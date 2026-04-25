@@ -96,7 +96,7 @@ describe("api", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getSessionsBootstrap()).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("api/sessions/bootstrap", {
+    expect(fetchMock).toHaveBeenCalledWith("api/bootstrap", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
@@ -114,7 +114,7 @@ describe("api", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getSessionsBootstrap({ refreshPiModels: true })).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("api/sessions/bootstrap?refresh_pi_models=1", {
+    expect(fetchMock).toHaveBeenCalledWith("api/bootstrap?refresh_pi_models=1", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
@@ -239,7 +239,7 @@ describe("api", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.listMessages("session-1", true, undefined, undefined, 6, 40)).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/messages?init=1&before=6&limit=40", {
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/messages?init=1&before=6&before_seq=6&limit=40", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
@@ -263,7 +263,7 @@ describe("api", () => {
     });
   });
 
-  it("requests live session data with an offset", async () => {
+  it("requests session state snapshots", async () => {
     const payload: LiveSessionResponse = {
       ok: true,
       session_id: "session-1",
@@ -280,13 +280,13 @@ describe("api", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getLiveSession("session-1", 4)).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/live?offset=4", {
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/state", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
   });
 
-  it("requests live session data with a requests version cursor", async () => {
+  it("requests session state snapshots when compatibility cursors are provided", async () => {
     const payload: LiveSessionResponse = {
       ok: true,
       session_id: "session-1",
@@ -305,7 +305,7 @@ describe("api", () => {
 
     await expect(api.getLiveSession("session-1", 4, "v1")).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith(
-      "api/sessions/session-1/live?offset=4&requests_version=v1",
+      "api/sessions/session-1/state",
       {
         headers: { Accept: "application/json" },
         signal: undefined,
@@ -313,7 +313,7 @@ describe("api", () => {
     );
   });
 
-  it("requests live session data with separate live and bridge cursors", async () => {
+  it("ignores legacy live cursor arguments and requests the state snapshot route", async () => {
     const payload: LiveSessionResponse = {
       ok: true,
       session_id: "session-1",
@@ -334,7 +334,7 @@ describe("api", () => {
 
     await expect(api.getLiveSession("session-1", 4, "v1", undefined, 2, undefined, 7)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith(
-      "api/sessions/session-1/live?offset=4&requests_version=v1&live_offset=2&bridge_offset=7",
+      "api/sessions/session-1/state",
       {
         headers: { Accept: "application/json" },
         signal: undefined,

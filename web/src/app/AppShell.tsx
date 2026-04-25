@@ -54,7 +54,7 @@ function EmptyDetailsWorkspace() {
 
 export function AppShell() {
   const { bySessionId } = useMessagesStore();
-  const { activeSessionId, items } = useSessionsStore();
+  const { activeSessionId, bootstrapLoaded, items } = useSessionsStore();
   const { busyBySessionId } = useLiveSessionStore();
   const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
   const sessionsStoreApi = useSessionsStoreApi();
@@ -72,7 +72,7 @@ export function AppShell() {
   const [fileViewerRequestKey, setFileViewerRequestKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [themeMode, setThemeMode] = useState(() => readThemeMode());
-  const [sseConnected, setSseConnected] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
   const {
     announcementEnabled,
     announcementLabel,
@@ -164,7 +164,7 @@ export function AppShell() {
     activeTitle,
     bySessionId,
     playReplyBeep,
-    realtimeConnected: sseConnected,
+    realtimeConnected,
     suppressedReplySoundSessionIdsRef,
     voiceSettings,
   });
@@ -175,9 +175,10 @@ export function AppShell() {
     activeSessionId,
     activeSessionPending,
     activeSessionRuntimeId,
+    bootstrapLoaded,
     items,
     liveSessionStoreApi,
-    onConnectionChange: setSseConnected,
+    onConnectionChange: setRealtimeConnected,
     refreshNotificationsFeed: refreshNotificationFeed,
     sessionUiStoreApi,
     sessionsStoreApi,
@@ -194,7 +195,7 @@ export function AppShell() {
     backgroundReplySoundPrimedSessionIdsRef,
     items,
     liveSessionStoreApi,
-    realtimeConnected: sseConnected,
+    realtimeConnected,
     replySoundEnabled,
     sessionUiStoreApi,
     sessionsStoreApi,

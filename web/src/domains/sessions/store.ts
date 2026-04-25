@@ -1,5 +1,6 @@
+import { configureRealtimeClient } from "../realtime/client";
 import { api } from "../../lib/api";
-import type { CwdGroupMeta, NewSessionDefaults, SessionSummary } from "../../lib/types";
+import type { CwdGroupMeta, NewSessionDefaults, SessionBootstrapResponse, SessionSummary, SessionsResponse } from "../../lib/types";
 
 export interface UpsertSessionOptions {
   prepend?: boolean;
@@ -37,6 +38,36 @@ export interface SessionsStore {
 }
 
 const PAGE_SIZE = 50;
+
+function normalizeSessionsResponse(data: SessionsResponse) {
+  return Array.isArray(data.items)
+    ? data.items
+    : Array.isArray(data.sessions)
+      ? data.sessions
+      : [];
+}
+
+function normalizeNewSessionDefaults(data: SessionBootstrapResponse): NewSessionDefaults | null {
+  if (data.new_session_defaults) {
+    return data.new_session_defaults;
+  }
+  const defaultBackend = String(data.launch_defaults?.default_backend || "").trim();
+  const availableBackends = Array.isArray(data.launch_defaults?.available_backends)
+    ? data.launch_defaults?.available_backends.filter((backend): backend is string => typeof backend === "string" && backend.trim().length > 0)
+    : [];
+  if (!defaultBackend && availableBackends.length === 0) {
+    return null;
+  }
+  const backends = Object.fromEntries((availableBackends.length ? availableBackends : [defaultBackend || "pi"])
+    .map((backend) => [backend, {
+      provider_choices: Array.isArray(data.launch_defaults?.providers) ? data.launch_defaults.providers : [],
+      models: Array.isArray(data.launch_defaults?.models) ? data.launch_defaults.models : [],
+    }]));
+  return {
+    default_backend: defaultBackend || availableBackends[0] || "pi",
+    backends,
+  };
+}
 
 function sessionDedupeKey(session: SessionSummary) {
   const threadId = String(session.thread_id || "").trim();
@@ -123,7 +154,7 @@ export function createSessionsStore(): SessionsStore {
         if (refreshId !== currentRefreshId) {
           return;
         }
-        const deduped = dedupeSessions(Array.isArray(data.sessions) ? data.sessions : []);
+        const deduped = dedupeSessions(normalizeSessionsResponse(data));
         const sessions = deduped.sessions;
         const representativeBySessionId = deduped.representativeBySessionId;
         const sessionIds = new Set(sessions.map((session) => session.session_id));
@@ -176,14 +207,21 @@ export function createSessionsStore(): SessionsStore {
     refresh,
     async refreshBootstrap(options?: RefreshBootstrapOptions) {
       const refreshId = ++currentBootstrapRefreshId;
-      const data = await api.getSessionsBootstrap(options);
+      const data = typeof (api as { getBootstrap?: unknown }).getBootstrap === "function"
+        ? await (api as { getBootstrap(options?: RefreshBootstrapOptions): Promise<SessionBootstrapResponse> }).getBootstrap(options)
+        : await (api as { getSessionsBootstrap(options?: RefreshBootstrapOptions): Promise<SessionBootstrapResponse> }).getSessionsBootstrap(options);
       if (refreshId !== currentBootstrapRefreshId) {
         return;
       }
+      configureRealtimeClient({
+        protocolVersion: data.protocol_version,
+        url: data.capabilities?.ws_realtime === false ? null : data.ws?.url,
+        heartbeatIntervalMs: data.ws?.heartbeat_interval_ms,
+      });
       state = {
         ...state,
         bootstrapLoaded: true,
-        newSessionDefaults: data.new_session_defaults ?? state.newSessionDefaults,
+        newSessionDefaults: normalizeNewSessionDefaults(data) ?? state.newSessionDefaults,
         recentCwds: Array.isArray(data.recent_cwds)
           ? data.recent_cwds.filter((cwd): cwd is string => typeof cwd === "string")
           : state.recentCwds,

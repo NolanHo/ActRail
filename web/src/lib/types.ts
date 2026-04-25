@@ -19,6 +19,26 @@ export interface NewSessionDefaults {
   backends?: Record<string, LaunchBackendDefaults>;
 }
 
+export interface BootstrapCapabilities {
+  ws_realtime?: boolean;
+  voice?: boolean;
+  harness?: boolean;
+  notifications?: boolean;
+  pi_ui?: boolean;
+  workspace_read?: boolean;
+  workspace_write?: boolean;
+}
+
+export interface BootstrapWebSocketConfig {
+  url?: string;
+  heartbeat_interval_ms?: number;
+  resume_buffer_events?: number;
+}
+
+export interface AppBootstrapUi {
+  deferred_features?: string[];
+}
+
 export interface SessionSummary {
   session_id: string;
   runtime_id?: string | null;
@@ -53,13 +73,25 @@ export interface SessionSummary {
 }
 
 export interface SessionsResponse {
-  sessions: SessionSummary[];
+  items?: SessionSummary[];
+  sessions?: SessionSummary[];
   remaining_count?: number;
   remaining_by_group?: Record<string, number>;
   omitted_group_count?: number;
+  group_key?: string | null;
 }
 
 export interface SessionBootstrapResponse {
+  protocol_version?: number;
+  capabilities?: BootstrapCapabilities;
+  ws?: BootstrapWebSocketConfig;
+  launch_defaults?: {
+    default_backend?: string;
+    available_backends?: string[];
+    providers?: string[];
+    models?: string[];
+  };
+  ui?: AppBootstrapUi;
   recent_cwds?: string[];
   cwd_groups?: Record<string, CwdGroupMeta>;
   new_session_defaults?: NewSessionDefaults;
@@ -73,6 +105,7 @@ export interface SessionDetailsResponse {
 
 export interface CreateSessionResponse {
   ok?: boolean;
+  session?: SessionSummary;
   session_id?: string;
   runtime_id?: string | null;
   backend?: string;
@@ -127,6 +160,7 @@ export interface CwdGroupMeta {
 
 export interface LoginResponse {
   ok?: boolean;
+  error?: string;
 }
 
 export interface EditCwdGroupResponse {
@@ -276,10 +310,14 @@ export interface MessageEvent {
 }
 
 export interface MessagesResponse {
+  items?: MessageEvent[];
   events: MessageEvent[];
   offset?: number;
   has_older?: boolean;
+  has_more?: boolean;
   next_before?: number;
+  next_before_seq?: number;
+  tail_seq?: number;
   ui_version?: string;
 }
 
@@ -316,6 +354,11 @@ export interface TurnTimingPayload {
   last_event_ts?: number | null;
 }
 
+export interface SessionStreamCursors {
+  session?: number;
+  ui?: number;
+}
+
 export interface LiveSessionResponse {
   ok?: boolean;
   session_id?: string;
@@ -332,8 +375,21 @@ export interface LiveSessionResponse {
   transport_state?: string;
   transport_error?: string | null;
   requests_version?: string;
+  tail_seq?: number;
+  stream_seq?: number;
+  ui_stream_seq?: number;
+  stream_cursors?: SessionStreamCursors | null;
   events: MessageEvent[];
   requests?: SessionUiRequest[];
+}
+
+export interface RealtimeEnvelope {
+  type?: string;
+  id?: string;
+  ts?: number;
+  stream?: string;
+  request_id?: string;
+  payload?: Record<string, unknown>;
 }
 
 export interface WorkspaceResponse {

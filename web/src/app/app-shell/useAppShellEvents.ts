@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { openAppEventStream, type AppEventStreamEvent } from "../../domains/events/stream";
+import {
+  connect,
+  disconnect,
+  setRealtimeSubscriptions,
+  subscribeRealtimeFrames,
+  subscribeRealtimeState,
+} from "../../domains/realtime/client";
+import type { RealtimeStreamSubscription } from "../../domains/realtime/client";
 import type { LiveSessionStore } from "../../domains/live-session/store";
 import type { SessionUiStore } from "../../domains/session-ui/store";
 import type { SessionsStore } from "../../domains/sessions/store";
-import { getSessionRuntimeId } from "../../lib/session-identity";
-import type { SessionSummary } from "../../lib/types";
+import type { RealtimeEnvelope, SessionSummary } from "../../lib/types";
 
 interface UseAppShellEventsOptions {
   activeSessionBackend?: string;
@@ -12,6 +18,7 @@ interface UseAppShellEventsOptions {
   activeSessionId: string | null;
   activeSessionPending?: boolean;
   activeSessionRuntimeId?: string | null;
+  bootstrapLoaded: boolean;
   items: SessionSummary[];
   liveSessionStoreApi: LiveSessionStore;
   onConnectionChange?: (connected: boolean) => void;
@@ -27,6 +34,7 @@ interface LatestAppShellEventContext {
   activeSessionId: string | null;
   activeSessionPending?: boolean;
   activeSessionRuntimeId?: string | null;
+  bootstrapLoaded: boolean;
   items: SessionSummary[];
   onConnectionChange?: (connected: boolean) => void;
   refreshNotificationsFeed: () => Promise<void>;
@@ -37,12 +45,34 @@ function isRecoverableNotFound(error: unknown) {
   return Boolean(error && typeof error === "object" && (error as { status?: unknown }).status === 404);
 }
 
+function sessionStreamName(sessionId: string) {
+  return `session:${sessionId}`;
+}
+
+function sessionUiStreamName(sessionId: string) {
+  return `session:${sessionId}:ui`;
+}
+
+function resolveSessionId(frame: RealtimeEnvelope) {
+  const payload = frame.payload && typeof frame.payload === "object" ? frame.payload as Record<string, unknown> : null;
+  if (typeof payload?.session_id === "string" && payload.session_id.trim()) {
+    return payload.session_id.trim();
+  }
+  const stream = String(frame.stream || "").trim();
+  if (!stream.startsWith("session:")) {
+    return "";
+  }
+  const [, rest] = stream.split("session:");
+  return String(rest || "").split(":")[0] || "";
+}
+
 export function useAppShellEvents({
   activeSessionBackend,
   activeSessionHistorical,
   activeSessionId,
   activeSessionPending,
   activeSessionRuntimeId,
+  bootstrapLoaded,
   items,
   liveSessionStoreApi,
   onConnectionChange,
@@ -52,13 +82,13 @@ export function useAppShellEvents({
   workspaceOpen,
 }: UseAppShellEventsOptions) {
   const [connected, setConnected] = useState(false);
-  const lastSeqRef = useRef(0);
   const latestRef = useRef<LatestAppShellEventContext>({
     activeSessionBackend,
     activeSessionHistorical,
     activeSessionId,
     activeSessionPending,
     activeSessionRuntimeId,
+    bootstrapLoaded,
     items,
     onConnectionChange,
     refreshNotificationsFeed,
@@ -72,12 +102,13 @@ export function useAppShellEvents({
       activeSessionId,
       activeSessionPending,
       activeSessionRuntimeId,
+      bootstrapLoaded,
       items,
       onConnectionChange,
       refreshNotificationsFeed,
       workspaceOpen,
     };
-  }, [activeSessionBackend, activeSessionHistorical, activeSessionId, activeSessionPending, activeSessionRuntimeId, items, onConnectionChange, refreshNotificationsFeed, workspaceOpen]);
+  }, [activeSessionBackend, activeSessionHistorical, activeSessionId, activeSessionPending, activeSessionRuntimeId, bootstrapLoaded, items, onConnectionChange, refreshNotificationsFeed, workspaceOpen]);
 
   useEffect(() => {
     const refreshSessions = () => sessionsStoreApi.refresh().catch(() => undefined);
@@ -99,7 +130,7 @@ export function useAppShellEvents({
           return undefined;
         });
     };
-    const pollLiveSession = (sessionId: string, runtimeId?: string | null) => {
+    const refreshLiveSessionSnapshot = (sessionId: string, runtimeId?: string | null) => {
       return (runtimeId
         ? liveSessionStoreApi.poll(sessionId, runtimeId)
         : liveSessionStoreApi.poll(sessionId))
@@ -110,97 +141,120 @@ export function useAppShellEvents({
           return undefined;
         });
     };
-    const resyncAll = () => {
-      const latest = latestRef.current;
-      void refreshSessions();
-      void latest.refreshNotificationsFeed();
-      if (latest.activeSessionId) {
-        void pollLiveSession(latest.activeSessionId, latest.activeSessionRuntimeId);
-      }
-      void refreshActiveWorkspace();
-    };
     const updateConnectionState = (isOpen: boolean) => {
       setConnected(isOpen);
       latestRef.current.onConnectionChange?.(isOpen);
     };
+    const handleFrame = (frame: RealtimeEnvelope) => {
+      const type = String(frame.type || "").trim();
+      if (!type) {
+        return;
+      }
 
-    const handleEvent = (event: AppEventStreamEvent) => {
-      if (typeof event.seq === "number" && Number.isFinite(event.seq)) {
-        lastSeqRef.current = Math.max(lastSeqRef.current, Math.floor(event.seq));
-      }
-      const eventType = String(event.type || "").trim();
-      if (!eventType) {
-        return;
-      }
-      if (eventType === "stream.resync") {
-        resyncAll();
-        return;
-      }
-      if (eventType === "sessions.invalidate" || eventType === "attention.invalidate") {
+      if (type === "sessions.updated") {
         void refreshSessions();
         return;
       }
-      if (eventType === "notifications.invalidate") {
+      if (type === "notifications.invalidate") {
         void latestRef.current.refreshNotificationsFeed();
         return;
       }
-
-      const latest = latestRef.current;
-      const targetRuntimeId = typeof event.runtime_id === "string" && event.runtime_id.trim()
-        ? event.runtime_id.trim()
-        : null;
-      const targetSessionId = typeof event.session_id === "string" && event.session_id.trim()
-        ? event.session_id.trim()
-        : null;
-      const session = latest.items.find((item) => (
-        (targetSessionId && item.session_id === targetSessionId)
-        || (targetRuntimeId && getSessionRuntimeId(item) === targetRuntimeId)
-      )) ?? null;
-
-      if (eventType === "session.workspace.invalidate") {
-        if (!latest.workspaceOpen || !latest.activeSessionId || !targetSessionId) {
-          return;
-        }
-        if (latest.activeSessionId !== targetSessionId && latest.activeSessionRuntimeId !== targetRuntimeId) {
-          return;
+      if (type === "session.workspace.invalidate") {
+        void refreshActiveWorkspace();
+        return;
+      }
+      if (type === "stream.resync") {
+        void refreshSessions();
+        void latestRef.current.refreshNotificationsFeed();
+        if (latestRef.current.activeSessionId) {
+          void refreshLiveSessionSnapshot(latestRef.current.activeSessionId, latestRef.current.activeSessionRuntimeId);
         }
         void refreshActiveWorkspace();
         return;
       }
 
-      if (eventType === "session.live.invalidate" || eventType === "session.transport.invalidate") {
-        if (!session) {
-          void refreshSessions();
+      if (
+        type === "session.state"
+        || type === "message.delta"
+        || type === "message.commit"
+        || type === "ui.request"
+        || type === "ui.resolved"
+      ) {
+        liveSessionStoreApi.applyFrame(frame);
+        return;
+      }
+
+      if (type === "queue.state") {
+        const sessionId = resolveSessionId(frame);
+        const latest = latestRef.current;
+        if (sessionId && latest.activeSessionId === sessionId && latest.workspaceOpen) {
+          void refreshActiveWorkspace();
+        }
+        return;
+      }
+
+      if (type === "transport.reset_required") {
+        const sessionId = resolveSessionId(frame);
+        if (!sessionId) {
           return;
         }
-        if ((session.historical && session.agent_backend === "pi") || session.pending_startup) {
-          void refreshSessions();
-          return;
+        liveSessionStoreApi.resetSession(sessionId);
+        const session = latestRef.current.items.find((item) => item.session_id === sessionId) ?? null;
+        void refreshLiveSessionSnapshot(sessionId, session?.runtime_id ?? null);
+        if (latestRef.current.activeSessionId === sessionId && latestRef.current.workspaceOpen) {
+          void refreshActiveWorkspace();
         }
-        const runtimeId = targetRuntimeId || getSessionRuntimeId(session);
-        const liveState = liveSessionStoreApi.getState();
-        const isTracked = session.session_id === latest.activeSessionId
-          || session.busy === true
-          || typeof liveState.offsetsBySessionId[session.session_id] === "number";
-        if (!isTracked) {
-          return;
-        }
-        void pollLiveSession(session.session_id, runtimeId);
       }
     };
 
-    const stream = openAppEventStream({
-      cursor: lastSeqRef.current,
-      onEvent: handleEvent,
-      onStateChange: (state) => {
-        updateConnectionState(state === "open");
-      },
+    const unsubscribeState = subscribeRealtimeState((next) => {
+      updateConnectionState(next === "open");
     });
+    const unsubscribeFrames = subscribeRealtimeFrames(handleFrame);
+
+    if (bootstrapLoaded) {
+      void connect().catch(() => undefined);
+    }
 
     return () => {
-      stream.close();
+      unsubscribeFrames();
+      unsubscribeState();
+      disconnect();
     };
-  }, [liveSessionStoreApi, sessionUiStoreApi, sessionsStoreApi]);
+  }, [bootstrapLoaded, liveSessionStoreApi, sessionUiStoreApi, sessionsStoreApi]);
+
+  useEffect(() => {
+    if (!bootstrapLoaded) {
+      return;
+    }
+    const liveState = liveSessionStoreApi.getState();
+    const subscriptions: RealtimeStreamSubscription[] = [{ name: "sessions" }];
+    const trackedSessionIds = new Set<string>();
+    const subscribeSession = (sessionId: string) => {
+      if (!sessionId || trackedSessionIds.has(sessionId)) {
+        return;
+      }
+      trackedSessionIds.add(sessionId);
+      subscriptions.push({
+        name: sessionStreamName(sessionId),
+        resumeFrom: liveState.streamCursorsBySessionId[sessionId],
+      });
+      subscriptions.push({
+        name: sessionUiStreamName(sessionId),
+        resumeFrom: liveState.uiStreamCursorsBySessionId[sessionId],
+      });
+    };
+
+    if (activeSessionId) {
+      subscribeSession(activeSessionId);
+    }
+    for (const session of items) {
+      if (session.busy || session.pending_startup) {
+        subscribeSession(session.session_id);
+      }
+    }
+    setRealtimeSubscriptions(subscriptions);
+  }, [activeSessionId, bootstrapLoaded, items, liveSessionStoreApi]);
 
   return { connected };
 }
