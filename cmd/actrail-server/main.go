@@ -19,7 +19,20 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	service := app.NewStub(cfg)
-	handler := httpapi.New(cfg, service, ws.NewHandler(cfg))
+	replay, err := ws.NewReplayBuffer(cfg.Protocol.ResumeBuffer)
+	if err != nil {
+		logger.Error("invalid websocket replay buffer", "err", err)
+		os.Exit(1)
+	}
+	registry := ws.NewRegistry()
+	publisher := ws.NewPublisher(registry, replay)
+	bridge := ws.NewAppBridge(service, service, publisher)
+	service.SetRuntimeEventSink(bridge)
+	handler := httpapi.New(cfg, service, ws.NewHandler(cfg,
+		ws.WithRegistry(registry),
+		ws.WithReplayBuffer(replay),
+		ws.WithCommandTarget(bridge),
+	))
 	server := &http.Server{
 		Addr:         cfg.Addr(),
 		Handler:      handler,

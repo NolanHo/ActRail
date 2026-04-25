@@ -35,6 +35,10 @@ func NewStub(cfg config.Config) *Stub {
 	return newStubWithRuntime(cfg, time.Now, RuntimeConfig{})
 }
 
+func NewStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
+	return newStubWithRuntime(cfg, now, runtimeCfg)
+}
+
 func newStub(cfg config.Config, now func() time.Time) *Stub {
 	return newStubWithRuntime(cfg, now, RuntimeConfig{Runner: &process.FakeRunner{}})
 }
