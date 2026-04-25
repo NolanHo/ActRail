@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { useComposerStoreApi, useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
-import { normalizeLaunchBackend, providerChoiceToSettings } from "../../lib/launch";
+import { normalizeLaunchBackend } from "../../lib/launch";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary } from "../../lib/types";
@@ -151,20 +151,19 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
       return;
     }
 
+    const resumeSessionId = String(session.resume_session_id || "").trim();
+    if (!resumeSessionId) {
+      setActionError("This historical session is missing resume metadata.");
+      return;
+    }
+
     setActionError("");
 
     try {
-      const details = await api.getSessionDetails(session.session_id);
-      const source = details.session;
-      const resumeSessionId = String(source.resume_session_id || "").trim();
-      if (!resumeSessionId) {
-        setActionError("This historical session is missing resume metadata.");
-        return;
-      }
-      const backend = normalizeLaunchBackend(source.agent_backend);
+      const backend = normalizeLaunchBackend(session.agent_backend);
       const response = await api.createSession({
         cwd,
-        backend,
+        agent_backend: backend,
         resume_session_id: resumeSessionId,
       });
       await selectCreatedSession(response);
@@ -184,19 +183,15 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
     setActionError("");
 
     try {
-      const details = await api.getSessionDetails(session.session_id);
-      const source = details.session;
+      const source = await api.getSessionDetails(session.session_id);
       const backend = normalizeLaunchBackend(source.agent_backend);
-      const providerSettings = providerChoiceToSettings(String(source.provider_choice || ""), backend);
       const response = await api.createSession({
         cwd,
-        backend,
-        model: String(source.model || "").trim() || undefined,
-        model_provider: providerSettings.model_provider,
-        preferred_auth_method: providerSettings.preferred_auth_method,
-        reasoning_effort: String(source.reasoning_effort || "").trim() || undefined,
-        service_tier: String(source.service_tier || "").trim().toLowerCase() === "fast" ? "fast" : undefined,
-        create_in_tmux: backend === "codex" && String(source.transport || "").trim().toLowerCase() === "tmux" ? true : undefined,
+        agent_backend: backend,
+        model: String(source.model || session.model || "").trim() || undefined,
+        provider: String(source.provider || session.provider_choice || "").trim() || undefined,
+        reasoning_effort: String(session.reasoning_effort || "").trim() || undefined,
+        title: String(source.title || source.alias || session.title || session.alias || "").trim() || undefined,
       });
       await selectCreatedSession(response);
     } catch (error) {
@@ -333,7 +328,7 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
                 onEdit={session.historical ? undefined : () => {
                   setActionError("");
                   void api.getSessionDetails(session.session_id)
-                    .then((details) => setEditingSession(details.session))
+                    .then((details) => setEditingSession(details as SessionSummary))
                     .catch((error) => {
                       setActionError(error instanceof Error ? error.message : "Failed to load session details");
                     });

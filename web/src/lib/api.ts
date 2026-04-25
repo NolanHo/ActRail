@@ -78,6 +78,64 @@ function normalizeUiResponsePayload(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeSessionDetailsResponse(response: SessionDetailsResponse & { session?: Record<string, unknown> | null }) {
+  if (!response.session || typeof response.session !== "object") {
+    return response as SessionDetailsResponse;
+  }
+  return {
+    ...response.session,
+    session_id: response.session_id ?? response.session.session_id,
+    runtime_id: response.runtime_id ?? response.session.runtime_id,
+    thread_id: response.thread_id ?? response.session.thread_id,
+    agent_backend: response.agent_backend ?? response.session.agent_backend,
+    cwd: response.cwd ?? response.session.cwd,
+    model: response.model ?? response.session.model,
+    priority_offset: response.priority_offset ?? response.session.priority_offset,
+  } as SessionDetailsResponse;
+}
+
+function legacyProviderToCanonical(payload: Record<string, unknown>) {
+  if (typeof payload.provider === "string" && payload.provider.trim()) {
+    return payload.provider.trim();
+  }
+  if (typeof payload.provider_choice === "string" && payload.provider_choice.trim()) {
+    return payload.provider_choice.trim();
+  }
+  const modelProvider = typeof payload.model_provider === "string" && payload.model_provider.trim()
+    ? payload.model_provider.trim()
+    : "";
+  const preferredAuthMethod = typeof payload.preferred_auth_method === "string" && payload.preferred_auth_method.trim()
+    ? payload.preferred_auth_method.trim()
+    : "";
+  if (modelProvider === "openai" && preferredAuthMethod === "chatgpt") {
+    return "chatgpt";
+  }
+  if (modelProvider === "openai" && preferredAuthMethod === "apikey") {
+    return "openai-api";
+  }
+  return modelProvider || undefined;
+}
+
+function normalizeCreateSessionPayload(payload: Record<string, unknown>) {
+  return {
+    agent_backend: typeof payload.agent_backend === "string" && payload.agent_backend.trim()
+      ? payload.agent_backend.trim()
+      : typeof payload.backend === "string" && payload.backend.trim()
+        ? payload.backend.trim()
+        : undefined,
+    cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
+    provider: legacyProviderToCanonical(payload),
+    model: typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : undefined,
+    reasoning_effort: typeof payload.reasoning_effort === "string" && payload.reasoning_effort.trim() ? payload.reasoning_effort.trim() : undefined,
+    resume_session_id: typeof payload.resume_session_id === "string" && payload.resume_session_id.trim() ? payload.resume_session_id.trim() : undefined,
+    title: typeof payload.title === "string" && payload.title.trim()
+      ? payload.title.trim()
+      : typeof payload.name === "string" && payload.name.trim()
+        ? payload.name.trim()
+        : undefined,
+  };
+}
+
 export const api = {
   me(signal?: AbortSignal) {
     return getJson<{ ok?: boolean }>("/api/me", signal);
@@ -116,9 +174,10 @@ export const api = {
   getSessionsBootstrap(options?: { refreshPiModels?: boolean }, signal?: AbortSignal) {
     return api.getBootstrap(options, signal);
   },
-  getSessionDetails(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
+  async getSessionDetails(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
-    return getJson<SessionDetailsResponse>(`/api/sessions/${routeId}/details`, signal);
+    const response = await getJson<SessionDetailsResponse & { session?: Record<string, unknown> | null }>(`/api/sessions/${routeId}/details`, signal);
+    return normalizeSessionDetailsResponse(response);
   },
   listMessages(sessionId: string, init = false, signal?: AbortSignal, offset?: number, before?: number, limit?: number, runtimeId?: string | null) {
     const query = new URLSearchParams();
@@ -193,7 +252,7 @@ export const api = {
     return postJson<RestartSessionResponse>(`/api/sessions/${routeId}/restart`, {});
   },
   async createSession(payload: Record<string, unknown>) {
-    const response = await postJson<CreateSessionResponse>(`/api/sessions`, payload);
+    const response = await postJson<CreateSessionResponse>(`/api/sessions`, normalizeCreateSessionPayload(payload));
     if (response.session && typeof response.session === "object") {
       return {
         ...response,
@@ -278,20 +337,29 @@ export const api = {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson(`/api/sessions/${routeId}/queue`);
   },
-  getFiles(sessionId: string, path?: string, signal?: AbortSignal, runtimeId?: string | null) {
+  async getFiles(sessionId: string, path?: string, signal?: AbortSignal, runtimeId?: string | null) {
     const query = new URLSearchParams();
     if (path) {
       query.set("path", path);
     }
     const suffix = query.size ? `?${query.toString()}` : "";
     const routeId = getSessionRouteId(sessionId, runtimeId);
-    return getJson<SessionFileListResponse>(`/api/sessions/${routeId}/file/list${suffix}`, signal);
+    const response = await getJson<SessionFileListResponse>(`/api/sessions/${routeId}/file/list${suffix}`, signal);
+    return {
+      ...response,
+      entries: Array.isArray(response.entries) ? response.entries : Array.isArray(response.items) ? response.items : [],
+    } as SessionFileListResponse & { entries: NonNullable<SessionFileListResponse["entries"]> };
   },
-  getFileRead(sessionId: string, path: string, signal?: AbortSignal, runtimeId?: string | null) {
+  async getFileRead(sessionId: string, path: string, signal?: AbortSignal, runtimeId?: string | null) {
     const query = new URLSearchParams();
     query.set("path", path);
     const routeId = getSessionRouteId(sessionId, runtimeId);
-    return getJson<SessionFileReadResponse>(`/api/sessions/${routeId}/file/read?${query.toString()}`, signal);
+    const response = await getJson<SessionFileReadResponse>(`/api/sessions/${routeId}/file/read?${query.toString()}`, signal);
+    return {
+      ...response,
+      size: response.size ?? response.size_bytes,
+      content_type: response.content_type ?? response.mime_type,
+    };
   },
   getGitFileVersions(sessionId: string, path: string, signal?: AbortSignal, runtimeId?: string | null) {
     const query = new URLSearchParams();

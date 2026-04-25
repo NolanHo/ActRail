@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils";
 
 import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
-import { providerChoiceToSettings } from "../../lib/launch";
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { CreateSessionResponse, LaunchBackendDefaults, SessionResumeCandidate, SessionResumeCandidatesResponse, SessionSummary } from "../../lib/types";
 
@@ -550,20 +549,15 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
               setSubmitting(true);
               setError("");
               try {
-                const providerSettings = providerChoiceToSettings(providerChoice || backendDefaults.provider_choice || "", backend);
                 const trimmedSessionName = sessionName.trim() || undefined;
                 const response = await api.createSession({
                   cwd: trimmedCwd,
-                  name: trimmedSessionName,
-                  backend,
+                  title: trimmedSessionName,
+                  agent_backend: backend,
                   resume_session_id: resumeSessionId || undefined,
-                  worktree_branch: supportsWorktree && useWorktree && !resumeSessionId ? trimmedWorktreeBranch : undefined,
-                  create_in_tmux: supportsTmux ? createInTmux : undefined,
+                  provider: providerChoice.trim() || backendDefaults.provider_choice?.trim() || undefined,
                   model: model.trim() || undefined,
-                  model_provider: providerSettings.model_provider,
-                  preferred_auth_method: providerSettings.preferred_auth_method,
                   reasoning_effort: reasoningEffort.trim() || undefined,
-                  service_tier: supportsFast && fastMode ? "fast" : undefined,
                 });
                 const optimisticSession = buildOptimisticCreatedSession(response, {
                   backend,

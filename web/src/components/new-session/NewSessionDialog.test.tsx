@@ -250,16 +250,12 @@ describe("NewSessionDialog", () => {
 
     expect(api.createSession).toHaveBeenCalledWith({
       cwd: "/tmp/project",
-      name: "Inbox cleanup",
-      backend: "codex",
-      create_in_tmux: true,
+      title: "Inbox cleanup",
+      agent_backend: "codex",
+      provider: "openai-api",
       model: "gpt-5.4",
       reasoning_effort: "high",
-      model_provider: "openai",
-      preferred_auth_method: "apikey",
       resume_session_id: undefined,
-      service_tier: "fast",
-      worktree_branch: "feature/inbox-cleanup",
     });
     expect(api.renameSession).not.toHaveBeenCalled();
     expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -477,16 +473,12 @@ describe("NewSessionDialog", () => {
 
     expect(api.createSession).toHaveBeenCalledWith({
       cwd: "/tmp/project",
-      name: "Inbox cleanup",
-      backend: "codex",
-      create_in_tmux: undefined,
+      title: "Inbox cleanup",
+      agent_backend: "codex",
+      provider: "chatgpt",
       model: undefined,
-      model_provider: "openai",
-      preferred_auth_method: "chatgpt",
       reasoning_effort: "high",
       resume_session_id: undefined,
-      service_tier: undefined,
-      worktree_branch: undefined,
     });
     expect(api.renameSession).not.toHaveBeenCalled();
     expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -678,16 +670,12 @@ describe("NewSessionDialog", () => {
 
     expect(api.createSession).toHaveBeenCalledWith({
       cwd: "/tmp/project",
-      name: "fresh-name",
-      backend: "codex",
-      create_in_tmux: undefined,
+      title: "fresh-name",
+      agent_backend: "codex",
+      provider: "chatgpt",
       model: undefined,
-      model_provider: "openai",
-      preferred_auth_method: "chatgpt",
       reasoning_effort: "high",
       resume_session_id: undefined,
-      service_tier: undefined,
-      worktree_branch: undefined,
     });
     expect(api.renameSession).not.toHaveBeenCalled();
     expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -1160,16 +1148,12 @@ describe("NewSessionDialog", () => {
 
     expect(api.createSession).toHaveBeenCalledWith({
       cwd: "/tmp/new-project",
-      name: undefined,
-      backend: "pi",
-      create_in_tmux: undefined,
+      title: undefined,
+      agent_backend: "pi",
+      provider: "macaron",
       model: "gpt-5.4",
-      model_provider: "macaron",
-      preferred_auth_method: undefined,
       reasoning_effort: "high",
       resume_session_id: undefined,
-      service_tier: undefined,
-      worktree_branch: undefined,
     });
   });
 
@@ -1235,13 +1219,12 @@ describe("NewSessionDialog", () => {
 
     expect(api.createSession).toHaveBeenCalledWith({
       cwd: "/tmp/pi-project",
-      backend: "pi",
-      create_in_tmux: true,
+      title: undefined,
+      agent_backend: "pi",
+      provider: "macaron",
       model: "gpt-5.4",
       reasoning_effort: "high",
-      model_provider: "macaron",
       resume_session_id: undefined,
-      worktree_branch: undefined,
     });
   });
 });
