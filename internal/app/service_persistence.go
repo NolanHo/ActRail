@@ -21,10 +21,18 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		_ = catalog.Close()
 		return nil, err
 	}
+	recentCwds, cwdGroups, err := loadPersistedAppState(catalog)
+	if err != nil {
+		_ = catalog.Close()
+		return nil, err
+	}
 	stub := &Stub{
-		cfg:      cfg,
-		registry: newSessionRegistry(now, catalog),
-		launcher: newRuntimeLauncher(runtimeCfg),
+		cfg:        cfg,
+		registry:   newSessionRegistry(now, catalog),
+		launcher:   newRuntimeLauncher(runtimeCfg),
+		appStore:   catalog,
+		recentCwds: recentCwds,
+		cwdGroups:  cwdGroups,
 	}
 	if err := stub.registry.Rehydrate(records); err != nil {
 		_ = catalog.Close()

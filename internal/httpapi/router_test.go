@@ -27,12 +27,14 @@ type serviceStub struct {
 	messagesFunc      func(context.Context, app.SessionMessagesRequest) (app.SessionMessagesResponse, error)
 	stateFunc         func(context.Context, app.SessionStateRequest) (app.SessionStateResponse, error)
 	workspaceFunc     func(context.Context, app.SessionWorkspaceRequest) (app.SessionWorkspaceResponse, error)
+	workspaceSetFunc  func(context.Context, app.UpdateSessionWorkspaceRequest) (app.SessionWorkspaceResponse, error)
 	fileListFunc      func(context.Context, app.WorkspaceFileListRequest) (app.WorkspaceFileListResponse, error)
 	fileReadFunc      func(context.Context, app.WorkspaceFileReadRequest) (app.WorkspaceFileReadResponse, error)
 	gitFunc           func(context.Context, app.GitFileVersionsRequest) (app.GitFileVersionsResponse, error)
 	renameFunc        func(context.Context, app.RenameSessionRequest) (app.RenameSessionResponse, error)
 	focusFunc         func(context.Context, app.FocusSessionRequest) (app.FocusSessionResponse, error)
 	editFunc          func(context.Context, app.EditSessionRequest) (app.EditSessionResponse, error)
+	editCwdGroupFunc  func(context.Context, app.EditCwdGroupRequest) (app.EditCwdGroupResponse, error)
 	modelFunc         func(context.Context, app.SwitchSessionModelRequest) (app.SwitchSessionModelResponse, error)
 	deleteFunc        func(context.Context, app.DeleteSessionRequest) (app.DeleteSessionResponse, error)
 	restartFunc       func(context.Context, app.RestartSessionRequest) (app.RestartSessionResponse, error)
@@ -96,6 +98,13 @@ func (s serviceStub) SessionWorkspace(ctx context.Context, req app.SessionWorksp
 	return s.base.SessionWorkspace(ctx, req)
 }
 
+func (s serviceStub) UpdateSessionWorkspace(ctx context.Context, req app.UpdateSessionWorkspaceRequest) (app.SessionWorkspaceResponse, error) {
+	if s.workspaceSetFunc != nil {
+		return s.workspaceSetFunc(ctx, req)
+	}
+	return s.base.UpdateSessionWorkspace(ctx, req)
+}
+
 func (s serviceStub) WorkspaceFileList(ctx context.Context, req app.WorkspaceFileListRequest) (app.WorkspaceFileListResponse, error) {
 	if s.fileListFunc != nil {
 		return s.fileListFunc(ctx, req)
@@ -138,6 +147,13 @@ func (s serviceStub) EditSession(ctx context.Context, req app.EditSessionRequest
 	return s.base.EditSession(ctx, req)
 }
 
+func (s serviceStub) EditCwdGroup(ctx context.Context, req app.EditCwdGroupRequest) (app.EditCwdGroupResponse, error) {
+	if s.editCwdGroupFunc != nil {
+		return s.editCwdGroupFunc(ctx, req)
+	}
+	return s.base.EditCwdGroup(ctx, req)
+}
+
 func (s serviceStub) SwitchSessionModel(ctx context.Context, req app.SwitchSessionModelRequest) (app.SwitchSessionModelResponse, error) {
 	if s.modelFunc != nil {
 		return s.modelFunc(ctx, req)
@@ -167,23 +183,25 @@ func (s serviceStub) HandoffSession(ctx context.Context, req app.HandoffSessionR
 }
 
 type fixtureService struct {
-	listReq      app.ListSessionsRequest
-	createReq    app.CreateSessionRequest
-	resumeReq    app.SessionResumeCandidatesRequest
-	detailsReq   app.SessionDetailsRequest
-	messagesReq  app.SessionMessagesRequest
-	stateReq     app.SessionStateRequest
-	workspaceReq app.SessionWorkspaceRequest
-	fileListReq  app.WorkspaceFileListRequest
-	fileReadReq  app.WorkspaceFileReadRequest
-	gitReq       app.GitFileVersionsRequest
-	renameReq    app.RenameSessionRequest
-	focusReq     app.FocusSessionRequest
-	editReq      app.EditSessionRequest
-	modelReq     app.SwitchSessionModelRequest
-	deleteReq    app.DeleteSessionRequest
-	restartReq   app.RestartSessionRequest
-	handoffReq   app.HandoffSessionRequest
+	listReq         app.ListSessionsRequest
+	createReq       app.CreateSessionRequest
+	resumeReq       app.SessionResumeCandidatesRequest
+	detailsReq      app.SessionDetailsRequest
+	messagesReq     app.SessionMessagesRequest
+	stateReq        app.SessionStateRequest
+	workspaceReq    app.SessionWorkspaceRequest
+	workspaceSetReq app.UpdateSessionWorkspaceRequest
+	fileListReq     app.WorkspaceFileListRequest
+	fileReadReq     app.WorkspaceFileReadRequest
+	gitReq          app.GitFileVersionsRequest
+	renameReq       app.RenameSessionRequest
+	focusReq        app.FocusSessionRequest
+	editReq         app.EditSessionRequest
+	editCwdGroupReq app.EditCwdGroupRequest
+	modelReq        app.SwitchSessionModelRequest
+	deleteReq       app.DeleteSessionRequest
+	restartReq      app.RestartSessionRequest
+	handoffReq      app.HandoffSessionRequest
 }
 
 func (s *fixtureService) Bootstrap(_ context.Context) app.BootstrapSnapshot {
@@ -209,7 +227,9 @@ func (s *fixtureService) Bootstrap(_ context.Context) app.BootstrapSnapshot {
 			Providers:         []string{},
 			Models:            []string{},
 		},
-		UI: app.UIConfig{DeferredFeatures: []string{"voice", "harness", "notifications"}},
+		UI:         app.UIConfig{DeferredFeatures: []string{"voice", "harness", "notifications"}},
+		RecentCwds: []string{"/root/code/ActRail", "/tmp/project"},
+		CwdGroups:  map[string]app.CwdGroupMeta{"/root/code/ActRail": {Label: "ActRail", Collapsed: true}},
 	}
 }
 
@@ -360,6 +380,16 @@ func (s *fixtureService) SessionWorkspace(_ context.Context, req app.SessionWork
 	}, nil
 }
 
+func (s *fixtureService) UpdateSessionWorkspace(_ context.Context, req app.UpdateSessionWorkspaceRequest) (app.SessionWorkspaceResponse, error) {
+	s.workspaceSetReq = req
+	return app.SessionWorkspaceResponse{
+		RootPath:     "/root/code/ActRail",
+		SelectedPath: req.SelectedPath,
+		OpenPaths:    append([]string(nil), req.OpenPaths...),
+		HistoryItems: append([]app.WorkspaceHistoryItem(nil), req.HistoryItems...),
+	}, nil
+}
+
 func (s *fixtureService) WorkspaceFileList(_ context.Context, req app.WorkspaceFileListRequest) (app.WorkspaceFileListResponse, error) {
 	s.fileListReq = req
 	return app.WorkspaceFileListResponse{
@@ -417,6 +447,11 @@ func (s *fixtureService) EditSession(_ context.Context, req app.EditSessionReque
 	return app.EditSessionResponse{OK: true, Alias: "Edited task", PriorityOffset: 0.5, Focused: true}, nil
 }
 
+func (s *fixtureService) EditCwdGroup(_ context.Context, req app.EditCwdGroupRequest) (app.EditCwdGroupResponse, error) {
+	s.editCwdGroupReq = req
+	return app.EditCwdGroupResponse{OK: true, CWD: req.CWD, Label: "ActRail", Collapsed: true}, nil
+}
+
 func (s *fixtureService) SwitchSessionModel(_ context.Context, req app.SwitchSessionModelRequest) (app.SwitchSessionModelResponse, error) {
 	s.modelReq = req
 	model := ""
@@ -465,6 +500,8 @@ func TestBootstrapRoute(t *testing.T) {
 		WS              struct {
 			URL string `json:"url"`
 		} `json:"ws"`
+		RecentCwds []string                    `json:"recent_cwds"`
+		CwdGroups  map[string]app.CwdGroupMeta `json:"cwd_groups"`
 	}
 	decodeJSON(t, res, &body)
 	if body.ProtocolVersion != 1 {
@@ -472,6 +509,12 @@ func TestBootstrapRoute(t *testing.T) {
 	}
 	if body.WS.URL != "/api/ws" {
 		t.Fatalf("expected websocket path /api/ws, got %q", body.WS.URL)
+	}
+	if len(body.RecentCwds) != 2 || body.RecentCwds[0] != "/root/code/ActRail" {
+		t.Fatalf("bootstrap recent_cwds = %#v", body.RecentCwds)
+	}
+	if meta, ok := body.CwdGroups["/root/code/ActRail"]; !ok || meta.Label != "ActRail" || !meta.Collapsed {
+		t.Fatalf("bootstrap cwd_groups = %#v", body.CwdGroups)
 	}
 }
 
@@ -569,6 +612,21 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		decodeJSON(t, res, &payload)
 		if payload.RootPath != "/root/code/ActRail" || len(payload.OpenPaths) != 2 {
 			t.Fatalf("unexpected workspace payload: %+v", payload)
+		}
+	})
+
+	t.Run("update workspace", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/workspace", bytes.NewBufferString(`{"selected_path":"internal/httpapi/router.go","open_paths":["internal","internal/httpapi/router.go"],"history_items":[{"path":"README.md","label":"Readme"}]}`))
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+
+		var payload app.SessionWorkspaceResponse
+		decodeJSON(t, res, &payload)
+		if payload.SelectedPath != "internal/httpapi/router.go" || len(payload.OpenPaths) != 2 {
+			t.Fatalf("unexpected update workspace payload: %+v", payload)
+		}
+		if svc.workspaceSetReq.SessionID.String() != "s_123" || svc.workspaceSetReq.SelectedPath != "internal/httpapi/router.go" {
+			t.Fatalf("unexpected update workspace request: %+v", svc.workspaceSetReq)
 		}
 	})
 
@@ -953,6 +1011,23 @@ func TestSessionActionRoutesUseAppSeams(t *testing.T) {
 		}
 		if svc.editReq.DependencySessionID.Value == nil || *svc.editReq.DependencySessionID.Value != "s_456" {
 			t.Fatalf("edit dependency request = %+v", svc.editReq.DependencySessionID)
+		}
+	})
+
+	t.Run("cwd group", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/cwd_groups/edit", bytes.NewBufferString(`{"cwd":"/root/code/ActRail","label":"ActRail","collapsed":true}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.editCwdGroupReq.CWD != "/root/code/ActRail" || svc.editCwdGroupReq.Label == nil || *svc.editCwdGroupReq.Label != "ActRail" {
+			t.Fatalf("cwd group request = %+v", svc.editCwdGroupReq)
+		}
+		if svc.editCwdGroupReq.Collapsed == nil || !*svc.editCwdGroupReq.Collapsed {
+			t.Fatalf("cwd group collapsed request = %+v", svc.editCwdGroupReq)
 		}
 	})
 

@@ -135,6 +135,13 @@ type SessionWorkspaceRequest struct {
 	SessionID session.SessionID
 }
 
+type UpdateSessionWorkspaceRequest struct {
+	SessionID    session.SessionID
+	SelectedPath string                 `json:"selected_path,omitempty"`
+	OpenPaths    []string               `json:"open_paths"`
+	HistoryItems []WorkspaceHistoryItem `json:"history_items"`
+}
+
 type SessionWorkspaceResponse struct {
 	RootPath     string                 `json:"root_path"`
 	SelectedPath string                 `json:"selected_path,omitempty"`

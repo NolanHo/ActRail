@@ -210,6 +210,10 @@ export const api = {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson<WorkspaceResponse>(`/api/sessions/${routeId}/workspace`, signal);
   },
+  updateWorkspace(sessionId: string, payload: Record<string, unknown>, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return postJson<WorkspaceResponse>(`/api/sessions/${routeId}/workspace`, payload);
+  },
   getSessionCommands(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson<SessionCommandsResponse>(`/api/sessions/${routeId}/commands`, signal);

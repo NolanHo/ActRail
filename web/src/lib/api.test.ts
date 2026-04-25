@@ -418,6 +418,36 @@ describe("api", () => {
     });
   });
 
+  it("updates workspace data", async () => {
+    const payload: WorkspaceResponse = {
+      root_path: "/tmp/project",
+      selected_path: "src/main.tsx",
+      open_paths: ["src/main.tsx", "src"],
+      history_items: [{ path: "src/main.tsx", label: "main.tsx" }],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.updateWorkspace("session-1", {
+      selected_path: "src/main.tsx",
+      open_paths: ["src/main.tsx", "src"],
+      history_items: [{ path: "src/main.tsx", label: "main.tsx" }],
+    })).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/workspace", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        selected_path: "src/main.tsx",
+        open_paths: ["src/main.tsx", "src"],
+        history_items: [{ path: "src/main.tsx", label: "main.tsx" }],
+      }),
+    }));
+  });
+
   it("requests the session command list", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

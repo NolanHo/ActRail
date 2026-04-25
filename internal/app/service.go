@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"actrail/internal/adapters/process"
@@ -20,12 +21,14 @@ type Service interface {
 	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)
 	SessionState(context.Context, SessionStateRequest) (SessionStateResponse, error)
 	SessionWorkspace(context.Context, SessionWorkspaceRequest) (SessionWorkspaceResponse, error)
+	UpdateSessionWorkspace(context.Context, UpdateSessionWorkspaceRequest) (SessionWorkspaceResponse, error)
 	WorkspaceFileList(context.Context, WorkspaceFileListRequest) (WorkspaceFileListResponse, error)
 	WorkspaceFileRead(context.Context, WorkspaceFileReadRequest) (WorkspaceFileReadResponse, error)
 	GitFileVersions(context.Context, GitFileVersionsRequest) (GitFileVersionsResponse, error)
 	RenameSession(context.Context, RenameSessionRequest) (RenameSessionResponse, error)
 	FocusSession(context.Context, FocusSessionRequest) (FocusSessionResponse, error)
 	EditSession(context.Context, EditSessionRequest) (EditSessionResponse, error)
+	EditCwdGroup(context.Context, EditCwdGroupRequest) (EditCwdGroupResponse, error)
 	SwitchSessionModel(context.Context, SwitchSessionModelRequest) (SwitchSessionModelResponse, error)
 	DeleteSession(context.Context, DeleteSessionRequest) (DeleteSessionResponse, error)
 	RestartSession(context.Context, RestartSessionRequest) (RestartSessionResponse, error)
@@ -33,10 +36,14 @@ type Service interface {
 }
 
 type Stub struct {
-	cfg      config.Config
-	registry *sessionRegistry
-	launcher runtimeLauncher
-	sink     RuntimeEventSink
+	cfg        config.Config
+	registry   *sessionRegistry
+	launcher   runtimeLauncher
+	sink       RuntimeEventSink
+	appStore   appStateStore
+	appStateMu sync.RWMutex
+	recentCwds []string
+	cwdGroups  map[string]CwdGroupMeta
 }
 
 func NewStub(cfg config.Config) (*Stub, error) {
@@ -57,18 +64,22 @@ func newStub(cfg config.Config, now func() time.Time) *Stub {
 
 func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
 	return &Stub{
-		cfg:      cfg,
-		registry: newSessionRegistry(now),
-		launcher: newRuntimeLauncher(runtimeCfg),
+		cfg:        cfg,
+		registry:   newSessionRegistry(now),
+		launcher:   newRuntimeLauncher(runtimeCfg),
+		recentCwds: []string{},
+		cwdGroups:  map[string]CwdGroupMeta{},
 	}
 }
 
 type BootstrapSnapshot struct {
-	ProtocolVersion int          `json:"protocol_version"`
-	Capabilities    Capabilities `json:"capabilities"`
-	WS              WSConfig     `json:"ws"`
-	LaunchDefaults  LaunchConfig `json:"launch_defaults"`
-	UI              UIConfig     `json:"ui"`
+	ProtocolVersion int                     `json:"protocol_version"`
+	Capabilities    Capabilities            `json:"capabilities"`
+	WS              WSConfig                `json:"ws"`
+	LaunchDefaults  LaunchConfig            `json:"launch_defaults"`
+	UI              UIConfig                `json:"ui"`
+	RecentCwds      []string                `json:"recent_cwds,omitempty"`
+	CwdGroups       map[string]CwdGroupMeta `json:"cwd_groups,omitempty"`
 }
 
 type Capabilities struct {
@@ -96,6 +107,11 @@ type LaunchConfig struct {
 
 type UIConfig struct {
 	DeferredFeatures []string `json:"deferred_features"`
+}
+
+type CwdGroupMeta struct {
+	Label     string `json:"label,omitempty"`
+	Collapsed bool   `json:"collapsed,omitempty"`
 }
 
 type SessionSummary struct {
@@ -152,6 +168,19 @@ type CreateSessionResponse struct {
 	WSAttach *SessionAttachRequest `json:"ws_attach,omitempty"`
 }
 
+type EditCwdGroupRequest struct {
+	CWD       string  `json:"cwd"`
+	Label     *string `json:"label,omitempty"`
+	Collapsed *bool   `json:"collapsed,omitempty"`
+}
+
+type EditCwdGroupResponse struct {
+	OK        bool   `json:"ok"`
+	CWD       string `json:"cwd"`
+	Label     string `json:"label,omitempty"`
+	Collapsed bool   `json:"collapsed,omitempty"`
+}
+
 type CreatedSession struct {
 	SessionID    string `json:"session_id"`
 	RuntimeID    string `json:"runtime_id,omitempty"`
@@ -195,6 +224,7 @@ func NotFound(message string) *Error {
 }
 
 func (s *Stub) Bootstrap(_ context.Context) BootstrapSnapshot {
+	recentCwds, cwdGroups := s.bootstrapAppStateSnapshot()
 	return BootstrapSnapshot{
 		ProtocolVersion: s.cfg.Protocol.Version,
 		Capabilities: Capabilities{
@@ -220,6 +250,8 @@ func (s *Stub) Bootstrap(_ context.Context) BootstrapSnapshot {
 		UI: UIConfig{
 			DeferredFeatures: append([]string(nil), s.cfg.DisabledUI...),
 		},
+		RecentCwds: recentCwds,
+		CwdGroups:  cwdGroups,
 	}
 }
 
@@ -261,6 +293,9 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 			return CreateSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", parsed))
 		}
 		return CreateSessionResponse{}, Unsupported("session resume not implemented")
+	}
+	if err := s.recordRecentCWD(cwd); err != nil {
+		return CreateSessionResponse{}, err
 	}
 	runtime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
 		Backend:         backend,

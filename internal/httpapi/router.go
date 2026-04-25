@@ -54,12 +54,14 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.Handle("GET /api/sessions/{session_id}/messages", r.requireAuth(http.HandlerFunc(r.sessionMessages)))
 	mux.Handle("GET /api/sessions/{session_id}/state", r.requireAuth(http.HandlerFunc(r.sessionState)))
 	mux.Handle("GET /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.sessionWorkspace)))
+	mux.Handle("POST /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.updateSessionWorkspace)))
 	mux.Handle("GET /api/sessions/{session_id}/file/list", r.requireAuth(http.HandlerFunc(r.workspaceFileList)))
 	mux.Handle("GET /api/sessions/{session_id}/file/read", r.requireAuth(http.HandlerFunc(r.workspaceFileRead)))
 	mux.Handle("GET /api/sessions/{session_id}/git/file_versions", r.requireAuth(http.HandlerFunc(r.gitFileVersions)))
 	mux.Handle("POST /api/sessions/{session_id}/rename", r.requireAuth(http.HandlerFunc(r.renameSession)))
 	mux.Handle("POST /api/sessions/{session_id}/focus", r.requireAuth(http.HandlerFunc(r.focusSession)))
 	mux.Handle("POST /api/sessions/{session_id}/edit", r.requireAuth(http.HandlerFunc(r.editSession)))
+	mux.Handle("POST /api/cwd_groups/edit", r.requireAuth(http.HandlerFunc(r.editCwdGroup)))
 	mux.Handle("POST /api/sessions/{session_id}/model", r.requireAuth(http.HandlerFunc(r.switchSessionModel)))
 	mux.Handle("POST /api/sessions/{session_id}/delete", r.requireAuth(http.HandlerFunc(r.deleteSession)))
 	mux.Handle("POST /api/sessions/{session_id}/restart", r.requireAuth(http.HandlerFunc(r.restartSession)))
@@ -279,6 +281,25 @@ func (r Router) sessionWorkspace(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
+func (r Router) updateSessionWorkspace(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body app.UpdateSessionWorkspaceRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.SessionID = sessionID
+	payload, err := r.app.UpdateSessionWorkspace(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (r Router) workspaceFileList(w http.ResponseWriter, req *http.Request) {
 	sessionID, ok := routeSessionID(w, req)
 	if !ok {
@@ -430,6 +451,20 @@ func (r Router) editSession(w http.ResponseWriter, req *http.Request) {
 		SnoozeUntil:         snoozeUntil,
 		DependencySessionID: dependencySessionID,
 	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) editCwdGroup(w http.ResponseWriter, req *http.Request) {
+	var body app.EditCwdGroupRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.EditCwdGroup(req.Context(), body)
 	if err != nil {
 		writeAppError(w, err)
 		return

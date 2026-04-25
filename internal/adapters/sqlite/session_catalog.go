@@ -9,7 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 const tsLayout = time.RFC3339Nano
 
@@ -85,6 +85,63 @@ var migrations = []migration{
 				}
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 1, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 2,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS session_queue_items (
+					session_id TEXT NOT NULL,
+					ordinal INTEGER NOT NULL,
+					item_id TEXT NOT NULL,
+					text TEXT NOT NULL,
+					state TEXT NOT NULL,
+					PRIMARY KEY(session_id, item_id),
+					UNIQUE(session_id, ordinal),
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE INDEX IF NOT EXISTS session_queue_items_session_idx ON session_queue_items(session_id, ordinal)`,
+				`CREATE TABLE IF NOT EXISTS session_workspace_state (
+					session_id TEXT PRIMARY KEY,
+					selected_path TEXT NOT NULL DEFAULT '',
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE TABLE IF NOT EXISTS session_workspace_open_paths (
+					session_id TEXT NOT NULL,
+					ordinal INTEGER NOT NULL,
+					path TEXT NOT NULL,
+					PRIMARY KEY(session_id, path),
+					UNIQUE(session_id, ordinal),
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE INDEX IF NOT EXISTS session_workspace_open_paths_session_idx ON session_workspace_open_paths(session_id, ordinal)`,
+				`CREATE TABLE IF NOT EXISTS session_workspace_history_items (
+					session_id TEXT NOT NULL,
+					ordinal INTEGER NOT NULL,
+					path TEXT NOT NULL,
+					label TEXT NOT NULL DEFAULT '',
+					PRIMARY KEY(session_id, ordinal),
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE INDEX IF NOT EXISTS session_workspace_history_session_idx ON session_workspace_history_items(session_id, ordinal)`,
+				`CREATE TABLE IF NOT EXISTS app_recent_cwds (
+					ordinal INTEGER PRIMARY KEY,
+					cwd TEXT NOT NULL UNIQUE
+				)`,
+				`CREATE TABLE IF NOT EXISTS cwd_groups (
+					cwd TEXT PRIMARY KEY,
+					label TEXT NOT NULL DEFAULT '',
+					collapsed INTEGER NOT NULL DEFAULT 0
+				)`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 2, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},
