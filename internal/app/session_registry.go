@@ -57,6 +57,7 @@ type sessionRecord struct {
 	runtime             sessionRuntime
 	uiRequest           *SessionUIRequestSnapshot
 	resumeCursors       SessionResumeCursors
+	inputMu             *sync.Mutex
 }
 
 func newSessionRegistry(now func() time.Time) *sessionRegistry {
@@ -108,6 +109,7 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 		state:           state,
 		transcript:      transcript,
 		runtime:         spec.Runtime,
+		inputMu:         &sync.Mutex{},
 	}
 	if _, exists := r.sessions[identity.SessionID()]; exists {
 		return sessionRecord{}, fmt.Errorf("session %q already exists", identity.SessionID())
@@ -323,6 +325,42 @@ func (r *sessionRegistry) ReplaceQueue(sessionID session.SessionID, text string)
 	return copySessionState(record.state), true, nil
 }
 
+func (r *sessionRegistry) ActivateQueued(sessionID session.SessionID, itemID session.QueueItemID) (message.CommittedMessage, session.State, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return message.CommittedMessage{}, session.State{}, false, nil
+	}
+	if record.state.Busy() || record.uiRequest != nil {
+		return message.CommittedMessage{}, copySessionState(record.state), false, nil
+	}
+	items := record.state.Queue().Items()
+	if len(items) == 0 {
+		return message.CommittedMessage{}, copySessionState(record.state), false, nil
+	}
+	queued := items[0]
+	if itemID != "" && queued.ID() != itemID {
+		return message.CommittedMessage{}, copySessionState(record.state), false, nil
+	}
+	now := r.now().UTC()
+	committed, err := record.transcript.AppendMessage(message.RoleUser.String(), message.KindMessage.String(), queued.Text(), now)
+	if err != nil {
+		return message.CommittedMessage{}, session.State{}, true, err
+	}
+	queue, err := session.NewQueueSnapshot(items[1:])
+	if err != nil {
+		return message.CommittedMessage{}, session.State{}, true, err
+	}
+	record.updatedAt = now
+	record.activityAt = now
+	if err := syncSessionRecordStateWithQueue(&record, true, queue); err != nil {
+		return message.CommittedMessage{}, session.State{}, true, err
+	}
+	r.sessions[sessionID] = copySessionRecord(record)
+	return committed, copySessionState(record.state), true, nil
+}
+
 func (r *sessionRegistry) SetBusy(sessionID session.SessionID, busy bool) (session.State, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -468,6 +506,7 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		runtime:             record.runtime,
 		uiRequest:           copySessionUIRequest(record.uiRequest),
 		resumeCursors:       record.resumeCursors,
+		inputMu:             record.inputMu,
 	}
 }
 
