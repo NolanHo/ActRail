@@ -9,7 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 const tsLayout = time.RFC3339Nano
 
@@ -142,6 +142,44 @@ var migrations = []migration{
 				}
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 2, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 3,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS session_source_refs (
+					session_id TEXT PRIMARY KEY,
+					backend TEXT NOT NULL DEFAULT '',
+					source_path TEXT NOT NULL DEFAULT '',
+					first_user_message TEXT NOT NULL DEFAULT '',
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE TABLE IF NOT EXISTS hidden_session_keys (
+					key TEXT PRIMARY KEY
+				)`,
+				`CREATE TABLE IF NOT EXISTS app_kv (
+					namespace TEXT NOT NULL,
+					key TEXT NOT NULL,
+					value_json TEXT NOT NULL DEFAULT '',
+					PRIMARY KEY(namespace, key)
+				)`,
+				`CREATE TABLE IF NOT EXISTS migration_warnings (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					source_table TEXT NOT NULL,
+					legacy_key TEXT NOT NULL DEFAULT '',
+					warning_code TEXT NOT NULL DEFAULT '',
+					message TEXT NOT NULL DEFAULT '',
+					payload_json TEXT NOT NULL DEFAULT '{}'
+				)`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 3, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},
