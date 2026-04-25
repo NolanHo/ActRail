@@ -57,7 +57,7 @@ func TestHandlerRejectsUnknownProtocolVersion(t *testing.T) {
 	}
 }
 
-func TestHandlerReportsNotImplementedForValidAuth(t *testing.T) {
+func TestHandlerRejectsNonWebSocketRequestAfterAuth(t *testing.T) {
 	cfg := config.Load()
 	cfg.Auth.Password = "secret"
 	h := NewHandler(cfg)
@@ -71,7 +71,7 @@ func TestHandlerReportsNotImplementedForValidAuth(t *testing.T) {
 
 	h.ServeHTTP(res, req)
 
-	if res.Code != http.StatusNotImplemented {
-		t.Fatalf("expected status %d, got %d", http.StatusNotImplemented, res.Code)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
 	}
 }
