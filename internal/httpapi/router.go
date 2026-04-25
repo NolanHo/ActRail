@@ -46,27 +46,37 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.HandleFunc("GET /api/me", r.me)
 	mux.HandleFunc("POST /api/login", r.login)
 	mux.HandleFunc("POST /api/logout", r.logout)
-	mux.HandleFunc("GET /api/bootstrap", r.bootstrap)
-	mux.HandleFunc("GET /api/sessions", r.listSessions)
-	mux.HandleFunc("POST /api/sessions", r.createSession)
-	mux.HandleFunc("GET /api/session_resume_candidates", r.sessionResumeCandidates)
-	mux.HandleFunc("GET /api/sessions/{session_id}/details", r.sessionDetails)
-	mux.HandleFunc("GET /api/sessions/{session_id}/messages", r.sessionMessages)
-	mux.HandleFunc("GET /api/sessions/{session_id}/state", r.sessionState)
-	mux.HandleFunc("GET /api/sessions/{session_id}/workspace", r.sessionWorkspace)
-	mux.HandleFunc("GET /api/sessions/{session_id}/file/list", r.workspaceFileList)
-	mux.HandleFunc("GET /api/sessions/{session_id}/file/read", r.workspaceFileRead)
-	mux.HandleFunc("GET /api/sessions/{session_id}/git/file_versions", r.gitFileVersions)
-	mux.HandleFunc("POST /api/sessions/{session_id}/rename", r.renameSession)
-	mux.HandleFunc("POST /api/sessions/{session_id}/focus", r.focusSession)
-	mux.HandleFunc("POST /api/sessions/{session_id}/edit", r.editSession)
-	mux.HandleFunc("POST /api/sessions/{session_id}/model", r.switchSessionModel)
-	mux.HandleFunc("POST /api/sessions/{session_id}/delete", r.deleteSession)
-	mux.HandleFunc("POST /api/sessions/{session_id}/restart", r.restartSession)
-	mux.HandleFunc("POST /api/sessions/{session_id}/handoff", r.handoffSession)
-	mux.Handle("GET /api/ws", r.ws)
+	mux.Handle("GET /api/bootstrap", r.requireAuth(http.HandlerFunc(r.bootstrap)))
+	mux.Handle("GET /api/sessions", r.requireAuth(http.HandlerFunc(r.listSessions)))
+	mux.Handle("POST /api/sessions", r.requireAuth(http.HandlerFunc(r.createSession)))
+	mux.Handle("GET /api/session_resume_candidates", r.requireAuth(http.HandlerFunc(r.sessionResumeCandidates)))
+	mux.Handle("GET /api/sessions/{session_id}/details", r.requireAuth(http.HandlerFunc(r.sessionDetails)))
+	mux.Handle("GET /api/sessions/{session_id}/messages", r.requireAuth(http.HandlerFunc(r.sessionMessages)))
+	mux.Handle("GET /api/sessions/{session_id}/state", r.requireAuth(http.HandlerFunc(r.sessionState)))
+	mux.Handle("GET /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.sessionWorkspace)))
+	mux.Handle("GET /api/sessions/{session_id}/file/list", r.requireAuth(http.HandlerFunc(r.workspaceFileList)))
+	mux.Handle("GET /api/sessions/{session_id}/file/read", r.requireAuth(http.HandlerFunc(r.workspaceFileRead)))
+	mux.Handle("GET /api/sessions/{session_id}/git/file_versions", r.requireAuth(http.HandlerFunc(r.gitFileVersions)))
+	mux.Handle("POST /api/sessions/{session_id}/rename", r.requireAuth(http.HandlerFunc(r.renameSession)))
+	mux.Handle("POST /api/sessions/{session_id}/focus", r.requireAuth(http.HandlerFunc(r.focusSession)))
+	mux.Handle("POST /api/sessions/{session_id}/edit", r.requireAuth(http.HandlerFunc(r.editSession)))
+	mux.Handle("POST /api/sessions/{session_id}/model", r.requireAuth(http.HandlerFunc(r.switchSessionModel)))
+	mux.Handle("POST /api/sessions/{session_id}/delete", r.requireAuth(http.HandlerFunc(r.deleteSession)))
+	mux.Handle("POST /api/sessions/{session_id}/restart", r.requireAuth(http.HandlerFunc(r.restartSession)))
+	mux.Handle("POST /api/sessions/{session_id}/handoff", r.requireAuth(http.HandlerFunc(r.handoffSession)))
+	mux.Handle("GET /api/ws", r.requireAuth(r.ws))
 
 	return mux
+}
+
+func (r Router) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !authn.Authenticated(req, r.cfg.Auth) {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "valid auth cookie required", "")
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
 }
 
 func (r Router) healthz(w http.ResponseWriter, _ *http.Request) {

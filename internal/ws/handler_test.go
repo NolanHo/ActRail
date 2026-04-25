@@ -31,6 +31,19 @@ func TestHandlerRejectsMissingAuthCookie(t *testing.T) {
 	}
 }
 
+func TestHandlerAllowsLocalNoAuthModeWithoutCookie(t *testing.T) {
+	cfg := config.Load()
+	h := NewHandler(cfg)
+	req := httptest.NewRequest(http.MethodGet, "/api/ws", nil)
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
 func TestHandlerRejectsUnknownProtocolVersion(t *testing.T) {
 	cfg := config.Load()
 	cfg.Auth.Password = "secret"

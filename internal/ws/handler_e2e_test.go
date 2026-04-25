@@ -100,6 +100,31 @@ func TestHandlerUpgradeSendsHelloAndTracksRegistry(t *testing.T) {
 	waitFor(t, time.Second, func() bool { return registry.Count() == 0 }, "registry remove closed connection")
 }
 
+func TestHandlerUpgradeAllowsLocalNoAuthModeWithoutCookie(t *testing.T) {
+	start := time.Unix(1760000000, 0)
+	clock := newManualClock(start)
+	hbTicker := newManualTicker()
+	registry := NewRegistry()
+	cfg := config.Load()
+	cfg.Protocol.HeartbeatInterval = 15 * time.Second
+	cfg.Protocol.ResumeBuffer = 8
+	h := NewHandler(cfg,
+		WithNow(clock.Now),
+		WithTickerFactory(func(time.Duration) Ticker { return hbTicker }),
+		WithRegistry(registry),
+	)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	conn := dialTestWebSocket(t, server, cfg, "")
+	defer conn.Close()
+
+	raw := readRawFrame(t, conn)
+	if raw.Type != FrameTypeHello {
+		t.Fatalf("hello frame type = %q, want %q", raw.Type, FrameTypeHello)
+	}
+}
+
 func TestHandlerHandlesCoreCommandsAndHeartbeats(t *testing.T) {
 	start := time.Unix(1760000000, 0)
 	clock := newManualClock(start)
@@ -450,12 +475,14 @@ func testWSConfig() config.Config {
 
 func dialTestWebSocket(t *testing.T, server *httptest.Server, cfg config.Config, query string) *websocket.Conn {
 	t.Helper()
-	cookie, err := authn.SessionCookie(cfg.Auth)
-	if err != nil {
-		t.Fatalf("SessionCookie() error = %v", err)
-	}
 	header := http.Header{}
-	header.Add("Cookie", cookie.Name+"="+cookie.Value)
+	if authn.Configured(cfg.Auth) {
+		cookie, err := authn.SessionCookie(cfg.Auth)
+		if err != nil {
+			t.Fatalf("SessionCookie() error = %v", err)
+		}
+		header.Add("Cookie", cookie.Name+"="+cookie.Value)
+	}
 	conn, res, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+cfg.Protocol.WebSocketPath+query, header)
 	if err != nil {
 		status := 0
