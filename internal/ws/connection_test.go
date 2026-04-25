@@ -38,7 +38,7 @@ func TestConnectionHandleSubscribeAcksAndReplays(t *testing.T) {
 	if frames[1].ID != "evt_old" {
 		t.Fatalf("replayed frame id = %q, want %q", frames[1].ID, "evt_old")
 	}
-	if !conn.subscriptions.Has(stream) {
+	if !conn.HasSubscription(stream) {
 		t.Fatalf("subscription %q not stored", stream)
 	}
 }
@@ -70,7 +70,7 @@ func TestConnectionHandleSubscribeReturnsResetRequired(t *testing.T) {
 	if len(frames) != 1 || frames[0].Type != FrameTypeTransportResetRequired {
 		t.Fatalf("frames = %#v", frames)
 	}
-	if conn.subscriptions.Has(stream) {
+	if conn.HasSubscription(stream) {
 		t.Fatalf("subscription %q stored after reset-required path", stream)
 	}
 }
