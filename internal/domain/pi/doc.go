@@ -1,2 +1,2 @@
-// Package pi reserves Pi-specific UI request and response domain types.
+// Package pi parses and normalizes Pi session material into typed events.
 package pi
