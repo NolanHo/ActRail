@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,8 @@ const (
 	defaultShutdownTimeout   = 10 * time.Second
 	defaultCookieName        = "actrail_auth"
 	defaultWSPath            = "/api/ws"
+	defaultDataDir           = "./data"
+	defaultSQLiteFilename    = "actrail.db"
 )
 
 type Config struct {
@@ -28,6 +31,7 @@ type Config struct {
 	Auth         Auth
 	Features     Features
 	Launch       Launch
+	Storage      Storage
 	DisabledUI   []string
 	AllowedHosts []string
 }
@@ -77,6 +81,10 @@ type Launch struct {
 	Models            []string
 }
 
+type Storage struct {
+	DataDir string
+}
+
 func Load() Config {
 	cfg := Config{
 		Server: Server{
@@ -112,6 +120,9 @@ func Load() Config {
 			Providers:         csvEnv("ACTRAIL_AVAILABLE_PROVIDERS", nil),
 			Models:            csvEnv("ACTRAIL_AVAILABLE_MODELS", nil),
 		},
+		Storage: Storage{
+			DataDir: envString("ACTRAIL_DATA_DIR", defaultDataDir),
+		},
 		DisabledUI: []string{"voice", "harness", "notifications"},
 	}
 
@@ -123,12 +134,24 @@ func (c Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Server.Host, c.Server.Port)
 }
 
+func (c Config) SQLitePath() string {
+	return c.Storage.SQLitePath()
+}
+
 func (c Config) Validate() error {
 	return c.Auth.Validate()
 }
 
 func (c Config) HeartbeatIntervalMillis() int {
 	return int(c.Protocol.HeartbeatInterval / time.Millisecond)
+}
+
+func (s Storage) EnsureDir() error {
+	return os.MkdirAll(s.DataDir, 0o755)
+}
+
+func (s Storage) SQLitePath() string {
+	return joinPath(s.DataDir, defaultSQLiteFilename)
 }
 
 func (a Auth) Mode() AuthMode {
@@ -198,4 +221,16 @@ func csvEnv(key string, fallback []string) []string {
 		return append([]string(nil), fallback...)
 	}
 	return out
+}
+
+func joinPath(base, name string) string {
+	if base == "." {
+		return "." + string(os.PathSeparator) + name
+	}
+	joined := filepath.Join(base, name)
+	prefix := "." + string(os.PathSeparator)
+	if strings.HasPrefix(base, prefix) && !strings.HasPrefix(joined, prefix) && !filepath.IsAbs(joined) {
+		return prefix + joined
+	}
+	return joined
 }
