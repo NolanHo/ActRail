@@ -75,3 +75,22 @@ func TestParseHistoricalSessionIDRejectsMissingDurableID(t *testing.T) {
 		t.Fatal("ParseHistoricalSessionID() error = nil, want error")
 	}
 }
+
+func TestDurableIDRejectsRouteDelimiters(t *testing.T) {
+	for _, raw := range []string{"s:123", "s/123", "s 123"} {
+		if _, err := NewDurableID(raw); err == nil {
+			t.Fatalf("NewDurableID(%q) error = nil, want error", raw)
+		}
+	}
+}
+
+func TestRuntimeAndThreadIDsRejectRouteDelimiters(t *testing.T) {
+	for _, raw := range []string{"r:123", "r/123", "r 123"} {
+		if _, err := NewRuntimeID(raw); err == nil {
+			t.Fatalf("NewRuntimeID(%q) error = nil, want error", raw)
+		}
+		if _, err := NewThreadID(raw); err == nil {
+			t.Fatalf("NewThreadID(%q) error = nil, want error", raw)
+		}
+	}
+}

@@ -50,6 +50,7 @@ type Protocol struct {
 
 type Auth struct {
 	CookieName string
+	Password   string
 }
 
 type Features struct {
@@ -87,6 +88,7 @@ func Load() Config {
 		},
 		Auth: Auth{
 			CookieName: envString("ACTRAIL_AUTH_COOKIE", defaultCookieName),
+			Password:   envString("ACTRAIL_AUTH_PASSWORD", ""),
 		},
 		Features: Features{
 			WebSocketRealtime: true,

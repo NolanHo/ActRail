@@ -50,8 +50,35 @@ func TestParseStreamRouteNormalizesWhitespace(t *testing.T) {
 	}
 }
 
+func TestParseStreamRouteRoundTrip(t *testing.T) {
+	identity, err := NewLiveIdentity("s_123", "r_123", "t_123", "pi")
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	routes := []func(Identity) (StreamRoute, error){MainStream, UIStream, TransportStream}
+	for _, build := range routes {
+		route, err := build(identity)
+		if err != nil {
+			t.Fatalf("build route error = %v", err)
+		}
+		parsed, err := ParseStreamRoute(route.String())
+		if err != nil {
+			t.Fatalf("ParseStreamRoute(%q) error = %v", route.String(), err)
+		}
+		if parsed != route {
+			t.Fatalf("round trip route = %#v, want %#v", parsed, route)
+		}
+	}
+}
+
 func TestParseStreamRouteRejectsHistoricalSyntheticID(t *testing.T) {
 	if _, err := ParseStreamRoute("session:history:pi:resume-1"); err == nil {
+		t.Fatal("ParseStreamRoute() error = nil, want error")
+	}
+}
+
+func TestParseStreamRouteRejectsEmbeddedDelimiterInLiveSessionID(t *testing.T) {
+	if _, err := ParseStreamRoute("session:s:123"); err == nil {
 		t.Fatal("ParseStreamRoute() error = nil, want error")
 	}
 }
