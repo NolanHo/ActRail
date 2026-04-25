@@ -45,6 +45,7 @@ type sessionRecord struct {
 	updatedAt       time.Time
 	activityAt      time.Time
 	state           session.State
+	transcript      message.Transcript
 }
 
 func newSessionRegistry(now func() time.Time) *sessionRegistry {
@@ -76,7 +77,8 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 	if err != nil {
 		return sessionRecord{}, err
 	}
-	state, err := session.NewState(identity, false, session.EmptyQueueSnapshot(), message.NewCommittedTail(0))
+	transcript := message.NewTranscript()
+	state, err := session.NewState(identity, false, session.EmptyQueueSnapshot(), transcript.Tail())
 	if err != nil {
 		return sessionRecord{}, err
 	}
@@ -91,6 +93,7 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 		updatedAt:       now,
 		activityAt:      now,
 		state:           state,
+		transcript:      transcript,
 	}
 	if _, exists := r.sessions[identity.SessionID()]; exists {
 		return sessionRecord{}, fmt.Errorf("session %q already exists", identity.SessionID())
@@ -126,6 +129,78 @@ func (r *sessionRegistry) List() []sessionRecord {
 	return items
 }
 
+func (r *sessionRegistry) AppendMessage(sessionID session.SessionID, role, kind, text string) (message.CommittedMessage, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return message.CommittedMessage{}, false, nil
+	}
+	now := r.now().UTC()
+	item, err := record.transcript.AppendMessage(role, kind, text, now)
+	if err != nil {
+		return message.CommittedMessage{}, true, err
+	}
+	record.updatedAt = now
+	record.activityAt = now
+	if err := syncSessionRecordState(&record, false); err != nil {
+		return message.CommittedMessage{}, true, err
+	}
+	r.sessions[sessionID] = copySessionRecord(record)
+	return item, true, nil
+}
+
+func (r *sessionRegistry) AppendAssistantDelta(sessionID session.SessionID, turnID, delta string) (message.PartialAssistantTurn, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return message.PartialAssistantTurn{}, false, nil
+	}
+	now := r.now().UTC()
+	partial, err := record.transcript.AppendAssistantDelta(turnID, delta)
+	if err != nil {
+		return message.PartialAssistantTurn{}, true, err
+	}
+	record.updatedAt = now
+	record.activityAt = now
+	if err := syncSessionRecordState(&record, true); err != nil {
+		return message.PartialAssistantTurn{}, true, err
+	}
+	r.sessions[sessionID] = copySessionRecord(record)
+	return partial, true, nil
+}
+
+func (r *sessionRegistry) CommitAssistantTurn(sessionID session.SessionID, turnID, text string) (message.CommittedMessage, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return message.CommittedMessage{}, false, nil
+	}
+	now := r.now().UTC()
+	item, err := record.transcript.CommitAssistantTurn(turnID, text, now)
+	if err != nil {
+		return message.CommittedMessage{}, true, err
+	}
+	record.updatedAt = now
+	record.activityAt = now
+	if err := syncSessionRecordState(&record, false); err != nil {
+		return message.CommittedMessage{}, true, err
+	}
+	r.sessions[sessionID] = copySessionRecord(record)
+	return item, true, nil
+}
+
+func syncSessionRecordState(record *sessionRecord, busy bool) error {
+	state, err := session.NewState(record.identity, busy, record.state.Queue(), record.transcript.Tail())
+	if err != nil {
+		return err
+	}
+	record.state = state
+	return nil
+}
+
 func copySessionRecord(record sessionRecord) sessionRecord {
 	return sessionRecord{
 		identity:        record.identity,
@@ -138,6 +213,7 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		updatedAt:       record.updatedAt,
 		activityAt:      record.activityAt,
 		state:           copySessionState(record.state),
+		transcript:      record.transcript.Clone(),
 	}
 }
 
