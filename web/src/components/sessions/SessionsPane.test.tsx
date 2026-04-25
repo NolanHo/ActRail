@@ -160,7 +160,7 @@ describe("SessionsPane", () => {
     expect(root?.textContent).not.toContain("web");
   });
 
-  it("uses first user message as title and hides cwd in compact row", () => {
+  it("falls back to cwd when persisted alias and title are missing", () => {
     renderSessionsPane({
       items: [{ session_id: "sess-1", first_user_message: "我准备用 preact + vite 重构web端，请帮我出个规划", cwd: "/Users/huapeixuan/Documents/Code/ActRail", agent_backend: "pi" }],
       activeSessionId: null,
@@ -171,11 +171,11 @@ describe("SessionsPane", () => {
       tmuxAvailable: false,
     });
 
-    expect(root?.querySelector(".sessionTitle")?.textContent).toContain("我准备用 preact + vite 重构web端，请帮我出个规划");
-    expect(root?.textContent).not.toContain("/Users/huapeixuan/Documents/Code/ActRail");
+    expect(root?.querySelector(".sessionTitle")?.textContent).toContain("/Users/huapeixuan/Documents/Code/ActRail");
+    expect(root?.querySelector(".sessionTitle")?.textContent).not.toContain("我准备用 preact + vite 重构web端，请帮我出个规划");
   });
 
-  it("prefers persisted title over first user message when alias is missing", () => {
+  it("prefers persisted title over cwd fallback when alias is missing", () => {
     renderSessionsPane({
       items: [{ session_id: "sess-1", title: "Release checklist", first_user_message: "先整理一下今晚要发的内容", agent_backend: "pi" }],
       activeSessionId: null,

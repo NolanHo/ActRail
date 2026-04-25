@@ -22,7 +22,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	service := app.NewStub(cfg)
+	service, err := app.NewStub(cfg)
+	if err != nil {
+		logger.Error("actrail service init failed", "sqlite_path", cfg.SQLitePath(), "err", err)
+		os.Exit(1)
+	}
 	replay, err := ws.NewReplayBuffer(cfg.Protocol.ResumeBuffer)
 	if err != nil {
 		logger.Error("invalid websocket replay buffer", "err", err)

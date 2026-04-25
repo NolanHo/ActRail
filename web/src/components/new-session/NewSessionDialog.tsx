@@ -108,7 +108,7 @@ function buildOptimisticCreatedSession(
 const RESUME_PAGE_SIZE = 20;
 
 function resumeOptionLabel(item: SessionResumeCandidate) {
-  const title = item.title?.trim() || item.alias?.trim() || item.first_user_message?.trim() || item.session_id.slice(0, 8);
+  const title = getSessionDisplayName(item as any, item.session_id.slice(0, 8));
   const branch = item.git_branch?.trim();
   return branch ? `${title} (${branch})` : title;
 }

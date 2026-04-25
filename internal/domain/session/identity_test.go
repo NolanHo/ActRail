@@ -57,6 +57,28 @@ func TestNewHistoricalIdentityBuildsSyntheticSessionID(t *testing.T) {
 	}
 }
 
+func TestNewDetachedIdentityPreservesDurableSessionIDWithoutRuntime(t *testing.T) {
+	identity, err := NewDetachedIdentity(" s_42 ", " PI ")
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	if identity.Historical() {
+		t.Fatal("identity.Historical() = true, want false")
+	}
+	if identity.Live() {
+		t.Fatal("identity.Live() = true, want false")
+	}
+	if got := identity.SessionID().String(); got != "s_42" {
+		t.Fatalf("SessionID() = %q, want %q", got, "s_42")
+	}
+	if got := identity.DurableID().String(); got != "s_42" {
+		t.Fatalf("DurableID() = %q, want %q", got, "s_42")
+	}
+	if _, ok := identity.RuntimeID(); ok {
+		t.Fatal("RuntimeID() ok = true, want false")
+	}
+}
+
 func TestParseHistoricalSessionIDNormalizesBackend(t *testing.T) {
 	ref, err := ParseHistoricalSessionID("history:PI:resume-1")
 	if err != nil {

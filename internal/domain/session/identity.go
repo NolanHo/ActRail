@@ -247,6 +247,36 @@ func NewHistoricalIdentity(durableIDRaw, backendRaw string, threadIDRaw ...strin
 	return identity, nil
 }
 
+func NewDetachedIdentity(sessionIDRaw, backendRaw string) (Identity, error) {
+	sessionID, err := ParseSessionID(sessionIDRaw)
+	if err != nil {
+		return Identity{}, err
+	}
+	if sessionID.IsHistorical() {
+		return Identity{}, fmt.Errorf("detached identity cannot use historical session id %q", sessionID)
+	}
+	durableID, err := NewDurableID(sessionID.String())
+	if err != nil {
+		return Identity{}, err
+	}
+	backend, err := ParseBackend(backendRaw)
+	if err != nil {
+		return Identity{}, err
+	}
+	identity := Identity{
+		sessionID:  sessionID,
+		durableID:  durableID,
+		runtimeID:  nil,
+		threadID:   nil,
+		backend:    backend,
+		historical: false,
+	}
+	if err := identity.Validate(); err != nil {
+		return Identity{}, err
+	}
+	return identity, nil
+}
+
 func (i Identity) Validate() error {
 	if err := i.sessionID.Validate(); err != nil {
 		return err
@@ -282,7 +312,13 @@ func (i Identity) Validate() error {
 		return fmt.Errorf("live session %q cannot use historical prefix", i.sessionID)
 	}
 	if i.runtimeID == nil {
-		return fmt.Errorf("live session %q requires runtime id", i.sessionID)
+		if i.threadID != nil {
+			return fmt.Errorf("detached session %q cannot carry thread id without runtime id", i.sessionID)
+		}
+		if i.durableID.String() != i.sessionID.String() {
+			return fmt.Errorf("detached session durable id %q must match session id %q", i.durableID, i.sessionID)
+		}
+		return nil
 	}
 	if err := i.runtimeID.Validate(); err != nil {
 		return err
@@ -313,7 +349,7 @@ func (i Identity) Historical() bool {
 }
 
 func (i Identity) Live() bool {
-	return !i.historical
+	return !i.historical && i.runtimeID != nil
 }
 
 func (i Identity) RuntimeID() (RuntimeID, bool) {

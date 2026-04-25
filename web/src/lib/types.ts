@@ -207,6 +207,8 @@ export interface SessionResumeCandidate {
   session_id: string;
   title?: string;
   alias?: string;
+  display_name?: string;
+  cwd?: string;
   first_user_message?: string;
   updated_ts?: number;
   git_branch?: string | null;

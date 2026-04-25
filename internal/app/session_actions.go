@@ -26,6 +26,8 @@ type SessionResumeCandidate struct {
 	SessionID        string  `json:"session_id"`
 	Title            string  `json:"title,omitempty"`
 	Alias            string  `json:"alias,omitempty"`
+	DisplayName      string  `json:"display_name,omitempty"`
+	CWD              string  `json:"cwd,omitempty"`
 	FirstUserMessage string  `json:"first_user_message,omitempty"`
 	UpdatedTS        float64 `json:"updated_ts,omitempty"`
 	GitBranch        string  `json:"git_branch,omitempty"`
@@ -335,7 +337,10 @@ func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (Del
 	if err := record.runtime.Kill(ctx); err != nil {
 		return DeleteSessionResponse{}, err
 	}
-	removed, ok := s.registry.Delete(req.SessionID)
+	removed, ok, err := s.registry.Delete(req.SessionID)
+	if err != nil {
+		return DeleteSessionResponse{}, err
+	}
 	if !ok {
 		return DeleteSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
@@ -361,6 +366,8 @@ func sessionResumeCandidateFromRecord(record sessionRecord) SessionResumeCandida
 		SessionID:        record.identity.SessionID().String(),
 		Title:            record.title,
 		Alias:            displayAlias(record),
+		DisplayName:      sessionDisplayName(record),
+		CWD:              record.cwd,
 		FirstUserMessage: firstUserMessage(record.transcript),
 		UpdatedTS:        timestampSeconds(record.updatedAt),
 	}

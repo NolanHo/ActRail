@@ -15,6 +15,7 @@ import (
 type sessionRegistry struct {
 	mu       sync.RWMutex
 	now      func() time.Time
+	store    sessionStore
 	nextID   sessionIDGenerator
 	order    []session.SessionID
 	sessions map[session.SessionID]sessionRecord
@@ -46,12 +47,14 @@ type sessionRecord struct {
 	model               string
 	reasoningEffort     string
 	focused             bool
+	hidden              bool
 	priorityOffset      float64
 	snoozeUntil         *time.Time
 	dependencySessionID *session.SessionID
 	createdAt           time.Time
 	updatedAt           time.Time
 	activityAt          time.Time
+	archivedAt          *time.Time
 	state               session.State
 	transcript          message.Transcript
 	runtime             sessionRuntime
@@ -60,12 +63,17 @@ type sessionRecord struct {
 	inputMu             *sync.Mutex
 }
 
-func newSessionRegistry(now func() time.Time) *sessionRegistry {
+func newSessionRegistry(now func() time.Time, stores ...sessionStore) *sessionRegistry {
 	if now == nil {
 		now = time.Now
 	}
+	var store sessionStore
+	if len(stores) > 0 {
+		store = stores[0]
+	}
 	return &sessionRegistry{
 		now:      now,
+		store:    store,
 		sessions: make(map[session.SessionID]sessionRecord),
 		order:    make([]session.SessionID, 0),
 	}
@@ -76,18 +84,25 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 	defer r.mu.Unlock()
 
 	now := r.now().UTC()
-	r.nextID.session++
-	r.nextID.runtime++
-	r.nextID.thread++
-
-	identity, err := session.NewLiveIdentity(
-		fmt.Sprintf("s_%d", r.nextID.session),
-		fmt.Sprintf("r_%d", r.nextID.runtime),
-		fmt.Sprintf("t_%d", r.nextID.thread),
-		spec.Backend.String(),
-	)
-	if err != nil {
-		return sessionRecord{}, err
+	var identity session.Identity
+	for {
+		r.nextID.session++
+		r.nextID.runtime++
+		r.nextID.thread++
+		candidate, err := session.NewLiveIdentity(
+			fmt.Sprintf("s_%d", r.nextID.session),
+			fmt.Sprintf("r_%d", r.nextID.runtime),
+			fmt.Sprintf("t_%d", r.nextID.thread),
+			spec.Backend.String(),
+		)
+		if err != nil {
+			return sessionRecord{}, err
+		}
+		if _, exists := r.sessions[candidate.SessionID()]; exists {
+			continue
+		}
+		identity = candidate
+		break
 	}
 	transcript := message.NewTranscript()
 	state, err := session.NewState(identity, false, session.EmptyQueueSnapshot(), transcript.Tail())
@@ -111,10 +126,10 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 		runtime:         spec.Runtime,
 		inputMu:         &sync.Mutex{},
 	}
-	if _, exists := r.sessions[identity.SessionID()]; exists {
-		return sessionRecord{}, fmt.Errorf("session %q already exists", identity.SessionID())
-	}
 	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return sessionRecord{}, err
+	}
 	id := cp.identity.SessionID()
 	r.sessions[id] = cp
 	r.order = append(r.order, id)
@@ -171,16 +186,28 @@ func (r *sessionRegistry) Update(routeID session.SessionID, touchActivity bool, 
 		record.activityAt = now
 	}
 	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return sessionRecord{}, true, err
+	}
 	r.sessions[actualID] = cp
 	return copySessionRecord(cp), true, nil
 }
 
-func (r *sessionRegistry) Delete(routeID session.SessionID) (sessionRecord, bool) {
+func (r *sessionRegistry) Delete(routeID session.SessionID) (sessionRecord, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	actualID, record, ok := r.resolveLocked(routeID)
 	if !ok {
-		return sessionRecord{}, false
+		return sessionRecord{}, false, nil
+	}
+	now := r.now().UTC()
+	record.focused = false
+	record.updatedAt = now
+	record.activityAt = now
+	record.archivedAt = &now
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return sessionRecord{}, true, err
 	}
 	delete(r.sessions, actualID)
 	for idx, sessionID := range r.order {
@@ -190,7 +217,7 @@ func (r *sessionRegistry) Delete(routeID session.SessionID) (sessionRecord, bool
 		r.order = append(r.order[:idx], r.order[idx+1:]...)
 		break
 	}
-	return copySessionRecord(record), true
+	return copySessionRecord(cp), true, nil
 }
 
 func (r *sessionRegistry) resolveLocked(routeID session.SessionID) (session.SessionID, sessionRecord, bool) {
@@ -227,7 +254,11 @@ func (r *sessionRegistry) AppendMessage(sessionID session.SessionID, role, kind,
 	if err := syncSessionRecordState(&record, false); err != nil {
 		return message.CommittedMessage{}, true, err
 	}
-	r.sessions[sessionID] = copySessionRecord(record)
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return message.CommittedMessage{}, true, err
+	}
+	r.sessions[sessionID] = cp
 	return item, true, nil
 }
 
@@ -248,7 +279,11 @@ func (r *sessionRegistry) AppendAssistantDelta(sessionID session.SessionID, turn
 	if err := syncSessionRecordState(&record, true); err != nil {
 		return message.PartialAssistantTurn{}, true, err
 	}
-	r.sessions[sessionID] = copySessionRecord(record)
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return message.PartialAssistantTurn{}, true, err
+	}
+	r.sessions[sessionID] = cp
 	return partial, true, nil
 }
 
@@ -269,7 +304,11 @@ func (r *sessionRegistry) CommitAssistantTurn(sessionID session.SessionID, turnI
 	if err := syncSessionRecordState(&record, false); err != nil {
 		return message.CommittedMessage{}, true, err
 	}
-	r.sessions[sessionID] = copySessionRecord(record)
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return message.CommittedMessage{}, true, err
+	}
+	r.sessions[sessionID] = cp
 	return item, true, nil
 }
 
@@ -295,8 +334,12 @@ func (r *sessionRegistry) ActivateSend(sessionID session.SessionID, text string)
 	if err := syncSessionRecordStateWithQueue(&record, true, session.EmptyQueueSnapshot()); err != nil {
 		return message.CommittedMessage{}, session.State{}, nil, true, err
 	}
-	r.sessions[sessionID] = copySessionRecord(record)
-	return item, copySessionState(record.state), copySessionUIRequest(record.uiRequest), true, nil
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return message.CommittedMessage{}, session.State{}, nil, true, err
+	}
+	r.sessions[sessionID] = cp
+	return item, copySessionState(cp.state), copySessionUIRequest(cp.uiRequest), true, nil
 }
 
 func (r *sessionRegistry) ReplaceQueue(sessionID session.SessionID, text string) (session.State, bool, error) {
@@ -321,8 +364,12 @@ func (r *sessionRegistry) ReplaceQueue(sessionID session.SessionID, text string)
 	if err := syncSessionRecordStateWithQueue(&record, record.state.Busy(), queue); err != nil {
 		return session.State{}, true, err
 	}
-	r.sessions[sessionID] = copySessionRecord(record)
-	return copySessionState(record.state), true, nil
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return session.State{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionState(cp.state), true, nil
 }
 
 func (r *sessionRegistry) ActivateQueued(sessionID session.SessionID, itemID session.QueueItemID) (message.CommittedMessage, session.State, bool, error) {
@@ -357,8 +404,12 @@ func (r *sessionRegistry) ActivateQueued(sessionID session.SessionID, itemID ses
 	if err := syncSessionRecordStateWithQueue(&record, true, queue); err != nil {
 		return message.CommittedMessage{}, session.State{}, true, err
 	}
-	r.sessions[sessionID] = copySessionRecord(record)
-	return committed, copySessionState(record.state), true, nil
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return message.CommittedMessage{}, session.State{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return committed, copySessionState(cp.state), true, nil
 }
 
 func (r *sessionRegistry) SetBusy(sessionID session.SessionID, busy bool) (session.State, bool, error) {
@@ -374,8 +425,12 @@ func (r *sessionRegistry) SetBusy(sessionID session.SessionID, busy bool) (sessi
 	if err := syncSessionRecordState(&record, busy); err != nil {
 		return session.State{}, true, err
 	}
-	r.sessions[sessionID] = copySessionRecord(record)
-	return copySessionState(record.state), true, nil
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return session.State{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionState(cp.state), true, nil
 }
 
 func (r *sessionRegistry) SetUIRequest(sessionID session.SessionID, request SessionUIRequestSnapshot) (*SessionUIRequestSnapshot, bool, error) {
@@ -393,8 +448,12 @@ func (r *sessionRegistry) SetUIRequest(sessionID session.SessionID, request Sess
 	record.updatedAt = now
 	record.activityAt = now
 	record.uiRequest = &normalized
-	r.sessions[sessionID] = copySessionRecord(record)
-	return copySessionUIRequest(record.uiRequest), true, nil
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return nil, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionUIRequest(cp.uiRequest), true, nil
 }
 
 func (r *sessionRegistry) ClearUIRequest(sessionID session.SessionID, requestID string) (SessionUIRequestSnapshot, session.State, bool, error) {
@@ -419,8 +478,12 @@ func (r *sessionRegistry) ClearUIRequest(sessionID session.SessionID, requestID 
 	record.updatedAt = now
 	record.activityAt = now
 	record.uiRequest = nil
-	r.sessions[sessionID] = copySessionRecord(record)
-	return resolved, copySessionState(record.state), true, nil
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return SessionUIRequestSnapshot{}, session.State{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return resolved, copySessionState(cp.state), true, nil
 }
 
 func (r *sessionRegistry) SetResumeCursor(sessionID session.SessionID, kind session.StreamKind, cursor string) error {
@@ -505,12 +568,14 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		model:               record.model,
 		reasoningEffort:     record.reasoningEffort,
 		focused:             record.focused,
+		hidden:              record.hidden,
 		priorityOffset:      record.priorityOffset,
 		snoozeUntil:         copyTimePtr(record.snoozeUntil),
 		dependencySessionID: copySessionIDPtr(record.dependencySessionID),
 		createdAt:           record.createdAt,
 		updatedAt:           record.updatedAt,
 		activityAt:          record.activityAt,
+		archivedAt:          copyTimePtr(record.archivedAt),
 		state:               copySessionState(record.state),
 		transcript:          record.transcript.Clone(),
 		runtime:             record.runtime,
@@ -602,9 +667,5 @@ func normalizeSessionTitle(raw, cwd string) string {
 	if cleaned == "" {
 		return "session"
 	}
-	base := filepath.Base(cleaned)
-	if base == "." || base == string(filepath.Separator) || base == "" {
-		return cleaned
-	}
-	return base
+	return filepath.Clean(cleaned)
 }
