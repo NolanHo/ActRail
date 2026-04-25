@@ -15,8 +15,13 @@ func (s Subscription) Validate() error {
 	if err := s.Name.Validate(); err != nil {
 		return err
 	}
-	if s.ResumeFrom != nil && *s.ResumeFrom < 0 {
-		return fmt.Errorf("resume cursor for %q must be non-negative", s.Name)
+	if s.ResumeFrom != nil {
+		if *s.ResumeFrom < 0 {
+			return fmt.Errorf("resume cursor for %q must be non-negative", s.Name)
+		}
+		if _, err := ParseSessionStream(s.Name); err != nil {
+			return fmt.Errorf("resume cursor is only supported on session streams: %w", err)
+		}
 	}
 	return nil
 }
