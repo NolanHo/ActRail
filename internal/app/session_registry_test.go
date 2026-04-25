@@ -81,17 +81,17 @@ func TestSessionRegistryListPreservesCreationOrder(t *testing.T) {
 	if items[1].identity.SessionID() != second.identity.SessionID() {
 		t.Fatalf("items[1].SessionID() = %q, want %q", items[1].identity.SessionID(), second.identity.SessionID())
 	}
-	if items[0].title != "one" {
-		t.Fatalf("items[0].title = %q, want %q", items[0].title, "one")
+	if items[0].title != "/tmp/one" {
+		t.Fatalf("items[0].title = %q, want %q", items[0].title, "/tmp/one")
 	}
-	if items[1].title != "two" {
-		t.Fatalf("items[1].title = %q, want %q", items[1].title, "two")
+	if items[1].title != "/tmp/two" {
+		t.Fatalf("items[1].title = %q, want %q", items[1].title, "/tmp/two")
 	}
 }
 
-func TestNormalizeSessionTitleFallsBackToCWDBase(t *testing.T) {
-	if got := normalizeSessionTitle("  ", "/root/code/ActRail"); got != "ActRail" {
-		t.Fatalf("normalizeSessionTitle() = %q, want %q", got, "ActRail")
+func TestNormalizeSessionTitleFallsBackToCWD(t *testing.T) {
+	if got := normalizeSessionTitle("  ", "/root/code/ActRail"); got != "/root/code/ActRail" {
+		t.Fatalf("normalizeSessionTitle() = %q, want %q", got, "/root/code/ActRail")
 	}
 	if got := normalizeSessionTitle("  Focus  ", "/root/code/ActRail"); got != "Focus" {
 		t.Fatalf("normalizeSessionTitle() explicit = %q, want %q", got, "Focus")

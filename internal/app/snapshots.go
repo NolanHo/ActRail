@@ -218,7 +218,7 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 		ThreadID:            threadID.String(),
 		Title:               record.title,
 		Alias:               displayAlias(record),
-		DisplayName:         displayAlias(record),
+		DisplayName:         sessionDisplayName(record),
 		FirstUserMessage:    firstUserMessage(record.transcript),
 		CWD:                 record.cwd,
 		AgentBackend:        record.identity.Backend().String(),

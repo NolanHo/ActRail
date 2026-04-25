@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"actrail/internal/app"
 	"actrail/internal/config"
@@ -39,7 +40,7 @@ type serviceStub struct {
 }
 
 func newServiceStub(cfg config.Config) serviceStub {
-	return serviceStub{base: app.NewStub(cfg)}
+	return serviceStub{base: app.NewStubForTest(cfg, time.Now, app.RuntimeConfig{})}
 }
 
 func (s serviceStub) Bootstrap(ctx context.Context) app.BootstrapSnapshot {
@@ -618,7 +619,7 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 }
 
 func TestRouteValidationReturnsErrorEnvelope(t *testing.T) {
-	h := newTestRouter(config.Load(), app.NewStub(config.Load()))
+	h := newTestRouter(config.Load(), app.NewStubForTest(config.Load(), time.Now, app.RuntimeConfig{}))
 
 	cases := []struct {
 		name   string

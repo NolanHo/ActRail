@@ -39,12 +39,16 @@ type Stub struct {
 	sink     RuntimeEventSink
 }
 
-func NewStub(cfg config.Config) *Stub {
-	return newStubWithRuntime(cfg, time.Now, RuntimeConfig{})
+func NewStub(cfg config.Config) (*Stub, error) {
+	return newPersistentStubWithRuntime(cfg, time.Now, RuntimeConfig{})
 }
 
 func NewStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
 	return newStubWithRuntime(cfg, now, runtimeCfg)
+}
+
+func NewPersistentStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) (*Stub, error) {
+	return newPersistentStubWithRuntime(cfg, now, runtimeCfg)
 }
 
 func newStub(cfg config.Config, now func() time.Time) *Stub {
@@ -278,6 +282,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		Runtime:         runtime,
 	})
 	if err != nil {
+		_ = runtime.Kill(ctx)
 		return CreateSessionResponse{}, err
 	}
 	s.startRuntimeIngest(record.identity.SessionID(), backend, runtime)
@@ -305,7 +310,7 @@ func sessionSummaryFromRecord(record sessionRecord) SessionSummary {
 		AgentBackend:        record.identity.Backend().String(),
 		Title:               record.title,
 		Alias:               displayAlias(record),
-		DisplayName:         displayAlias(record),
+		DisplayName:         sessionDisplayName(record),
 		FirstUserMessage:    firstUserMessage(record.transcript),
 		CWD:                 record.cwd,
 		Busy:                record.state.Busy(),
