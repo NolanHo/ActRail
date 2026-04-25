@@ -87,8 +87,8 @@ func (r *ExecRunner) startWithPipes(spec LaunchSpec, cmd *exec.Cmd) (Handle, err
 		stderr: stderrHook,
 		waitCh: make(chan waitResult, 1),
 		proc:   cmd.Process,
+		cmd:    cmd,
 	}
-	go handle.await(cmd)
 	return handle, nil
 }
 
@@ -111,8 +111,8 @@ func (r *ExecRunner) startWithPTY(spec LaunchSpec, cmd *exec.Cmd) (Handle, error
 		pty:    wrapMirroredPTY(dev, mirror),
 		waitCh: make(chan waitResult, 1),
 		proc:   cmd.Process,
+		cmd:    cmd,
 	}
-	go handle.await(cmd)
 	return handle, nil
 }
 
@@ -151,13 +151,15 @@ func ensureWorkingDir(dir WorkingDir) error {
 }
 
 type execHandle struct {
-	spec   LaunchSpec
-	pid    int
-	logs   LogPaths
-	stdout io.ReadCloser
-	stderr io.ReadCloser
-	pty    PTY
-	waitCh chan waitResult
+	spec      LaunchSpec
+	pid       int
+	logs      LogPaths
+	stdout    io.ReadCloser
+	stderr    io.ReadCloser
+	pty       PTY
+	waitCh    chan waitResult
+	cmd       *exec.Cmd
+	waitStart sync.Once
 
 	mu     sync.Mutex
 	proc   *os.Process
@@ -227,10 +229,14 @@ func (h *execHandle) Wait(ctx context.Context) (ExitStatus, error) {
 	h.mu.Lock()
 	result := h.result
 	waitCh := h.waitCh
+	cmd := h.cmd
 	h.mu.Unlock()
 	if result != nil {
 		return result.status, result.err
 	}
+	h.waitStart.Do(func() {
+		go h.await(cmd)
+	})
 	select {
 	case <-ctx.Done():
 		return ExitStatus{}, ctx.Err()

@@ -239,7 +239,7 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 		UIRequest:            copySessionUIRequest(record.uiRequest),
 		PartialAssistantTurn: partialAssistantTurn(record.transcript),
 		TailSeq:              record.transcript.TailSeq().Uint64(),
-		ResumeCursors:        SessionResumeCursors{},
+		ResumeCursors:        record.resumeCursors,
 	}, nil
 }
 

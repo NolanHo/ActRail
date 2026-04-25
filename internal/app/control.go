@@ -85,12 +85,16 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 	if !ok {
 		return SendResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
-	return SendResponse{
+	response := SendResponse{
 		Message: sessionMessageFromCommitted(item),
 		Busy:    state.Busy(),
 		Queue:   queueSnapshotFromState(state),
 		UI:      copySessionUIRequest(uiRequest),
-	}, nil
+	}
+	s.emitMessageCommit(req.SessionID, "", response.Message)
+	s.emitQueueState(req.SessionID, response.Queue)
+	s.emitSessionState(req.SessionID)
+	return response, nil
 }
 
 func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, error) {
@@ -105,7 +109,10 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 	if !ok {
 		return EnqueueResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
-	return EnqueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}, nil
+	response := EnqueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
+	s.emitQueueState(req.SessionID, response.Queue)
+	s.emitSessionState(req.SessionID)
+	return response, nil
 }
 
 func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptResponse, error) {
@@ -123,7 +130,10 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 	if !ok {
 		return InterruptResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
-	return InterruptResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}, nil
+	response := InterruptResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
+	s.emitQueueState(req.SessionID, response.Queue)
+	s.emitSessionState(req.SessionID)
+	return response, nil
 }
 
 func (s *Stub) RespondUI(ctx context.Context, req UIResponseRequest) (UIResponseResponse, error) {
@@ -161,11 +171,14 @@ func (s *Stub) RespondUI(ctx context.Context, req UIResponseRequest) (UIResponse
 	if !ok {
 		return UIResponseResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
-	return UIResponseResponse{
+	response := UIResponseResponse{
 		ResolvedRequestID: resolved.RequestID,
 		Busy:              state.Busy(),
 		Queue:             queueSnapshotFromState(state),
-	}, nil
+	}
+	s.emitUIResolved(req.SessionID, resolved.RequestID)
+	s.emitSessionState(req.SessionID)
+	return response, nil
 }
 
 func (s *Stub) SetSessionUIRequest(sessionID session.SessionID, request SessionUIRequestSnapshot) error {

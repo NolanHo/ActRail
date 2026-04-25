@@ -75,6 +75,13 @@ func TestCreateSessionLaunchesRuntimeThroughInjectedCatalogAndRunner(t *testing.
 	if start.CWD().String() != "/root/code/ActRail" {
 		t.Fatalf("launch cwd = %q, want %q", start.CWD().String(), "/root/code/ActRail")
 	}
+	wantMode := process.IOModePipes
+	if preferRuntimePTY() {
+		wantMode = process.IOModePTY
+	}
+	if start.IO().Mode() != wantMode {
+		t.Fatalf("launch io mode = %q, want %q", start.IO().Mode(), wantMode)
+	}
 	sessionID, err := session.ParseSessionID(created.Session.SessionID)
 	if err != nil {
 		t.Fatalf("ParseSessionID() error = %v", err)

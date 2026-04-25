@@ -28,10 +28,15 @@ type Stub struct {
 	cfg      config.Config
 	registry *sessionRegistry
 	launcher runtimeLauncher
+	sink     RuntimeEventSink
 }
 
 func NewStub(cfg config.Config) *Stub {
 	return newStubWithRuntime(cfg, time.Now, RuntimeConfig{})
+}
+
+func NewStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
+	return newStubWithRuntime(cfg, now, runtimeCfg)
 }
 
 func newStub(cfg config.Config, now func() time.Time) *Stub {
@@ -253,6 +258,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	if err != nil {
 		return CreateSessionResponse{}, err
 	}
+	s.startRuntimeIngest(record.identity.SessionID(), backend, runtime)
 	stream, err := session.MainStream(record.identity)
 	if err != nil {
 		return CreateSessionResponse{}, err
