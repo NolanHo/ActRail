@@ -141,16 +141,6 @@ function normalizeSnapshotEvents(messagePayload: Awaited<ReturnType<typeof api.l
   return [...normalizeMessageSnapshot(messagePayload).events, ...partialAssistantTurnEvent(statePayload)];
 }
 
-function isStreamingAssistantEvent(event: MessageEvent | undefined) {
-  return Boolean(
-    event
-    && event.role === "assistant"
-    && event.streaming === true
-    && typeof event.stream_id === "string"
-    && event.stream_id.length > 0,
-  );
-}
-
 function normalizeSnapshotRequests(payload: LiveSessionResponse) {
   if (Array.isArray(payload.requests)) {
     return payload.requests.map((request) => normalizeRequest(request)).filter((request): request is SessionUiRequest => request !== null);
@@ -189,12 +179,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     sessionId: string,
     messagePayload: Awaited<ReturnType<typeof api.listMessages>>,
     statePayload: LiveSessionResponse,
-    replace: boolean,
+    _replace: boolean,
   ) => {
     const normalizedMessages = normalizeMessageSnapshot(messagePayload);
-    const priorEvents = replace ? [] : (messagesStore.getState().bySessionId[sessionId] ?? []).filter((event) => !isStreamingAssistantEvent(event));
-    messagesStore.applyLive(sessionId, [...priorEvents, ...normalizeSnapshotEvents(messagePayload, statePayload)], {
-      replace: true,
+    messagesStore.applySnapshot(sessionId, normalizeSnapshotEvents(messagePayload, statePayload), {
       offset: normalizedMessages.offset,
       hasOlder: normalizedMessages.hasOlder,
       nextBefore: normalizedMessages.nextBefore,
@@ -286,18 +274,17 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       emit();
 
       try {
-        const offset = replace ? undefined : state.offsetsBySessionId[sessionId];
         const [messagePayload, statePayload] = await Promise.all([
           runtimeId
-            ? api.listMessages(sessionId, replace, undefined, offset, undefined, undefined, runtimeId)
-            : api.listMessages(sessionId, replace, undefined, offset),
+            ? api.listMessages(sessionId, replace, undefined, undefined, undefined, undefined, runtimeId)
+            : api.listMessages(sessionId, replace),
           typeof (api as { getSessionState?: unknown }).getSessionState === "function"
             ? runtimeId
               ? (api as { getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null): Promise<LiveSessionResponse> }).getSessionState(sessionId, undefined, runtimeId)
               : (api as { getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null): Promise<LiveSessionResponse> }).getSessionState(sessionId)
             : runtimeId
-              ? (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, offset, undefined, undefined, undefined, runtimeId, undefined)
-              : (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, offset),
+              ? (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, state.offsetsBySessionId[sessionId], undefined, undefined, undefined, runtimeId, undefined)
+              : (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, state.offsetsBySessionId[sessionId]),
         ]);
         applySnapshot(sessionId, messagePayload, statePayload, replace);
       } catch (error) {

@@ -31,7 +31,7 @@ describe("createMessagesStore", () => {
 
     await store.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true);
     expect(snapshots).toEqual([
       { loading: true, messages: [] },
       { loading: false, messages: [{ id: "m1" }, { id: "m2" }] },
@@ -62,7 +62,7 @@ describe("createMessagesStore", () => {
     });
   });
 
-  it("replaces messages for a polled session without touching other sessions", async () => {
+  it("merges polled snapshots for one session without touching other sessions", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({
         events: [{ id: "m1" }],
@@ -73,7 +73,7 @@ describe("createMessagesStore", () => {
         offset: 1,
       } as never)
       .mockResolvedValueOnce({
-        events: [{ id: "m2" }],
+        events: [{ id: "m1" }, { id: "m2" }],
         offset: 2,
       } as never);
     const store = createMessagesStore();
@@ -82,9 +82,9 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s2");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true, undefined, undefined);
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true, undefined, undefined);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false);
     expect(store.getState()).toEqual({
       bySessionId: {
         s1: [{ id: "m1" }, { id: "m2" }],
@@ -168,7 +168,7 @@ describe("createMessagesStore", () => {
     const pollPromise = store.poll("s1");
 
     expect(api.listMessages).toHaveBeenCalledTimes(1);
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true);
 
     resolveFirst!({ events: [{ id: "m1" }], offset: 1 });
     await Promise.all([initialPromise, pollPromise]);
@@ -177,26 +177,42 @@ describe("createMessagesStore", () => {
     expect(store.getState().offsetsBySessionId.s1).toBe(1);
   });
 
-  it("passes the saved offset when polling", async () => {
+  it("keeps transcript cardinality stable across repeated snapshot polls with stable ids", async () => {
     vi.mocked(api.listMessages)
-      .mockResolvedValueOnce({ events: [{ id: "m1" }], offset: 4 } as never)
-      .mockResolvedValueOnce({ events: [{ id: "m2" }], offset: 5 } as never);
+      .mockResolvedValueOnce({ events: [{ id: "m1" }], offset: 1 } as never)
+      .mockResolvedValueOnce({ events: [{ id: "m1" }, { id: "m2" }], offset: 2 } as never)
+      .mockResolvedValueOnce({ events: [{ id: "m1" }, { id: "m2" }], offset: 2 } as never);
+    const store = createMessagesStore();
+
+    await store.loadInitial("s1");
+    await store.poll("s1");
+    await store.poll("s1");
+
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false);
+    expect(store.getState().bySessionId.s1).toEqual([{ id: "m1" }, { id: "m2" }]);
+  });
+
+  it("replaces snapshot pages that do not expose a stable merge key", async () => {
+    vi.mocked(api.listMessages)
+      .mockResolvedValueOnce({ events: [{ role: "assistant", text: "hello" }], offset: 1 } as never)
+      .mockResolvedValueOnce({ events: [{ role: "assistant", text: "hello" }], offset: 1 } as never);
     const store = createMessagesStore();
 
     await store.loadInitial("s1");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 4);
-    expect(store.getState().bySessionId.s1).toEqual([{ id: "m1" }, { id: "m2" }]);
+    expect(store.getState().bySessionId.s1).toEqual([{ role: "assistant", text: "hello" }]);
   });
 
-  it("applies live payloads by replacing then appending messages", () => {
+  it("applies snapshot replacement and live appends without duplicating stable ids", () => {
     const store = createMessagesStore();
 
-    store.applyLive("s1", [{ id: "m1" } as any], { replace: true, offset: 4 });
-    store.applyLive("s1", [{ id: "m2" } as any], { replace: false, offset: 5 });
+    store.applySnapshot("s1", [{ id: "m1" } as any], { offset: 4 });
+    store.applySnapshot("s1", [{ id: "m1" }, { id: "m2" }] as any, { offset: 5 });
+    store.applyLive("s1", [{ id: "m2", text: "updated" } as any], { replace: false, offset: 5 });
 
-    expect(store.getState().bySessionId.s1).toEqual([{ id: "m1" }, { id: "m2" }]);
+    expect(store.getState().bySessionId.s1).toEqual([{ id: "m1" }, { id: "m2", text: "updated" }]);
     expect(store.getState().offsetsBySessionId.s1).toBe(5);
     expect(store.getState().loadedBySessionId.s1).toBe(true);
   });
