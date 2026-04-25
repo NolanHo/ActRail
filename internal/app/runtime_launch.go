@@ -54,7 +54,7 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 	if err != nil {
 		panic(err)
 	}
-	ioSpec, err := process.PipeIO(process.LogPaths{})
+	ioSpec, err := defaultRuntimeIO()
 	if err != nil {
 		panic(err)
 	}
@@ -77,6 +77,13 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 		env:            env,
 		io:             ioSpec,
 	}
+}
+
+func defaultRuntimeIO() (process.IO, error) {
+	if preferRuntimePTY() {
+		return process.PTYIO(process.PTYSize{Rows: 24, Cols: 80}, process.LogPaths{})
+	}
+	return process.PipeIO(process.LogPaths{})
 }
 
 func defaultRuntimeBinPath(backend session.Backend) (string, error) {
