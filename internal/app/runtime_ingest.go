@@ -173,6 +173,7 @@ func (s *Stub) applyPIUIResolved(sessionID session.SessionID, event pi.Event) {
 	_ = s.ClearSessionUIRequest(sessionID, requestID)
 	s.emitUIResolved(sessionID, requestID)
 	s.emitSessionState(sessionID)
+	s.scheduleQueuedDispatch(sessionID)
 }
 
 func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) {
@@ -185,8 +186,11 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) {
 			s.emitSessionState(sessionID)
 		}
 	case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
-		if _, _, err := s.registry.SetBusy(sessionID, false); err == nil {
+		if state, ok, err := s.registry.SetBusy(sessionID, false); err == nil && ok {
 			s.emitSessionState(sessionID)
+			if !state.Busy() {
+				s.scheduleQueuedDispatch(sessionID)
+			}
 		}
 	}
 }
