@@ -162,7 +162,7 @@ describe("SessionsPane", () => {
 
   it("uses first user message as title and hides cwd in compact row", () => {
     renderSessionsPane({
-      items: [{ session_id: "sess-1", first_user_message: "我准备用 preact + vite 重构web端，请帮我出个规划", cwd: "/Users/huapeixuan/Documents/Code/codoxear", agent_backend: "pi" }],
+      items: [{ session_id: "sess-1", first_user_message: "我准备用 preact + vite 重构web端，请帮我出个规划", cwd: "/Users/huapeixuan/Documents/Code/ActRail", agent_backend: "pi" }],
       activeSessionId: null,
       loading: false,
       newSessionDefaults: null,
@@ -172,7 +172,7 @@ describe("SessionsPane", () => {
     });
 
     expect(root?.querySelector(".sessionTitle")?.textContent).toContain("我准备用 preact + vite 重构web端，请帮我出个规划");
-    expect(root?.textContent).not.toContain("/Users/huapeixuan/Documents/Code/codoxear");
+    expect(root?.textContent).not.toContain("/Users/huapeixuan/Documents/Code/ActRail");
   });
 
   it("prefers persisted title over first user message when alias is missing", () => {

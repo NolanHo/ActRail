@@ -28,7 +28,7 @@ function createStaticStore<TState extends object, TActions extends Record<string
 
 describe("AskUserCard", () => {
   let root: HTMLDivElement | null = null;
-  const ASK_USER_BRIDGE_PREFIX = "__codoxear_ask_user_bridge_v1__";
+  const ASK_USER_BRIDGE_PREFIX = "__actrail_ask_user_bridge_v1__";
 
   afterEach(() => {
     vi.clearAllMocks();

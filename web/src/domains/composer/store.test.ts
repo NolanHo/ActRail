@@ -15,7 +15,7 @@ describe("createComposerStore", () => {
   });
 
   it("loads persisted drafts from localStorage", () => {
-    window.localStorage.setItem("codoxear.composerDrafts.v1", JSON.stringify({ s1: "persisted draft" }));
+    window.localStorage.setItem("actrail.composerDrafts.v1", JSON.stringify({ s1: "persisted draft" }));
 
     const store = createComposerStore();
 
@@ -29,7 +29,7 @@ describe("createComposerStore", () => {
     store.setDraft("s2", "second");
 
     expect(store.getState().draftBySessionId).toEqual({ s1: "first", s2: "second" });
-    expect(JSON.parse(window.localStorage.getItem("codoxear.composerDrafts.v1") || "{}")).toEqual({ s1: "first", s2: "second" });
+    expect(JSON.parse(window.localStorage.getItem("actrail.composerDrafts.v1") || "{}")).toEqual({ s1: "first", s2: "second" });
   });
 
   it("copies a draft to a new session id", () => {

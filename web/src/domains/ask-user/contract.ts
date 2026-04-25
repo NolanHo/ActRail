@@ -24,5 +24,5 @@ export type AskUserBridgeAnswers = Record<string, string | string[]>;
 
 export type AskUserLike = MessageEvent | SessionUiRequest;
 
-export const ASK_USER_BRIDGE_PREFIX = "__codoxear_ask_user_bridge_v1__";
+export const ASK_USER_BRIDGE_PREFIX = "__actrail_ask_user_bridge_v1__";
 export const CUSTOM_RESPONSE_OPTION_RE = /type custom response/i;

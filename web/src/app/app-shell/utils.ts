@@ -2,7 +2,7 @@ import type { VoiceSettingsResponse } from "../../lib/types";
 
 export type ThemeMode = "light" | "dark";
 
-export const THEME_MODE_STORAGE_KEY = "codoxear.themeMode";
+export const THEME_MODE_STORAGE_KEY = "actrail.themeMode";
 
 export const DEFAULT_VOICE_SETTINGS: VoiceSettingsResponse = {
   tts_enabled_for_narration: false,
@@ -69,7 +69,7 @@ export function applyThemeMode(mode: ThemeMode) {
 
 export function getAnnouncementClientId() {
   if (typeof window === "undefined") return "announcement-client";
-  const key = "codoxear.announcementClientId";
+  const key = "actrail.announcementClientId";
   const current = window.localStorage.getItem(key);
   if (current) return current;
   const next = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"

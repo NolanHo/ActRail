@@ -111,7 +111,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
             <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.currentTarget.checked)} />
             <div>
               <strong className="block text-foreground">Enabled</strong>
-              <span className="text-muted-foreground">Allow Codoxear to inject the configured request during harness sweeps.</span>
+              <span className="text-muted-foreground">Allow ActRail to inject the configured request during harness sweeps.</span>
             </div>
           </label>
           <label className="fieldBlock">

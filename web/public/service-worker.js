@@ -5,7 +5,7 @@ self.addEventListener("push", (event) => {
   } catch (_error) {
     payload = {};
   }
-  const sessionName = typeof payload.session_display_name === "string" && payload.session_display_name ? payload.session_display_name : "Codoxear";
+  const sessionName = typeof payload.session_display_name === "string" && payload.session_display_name ? payload.session_display_name : "ActRail";
   const body = typeof payload.notification_text === "string" && payload.notification_text ? payload.notification_text : "New final response";
   const sessionId = typeof payload.session_id === "string" ? payload.session_id : "";
   const targetUrl = new URL("./", self.registration.scope);
@@ -15,7 +15,7 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(sessionName, {
       body,
-      tag: sessionId || "codoxear-final-response",
+      tag: sessionId || "actrail-final-response",
       data: { url: targetUrl.toString() },
       renotify: true,
     })

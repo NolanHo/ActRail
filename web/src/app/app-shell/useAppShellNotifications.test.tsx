@@ -72,7 +72,7 @@ it("dedupes desktop notifications by message id", async () => {
       notificationSpy(title, options);
     }
   } as any);
-  localStorage.setItem("codoxear.notificationEnabled", "1");
+  localStorage.setItem("actrail.notificationEnabled", "1");
 
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -99,7 +99,7 @@ it("dedupes desktop notifications by message id", async () => {
 });
 
 it("reads the persisted reply-sound preference", async () => {
-  localStorage.setItem("codoxear.replySoundEnabled", "0");
+  localStorage.setItem("actrail.replySoundEnabled", "0");
   const root = document.createElement("div");
   document.body.appendChild(root);
 

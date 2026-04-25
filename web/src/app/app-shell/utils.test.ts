@@ -18,12 +18,12 @@ describe("app-shell utils", () => {
   });
 
   it("reads local toggle values with the current defaults", () => {
-    localStorage.setItem("codoxear.flag", "1");
+    localStorage.setItem("actrail.flag", "1");
 
-    expect(readLocalToggle("codoxear.flag")).toBe(true);
+    expect(readLocalToggle("actrail.flag")).toBe(true);
 
-    localStorage.removeItem("codoxear.flag");
-    expect(readLocalToggleDefaultOn("codoxear.default-on")).toBe(true);
+    localStorage.removeItem("actrail.flag");
+    expect(readLocalToggleDefaultOn("actrail.default-on")).toBe(true);
   });
 
   it("reads and applies persisted theme mode", () => {

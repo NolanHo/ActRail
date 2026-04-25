@@ -1,7 +1,7 @@
 import { api } from "../../lib/api";
 import type { MessageEvent } from "../../lib/types";
 
-const COMPOSER_DRAFTS_STORAGE_KEY = "codoxear.composerDrafts.v1";
+const COMPOSER_DRAFTS_STORAGE_KEY = "actrail.composerDrafts.v1";
 
 export interface PendingComposerMessage {
   localId: string;

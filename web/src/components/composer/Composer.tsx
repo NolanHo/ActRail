@@ -31,7 +31,7 @@ import type {
 import { getDisplayableTodoSnapshot, TodoComposerPanel } from "./TodoComposerPanel";
 
 function enterToSendEnabled() {
-  return window.localStorage.getItem("codoxear.enterToSend") === "1";
+  return window.localStorage.getItem("actrail.enterToSend") === "1";
 }
 
 function getSlashDraftQuery(draft: string) {

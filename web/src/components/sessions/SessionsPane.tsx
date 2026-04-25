@@ -30,7 +30,7 @@ function deleteSessionConfirmText(session: SessionSummary) {
   const sid = shortSessionId(session.session_id);
   const target = name ? ` \"${name}\" (${sid})` : ` ${sid}`;
   if (session.owned) {
-    return `Delete this web-owned session${target}? This will stop it and remove it from Codoxear.`;
+    return `Delete this web-owned session${target}? This will stop it and remove it from ActRail.`;
   }
   return `Delete this terminal-owned session${target}? This will also stop the corresponding terminal session.`;
 }
@@ -39,14 +39,14 @@ function handoffSessionConfirmText(session: SessionSummary) {
   const name = getSessionDisplayName({ ...session, session_id: "" }, "");
   const sid = shortSessionId(session.session_id);
   const target = name ? ` \"${name}\" (${sid})` : ` ${sid}`;
-  return `Start a fresh Pi runtime for session${target}? Codoxear will archive the current Pi history, launch a new durable session, and switch only after the new runtime is live.`;
+  return `Start a fresh Pi runtime for session${target}? ActRail will archive the current Pi history, launch a new durable session, and switch only after the new runtime is live.`;
 }
 
 function restartSessionConfirmText(session: SessionSummary) {
   const name = getSessionDisplayName({ ...session, session_id: "" }, "");
   const sid = shortSessionId(session.session_id);
   const target = name ? ` \"${name}\" (${sid})` : ` ${sid}`;
-  return `Restart the backend Pi process for session${target}? Codoxear will stop the current Pi runtime, start a new one against the same session file, and keep this tab bound to the same durable session. Any in-flight turn will be interrupted.`;
+  return `Restart the backend Pi process for session${target}? ActRail will stop the current Pi runtime, start a new one against the same session file, and keep this tab bound to the same durable session. Any in-flight turn will be interrupted.`;
 }
 
 export function SessionsPane({ onNewSession }: SessionsPaneProps) {

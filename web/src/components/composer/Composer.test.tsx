@@ -492,7 +492,7 @@ describe("Composer", () => {
   });
 
   it("restores session drafts from localStorage on reload", () => {
-    window.localStorage.setItem("codoxear.composerDrafts.v1", JSON.stringify({ "sess-1": "persisted draft" }));
+    window.localStorage.setItem("actrail.composerDrafts.v1", JSON.stringify({ "sess-1": "persisted draft" }));
     const composerStore = createComposerStore();
     renderComposer({ composerStore: composerStore as any });
 
@@ -500,7 +500,7 @@ describe("Composer", () => {
   });
 
   it("submits on plain Enter when enter-to-send is enabled", async () => {
-    window.localStorage.setItem("codoxear.enterToSend", "1");
+    window.localStorage.setItem("actrail.enterToSend", "1");
     const { submit } = renderComposer({ items: [] });
     const composerRoot = getRoot();
 

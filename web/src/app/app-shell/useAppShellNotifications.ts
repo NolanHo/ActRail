@@ -53,8 +53,8 @@ export function useAppShellNotifications({
   suppressedReplySoundSessionIdsRef,
   voiceSettings,
 }: UseAppShellNotificationsOptions) {
-  const [notificationsEnabled, setNotificationsEnabled] = useState(() => readLocalToggle("codoxear.notificationEnabled"));
-  const [replySoundEnabled, setReplySoundEnabled] = useState(() => readLocalToggleDefaultOn("codoxear.replySoundEnabled"));
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => readLocalToggle("actrail.notificationEnabled"));
+  const [replySoundEnabled, setReplySoundEnabled] = useState(() => readLocalToggleDefaultOn("actrail.replySoundEnabled"));
   const [notificationPermission, setNotificationPermission] = useState(() => (
     typeof Notification === "undefined" ? "unsupported" : Notification.permission
   ));
@@ -85,12 +85,12 @@ export function useAppShellNotifications({
   }, []);
 
   useEffect(() => {
-    writeLocalToggle("codoxear.notificationEnabled", notificationsEnabled);
+    writeLocalToggle("actrail.notificationEnabled", notificationsEnabled);
   }, [notificationsEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem("codoxear.replySoundEnabled", replySoundEnabled ? "1" : "0");
+    window.localStorage.setItem("actrail.replySoundEnabled", replySoundEnabled ? "1" : "0");
   }, [replySoundEnabled]);
 
   const ensureVoiceServiceWorker = async () => {

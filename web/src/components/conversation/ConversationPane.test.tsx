@@ -1755,7 +1755,7 @@ describe("ConversationPane", () => {
             {
               role: "assistant",
               ts: 1_744_000_000,
-              text: "[server.py](/repo/codoxear/server.py#L123)\n\n| Name | Urgency |\n|---|---:|\n| offline | 2 |\n\n![diagram](./flow.png)",
+              text: "[server.py](/repo/actrail/server.py#L123)\n\n| Name | Urgency |\n|---|---:|\n| offline | 2 |\n\n![diagram](./flow.png)",
             },
             { role: "assistant", ts: 1_650_000, text: "synthetic timestamp should stay hidden" },
           ],
@@ -1782,9 +1782,9 @@ describe("ConversationPane", () => {
     expect(timestamps).toHaveLength(1);
     expect(timestamps[0]?.getAttribute("datetime")).toBe(new Date(1_744_000_000 * 1000).toISOString());
 
-    const fileLink = root.querySelector(".messageBody a[data-file-path='/repo/codoxear/server.py']") as HTMLAnchorElement | null;
+    const fileLink = root.querySelector(".messageBody a[data-file-path='/repo/actrail/server.py']") as HTMLAnchorElement | null;
     expect(fileLink?.textContent).toBe("server.py#L123");
-    expect(fileLink?.getAttribute("href")).toContain("api/sessions/sess-8/file/blob?path=%2Frepo%2Fcodoxear%2Fserver.py");
+    expect(fileLink?.getAttribute("href")).toContain("api/sessions/sess-8/file/blob?path=%2Frepo%2Factrail%2Fserver.py");
 
     const table = root.querySelector(".messageBody .mdTableWrap table");
     expect(table).not.toBeNull();

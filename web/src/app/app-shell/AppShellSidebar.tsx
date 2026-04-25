@@ -31,7 +31,7 @@ export function AppShellSidebar({
     <>
       <header className="sidebarBanner">
         <div className="sidebarBannerActions">
-          <Button type="button" variant="ghost" className="brandMark" onClick={onBrandClick}>Codoxear</Button>
+          <Button type="button" variant="ghost" className="brandMark" onClick={onBrandClick}>ActRail</Button>
           <div className="sidebarActionButtons">
             <Button
               type="button"

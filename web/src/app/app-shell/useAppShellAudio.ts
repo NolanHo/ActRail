@@ -21,14 +21,14 @@ interface UseAppShellAudioOptions {
 }
 
 export function useAppShellAudio({ bootstrapLoaded = false, voiceSupported = true }: UseAppShellAudioOptions = {}) {
-  const [announcementEnabled, setAnnouncementEnabled] = useState(() => readLocalToggle("codoxear.announcementEnabled"));
+  const [announcementEnabled, setAnnouncementEnabled] = useState(() => readLocalToggle("actrail.announcementEnabled"));
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsResponse>(DEFAULT_VOICE_SETTINGS);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [voiceSettingsStatus, setVoiceSettingsStatus] = useState("");
   const [voiceBaseUrlDraft, setVoiceBaseUrlDraft] = useState("");
   const [voiceApiKeyDraft, setVoiceApiKeyDraft] = useState("");
   const [narrationEnabledDraft, setNarrationEnabledDraft] = useState(false);
-  const [enterToSendDraft, setEnterToSendDraft] = useState(() => readLocalToggle("codoxear.enterToSend"));
+  const [enterToSendDraft, setEnterToSendDraft] = useState(() => readLocalToggle("actrail.enterToSend"));
   const liveAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioRetryTimerRef = useRef<number | null>(null);
   const hlsRef = useRef<any>(null);
@@ -60,7 +60,7 @@ export function useAppShellAudio({ bootstrapLoaded = false, voiceSupported = tru
   }, [bootstrapLoaded, voiceSupported]);
 
   useEffect(() => {
-    writeLocalToggle("codoxear.announcementEnabled", announcementEnabled);
+    writeLocalToggle("actrail.announcementEnabled", announcementEnabled);
   }, [announcementEnabled]);
 
   const startAnnouncementPlayback = (settings: VoiceSettingsResponse, { resetSource = false, force = false }: StartPlaybackOptions = {}) => {
@@ -206,7 +206,7 @@ export function useAppShellAudio({ bootstrapLoaded = false, voiceSupported = tru
     setVoiceBaseUrlDraft(String(voiceSettings.tts_base_url || ""));
     setVoiceApiKeyDraft(String(voiceSettings.tts_api_key || ""));
     setNarrationEnabledDraft(!!voiceSettings.tts_enabled_for_narration);
-    setEnterToSendDraft(readLocalToggle("codoxear.enterToSend"));
+    setEnterToSendDraft(readLocalToggle("actrail.enterToSend"));
     setVoiceSettingsOpen(true);
   };
 
@@ -256,7 +256,7 @@ export function useAppShellAudio({ bootstrapLoaded = false, voiceSupported = tru
       const response = await api.saveVoiceSettings(payload);
       const nextSettings = mergeVoiceSettings(response);
       setVoiceSettings(nextSettings);
-      writeLocalToggle("codoxear.enterToSend", enterToSendDraft);
+      writeLocalToggle("actrail.enterToSend", enterToSendDraft);
       setVoiceSettingsStatus("");
       setVoiceSettingsOpen(false);
     } catch (error) {

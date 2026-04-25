@@ -852,7 +852,7 @@ describe("AppShell", () => {
     });
     await flush();
 
-    expect(localStorage.getItem("codoxear.themeMode")).toBe("dark");
+    expect(localStorage.getItem("actrail.themeMode")).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(document.documentElement.style.colorScheme).toBe("dark");
   });
@@ -881,7 +881,7 @@ describe("AppShell", () => {
     });
     await flush();
 
-    expect(localStorage.getItem("codoxear.replySoundEnabled")).toBe("0");
+    expect(localStorage.getItem("actrail.replySoundEnabled")).toBe("0");
   });
 
   it("requests a fixed-text mobile test push from settings", async () => {
@@ -915,7 +915,7 @@ describe("AppShell", () => {
 
   it("sends announcement listener heartbeats when announcements are enabled", async () => {
     const { api } = await import("../lib/api");
-    localStorage.setItem("codoxear.announcementEnabled", "1");
+    localStorage.setItem("actrail.announcementEnabled", "1");
 
     renderAppShell();
     await flush();
@@ -959,7 +959,7 @@ describe("AppShell", () => {
         notificationSpy(title, options);
       }
     } as any);
-    localStorage.setItem("codoxear.notificationEnabled", "1");
+    localStorage.setItem("actrail.notificationEnabled", "1");
     vi.mocked(api.getNotificationsFeed)
       .mockResolvedValueOnce({ ok: true, items: [] })
       .mockResolvedValueOnce({
@@ -993,7 +993,7 @@ describe("AppShell", () => {
         notificationSpy(title, options);
       }
     } as any);
-    localStorage.setItem("codoxear.notificationEnabled", "1");
+    localStorage.setItem("actrail.notificationEnabled", "1");
     setDocumentVisibility("hidden");
     vi.mocked(api.getNotificationsFeed)
       .mockResolvedValueOnce({ ok: true, items: [] })
@@ -1351,7 +1351,7 @@ describe("AppShell", () => {
         notificationSpy(title, options);
       }
     } as any);
-    localStorage.setItem("codoxear.notificationEnabled", "1");
+    localStorage.setItem("actrail.notificationEnabled", "1");
 
     renderAppShell({
       agentBackend: "codex",
@@ -1374,7 +1374,7 @@ describe("AppShell", () => {
         notificationSpy(title, options);
       }
     } as any);
-    localStorage.setItem("codoxear.notificationEnabled", "1");
+    localStorage.setItem("actrail.notificationEnabled", "1");
     vi.mocked(api.getNotificationMessage).mockResolvedValue({
       ok: true,
       notification_text: "resolved summary",
@@ -1402,7 +1402,7 @@ describe("AppShell", () => {
       static requestPermission = vi.fn().mockResolvedValue("granted");
       constructor() {}
     } as any);
-    localStorage.setItem("codoxear.notificationEnabled", "1");
+    localStorage.setItem("actrail.notificationEnabled", "1");
 
     const finalResponseEvent = { role: "assistant", message_class: "final_response", message_id: "msg-retry" };
     let resolveNotificationLookup: ((value: unknown) => void) | null = null;
@@ -1619,7 +1619,7 @@ describe("AppShell", () => {
   });
 
   it("autoplays announcement audio when enabled and live segments are ready", async () => {
-    localStorage.setItem("codoxear.announcementEnabled", "1");
+    localStorage.setItem("actrail.announcementEnabled", "1");
     const play = vi.fn().mockResolvedValue(undefined);
     const canPlayType = vi.fn().mockReturnValue("probably");
     Object.defineProperty(HTMLMediaElement.prototype, "play", {

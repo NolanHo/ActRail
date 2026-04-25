@@ -1085,7 +1085,7 @@ describe("NewSessionDialog", () => {
           offset: 0,
           limit: 20,
           remaining: 0,
-          sessions: [{ session_id: "stale-resume", title: "codoxear new 修复", first_user_message: "old prompt" }],
+          sessions: [{ session_id: "stale-resume", title: "actrail new 修复", first_user_message: "old prompt" }],
         } as any;
       }
       return {
@@ -1131,7 +1131,7 @@ describe("NewSessionDialog", () => {
     await flush();
 
     const select = root.querySelector('select[name="resumeSessionId"]') as HTMLSelectElement;
-    expect(select.textContent).toContain("codoxear new 修复");
+    expect(select.textContent).toContain("actrail new 修复");
 
     await setSelectValue(select, "stale-resume");
     expect(select.value).toBe("stale-resume");
@@ -1140,7 +1140,7 @@ describe("NewSessionDialog", () => {
     await flush();
 
     expect(select.value).toBe("");
-    expect(select.textContent).not.toContain("codoxear new 修复");
+    expect(select.textContent).not.toContain("actrail new 修复");
 
     const form = root.querySelector("form") as HTMLFormElement;
     await submitForm(form);
