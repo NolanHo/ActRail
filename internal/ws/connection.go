@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type IDSource interface {
@@ -97,11 +99,42 @@ func streamSortKey(name StreamName) int {
 	}
 }
 
+type frameWriter interface {
+	WriteFrames(frames ...Frame) error
+}
+
+type websocketFrameWriter struct {
+	mu    sync.Mutex
+	conn  *websocket.Conn
+	codec Codec
+}
+
+func newWebsocketFrameWriter(conn *websocket.Conn, codec Codec) *websocketFrameWriter {
+	return &websocketFrameWriter{conn: conn, codec: codec}
+}
+
+func (w *websocketFrameWriter) WriteFrames(frames ...Frame) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, frame := range frames {
+		encoded, err := w.codec.Encode(frame)
+		if err != nil {
+			return err
+		}
+		if err := w.conn.WriteMessage(websocket.TextMessage, encoded); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ConnectionState struct {
+	mu            sync.RWMutex
 	id            string
 	ids           IDSource
 	heartbeat     HeartbeatState
 	subscriptions SubscriptionSet
+	writer        frameWriter
 }
 
 func NewConnectionState(connectionID string, heartbeatInterval time.Duration, ids IDSource, now time.Time) (*ConnectionState, error) {
@@ -123,22 +156,62 @@ func NewConnectionState(connectionID string, heartbeatInterval time.Duration, id
 	}, nil
 }
 
+func (c *ConnectionState) AttachWriter(writer frameWriter) error {
+	if writer == nil {
+		return fmt.Errorf("connection writer is required")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.writer != nil {
+		return fmt.Errorf("connection %q writer already attached", c.id)
+	}
+	c.writer = writer
+	return nil
+}
+
 func (c *ConnectionState) ID() string {
 	return c.id
 }
 
 func (c *ConnectionState) Subscriptions() []Subscription {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.subscriptions.Snapshot()
 }
 
+func (c *ConnectionState) HasSubscription(name StreamName) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.subscriptions.Has(name)
+}
+
 func (c *ConnectionState) Heartbeat() HeartbeatState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.heartbeat
 }
 
 func (c *ConnectionState) BuildHeartbeatFrame(now time.Time) Frame {
-	frame := NewHeartbeatFrame(now, c.ids.Next(), c.id)
+	return NewHeartbeatFrame(now, c.ids.Next(), c.id)
+}
+
+func (c *ConnectionState) WriteFrames(now time.Time, frames ...Frame) error {
+	if len(frames) == 0 {
+		return nil
+	}
+	c.mu.RLock()
+	writer := c.writer
+	c.mu.RUnlock()
+	if writer == nil {
+		return fmt.Errorf("connection %q writer is not attached", c.id)
+	}
+	if err := writer.WriteFrames(frames...); err != nil {
+		return err
+	}
+	c.mu.Lock()
 	c.heartbeat.ObserveServerSend(now)
-	return frame
+	c.mu.Unlock()
+	return nil
 }
 
 func (c *ConnectionState) HandleFrame(now time.Time, frame RawFrame, replay *ReplayBuffer) ([]Frame, error) {
@@ -154,15 +227,20 @@ func (c *ConnectionState) HandleFrame(now time.Time, frame RawFrame, replay *Rep
 		if err != nil {
 			return c.errorFrames(now, frame, ErrorCodeInvalidRequest, err.Error(), "payload"), nil
 		}
-		if err := c.subscriptions.ApplyUnsubscribe(cmd.Streams); err != nil {
+		c.mu.Lock()
+		err = c.subscriptions.ApplyUnsubscribe(cmd.Streams)
+		c.mu.Unlock()
+		if err != nil {
 			return c.errorFrames(now, frame, ErrorCodeInvalidRequest, err.Error(), "payload"), nil
 		}
-		return c.serverFrames(now, NewAckFrame(now, c.ids.Next(), cmd.Stream, cmd.RequestID, FrameTypeUnsubscribe)), nil
+		return c.serverFrames(NewAckFrame(now, c.ids.Next(), cmd.Stream, cmd.RequestID, FrameTypeUnsubscribe)), nil
 	case FrameTypePing:
 		if _, err := DecodePingCommand(frame); err != nil {
 			return c.errorFrames(now, frame, ErrorCodeInvalidRequest, err.Error(), "payload"), nil
 		}
+		c.mu.Lock()
 		c.heartbeat.ObserveClientPing(now)
+		c.mu.Unlock()
 		return nil, nil
 	default:
 		stream := SystemStream
@@ -190,24 +268,24 @@ func (c *ConnectionState) handleSubscribe(now time.Time, cmd SubscribeCommand, r
 				if frameErr != nil {
 					return nil, frameErr
 				}
-				return c.serverFrames(now, resetFrame), nil
+				return c.serverFrames(resetFrame), nil
 			}
 			return nil, err
 		}
 		replayed = append(replayed, frames...)
 	}
-	if err := c.subscriptions.ApplySubscribe(cmd.Payload); err != nil {
+	c.mu.Lock()
+	err := c.subscriptions.ApplySubscribe(cmd.Payload)
+	c.mu.Unlock()
+	if err != nil {
 		return c.errorFrames(now, RawFrame{RequestID: cmd.RequestID, Stream: cmd.Stream.String()}, ErrorCodeInvalidRequest, err.Error(), "payload", cmd.Stream), nil
 	}
 	frames := []Frame{NewAckFrame(now, c.ids.Next(), cmd.Stream, cmd.RequestID, FrameTypeSubscribe)}
 	frames = append(frames, replayed...)
-	return c.serverFrames(now, frames...), nil
+	return c.serverFrames(frames...), nil
 }
 
-func (c *ConnectionState) serverFrames(now time.Time, frames ...Frame) []Frame {
-	if len(frames) > 0 {
-		c.heartbeat.ObserveServerSend(now)
-	}
+func (c *ConnectionState) serverFrames(frames ...Frame) []Frame {
 	return frames
 }
 
@@ -218,7 +296,7 @@ func (c *ConnectionState) errorFrames(now time.Time, incoming RawFrame, code Err
 	} else if parsed, err := ParseStreamName(incoming.Stream); err == nil {
 		stream = parsed
 	}
-	return c.serverFrames(now, NewErrorFrame(now, c.ids.Next(), stream, incoming.RequestID, code, message, field))
+	return c.serverFrames(NewErrorFrame(now, c.ids.Next(), stream, incoming.RequestID, code, message, field))
 }
 
 func AsResetRequired(err error, target *ResetRequiredError) bool {

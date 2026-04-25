@@ -35,6 +35,7 @@ type Handler struct {
 	upgrader      websocket.Upgrader
 	registry      *Registry
 	replay        *ReplayBuffer
+	publisher     *Publisher
 	codec         Codec
 	now           func() time.Time
 	newTicker     func(time.Duration) Ticker
@@ -79,6 +80,7 @@ func NewHandler(cfg config.Config, opts ...HandlerOption) *Handler {
 			opt(h)
 		}
 	}
+	h.publisher = NewPublisher(h.registry, h.replay, WithPublisherNow(h.now))
 	return h
 }
 
@@ -139,6 +141,26 @@ func (h *Handler) Registry() *Registry {
 	return h.registry
 }
 
+func (h *Handler) Publisher() *Publisher {
+	return h.publisher
+}
+
+func (h *Handler) Publish(cursor int64, frame Frame) (PublishResult, error) {
+	return h.publisher.Publish(cursor, frame)
+}
+
+func (h *Handler) PublishSession(cursor int64, frame Frame) (PublishResult, error) {
+	return h.publisher.PublishSession(cursor, frame)
+}
+
+func (h *Handler) Broadcast(frame Frame) (PublishResult, error) {
+	return h.publisher.Broadcast(frame)
+}
+
+func (h *Handler) BroadcastSessions(frame Frame) (PublishResult, error) {
+	return h.publisher.BroadcastSessions(frame)
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if !authn.Authenticated(req, h.cfg.Auth) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "valid auth cookie required", "")
@@ -168,13 +190,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		return
 	}
+	if err := state.AttachWriter(newWebsocketFrameWriter(wsconn, h.codec)); err != nil {
+		return
+	}
 	if err := h.registry.Add(state); err != nil {
 		return
 	}
 	defer h.registry.Remove(state.ID())
 
 	hello := NewHelloFrame(now, h.frameIDs.Next(), state.ID(), h.cfg.Protocol.Version, h.cfg.HeartbeatIntervalMillis(), h.cfg.Protocol.ResumeBuffer)
-	if err := h.writeFrames(wsconn, state.serverFrames(now, hello)...); err != nil {
+	if err := state.WriteFrames(now, hello); err != nil {
 		return
 	}
 
@@ -192,7 +217,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if !state.Heartbeat().ServerHeartbeatDue(tickAt) {
 				continue
 			}
-			if err := h.writeFrames(wsconn, state.BuildHeartbeatFrame(tickAt)); err != nil {
+			if err := state.WriteFrames(tickAt, state.BuildHeartbeatFrame(tickAt)); err != nil {
 				return
 			}
 		case read := <-reads:
@@ -207,12 +232,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			if read.messageType != websocket.TextMessage {
 				now := h.now()
-				if err := h.writeFrames(wsconn, state.errorFrames(now, RawFrame{Stream: SystemStream.String()}, ErrorCodeUnsupported, "only text websocket frames are supported", "type")...); err != nil {
+				if err := state.WriteFrames(now, state.errorFrames(now, RawFrame{Stream: SystemStream.String()}, ErrorCodeUnsupported, "only text websocket frames are supported", "type")...); err != nil {
 					return
 				}
 				continue
 			}
-			if err := h.handleIncomingFrame(wsconn, state, read.payload); err != nil {
+			if err := h.handleIncomingFrame(state, read.payload); err != nil {
 				return
 			}
 		}
@@ -234,33 +259,17 @@ func readLoop(conn *websocket.Conn, out chan<- readResult, done <-chan struct{})
 	}
 }
 
-func (h *Handler) handleIncomingFrame(conn *websocket.Conn, state *ConnectionState, payload []byte) error {
+func (h *Handler) handleIncomingFrame(state *ConnectionState, payload []byte) error {
 	raw, err := h.codec.Decode(payload)
 	now := h.now()
 	if err != nil {
-		return h.writeFrames(conn, state.errorFrames(now, RawFrame{Stream: SystemStream.String()}, ErrorCodeInvalidRequest, err.Error(), "payload")...)
+		return state.WriteFrames(now, state.errorFrames(now, RawFrame{Stream: SystemStream.String()}, ErrorCodeInvalidRequest, err.Error(), "payload")...)
 	}
 	frames, err := state.HandleFrame(now, raw, h.replay)
 	if err != nil {
-		return h.writeFrames(conn, state.errorFrames(now, raw, ErrorCodeInternal, err.Error(), "payload")...)
+		return state.WriteFrames(now, state.errorFrames(now, raw, ErrorCodeInternal, err.Error(), "payload")...)
 	}
-	if len(frames) == 0 {
-		return nil
-	}
-	return h.writeFrames(conn, frames...)
-}
-
-func (h *Handler) writeFrames(conn *websocket.Conn, frames ...Frame) error {
-	for _, frame := range frames {
-		encoded, err := h.codec.Encode(frame)
-		if err != nil {
-			return err
-		}
-		if err := conn.WriteMessage(websocket.TextMessage, encoded); err != nil {
-			return err
-		}
-	}
-	return nil
+	return state.WriteFrames(now, frames...)
 }
 
 func writeError(w http.ResponseWriter, status int, code, message, field string) {
