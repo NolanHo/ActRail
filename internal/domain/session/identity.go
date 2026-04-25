@@ -11,9 +11,9 @@ const historicalSessionPrefix = "history:"
 type DurableID string
 
 func NewDurableID(raw string) (DurableID, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", fmt.Errorf("durable session id is required")
+	value, err := normalizeRouteToken(raw, "durable session id")
+	if err != nil {
+		return "", err
 	}
 	if strings.HasPrefix(value, historicalSessionPrefix) {
 		return "", fmt.Errorf("durable session id %q uses reserved %q prefix", value, historicalSessionPrefix)
@@ -67,9 +67,9 @@ func (id SessionID) IsHistorical() bool {
 type RuntimeID string
 
 func NewRuntimeID(raw string) (RuntimeID, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", fmt.Errorf("runtime id is required")
+	value, err := normalizeRouteToken(raw, "runtime id")
+	if err != nil {
+		return "", err
 	}
 	return RuntimeID(value), nil
 }
@@ -87,9 +87,9 @@ func (id RuntimeID) String() string {
 type ThreadID string
 
 func NewThreadID(raw string) (ThreadID, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", fmt.Errorf("thread id is required")
+	value, err := normalizeRouteToken(raw, "thread id")
+	if err != nil {
+		return "", err
 	}
 	return ThreadID(value), nil
 }
@@ -101,6 +101,31 @@ func (id ThreadID) Validate() error {
 
 func (id ThreadID) String() string {
 	return string(id)
+}
+
+func normalizeRouteToken(raw, label string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", label)
+	}
+	if !isRouteToken(value) {
+		return "", fmt.Errorf("%s %q must use only letters, digits, underscores, or hyphens", label, value)
+	}
+	return value, nil
+}
+
+func isRouteToken(value string) bool {
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // HistoricalRef is the durable identity behind a synthetic historical session id.
