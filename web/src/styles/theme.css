@@ -1,0 +1,234 @@
+:root {
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-assistant-prose: "LXGW WenKai", "LXGW WenKai Screen", "PingFang SC", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+  --font-code: "Fira Code", "LXGW WenKai Mono", "LXGW WenKai", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--font-ui);
+  line-height: 1.5;
+  font-weight: 400;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  background: hsl(42 30% 97%);
+  color: hsl(224 30% 16%);
+
+  --background: 42 30% 97%;
+  --foreground: 224 30% 16%;
+  --card: 0 0% 100%;
+  --card-foreground: 224 30% 16%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 224 30% 16%;
+  --primary: 213 84% 42%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 35 44% 95%;
+  --secondary-foreground: 224 28% 18%;
+  --muted: 210 24% 92%;
+  --muted-foreground: 220 12% 38%;
+  --accent: 204 88% 93%;
+  --accent-foreground: 224 28% 18%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 220 18% 84%;
+  --input: 220 18% 84%;
+  --ring: 213 84% 42%;
+  --radius: 1rem;
+
+  --bg: hsl(var(--background));
+  --panel: hsl(var(--card));
+  --text: hsl(var(--foreground));
+  --text-muted: hsl(var(--muted-foreground));
+  --surface: hsl(var(--card) / 0.86);
+  --surface-border: hsl(var(--border));
+  --legacy-border: hsl(var(--border));
+  --legacy-accent: hsl(var(--primary));
+  --legacy-muted: hsl(var(--muted-foreground));
+  --accent-weak: hsl(var(--primary) / 0.12);
+  --shadow: 0 24px 60px rgba(36, 46, 66, 0.14);
+  --shadow-sm: 0 1px 2px rgba(36, 46, 66, 0.08);
+  --bubble-user: hsl(205 100% 96%);
+  --bubble-assistant: hsl(var(--card));
+
+  --page-background:
+    radial-gradient(circle at top, hsl(var(--primary) / 0.14), transparent 34%),
+    linear-gradient(180deg, hsl(42 45% 99%), hsl(var(--background)) 40%, hsl(210 28% 92%));
+  --shell-background:
+    radial-gradient(circle at top left, hsl(var(--primary) / 0.08), transparent 28%),
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 84%, #fffaf2), color-mix(in srgb, var(--bg) 92%, #e9eef7));
+  --chrome-border: color-mix(in srgb, var(--legacy-border) 78%, white);
+  --chrome-surface: color-mix(in srgb, var(--panel) 94%, #fffaf3);
+  --chrome-elevated: color-mix(in srgb, var(--panel) 90%, white);
+  --dialog-backdrop: rgba(36, 46, 66, 0.24);
+  --field-label: color-mix(in srgb, var(--text) 84%, transparent);
+  --field-surface: rgba(255, 255, 255, 0.96);
+  --field-surface-disabled: rgba(36, 46, 66, 0.04);
+  --field-border: rgba(36, 46, 66, 0.14);
+  --field-focus: rgba(29, 78, 216, 0.16);
+  --field-focus-border: rgba(29, 78, 216, 0.42);
+  --control-surface: rgba(255, 255, 255, 0.82);
+  --control-surface-hover: rgba(255, 255, 255, 0.96);
+  --control-border: rgba(36, 46, 66, 0.12);
+
+  --message-card-base: color-mix(in srgb, var(--panel) 92%, #f8fafc);
+  --message-card-reasoning-bg: color-mix(in srgb, #f7efe5 86%, white);
+  --message-card-reasoning-border: color-mix(in srgb, #d5c0a6 48%, var(--legacy-border));
+  --message-card-tool-bg: color-mix(in srgb, #edf5fb 86%, white);
+  --message-card-tool-border: color-mix(in srgb, #afcae3 52%, var(--legacy-border));
+  --message-card-tool-result-bg: color-mix(in srgb, #eef7f1 86%, white);
+  --message-card-tool-result-border: color-mix(in srgb, #b2cfba 50%, var(--legacy-border));
+  --message-card-tool-error-bg: color-mix(in srgb, #fff2f2 84%, white);
+  --message-card-tool-error-border: rgba(185, 28, 28, 0.28);
+  --message-card-subagent-bg: color-mix(in srgb, #f2efff 78%, white);
+  --message-card-subagent-border: color-mix(in srgb, #cdbdff 52%, var(--legacy-border));
+  --message-card-todo-bg: color-mix(in srgb, #f3f7e8 82%, white);
+  --message-card-todo-border: color-mix(in srgb, #c7d8a7 52%, var(--legacy-border));
+  --message-todo-item-bg: color-mix(in srgb, #fbfcf6 84%, var(--panel));
+  --message-todo-item-border: color-mix(in srgb, #cdd9b4 48%, var(--legacy-border));
+  --message-todo-status-bg: rgba(15, 23, 42, 0.08);
+  --message-todo-status-fg: hsl(220 14% 36%);
+  --message-todo-status-not-started-bg: rgba(148, 163, 184, 0.18);
+  --message-todo-status-not-started-fg: hsl(220 16% 34%);
+  --message-todo-status-completed-bg: rgba(22, 163, 74, 0.12);
+  --message-todo-status-completed-fg: #166534;
+  --message-todo-status-in-progress-bg: rgba(37, 99, 235, 0.12);
+  --message-todo-status-in-progress-fg: #1d4ed8;
+  --message-card-system-bg: color-mix(in srgb, #f3f4f6 82%, white);
+  --message-card-system-border: color-mix(in srgb, #d6d9de 58%, var(--legacy-border));
+
+  --markdown-heading: hsl(224 30% 18%);
+  --markdown-link: hsl(213 82% 38%);
+  --markdown-link-hover: hsl(213 82% 30%);
+  --markdown-file-link-bg: hsl(206 100% 97%);
+  --markdown-file-link-border: hsl(210 48% 82%);
+  --markdown-inline-code-bg: hsl(32 42% 95%);
+  --markdown-inline-code-border: hsl(30 24% 82%);
+  --markdown-inline-code-fg: hsl(18 45% 30%);
+  --markdown-code-bg: hsl(216 43% 97%);
+  --markdown-code-border: hsl(219 28% 86%);
+  --markdown-code-fg: hsl(224 34% 22%);
+  --markdown-blockquote-bg: hsl(210 100% 97%);
+  --markdown-blockquote-border: hsl(210 72% 70%);
+  --markdown-blockquote-fg: hsl(220 22% 30%);
+  --markdown-table-bg: hsl(0 0% 100%);
+  --markdown-table-header-bg: hsl(214 36% 95%);
+  --markdown-table-row-alt: hsl(210 40% 98%);
+  --markdown-table-border: hsl(216 22% 84%);
+  --markdown-rule: hsl(216 18% 82%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  background: hsl(258 23% 8%);
+  color: hsl(0 0% 75%);
+
+  --background: 258 23% 8%;
+  --foreground: 0 0% 75%;
+  --card: 255 21% 11%;
+  --card-foreground: 0 0% 75%;
+  --popover: 255 21% 11%;
+  --popover-foreground: 0 0% 75%;
+  --primary: 189 86% 45%;
+  --primary-foreground: 255 24% 10%;
+  --secondary: 257 18% 15%;
+  --secondary-foreground: 0 0% 75%;
+  --muted: 257 18% 15%;
+  --muted-foreground: 221 34% 71%;
+  --accent: 256 20% 17%;
+  --accent-foreground: 0 0% 75%;
+  --destructive: 340 87% 66%;
+  --destructive-foreground: 255 24% 10%;
+  --border: 255 18% 14%;
+  --input: 255 18% 14%;
+  --ring: 189 86% 45%;
+  --radius: 1rem;
+
+  --bg: hsl(var(--background));
+  --panel: hsl(var(--card));
+  --text: hsl(var(--foreground));
+  --text-muted: hsl(var(--muted-foreground));
+  --surface: hsl(var(--card) / 0.9);
+  --surface-border: hsl(var(--border));
+  --legacy-border: hsl(var(--border));
+  --legacy-accent: hsl(var(--primary));
+  --legacy-muted: hsl(var(--muted-foreground));
+  --accent-weak: hsl(var(--primary) / 0.1);
+  --shadow: 0 22px 56px rgba(3, 2, 8, 0.46);
+  --shadow-sm: 0 1px 2px rgba(3, 2, 8, 0.24);
+  --bubble-user: hsl(252 28% 16%);
+  --bubble-assistant: hsl(255 21% 11%);
+
+  --page-background:
+    radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 38%),
+    linear-gradient(180deg, hsl(258 22% 10%), hsl(var(--background)) 44%, hsl(258 24% 6%));
+  --shell-background:
+    radial-gradient(circle at top left, hsl(var(--primary) / 0.06), transparent 30%),
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, #0d0b12), color-mix(in srgb, var(--bg) 98%, #09070d));
+  --chrome-border: color-mix(in srgb, var(--legacy-border) 92%, black);
+  --chrome-surface: color-mix(in srgb, var(--panel) 96%, #0d0b12);
+  --chrome-elevated: color-mix(in srgb, var(--panel) 92%, #14111b);
+  --dialog-backdrop: rgba(5, 4, 10, 0.68);
+  --field-label: color-mix(in srgb, var(--text) 78%, transparent);
+  --field-surface: rgba(25, 22, 33, 0.92);
+  --field-surface-disabled: rgba(255, 255, 255, 0.03);
+  --field-border: rgba(14, 210, 247, 0.08);
+  --field-focus: rgba(14, 210, 247, 0.12);
+  --field-focus-border: rgba(14, 210, 247, 0.34);
+  --control-surface: rgba(25, 22, 33, 0.88);
+  --control-surface-hover: rgba(31, 27, 41, 0.96);
+  --control-border: rgba(14, 210, 247, 0.12);
+
+  --message-card-base: color-mix(in srgb, var(--panel) 96%, #100e17);
+  --message-card-reasoning-bg: color-mix(in srgb, #211b18 86%, var(--panel));
+  --message-card-reasoning-border: color-mix(in srgb, #64523d 30%, var(--legacy-border));
+  --message-card-tool-bg: color-mix(in srgb, #121d25 88%, var(--panel));
+  --message-card-tool-border: color-mix(in srgb, #245362 28%, var(--legacy-border));
+  --message-card-tool-result-bg: color-mix(in srgb, #121d1a 88%, var(--panel));
+  --message-card-tool-result-border: color-mix(in srgb, #33564d 26%, var(--legacy-border));
+  --message-card-tool-error-bg: color-mix(in srgb, #2b131b 88%, var(--panel));
+  --message-card-tool-error-border: rgba(244, 86, 157, 0.24);
+  --message-card-subagent-bg: color-mix(in srgb, #1c1730 84%, var(--panel));
+  --message-card-subagent-border: color-mix(in srgb, #4b3b76 30%, var(--legacy-border));
+  --message-card-todo-bg: color-mix(in srgb, #141914 92%, var(--panel));
+  --message-card-todo-border: color-mix(in srgb, #33483a 20%, var(--legacy-border));
+  --message-todo-item-bg: color-mix(in srgb, #111511 90%, var(--panel));
+  --message-todo-item-border: color-mix(in srgb, #2d4032 18%, var(--legacy-border));
+  --message-todo-status-bg: rgba(255, 255, 255, 0.045);
+  --message-todo-status-fg: hsl(220 16% 74%);
+  --message-todo-status-not-started-bg: rgba(148, 163, 184, 0.1);
+  --message-todo-status-not-started-fg: hsl(220 18% 72%);
+  --message-todo-status-completed-bg: rgba(74, 222, 128, 0.1);
+  --message-todo-status-completed-fg: hsl(144 43% 72%);
+  --message-todo-status-in-progress-bg: rgba(56, 189, 248, 0.1);
+  --message-todo-status-in-progress-fg: hsl(194 62% 72%);
+  --message-card-system-bg: color-mix(in srgb, #15131d 88%, var(--panel));
+  --message-card-system-border: color-mix(in srgb, #2f2a3f 30%, var(--legacy-border));
+
+  --markdown-heading: hsl(188 72% 46%);
+  --markdown-link: hsl(198 91% 70%);
+  --markdown-link-hover: hsl(198 91% 76%);
+  --markdown-file-link-bg: hsl(256 20% 16%);
+  --markdown-file-link-border: hsl(189 52% 34%);
+  --markdown-inline-code-bg: hsl(258 18% 15%);
+  --markdown-inline-code-border: hsl(255 16% 22%);
+  --markdown-inline-code-fg: hsl(334 82% 70%);
+  --markdown-code-bg: hsl(255 20% 12%);
+  --markdown-code-border: hsl(255 16% 18%);
+  --markdown-code-fg: hsl(0 0% 76%);
+  --markdown-blockquote-bg: hsl(254 20% 14%);
+  --markdown-blockquote-border: hsl(205 91% 64%);
+  --markdown-blockquote-fg: hsl(220 32% 80%);
+  --markdown-table-bg: hsl(255 21% 11%);
+  --markdown-table-header-bg: hsl(256 18% 14%);
+  --markdown-table-row-alt: hsl(255 18% 13%);
+  --markdown-table-border: hsl(189 54% 18%);
+  --markdown-rule: hsl(255 16% 20%);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
