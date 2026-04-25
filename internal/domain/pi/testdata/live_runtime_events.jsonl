@@ -1,0 +1,4 @@
+{"type":"extension_ui_request","id":"ui-req-1","method":"select","title":"Pick a location","message":"Where should this go?","question":"Where should this go?","context":"Choose one or type your own.","options":["Details","Sidebar"],"allowMultiple":true,"timeout":10000}
+{"type":"message.delta","turn_id":"turn-001","role":"assistant","delta":"Codoxear serves a browser UI for Codex-style sessions."}
+{"type":"message_end","message":{"role":"toolResult","toolCallId":"ui-req-1","toolName":"ask_user","details":{"answer":"Sidebar","cancelled":false}}}
+{"type":"turn.completed","turn_id":"turn-001","role":"assistant","text":"Codoxear serves a browser UI for Codex-style sessions."}
