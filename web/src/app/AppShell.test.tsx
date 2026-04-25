@@ -5,14 +5,34 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "./providers";
 import { AppShell } from "./AppShell";
 
-const eventStreamMocks = vi.hoisted(() => ({
-  openAppEventStream: vi.fn((_options: { onEvent?: (event: Record<string, unknown>) => void }) => ({
-    close: vi.fn(),
-  })),
-}));
+const realtimeMocks = vi.hoisted(() => {
+  let frameListener: ((frame: Record<string, unknown>) => void) | null = null;
+  return {
+    connect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn(),
+    setRealtimeSubscriptions: vi.fn(),
+    subscribeRealtimeFrames: vi.fn((listener: (frame: Record<string, unknown>) => void) => {
+      frameListener = listener;
+      return vi.fn(() => {
+        frameListener = null;
+      });
+    }),
+    subscribeRealtimeState: vi.fn((listener: (state: string) => void) => {
+      listener("closed");
+      return vi.fn();
+    }),
+    emitFrame(frame: Record<string, unknown>) {
+      frameListener?.(frame);
+    },
+  };
+});
 
-vi.mock("../domains/events/stream", () => ({
-  openAppEventStream: eventStreamMocks.openAppEventStream,
+vi.mock("../domains/realtime/client", () => ({
+  connect: realtimeMocks.connect,
+  disconnect: realtimeMocks.disconnect,
+  setRealtimeSubscriptions: realtimeMocks.setRealtimeSubscriptions,
+  subscribeRealtimeFrames: realtimeMocks.subscribeRealtimeFrames,
+  subscribeRealtimeState: realtimeMocks.subscribeRealtimeState,
 }));
 
 vi.mock("../lib/api", () => ({
@@ -176,6 +196,7 @@ function renderAppShell({
       items: sessionItems,
       activeSessionId,
       loading: false,
+      bootstrapLoaded: true,
       newSessionDefaults: null,
     },
     { refresh: vi.fn().mockResolvedValue(undefined), refreshBootstrap: vi.fn().mockResolvedValue(undefined), select: vi.fn() },
@@ -187,12 +208,25 @@ function renderAppShell({
   const liveSessionStore = createStaticStore(
     {
       offsetsBySessionId: offsetState,
+      liveOffsetsBySessionId: {},
+      bridgeOffsetsBySessionId: {},
+      streamCursorsBySessionId: {},
+      uiStreamCursorsBySessionId: {},
       requestsBySessionId: activeSessionId ? { [activeSessionId]: requests as any[] } : {},
       requestVersionsBySessionId: {},
       busyBySessionId: liveBusyBySessionId ?? Object.fromEntries(sessionItems.map((session) => [session.session_id, session.busy])),
       loadingBySessionId: {},
+      errorBySessionId: {},
+      tokenBySessionId: {},
+      contextUsageBySessionId: {},
+      turnTimingBySessionId: {},
     },
-    { loadInitial: vi.fn().mockResolvedValue(undefined), poll: vi.fn().mockResolvedValue(undefined) },
+    {
+      loadInitial: vi.fn().mockResolvedValue(undefined),
+      poll: vi.fn().mockResolvedValue(undefined),
+      applyFrame: vi.fn(),
+      resetSession: vi.fn(),
+    },
   );
   const composerStore = createStaticStore(
     { draft: "", sending: false },
@@ -279,7 +313,7 @@ describe("AppShell", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps one SSE connection while session state changes", async () => {
+  it("keeps one realtime socket subscription set while session state changes", async () => {
     const { liveSessionStore, sessionsStore } = renderAppShell({
       activeSessionId: "sess-1",
       items: [
@@ -289,7 +323,7 @@ describe("AppShell", () => {
     });
 
     await flush();
-    expect(eventStreamMocks.openAppEventStream).toHaveBeenCalledTimes(1);
+    expect(realtimeMocks.connect).toHaveBeenCalledTimes(1);
 
     act(() => {
       sessionsStore.setState({
@@ -314,19 +348,16 @@ describe("AppShell", () => {
     });
     await flush();
 
-    expect(eventStreamMocks.openAppEventStream).toHaveBeenCalledTimes(1);
+    expect(realtimeMocks.connect).toHaveBeenCalledTimes(1);
 
-    const streamOptions = eventStreamMocks.openAppEventStream.mock.calls[0]?.[0];
-    expect(streamOptions).toBeTruthy();
-    if (!streamOptions?.onEvent) {
-      throw new Error("SSE handler missing");
-    }
-    const onStreamEvent = streamOptions.onEvent;
     act(() => {
-      onStreamEvent({
-        type: "session.live.invalidate",
-        session_id: "sess-2",
-        runtime_id: null,
+      realtimeMocks.emitFrame({
+        type: "transport.reset_required",
+        stream: "session:sess-2",
+        payload: {
+          session_id: "sess-2",
+          reason: "resume_cursor_expired",
+        },
       });
     });
     await flush();
@@ -334,7 +365,7 @@ describe("AppShell", () => {
     expect(liveSessionStore.poll).toHaveBeenCalledWith("sess-2");
   });
 
-  it("does not force a sessions refresh for transport-only invalidations", async () => {
+  it("does not force a sessions refresh for tracked session frames", async () => {
     const { liveSessionStore, sessionsStore } = renderAppShell({
       activeSessionId: "sess-1",
       items: [{ session_id: "sess-1", alias: "Alpha", agent_backend: "pi", busy: true }],
@@ -344,22 +375,22 @@ describe("AppShell", () => {
     vi.mocked(sessionsStore.refresh).mockClear();
     vi.mocked(liveSessionStore.poll).mockClear();
 
-    const streamOptions = eventStreamMocks.openAppEventStream.mock.calls[0]?.[0];
-    expect(streamOptions).toBeTruthy();
-    if (!streamOptions?.onEvent) {
-      throw new Error("SSE handler missing");
-    }
-    const onStreamEvent = streamOptions.onEvent;
     act(() => {
-      onStreamEvent({
-        type: "session.transport.invalidate",
-        session_id: "sess-1",
-        runtime_id: null,
+      realtimeMocks.emitFrame({
+        type: "message.delta",
+        stream: "session:sess-1",
+        payload: {
+          session_id: "sess-1",
+          stream_seq: 12,
+          turn_id: "turn-1",
+          role: "assistant",
+          delta: "partial",
+        },
       });
     });
     await flush();
 
-    expect(liveSessionStore.poll).toHaveBeenCalledWith("sess-1");
+    expect(liveSessionStore.poll).not.toHaveBeenCalled();
     expect(sessionsStore.refresh).not.toHaveBeenCalled();
   });
 

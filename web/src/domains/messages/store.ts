@@ -5,6 +5,24 @@ const HISTORY_PAGE_SIZE = 300;
 
 const MACHINE_TRACE_TYPES = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 
+function normalizeMessagePage(data: Awaited<ReturnType<typeof api.listMessages>>) {
+  const events = Array.isArray(data.items)
+    ? data.items
+    : Array.isArray(data.events)
+      ? data.events
+      : [];
+  return {
+    events,
+    offset: typeof data.offset === "number" ? data.offset : typeof data.tail_seq === "number" ? data.tail_seq : undefined,
+    hasOlder: data.has_older === true || data.has_more === true,
+    nextBefore: typeof data.next_before === "number"
+      ? data.next_before
+      : typeof data.next_before_seq === "number"
+        ? data.next_before_seq
+        : undefined,
+  };
+}
+
 export interface MessagesState {
   bySessionId: Record<string, MessageEvent[]>;
   offsetsBySessionId: Record<string, number>;
@@ -150,7 +168,7 @@ export function createMessagesStore(): MessagesStore {
       emit();
 
       try {
-        const data = await api.listMessages(sessionId, init, undefined, init ? undefined : state.offsetsBySessionId[sessionId]);
+        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, init ? undefined : state.offsetsBySessionId[sessionId]));
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }
@@ -170,13 +188,13 @@ export function createMessagesStore(): MessagesStore {
           },
           hasOlderBySessionId: {
             ...state.hasOlderBySessionId,
-            [sessionId]: init ? data.has_older === true : state.hasOlderBySessionId[sessionId] ?? false,
+            [sessionId]: init ? data.hasOlder === true : state.hasOlderBySessionId[sessionId] ?? false,
           },
           olderBeforeBySessionId: {
             ...state.olderBeforeBySessionId,
             [sessionId]: init
-              ? typeof data.next_before === "number"
-                ? data.next_before
+              ? typeof data.nextBefore === "number"
+                ? data.nextBefore
                 : 0
               : state.olderBeforeBySessionId[sessionId] ?? 0,
           },
@@ -242,7 +260,7 @@ export function createMessagesStore(): MessagesStore {
       let foundAnchor = false;
 
       while ((nextBefore > 0 || hasOlder) && !foundAnchor) {
-        const data = await api.listMessages(sessionId, true, undefined, undefined, nextBefore, limit);
+        const data = normalizeMessagePage(await api.listMessages(sessionId, true, undefined, undefined, nextBefore, limit));
         if (loadId !== currentOlderLoadIds[sessionId]) {
           return;
         }
@@ -250,8 +268,8 @@ export function createMessagesStore(): MessagesStore {
         const pageEvents = Array.isArray(data.events) ? data.events : [];
         aggregatedEvents = [...pageEvents, ...aggregatedEvents];
         foundAnchor = pageEvents.some(eventCreatesConversationAnchor);
-        hasOlder = data.has_older === true;
-        nextBefore = typeof data.next_before === "number" ? data.next_before : 0;
+        hasOlder = data.hasOlder === true;
+        nextBefore = typeof data.nextBefore === "number" ? data.nextBefore : 0;
         if (typeof data.offset === "number") {
           nextOffset = data.offset;
         }

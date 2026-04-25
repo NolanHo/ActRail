@@ -1,11 +1,11 @@
 {
-  "name": "codoxear-web",
+  "name": "actrail-web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && rm -rf ../codoxear/static/dist && mkdir -p ../codoxear/static/dist && cp -R dist/. ../codoxear/static/dist/",
+    "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "tsc --noEmit -p tsconfig.test.json && vitest run",
     "test:watch": "vitest"

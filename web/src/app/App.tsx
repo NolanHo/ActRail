@@ -72,8 +72,12 @@ export default function App() {
 
     let cancelled = false;
     api.me()
-      .then(() => {
+      .then((response) => {
         if (cancelled) return;
+        if (response?.ok === false) {
+          setAuthState("unauthenticated");
+          return;
+        }
         setLoginError("");
         setAuthState("authenticated");
       })
@@ -124,7 +128,11 @@ export default function App() {
           setLoginPending(true);
           setLoginError("");
           try {
-            await api.login(trimmed);
+            const response = await api.login(trimmed);
+            if (response?.ok === false) {
+              setLoginError(typeof response.error === "string" ? response.error : "Sign in failed");
+              return;
+            }
             setAuthState("authenticated");
           } catch (error) {
             setLoginError(error instanceof Error ? error.message : "Sign in failed");

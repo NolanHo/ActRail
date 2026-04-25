@@ -16,7 +16,7 @@ const NOTIFICATION_MESSAGE_RETRY_MS = 15000;
 const FINAL_NOTIFICATION_SUMMARY_STATUSES = new Set(["sent", "skipped", "error"]);
 const REPLY_SOUND_TEXT_DEDUPE_MS = 30000;
 const NOTIFICATION_FEED_POLL_MS = 5000;
-const SSE_NOTIFICATION_FALLBACK_MS = 60000;
+const REALTIME_NOTIFICATION_RECOVERY_MS = 60000;
 
 function isDocumentVisible() {
   if (typeof document === "undefined") {
@@ -226,7 +226,7 @@ export function useAppShellNotifications({
     void refreshNotificationFeed(true);
     const intervalId = window.setInterval(() => {
       void refreshNotificationFeed(false);
-    }, realtimeConnected ? SSE_NOTIFICATION_FALLBACK_MS : NOTIFICATION_FEED_POLL_MS);
+    }, realtimeConnected ? REALTIME_NOTIFICATION_RECOVERY_MS : NOTIFICATION_FEED_POLL_MS);
     return () => {
       window.clearInterval(intervalId);
     };

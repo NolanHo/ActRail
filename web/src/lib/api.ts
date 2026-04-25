@@ -1,3 +1,4 @@
+import { sendRealtimeCommand } from "../domains/realtime/client";
 import { getJson, postJson } from "./http";
 import { getSessionRouteId } from "./session-identity";
 import type {
@@ -33,6 +34,22 @@ import type {
   WorkspaceResponse,
 } from "./types";
 
+function sessionStreamName(sessionId: string) {
+  return `session:${sessionId}`;
+}
+
+function sessionUiStreamName(sessionId: string) {
+  return `session:${sessionId}:ui`;
+}
+
+function withSessionIdentity(sessionId: string, runtimeId?: string | null, extra?: Record<string, unknown>) {
+  return {
+    session_id: sessionId,
+    ...(runtimeId ? { runtime_id: runtimeId } : {}),
+    ...(extra ?? {}),
+  };
+}
+
 export const api = {
   me(signal?: AbortSignal) {
     return getJson<{ ok?: boolean }>("/api/me", signal);
@@ -60,13 +77,16 @@ export const api = {
     const suffix = query.size ? `?${query.toString()}` : "";
     return getJson<SessionsResponse>(`/api/sessions${suffix}`, signal);
   },
-  getSessionsBootstrap(options?: { refreshPiModels?: boolean }, signal?: AbortSignal) {
+  getBootstrap(options?: { refreshPiModels?: boolean }, signal?: AbortSignal) {
     const query = new URLSearchParams();
     if (options?.refreshPiModels) {
       query.set("refresh_pi_models", "1");
     }
     const suffix = query.size ? `?${query.toString()}` : "";
-    return getJson<SessionBootstrapResponse>(`/api/sessions/bootstrap${suffix}`, signal);
+    return getJson<SessionBootstrapResponse>(`/api/bootstrap${suffix}`, signal);
+  },
+  getSessionsBootstrap(options?: { refreshPiModels?: boolean }, signal?: AbortSignal) {
+    return api.getBootstrap(options, signal);
   },
   getSessionDetails(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
@@ -82,6 +102,7 @@ export const api = {
     }
     if (typeof before === "number" && Number.isFinite(before) && before > 0) {
       query.set("before", String(before));
+      query.set("before_seq", String(before));
     }
     if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
       query.set("limit", String(limit));
@@ -94,23 +115,12 @@ export const api = {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson<SessionUiStateResponse>(`/api/sessions/${routeId}/ui_state`, signal);
   },
-  getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number) {
-    const query = new URLSearchParams();
-    if (typeof offset === "number" && Number.isFinite(offset) && offset > 0) {
-      query.set("offset", String(offset));
-    }
-    if (typeof requestsVersion === "string" && requestsVersion.length > 0) {
-      query.set("requests_version", requestsVersion);
-    }
-    if (typeof liveOffset === "number" && Number.isFinite(liveOffset) && liveOffset > 0) {
-      query.set("live_offset", String(liveOffset));
-    }
-    if (typeof bridgeOffset === "number" && Number.isFinite(bridgeOffset) && bridgeOffset > 0) {
-      query.set("bridge_offset", String(bridgeOffset));
-    }
-    const suffix = query.size ? `?${query.toString()}` : "";
+  getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
-    return getJson<LiveSessionResponse>(`/api/sessions/${routeId}/live${suffix}`, signal);
+    return getJson<LiveSessionResponse>(`/api/sessions/${routeId}/state`, signal);
+  },
+  getLiveSession(sessionId: string, _offset?: number, _requestsVersion?: string, signal?: AbortSignal, _liveOffset?: number, runtimeId?: string | null, _bridgeOffset?: number) {
+    return api.getSessionState(sessionId, signal, runtimeId);
   },
   getWorkspace(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
@@ -125,16 +135,22 @@ export const api = {
     return postJson<AttachmentInjectResponse>(`/api/sessions/${routeId}/inject_image`, payload);
   },
   async sendMessage(sessionId: string, text: string, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
-    return postJson(`/api/sessions/${routeId}/send`, { text });
+    return sendRealtimeCommand({
+      type: "send",
+      stream: sessionStreamName(sessionId),
+      payload: withSessionIdentity(sessionId, runtimeId, { text }),
+    });
   },
   switchSessionModel(sessionId: string, payload: { model: string; provider?: string }, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return postJson<SwitchSessionModelResponse>(`/api/sessions/${routeId}/model`, payload);
   },
   async enqueueMessage(sessionId: string, text: string, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
-    return postJson(`/api/sessions/${routeId}/enqueue`, { text });
+    return sendRealtimeCommand({
+      type: "enqueue",
+      stream: sessionStreamName(sessionId),
+      payload: withSessionIdentity(sessionId, runtimeId, { text }),
+    });
   },
   deleteSession(sessionId: string, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
@@ -149,7 +165,19 @@ export const api = {
     return postJson<RestartSessionResponse>(`/api/sessions/${routeId}/restart`, {});
   },
   async createSession(payload: Record<string, unknown>) {
-    return postJson<CreateSessionResponse>(`/api/sessions`, payload);
+    const response = await postJson<CreateSessionResponse>(`/api/sessions`, payload);
+    if (response.session && typeof response.session === "object") {
+      return {
+        ...response,
+        session_id: response.session_id ?? response.session.session_id,
+        runtime_id: response.runtime_id ?? response.session.runtime_id,
+        backend: response.backend ?? response.session.agent_backend,
+        pending_startup: response.pending_startup ?? response.session.pending_startup,
+        focused: response.focused ?? response.session.focused,
+        alias: response.alias ?? response.session.alias,
+      };
+    }
+    return response;
   },
   getSessionResumeCandidates(cwd: string, agentBackend: string, options?: { offset?: number; limit?: number }) {
     const query = new URLSearchParams();
@@ -252,11 +280,17 @@ export const api = {
     return postJson<HarnessConfigResponse>(`/api/sessions/${routeId}/harness`, payload);
   },
   interruptSession(sessionId: string, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
-    return postJson(`/api/sessions/${routeId}/interrupt`, {});
+    return sendRealtimeCommand({
+      type: "interrupt",
+      stream: sessionStreamName(sessionId),
+      payload: withSessionIdentity(sessionId, runtimeId),
+    });
   },
   submitUiResponse(sessionId: string, payload: Record<string, unknown>, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
-    return postJson(`/api/sessions/${routeId}/ui_response`, payload);
+    return sendRealtimeCommand({
+      type: "ui.response",
+      stream: sessionUiStreamName(sessionId),
+      payload: withSessionIdentity(sessionId, runtimeId, payload),
+    });
   },
 };
