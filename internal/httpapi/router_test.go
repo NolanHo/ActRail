@@ -325,9 +325,16 @@ func (s *fixtureService) SessionState(_ context.Context, req app.SessionStateReq
 			State: "queued",
 		}}},
 		UIRequest: &app.SessionUIRequestSnapshot{
-			RequestID: "ui_123",
-			Kind:      "prompt",
-			Prompt:    "Need input",
+			RequestID:     "ui_123",
+			Kind:          "ask_user",
+			Method:        "select",
+			Prompt:        "Need input",
+			Question:      "Need input",
+			AllowFreeform: false,
+			Options: []app.SessionUIOptionSnapshot{{
+				Label: "Approve",
+				Value: "Approve",
+			}},
 		},
 		PartialAssistantTurn: &app.PartialAssistantTurnSnapshot{
 			TurnID: "turn_123",
@@ -546,6 +553,9 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		decodeJSON(t, res, &payload)
 		if !payload.Busy || len(payload.Queue.Items) != 1 || payload.ResumeCursors.Transport != "cur_transport" {
 			t.Fatalf("unexpected state payload: %+v", payload)
+		}
+		if payload.UIRequest == nil || payload.UIRequest.Method != "select" || len(payload.UIRequest.Options) != 1 || payload.UIRequest.Options[0].Label != "Approve" {
+			t.Fatalf("unexpected ui request snapshot: %+v", payload.UIRequest)
 		}
 	})
 

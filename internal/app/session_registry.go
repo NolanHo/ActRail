@@ -456,9 +456,19 @@ func (r *sessionRegistry) SetResumeCursor(sessionID session.SessionID, kind sess
 
 func normalizeSessionUIRequest(raw SessionUIRequestSnapshot) (SessionUIRequestSnapshot, error) {
 	request := SessionUIRequestSnapshot{
-		RequestID: strings.TrimSpace(raw.RequestID),
-		Kind:      strings.TrimSpace(raw.Kind),
-		Prompt:    strings.TrimSpace(raw.Prompt),
+		RequestID:     strings.TrimSpace(raw.RequestID),
+		Kind:          strings.TrimSpace(raw.Kind),
+		Method:        strings.TrimSpace(raw.Method),
+		Title:         strings.TrimSpace(raw.Title),
+		Message:       strings.TrimSpace(raw.Message),
+		Prompt:        strings.TrimSpace(raw.Prompt),
+		Question:      strings.TrimSpace(raw.Question),
+		Context:       strings.TrimSpace(raw.Context),
+		AllowFreeform: raw.AllowFreeform,
+		AllowMultiple: raw.AllowMultiple,
+		Options:       copySessionUIOptions(raw.Options),
+		Questions:     copySessionUIQuestions(raw.Questions),
+		Metadata:      copyAnyMap(raw.Metadata),
 	}
 	if request.RequestID == "" {
 		return SessionUIRequestSnapshot{}, fmt.Errorf("ui request id is required")
@@ -527,7 +537,44 @@ func copySessionUIRequest(raw *SessionUIRequestSnapshot) *SessionUIRequestSnapsh
 		return nil
 	}
 	copied := *raw
+	copied.Options = copySessionUIOptions(raw.Options)
+	copied.Questions = copySessionUIQuestions(raw.Questions)
+	copied.Metadata = copyAnyMap(raw.Metadata)
 	return &copied
+}
+
+func copySessionUIOptions(raw []SessionUIOptionSnapshot) []SessionUIOptionSnapshot {
+	if len(raw) == 0 {
+		return nil
+	}
+	return append([]SessionUIOptionSnapshot(nil), raw...)
+}
+
+func copySessionUIQuestions(raw []SessionUIQuestionSnapshot) []SessionUIQuestionSnapshot {
+	if len(raw) == 0 {
+		return nil
+	}
+	copied := make([]SessionUIQuestionSnapshot, 0, len(raw))
+	for _, question := range raw {
+		copied = append(copied, SessionUIQuestionSnapshot{
+			Header:      question.Header,
+			Question:    question.Question,
+			Options:     copySessionUIOptions(question.Options),
+			MultiSelect: question.MultiSelect,
+		})
+	}
+	return copied
+}
+
+func copyAnyMap(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	copied := make(map[string]any, len(raw))
+	for key, value := range raw {
+		copied[key] = value
+	}
+	return copied
 }
 
 func copyTimePtr(raw *time.Time) *time.Time {
