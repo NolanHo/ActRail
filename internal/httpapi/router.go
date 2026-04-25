@@ -3,11 +3,15 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"actrail/internal/app"
 	"actrail/internal/config"
+	"actrail/internal/httpapi/authn"
 )
 
 type Router struct {
@@ -22,11 +26,6 @@ type authStatus struct {
 
 type loginRequest struct {
 	Password string `json:"password"`
-}
-
-type loginResponse struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
 }
 
 func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handler {
@@ -65,21 +64,34 @@ func (r Router) healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (r Router) me(w http.ResponseWriter, req *http.Request) {
-	_, err := req.Cookie(r.cfg.Auth.CookieName)
-	writeJSON(w, http.StatusOK, authStatus{OK: err == nil})
+	writeJSON(w, http.StatusOK, authStatus{OK: authn.Authenticated(req, r.cfg.Auth)})
 }
 
 func (r Router) login(w http.ResponseWriter, req *http.Request) {
 	var body loginRequest
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil && !errors.Is(err, http.ErrBodyNotAllowed) {
-		writeJSON(w, http.StatusBadRequest, loginResponse{OK: false, Error: "invalid json"})
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
-	if body.Password == "" {
-		writeJSON(w, http.StatusBadRequest, loginResponse{OK: false, Error: "password required"})
+	if strings.TrimSpace(body.Password) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "password required", "password")
 		return
 	}
-	writeJSON(w, http.StatusNotImplemented, loginResponse{OK: false, Error: "login not implemented"})
+	if !authn.Configured(r.cfg.Auth) {
+		writeError(w, http.StatusNotImplemented, "unsupported", "password auth not configured", "")
+		return
+	}
+	if !authn.PasswordMatches(r.cfg.Auth, body.Password) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid password", "")
+		return
+	}
+	cookie, err := authn.SessionCookie(r.cfg.Auth)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), "")
+		return
+	}
+	http.SetCookie(w, cookie)
+	writeJSON(w, http.StatusOK, authStatus{OK: true})
 }
 
 func (r Router) logout(w http.ResponseWriter, _ *http.Request) {
@@ -99,12 +111,32 @@ func (r Router) bootstrap(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r Router) listSessions(w http.ResponseWriter, req *http.Request) {
+	offset, err := queryNonNegativeInt(req, "offset")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "offset")
+		return
+	}
+	limit, err := queryNonNegativeInt(req, "limit")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "limit")
+		return
+	}
+	groupOffset, err := queryNonNegativeInt(req, "group_offset")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "group_offset")
+		return
+	}
+	groupLimit, err := queryNonNegativeInt(req, "group_limit")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "group_limit")
+		return
+	}
 	payload, err := r.app.ListSessions(req.Context(), app.ListSessionsRequest{
 		GroupKey:    req.URL.Query().Get("group_key"),
-		Offset:      queryInt(req, "offset"),
-		Limit:       queryInt(req, "limit"),
-		GroupOffset: queryInt(req, "group_offset"),
-		GroupLimit:  queryInt(req, "group_limit"),
+		Offset:      offset,
+		Limit:       limit,
+		GroupOffset: groupOffset,
+		GroupLimit:  groupLimit,
 	})
 	if err != nil {
 		writeAppError(w, err)
@@ -150,6 +182,8 @@ func writeAppError(w http.ResponseWriter, err error) {
 			status = http.StatusConflict
 		case "unsupported":
 			status = http.StatusNotImplemented
+		case "transport_reset_required":
+			status = http.StatusConflict
 		}
 		writeError(w, status, appErr.Code, appErr.Message, appErr.Field)
 		return
@@ -157,14 +191,28 @@ func writeAppError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), "")
 }
 
-func queryInt(req *http.Request, key string) int {
-	v := req.URL.Query().Get(key)
-	if v == "" {
-		return 0
+func decodeJSONBody(req *http.Request, dst any) error {
+	dec := json.NewDecoder(req.Body)
+	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
 	}
-	n, err := strconv.Atoi(v)
+	return nil
+}
+
+func queryNonNegativeInt(req *http.Request, key string) (int, error) {
+	value := strings.TrimSpace(req.URL.Query().Get(key))
+	if value == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(value)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("query parameter %q must be an integer", key)
 	}
-	return n
+	if n < 0 {
+		return 0, fmt.Errorf("query parameter %q must be a non-negative integer", key)
+	}
+	return n, nil
 }

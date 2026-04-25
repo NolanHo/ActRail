@@ -28,6 +28,9 @@ func TestLoadDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Launch.AvailableBackends, []string{"pi", "codex"}) {
 		t.Fatalf("unexpected default backends: %#v", cfg.Launch.AvailableBackends)
 	}
+	if cfg.Auth.Password != "" {
+		t.Fatalf("expected empty auth password by default, got %q", cfg.Auth.Password)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -37,6 +40,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("ACTRAIL_AVAILABLE_BACKENDS", "pi")
 	t.Setenv("ACTRAIL_AVAILABLE_PROVIDERS", "openrouter,anthropic")
 	t.Setenv("ACTRAIL_AVAILABLE_MODELS", "claude-sonnet,gemini-2.5-pro")
+	t.Setenv("ACTRAIL_AUTH_PASSWORD", "secret")
 
 	cfg := Load()
 
@@ -57,5 +61,8 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Launch.Models, []string{"claude-sonnet", "gemini-2.5-pro"}) {
 		t.Fatalf("unexpected model override: %#v", cfg.Launch.Models)
+	}
+	if cfg.Auth.Password != "secret" {
+		t.Fatalf("expected auth password override, got %q", cfg.Auth.Password)
 	}
 }
