@@ -236,7 +236,7 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 	return SessionStateResponse{
 		Busy:                 record.state.Busy(),
 		Queue:                queueSnapshotFromState(record.state),
-		UIRequest:            nil,
+		UIRequest:            copySessionUIRequest(record.uiRequest),
 		PartialAssistantTurn: partialAssistantTurn(record.transcript),
 		TailSeq:              record.transcript.TailSeq().Uint64(),
 		ResumeCursors:        SessionResumeCursors{},
