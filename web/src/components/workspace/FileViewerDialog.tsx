@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { api } from "../../lib/api";
-import type { GitFileVersionsResponse, SessionFileListEntry, SessionFileReadResponse } from "../../lib/types";
+import type { GitFileVersion, GitFileVersionsResponse, SessionFileListEntry, SessionFileReadResponse } from "../../lib/types";
 import { MonacoWorkspace } from "./MonacoWorkspace";
 import { normalizeRememberedLine, preferredFileSelectionForSession, rememberFileSelection } from "./fileSelectionState";
 
@@ -168,6 +168,65 @@ function PlainDiffWorkspace({ baseText, currentText }: { baseText: string; curre
   );
 }
 
+function formatCommitTime(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  return new Date(value * 1000).toLocaleString();
+}
+
+function normalizeGitVersions(value: GitFileVersionsResponse | null): GitFileVersion[] {
+  return Array.isArray(value?.items)
+    ? value.items.filter((item): item is GitFileVersion => Boolean(item && typeof item === "object" && typeof item.version_id === "string" && typeof item.label === "string"))
+    : [];
+}
+
+function GitVersionsPanel({ value }: { value: GitFileVersionsResponse | null }) {
+  const items = normalizeGitVersions(value);
+  return (
+    <ScrollArea className="fileViewerSurface rounded-2xl border border-border/60 bg-background/70 p-4" data-testid="file-versions-view">
+      <div className="space-y-3">
+        {value?.fallback_reason ? <p className="text-sm text-muted-foreground">{value.fallback_reason}</p> : null}
+        {items.length ? items.map((item) => (
+          <article key={item.version_id} className="rounded-2xl border border-border/60 bg-card/70 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-foreground">{item.label}</p>
+                {item.message ? <p className="text-sm text-muted-foreground">{item.message}</p> : null}
+              </div>
+              {item.current ? <span className="rounded-full border border-border/70 px-2 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Current</span> : null}
+            </div>
+            <dl className="mt-3 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+              <div>
+                <dt className="text-xs uppercase tracking-[0.14em]">Version</dt>
+                <dd className="font-mono text-foreground">{item.version_id}</dd>
+              </div>
+              {item.commit_hash ? (
+                <div>
+                  <dt className="text-xs uppercase tracking-[0.14em]">Commit</dt>
+                  <dd className="font-mono text-foreground">{item.commit_hash}</dd>
+                </div>
+              ) : null}
+              {item.author ? (
+                <div>
+                  <dt className="text-xs uppercase tracking-[0.14em]">Author</dt>
+                  <dd className="text-foreground">{item.author}</dd>
+                </div>
+              ) : null}
+              {formatCommitTime(item.commit_ts) ? (
+                <div>
+                  <dt className="text-xs uppercase tracking-[0.14em]">Timestamp</dt>
+                  <dd className="text-foreground">{formatCommitTime(item.commit_ts)}</dd>
+                </div>
+              ) : null}
+            </dl>
+          </article>
+        )) : <p className="text-sm text-muted-foreground">No git versions available.</p>}
+      </div>
+    </ScrollArea>
+  );
+}
+
 function FileTreeNodeRow({
   depth,
   node,
@@ -295,7 +354,7 @@ export function FileViewerDialog({
         if (controller.signal.aborted || requestId !== listRequestIdRef.current) {
           return;
         }
-        const entries = normalizeFileListEntries(response.entries);
+        const entries = normalizeFileListEntries(response.entries ?? response.items);
         if (!entries) {
           setTree([]);
           setTreeError("Unable to list files");
@@ -464,7 +523,7 @@ export function FileViewerDialog({
       if (controller.signal.aborted) {
         return;
       }
-      const entries = normalizeFileListEntries(response.entries);
+      const entries = normalizeFileListEntries(response.entries ?? response.items);
       if (!entries) {
         setTree((current) => setTreeNodeError(current, dirPath, "Unable to list files"));
         return;
@@ -586,18 +645,27 @@ export function FileViewerDialog({
             {loading ? <p className="text-sm text-muted-foreground">Loading file…</p> : null}
             {!loading && error ? <p className="text-sm text-destructive">{error}</p> : null}
             {!loading && !error && viewMode === "diff" && diffPayload ? (
-              <MonacoWorkspace
-                mode="diff"
-                path={normalizedPath}
-                line={activeLine}
-                originalText={String(diffPayload.base_text || "")}
-                modifiedText={String(diffPayload.current_text || "")}
-                fallback={<PlainDiffWorkspace baseText={String(diffPayload.base_text || "")} currentText={String(diffPayload.current_text || "")} />}
-              />
+              (typeof diffPayload.base_text === "string" || typeof diffPayload.current_text === "string") ? (
+                <MonacoWorkspace
+                  mode="diff"
+                  path={normalizedPath}
+                  line={activeLine}
+                  originalText={String(diffPayload.base_text || "")}
+                  modifiedText={String(diffPayload.current_text || "")}
+                  fallback={<PlainDiffWorkspace baseText={String(diffPayload.base_text || "")} currentText={String(diffPayload.current_text || "")} />}
+                />
+              ) : (
+                <GitVersionsPanel value={diffPayload} />
+              )
             ) : null}
             {!loading && !error && payload?.kind === "image" && payload.image_url ? (
               <div className="fileViewerSurface flex items-start justify-center overflow-auto rounded-2xl border border-border/60 bg-background/70 p-4">
                 <img src={payload.image_url} alt={normalizedPath || "Session file"} className="max-h-full rounded-xl object-contain" />
+              </div>
+            ) : null}
+            {!loading && !error && payload?.kind === "image" && !payload.image_url ? (
+              <div className="fileViewerSurface rounded-2xl border border-border/60 bg-background/70 p-4 text-sm text-muted-foreground">
+                {payload.unsupported_reason || "Image preview unavailable."}
               </div>
             ) : null}
             {!loading && !error && viewMode === "preview" && canPreview && payload?.kind !== "image" ? (
@@ -606,13 +674,19 @@ export function FileViewerDialog({
               </ScrollArea>
             ) : null}
             {!loading && !error && viewMode === "file" && payload?.kind !== "image" ? (
-              <MonacoWorkspace
-                mode="file"
-                path={normalizedPath}
-                line={activeLine}
-                modifiedText={payload?.text || ""}
-                fallback={<PlainTextWorkspace value={payload?.text || ""} />}
-              />
+              payload?.kind === "text" || typeof payload?.text === "string" ? (
+                <MonacoWorkspace
+                  mode="file"
+                  path={normalizedPath}
+                  line={activeLine}
+                  modifiedText={payload?.text || ""}
+                  fallback={<PlainTextWorkspace value={payload?.text || ""} />}
+                />
+              ) : (
+                <div className="fileViewerSurface rounded-2xl border border-border/60 bg-background/70 p-4 text-sm text-muted-foreground">
+                  {payload?.unsupported_reason || "This file cannot be rendered in the browser."}
+                </div>
+              )
             ) : null}
           </section>
         </div>

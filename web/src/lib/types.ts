@@ -98,9 +98,38 @@ export interface SessionBootstrapResponse {
   tmux_available?: boolean;
 }
 
+export interface SessionCapabilitySnapshot {
+  ws_realtime?: boolean;
+  voice?: boolean;
+  harness?: boolean;
+  notifications?: boolean;
+  pi_ui?: boolean;
+  workspace_read?: boolean;
+  workspace_write?: boolean;
+}
+
 export interface SessionDetailsResponse {
-  ok?: boolean;
-  session: SessionSummary;
+  session_id: string;
+  runtime_id?: string | null;
+  thread_id?: string | null;
+  title?: string;
+  alias?: string;
+  display_name?: string;
+  first_user_message?: string;
+  cwd?: string;
+  agent_backend?: string;
+  provider?: string;
+  model?: string;
+  busy?: boolean;
+  focused?: boolean;
+  queue_length?: number;
+  priority_offset?: number;
+  snooze_until?: number | null;
+  dependency_session_id?: string | null;
+  last_updated_ts?: number;
+  last_activity_ts?: number;
+  historical?: boolean;
+  capabilities?: SessionCapabilitySnapshot;
 }
 
 export interface CreateSessionResponse {
@@ -433,15 +462,19 @@ export interface RealtimeEnvelope {
   payload?: Record<string, unknown>;
 }
 
+export interface WorkspaceHistoryItem {
+  path: string;
+  label?: string;
+}
+
 export interface WorkspaceResponse {
   ok?: boolean;
   session_id?: string;
   runtime_id?: string | null;
-  diagnostics?: Record<string, unknown> | null;
-  context_usage?: ContextUsagePayload | null;
-  queue?: {
-    items?: Array<string | { text?: string }>;
-  } | null;
+  root_path?: string;
+  selected_path?: string;
+  open_paths?: string[];
+  history_items?: WorkspaceHistoryItem[];
 }
 
 export interface SessionCommand {
@@ -469,9 +502,12 @@ export interface SessionFileListEntry {
 
 export interface SessionFileListResponse {
   ok?: boolean;
+  root_path?: string;
   cwd?: string;
   path?: string;
-  entries: SessionFileListEntry[];
+  entries?: SessionFileListEntry[];
+  items?: SessionFileListEntry[];
+  truncated?: boolean;
 }
 
 export interface SessionFileReadResponse {
@@ -480,11 +516,26 @@ export interface SessionFileReadResponse {
   path?: string;
   rel?: string;
   size?: number;
+  size_bytes?: number;
   text?: string;
   editable?: boolean;
   version?: string;
   image_url?: string;
   content_type?: string;
+  mime_type?: string;
+  encoding?: string;
+  download_name?: string;
+  unsupported_reason?: string;
+}
+
+export interface GitFileVersion {
+  version_id: string;
+  label: string;
+  commit_hash?: string;
+  author?: string;
+  commit_ts?: number;
+  message?: string;
+  current?: boolean;
 }
 
 export interface GitFileVersionsResponse {
@@ -497,6 +548,8 @@ export interface GitFileVersionsResponse {
   current_text?: string;
   base_exists?: boolean;
   base_text?: string;
+  fallback_reason?: string;
+  items?: GitFileVersion[];
 }
 
 export interface HarnessConfigResponse {

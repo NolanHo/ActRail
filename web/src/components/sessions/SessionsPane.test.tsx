@@ -14,7 +14,7 @@ vi.mock("../../lib/api", () => ({
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     setSessionFocus: vi.fn().mockResolvedValue({ ok: true, focused: true }),
-    getSessionDetails: vi.fn().mockResolvedValue({ ok: true, session: { session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi", priority_offset: 0 } }),
+    getSessionDetails: vi.fn().mockResolvedValue({ session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi", priority_offset: 0 }),
   },
 }));
 
@@ -469,17 +469,12 @@ describe("SessionsPane", () => {
 
   it("duplicates a session from details and selects returned session", async () => {
     vi.mocked(api.getSessionDetails).mockResolvedValue({
-      ok: true,
-      session: {
-        session_id: "sess-1",
-        cwd: "/tmp/project",
-        agent_backend: "codex",
-        provider_choice: "openai-api",
-        model: "gpt-5.4",
-        reasoning_effort: "high",
-        service_tier: "fast",
-        transport: "tmux",
-      },
+      session_id: "sess-1",
+      cwd: "/tmp/project",
+      agent_backend: "codex",
+      provider: "openai-api",
+      model: "gpt-5.4",
+      title: "Inbox cleanup",
     } as any);
 
     const sessionsStore = renderSessionsPane({
@@ -508,13 +503,11 @@ describe("SessionsPane", () => {
     expect(api.getSessionDetails).toHaveBeenCalledWith("sess-1");
     expect(api.createSession).toHaveBeenCalledWith({
       cwd: "/tmp/project",
-      backend: "codex",
+      agent_backend: "codex",
       model: "gpt-5.4",
-      model_provider: "openai",
-      preferred_auth_method: "apikey",
-      reasoning_effort: "high",
-      service_tier: "fast",
-      create_in_tmux: true,
+      provider: "openai-api",
+      reasoning_effort: undefined,
+      title: "Inbox cleanup",
     });
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-2");
   });
@@ -540,10 +533,7 @@ describe("SessionsPane", () => {
   });
 
   it("opens edit dialog from icon action and saves fields", async () => {
-    vi.mocked(api.getSessionDetails).mockResolvedValue({
-      ok: true,
-      session: { session_id: "sess-1", alias: "Inbox cleanup", first_user_message: "整理一下今天的会话", agent_backend: "pi", priority_offset: 0 },
-    } as any);
+    vi.mocked(api.getSessionDetails).mockResolvedValue({ session_id: "sess-1", alias: "Inbox cleanup", first_user_message: "整理一下今天的会话", agent_backend: "pi", priority_offset: 0 } as any);
 
     const sessionsStore = renderSessionsPane({
       items: [

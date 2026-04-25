@@ -54,7 +54,7 @@ function EmptyDetailsWorkspace() {
 
 export function AppShell() {
   const { bySessionId } = useMessagesStore();
-  const { activeSessionId, bootstrapLoaded, items } = useSessionsStore();
+  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items } = useSessionsStore();
   const { busyBySessionId } = useLiveSessionStore();
   const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
   const sessionsStoreApi = useSessionsStoreApi();
@@ -73,6 +73,9 @@ export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [themeMode, setThemeMode] = useState(() => readThemeMode());
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const voiceSupported = bootstrapCapabilities?.voice !== false;
+  const harnessSupported = bootstrapCapabilities?.harness !== false;
+  const notificationsSupported = bootstrapCapabilities?.notifications !== false;
   const {
     announcementEnabled,
     announcementLabel,
@@ -94,7 +97,7 @@ export function AppShell() {
     voiceSettings,
     voiceSettingsOpen,
     voiceSettingsStatus,
-  } = useAppShellAudio();
+  } = useAppShellAudio({ bootstrapLoaded, voiceSupported });
   const backgroundReplySoundPrimedSessionIdsRef = useRef(new Set<string>());
   const suppressedReplySoundSessionIdsRef = useRef(new Set<string>());
   const activeSessionReplySoundPrimingRef = useRef<string | null>(null);
@@ -162,7 +165,9 @@ export function AppShell() {
   } = useAppShellNotifications({
     activeSessionId,
     activeTitle,
+    bootstrapLoaded,
     bySessionId,
+    notificationsSupported,
     playReplyBeep,
     realtimeConnected,
     suppressedReplySoundSessionIdsRef,
@@ -327,6 +332,10 @@ export function AppShell() {
   }, [activeSessionBusy, activeSessionId, interruptActiveSession]);
 
   const triggerTestPushNotification = async () => {
+    if (!notificationsSupported) {
+      setVoiceSettingsStatus("Notifications are unavailable on this backend.");
+      return;
+    }
     setVoiceSettingsStatus("Sending test push...");
     try {
       const response = await api.triggerTestPushNotification() as { sent_count?: number; failed_count?: number; target_count?: number };
@@ -448,6 +457,7 @@ export function AppShell() {
         fileViewerPath={fileViewerPath}
         fileViewerRequestKey={fileViewerRequestKey}
         harnessOpen={harnessOpen}
+        harnessSupported={harnessSupported}
         newSessionOpen={newSessionOpen}
         sessionsRail={renderSessionsRail()}
         sidebarOpen={sidebarOpen}

@@ -126,10 +126,12 @@ describe("api", () => {
     });
   });
 
-  it("requests session details", async () => {
+  it("requests session details and normalizes the flat backend shape", async () => {
     const payload: SessionDetailsResponse = {
-      ok: true,
-      session: { session_id: "sess-1", model: "gpt-5.4", priority_offset: 0.25 },
+      session_id: "sess-1",
+      agent_backend: "pi",
+      model: "gpt-5.4",
+      priority_offset: 0.25,
     };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -143,6 +145,53 @@ describe("api", () => {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
+  });
+
+  it("posts canonical create-session fields and flattens the session envelope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        ok: true,
+        session: {
+          session_id: "sess-2",
+          runtime_id: "rt-2",
+          agent_backend: "pi",
+          alias: "Inbox cleanup",
+          cwd: "/tmp/project",
+          busy: false,
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.createSession({
+      cwd: "/tmp/project",
+      title: "Inbox cleanup",
+      agent_backend: "pi",
+      provider: "openrouter",
+      model: "gpt-5.4",
+      reasoning_effort: "high",
+    })).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      session_id: "sess-2",
+      runtime_id: "rt-2",
+      backend: "pi",
+      alias: "Inbox cleanup",
+    }));
+
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        agent_backend: "pi",
+        cwd: "/tmp/project",
+        provider: "openrouter",
+        model: "gpt-5.4",
+        reasoning_effort: "high",
+        resume_session_id: undefined,
+        title: "Inbox cleanup",
+      }),
+    }));
   });
 
   it("requests more sessions for a specific cwd group", async () => {
@@ -350,10 +399,10 @@ describe("api", () => {
 
   it("requests workspace data", async () => {
     const payload: WorkspaceResponse = {
-      ok: true,
-      session_id: "session-1",
-      diagnostics: { status: "ok" },
-      queue: { items: ["Queued follow-up"] },
+      root_path: "/tmp/project",
+      selected_path: "src/main.tsx",
+      open_paths: ["src/main.tsx"],
+      history_items: [{ path: "README.md", label: "README" }],
     };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -414,11 +463,11 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => '{"ok":true,"kind":"text","text":"hello"}',
+      text: async () => '{"kind":"text","mime_type":"text/plain","size_bytes":5,"text":"hello"}',
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.getFileRead("pi-session", "src/main.tsx")).resolves.toEqual({ ok: true, kind: "text", text: "hello" });
+    await expect(api.getFileRead("pi-session", "src/main.tsx")).resolves.toEqual({ kind: "text", mime_type: "text/plain", content_type: "text/plain", size_bytes: 5, size: 5, text: "hello" });
     expect(fetchMock).toHaveBeenCalledWith("api/sessions/pi-session/file/read?path=src%2Fmain.tsx", {
       headers: { Accept: "application/json" },
       signal: undefined,
@@ -429,14 +478,16 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => '{"ok":true,"path":"","entries":[{"name":"src","path":"src","kind":"dir"}]}',
+      text: async () => '{"root_path":"/tmp/project","path":"","items":[{"name":"src","path":"src","kind":"dir"}],"truncated":false}',
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getFiles("pi-session")).resolves.toEqual({
-      ok: true,
+      root_path: "/tmp/project",
       path: "",
+      items: [{ name: "src", path: "src", kind: "dir" }],
       entries: [{ name: "src", path: "src", kind: "dir" }],
+      truncated: false,
     });
     expect(fetchMock).toHaveBeenCalledWith("api/sessions/pi-session/file/list", {
       headers: { Accept: "application/json" },
@@ -448,13 +499,13 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => '{"ok":true,"path":"src","entries":[{"name":"main.tsx","path":"src/main.tsx","kind":"file"}]}',
+      text: async () => '{"path":"src","items":[{"name":"main.tsx","path":"src/main.tsx","kind":"file"}]}',
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getFiles("pi-session", "src")).resolves.toEqual({
-      ok: true,
       path: "src",
+      items: [{ name: "main.tsx", path: "src/main.tsx", kind: "file" }],
       entries: [{ name: "main.tsx", path: "src/main.tsx", kind: "file" }],
     });
     expect(fetchMock).toHaveBeenCalledWith("api/sessions/pi-session/file/list?path=src", {
@@ -467,11 +518,11 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => '{"ok":true,"path":"src/main.tsx","current_text":"x"}',
+      text: async () => '{"path":"src/main.tsx","items":[{"version_id":"workspace","label":"Workspace","current":true}],"fallback_reason":"workspace only"}',
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.getGitFileVersions("pi-session", "src/main.tsx")).resolves.toEqual({ ok: true, path: "src/main.tsx", current_text: "x" });
+    await expect(api.getGitFileVersions("pi-session", "src/main.tsx")).resolves.toEqual({ path: "src/main.tsx", items: [{ version_id: "workspace", label: "Workspace", current: true }], fallback_reason: "workspace only" });
     expect(fetchMock).toHaveBeenCalledWith("api/sessions/pi-session/git/file_versions?path=src%2Fmain.tsx", {
       headers: { Accept: "application/json" },
       signal: undefined,
