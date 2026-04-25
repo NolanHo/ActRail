@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -74,5 +75,98 @@ func TestDecodePingCommand(t *testing.T) {
 	}
 	if cmd.Stream != SystemStream {
 		t.Fatalf("Stream = %q, want %q", cmd.Stream, SystemStream)
+	}
+}
+
+func TestDecodeSendCommand(t *testing.T) {
+	cmd, err := DecodeSendCommand(RawFrame{
+		Type:      FrameTypeSend,
+		RequestID: "req_send_1",
+		TS:        1760000000,
+		Stream:    "session:s_123",
+		Payload:   []byte(`{"session_id":"s_123","text":"  hello  "}`),
+	})
+	if err != nil {
+		t.Fatalf("DecodeSendCommand() error = %v", err)
+	}
+	if cmd.RequestID != "req_send_1" || cmd.SessionID.String() != "s_123" || cmd.Text != "hello" {
+		t.Fatalf("cmd = %#v", cmd)
+	}
+}
+
+func TestDecodeEnqueueCommand(t *testing.T) {
+	cmd, err := DecodeEnqueueCommand(RawFrame{
+		Type:      FrameTypeEnqueue,
+		RequestID: "req_enqueue_1",
+		TS:        1760000000,
+		Stream:    "session:s_123",
+		Payload:   []byte(`{"session_id":"s_123","text":"queued"}`),
+	})
+	if err != nil {
+		t.Fatalf("DecodeEnqueueCommand() error = %v", err)
+	}
+	if cmd.RequestID != "req_enqueue_1" || cmd.SessionID.String() != "s_123" || cmd.Text != "queued" {
+		t.Fatalf("cmd = %#v", cmd)
+	}
+}
+
+func TestDecodeInterruptCommand(t *testing.T) {
+	cmd, err := DecodeInterruptCommand(RawFrame{
+		Type:      FrameTypeInterrupt,
+		RequestID: "req_interrupt_1",
+		TS:        1760000000,
+		Stream:    "session:s_123",
+		Payload:   []byte(`{"session_id":"s_123"}`),
+	})
+	if err != nil {
+		t.Fatalf("DecodeInterruptCommand() error = %v", err)
+	}
+	if cmd.RequestID != "req_interrupt_1" || cmd.SessionID.String() != "s_123" {
+		t.Fatalf("cmd = %#v", cmd)
+	}
+}
+
+func TestDecodeUIResponseCommand(t *testing.T) {
+	cmd, err := DecodeUIResponseCommand(RawFrame{
+		Type:      FrameTypeUIResponse,
+		RequestID: "req_ui_1",
+		TS:        1760000000,
+		Stream:    "session:s_123:ui",
+		Payload:   []byte(`{"session_id":"s_123","response_to":"ask_1","value":{"choice":"A"}}`),
+	})
+	if err != nil {
+		t.Fatalf("DecodeUIResponseCommand() error = %v", err)
+	}
+	if cmd.RequestID != "req_ui_1" || cmd.SessionID.String() != "s_123" || cmd.ResponseTo != "ask_1" {
+		t.Fatalf("cmd = %#v", cmd)
+	}
+	if !bytes.Equal(cmd.Value, []byte(`{"choice":"A"}`)) {
+		t.Fatalf("Value = %s", string(cmd.Value))
+	}
+}
+
+func TestDecodeSendCommandRejectsSessionMismatch(t *testing.T) {
+	_, err := DecodeSendCommand(RawFrame{
+		Type:      FrameTypeSend,
+		RequestID: "req_send_1",
+		TS:        1760000000,
+		Stream:    "session:s_123",
+		Payload:   []byte(`{"session_id":"s_456","text":"hello"}`),
+	})
+	if err == nil {
+		t.Fatal("DecodeSendCommand() error = nil, want error")
+	}
+}
+
+func TestDecodeUIResponseCommandRejectsMainStream(t *testing.T) {
+	_, err := DecodeUIResponseCommand(RawFrame{
+		Type:      FrameTypeUIResponse,
+		RequestID: "req_ui_1",
+		TS:        1760000000,
+		Stream:    "session:s_123",
+		Payload:   []byte(`{"session_id":"s_123","response_to":"ask_1","value":"A"}`),
+	})
+	if err == nil {
+		t.Fatal("DecodeUIResponseCommand() error = nil, want error")
 	}
 }

@@ -41,6 +41,7 @@ type Handler struct {
 	newTicker     func(time.Duration) Ticker
 	connectionIDs IDSource
 	frameIDs      IDSource
+	commandTarget CommandTarget
 	initErr       error
 }
 
@@ -134,6 +135,12 @@ func WithFrameIDs(ids IDSource) HandlerOption {
 func WithUpgrader(upgrader websocket.Upgrader) HandlerOption {
 	return func(h *Handler) {
 		h.upgrader = upgrader
+	}
+}
+
+func WithCommandTarget(target CommandTarget) HandlerOption {
+	return func(h *Handler) {
+		h.commandTarget = target
 	}
 }
 
@@ -265,7 +272,7 @@ func (h *Handler) handleIncomingFrame(state *ConnectionState, payload []byte) er
 	if err != nil {
 		return state.WriteFrames(now, state.errorFrames(now, RawFrame{Stream: SystemStream.String()}, ErrorCodeInvalidRequest, err.Error(), "payload")...)
 	}
-	frames, err := state.HandleFrame(now, raw, h.replay)
+	frames, err := state.HandleFrame(now, raw, h.replay, h.commandTarget)
 	if err != nil {
 		return state.WriteFrames(now, state.errorFrames(now, raw, ErrorCodeInternal, err.Error(), "payload")...)
 	}
