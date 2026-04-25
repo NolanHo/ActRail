@@ -1877,10 +1877,10 @@ describe("AppShell", () => {
     expect(getToolbarTodoButton()).toBeNull();
   });
 
-  it("uses the first user message as the active title when no alias is set", () => {
+  it("uses cwd as the active title when alias and title are missing", () => {
     const sessionsStore = createStaticStore(
       {
-        items: [{ session_id: "4a145abccb9a48889dc7f3e5bed735f2", first_user_message: "我准备用 preact + vite 重构web端，请帮我出个规划", agent_backend: "pi", busy: true }],
+        items: [{ session_id: "4a145abccb9a48889dc7f3e5bed735f2", cwd: "/root/code/ActRail", first_user_message: "我准备用 preact + vite 重构web端，请帮我出个规划", agent_backend: "pi", busy: true }],
         activeSessionId: "4a145abccb9a48889dc7f3e5bed735f2",
         loading: false,
         newSessionDefaults: null,
@@ -1920,7 +1920,8 @@ describe("AppShell", () => {
       mountNode,
     );
 
-    expect(getRoot().querySelector(".conversationTitle")?.textContent).toContain("我准备用 preact + vite 重构web端，请帮我出个规划");
+    expect(getRoot().querySelector(".conversationTitle")?.textContent).toContain("/root/code/ActRail");
+    expect(getRoot().querySelector(".conversationTitle")?.textContent).not.toContain("我准备用 preact + vite 重构web端，请帮我出个规划");
   });
 
   it("refreshes sessions when active session polling returns 404", async () => {
