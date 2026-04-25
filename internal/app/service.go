@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -22,11 +24,16 @@ type Service interface {
 }
 
 type Stub struct {
-	cfg config.Config
+	cfg      config.Config
+	registry *sessionRegistry
 }
 
 func NewStub(cfg config.Config) *Stub {
-	return &Stub{cfg: cfg}
+	return newStub(cfg, time.Now)
+}
+
+func newStub(cfg config.Config, now func() time.Time) *Stub {
+	return &Stub{cfg: cfg, registry: newSessionRegistry(now)}
 }
 
 type BootstrapSnapshot struct {
@@ -138,6 +145,10 @@ func Invalid(field, message string) *Error {
 	return &Error{Code: "invalid_request", Message: message, Field: field}
 }
 
+func NotFound(message string) *Error {
+	return &Error{Code: "not_found", Message: message}
+}
+
 func (s *Stub) Bootstrap(_ context.Context) BootstrapSnapshot {
 	return BootstrapSnapshot{
 		ProtocolVersion: s.cfg.Protocol.Version,
@@ -173,19 +184,143 @@ func (s *Stub) ListSessions(_ context.Context, req ListSessionsRequest) (ListSes
 		v := req.GroupKey
 		groupKey = &v
 	}
+	items := s.registry.List()
+	offset, limit := listWindow(req)
+	start, end := paginate(len(items), offset, limit)
+	summaries := make([]SessionSummary, 0, end-start)
+	for _, record := range items[start:end] {
+		summaries = append(summaries, sessionSummaryFromRecord(record))
+	}
 	return ListSessionsResponse{
-		Items:          []SessionSummary{},
-		RemainingCount: 0,
+		Items:          summaries,
+		RemainingCount: len(items) - end,
 		GroupKey:       groupKey,
 	}, nil
 }
 
 func (s *Stub) CreateSession(_ context.Context, req CreateSessionRequest) (CreateSessionResponse, error) {
-	if strings.TrimSpace(req.CWD) == "" {
+	cwd := strings.TrimSpace(req.CWD)
+	if cwd == "" {
 		return CreateSessionResponse{}, Invalid("cwd", "cwd required")
 	}
-	if _, err := session.ParseBackend(req.AgentBackend); err != nil {
+	backend, err := session.ParseBackend(req.AgentBackend)
+	if err != nil {
 		return CreateSessionResponse{}, Invalid("agent_backend", err.Error())
 	}
-	return CreateSessionResponse{}, Unsupported("session creation not implemented")
+	if resumeID := optionalString(req.ResumeSessionID); resumeID != "" {
+		parsed, err := session.ParseSessionID(resumeID)
+		if err != nil {
+			return CreateSessionResponse{}, Invalid("resume_session_id", err.Error())
+		}
+		if _, ok := s.registry.Lookup(parsed); !ok {
+			return CreateSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", parsed))
+		}
+		return CreateSessionResponse{}, Unsupported("session resume not implemented")
+	}
+	record, err := s.registry.Create(sessionCreateSpec{
+		Backend:         backend,
+		CWD:             cwd,
+		Provider:        optionalString(req.Provider),
+		Model:           optionalString(req.Model),
+		ReasoningEffort: optionalString(req.ReasoningEffort),
+		Title:           optionalString(req.Title),
+	})
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	stream, err := session.MainStream(record.identity)
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	return CreateSessionResponse{
+		OK:      true,
+		Session: createdSessionFromRecord(record),
+		WSAttach: &SessionAttachRequest{
+			SessionID:            record.identity.SessionID().String(),
+			SuggestSubscriptions: []string{stream.String()},
+		},
+	}, nil
+}
+
+func sessionSummaryFromRecord(record sessionRecord) SessionSummary {
+	runtimeID, _ := record.identity.RuntimeID()
+	threadID, _ := record.identity.ThreadID()
+	return SessionSummary{
+		SessionID:     record.identity.SessionID().String(),
+		RuntimeID:     runtimeID.String(),
+		ThreadID:      threadID.String(),
+		AgentBackend:  record.identity.Backend().String(),
+		Title:         record.title,
+		CWD:           record.cwd,
+		Busy:          record.state.Busy(),
+		LastUpdatedTS: timestampSeconds(record.updatedAt),
+		Historical:    record.identity.Historical(),
+	}
+}
+
+func createdSessionFromRecord(record sessionRecord) *CreatedSession {
+	runtimeID, _ := record.identity.RuntimeID()
+	threadID, _ := record.identity.ThreadID()
+	return &CreatedSession{
+		SessionID:    record.identity.SessionID().String(),
+		RuntimeID:    runtimeID.String(),
+		ThreadID:     threadID.String(),
+		AgentBackend: record.identity.Backend().String(),
+		CWD:          record.cwd,
+		Busy:         record.state.Busy(),
+	}
+}
+
+func (s *Stub) capabilitiesSnapshot() SessionCapabilitySnapshot {
+	return SessionCapabilitySnapshot{
+		WSRealtime:     s.cfg.Features.WebSocketRealtime,
+		Voice:          s.cfg.Features.Voice,
+		Harness:        s.cfg.Features.Harness,
+		Notifications:  s.cfg.Features.Notifications,
+		PIUI:           s.cfg.Features.PIUI,
+		WorkspaceRead:  s.cfg.Features.WorkspaceRead,
+		WorkspaceWrite: s.cfg.Features.WorkspaceWrite,
+	}
+}
+
+func optionalString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(*v)
+}
+
+func timestampSeconds(ts time.Time) float64 {
+	if ts.IsZero() {
+		return 0
+	}
+	return float64(ts.UnixNano()) / float64(time.Second)
+}
+
+func listWindow(req ListSessionsRequest) (int, int) {
+	offset := req.Offset
+	limit := req.Limit
+	if strings.TrimSpace(req.GroupKey) != "" {
+		if req.GroupOffset > 0 {
+			offset = req.GroupOffset
+		}
+		if req.GroupLimit > 0 {
+			limit = req.GroupLimit
+		}
+	}
+	return offset, limit
+}
+
+func paginate(total, offset, limit int) (int, int) {
+	if offset >= total {
+		return total, total
+	}
+	if limit <= 0 {
+		return offset, total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return offset, end
 }

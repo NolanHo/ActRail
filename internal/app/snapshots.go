@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"actrail/internal/domain/session"
 )
@@ -172,30 +173,109 @@ type GitFileVersion struct {
 	Current    bool    `json:"current"`
 }
 
-func (s *Stub) SessionDetails(_ context.Context, _ SessionDetailsRequest) (SessionDetailsResponse, error) {
-	return SessionDetailsResponse{}, Unsupported("session details not implemented")
+func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (SessionDetailsResponse, error) {
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
+		return SessionDetailsResponse{}, err
+	}
+	runtimeID, _ := record.identity.RuntimeID()
+	threadID, _ := record.identity.ThreadID()
+	return SessionDetailsResponse{
+		SessionID:      record.identity.SessionID().String(),
+		RuntimeID:      runtimeID.String(),
+		ThreadID:       threadID.String(),
+		Title:          record.title,
+		CWD:            record.cwd,
+		AgentBackend:   record.identity.Backend().String(),
+		Provider:       record.provider,
+		Model:          record.model,
+		Busy:           record.state.Busy(),
+		QueueLength:    record.state.Queue().Len(),
+		LastUpdatedTS:  timestampSeconds(record.updatedAt),
+		LastActivityTS: timestampSeconds(record.activityAt),
+		Historical:     record.identity.Historical(),
+		Capabilities:   s.capabilitiesSnapshot(),
+	}, nil
 }
 
-func (s *Stub) SessionMessages(_ context.Context, _ SessionMessagesRequest) (SessionMessagesResponse, error) {
+func (s *Stub) SessionMessages(_ context.Context, req SessionMessagesRequest) (SessionMessagesResponse, error) {
+	if _, err := s.lookupSession(req.SessionID); err != nil {
+		return SessionMessagesResponse{}, err
+	}
 	return SessionMessagesResponse{}, Unsupported("session message snapshot not implemented")
 }
 
-func (s *Stub) SessionState(_ context.Context, _ SessionStateRequest) (SessionStateResponse, error) {
-	return SessionStateResponse{}, Unsupported("session state snapshot not implemented")
+func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (SessionStateResponse, error) {
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
+		return SessionStateResponse{}, err
+	}
+	return SessionStateResponse{
+		Busy:                 record.state.Busy(),
+		Queue:                queueSnapshotFromState(record.state),
+		UIRequest:            nil,
+		PartialAssistantTurn: partialAssistantTurn(record.state),
+		TailSeq:              record.state.Tail().Seq().Uint64(),
+		ResumeCursors:        SessionResumeCursors{},
+	}, nil
 }
 
-func (s *Stub) SessionWorkspace(_ context.Context, _ SessionWorkspaceRequest) (SessionWorkspaceResponse, error) {
+func (s *Stub) SessionWorkspace(_ context.Context, req SessionWorkspaceRequest) (SessionWorkspaceResponse, error) {
+	if _, err := s.lookupSession(req.SessionID); err != nil {
+		return SessionWorkspaceResponse{}, err
+	}
 	return SessionWorkspaceResponse{}, Unsupported("session workspace snapshot not implemented")
 }
 
-func (s *Stub) WorkspaceFileList(_ context.Context, _ WorkspaceFileListRequest) (WorkspaceFileListResponse, error) {
+func (s *Stub) WorkspaceFileList(_ context.Context, req WorkspaceFileListRequest) (WorkspaceFileListResponse, error) {
+	if _, err := s.lookupSession(req.SessionID); err != nil {
+		return WorkspaceFileListResponse{}, err
+	}
 	return WorkspaceFileListResponse{}, Unsupported("workspace file listing not implemented")
 }
 
-func (s *Stub) WorkspaceFileRead(_ context.Context, _ WorkspaceFileReadRequest) (WorkspaceFileReadResponse, error) {
+func (s *Stub) WorkspaceFileRead(_ context.Context, req WorkspaceFileReadRequest) (WorkspaceFileReadResponse, error) {
+	if _, err := s.lookupSession(req.SessionID); err != nil {
+		return WorkspaceFileReadResponse{}, err
+	}
 	return WorkspaceFileReadResponse{}, Unsupported("workspace file read not implemented")
 }
 
-func (s *Stub) GitFileVersions(_ context.Context, _ GitFileVersionsRequest) (GitFileVersionsResponse, error) {
+func (s *Stub) GitFileVersions(_ context.Context, req GitFileVersionsRequest) (GitFileVersionsResponse, error) {
+	if _, err := s.lookupSession(req.SessionID); err != nil {
+		return GitFileVersionsResponse{}, err
+	}
 	return GitFileVersionsResponse{}, Unsupported("git file versions not implemented")
+}
+
+func (s *Stub) lookupSession(sessionID session.SessionID) (sessionRecord, error) {
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return sessionRecord{}, NotFound(fmt.Sprintf("session %q not found", sessionID))
+	}
+	return record, nil
+}
+
+func queueSnapshotFromState(state session.State) SessionQueueSnapshot {
+	items := state.Queue().Items()
+	snapshot := SessionQueueSnapshot{Items: make([]QueuedPromptSnapshot, 0, len(items))}
+	for _, item := range items {
+		snapshot.Items = append(snapshot.Items, QueuedPromptSnapshot{
+			ID:    item.ID().String(),
+			Text:  item.Text(),
+			State: item.State().String(),
+		})
+	}
+	return snapshot
+}
+
+func partialAssistantTurn(state session.State) *PartialAssistantTurnSnapshot {
+	if !state.Tail().Live() {
+		return nil
+	}
+	turnID, ok := state.Tail().TurnID()
+	if !ok {
+		return nil
+	}
+	return &PartialAssistantTurnSnapshot{TurnID: turnID.String()}
 }
