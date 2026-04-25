@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("ACTRAIL_HOST", "")
 	t.Setenv("ACTRAIL_PORT", "")
 	t.Setenv("ACTRAIL_AVAILABLE_BACKENDS", "")
+	t.Setenv("ACTRAIL_DATA_DIR", "")
 
 	cfg := Load()
 
@@ -27,6 +30,12 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Launch.AvailableBackends, []string{"pi", "codex"}) {
 		t.Fatalf("unexpected default backends: %#v", cfg.Launch.AvailableBackends)
+	}
+	if cfg.Storage.DataDir != "./data" {
+		t.Fatalf("expected default data dir ./data, got %q", cfg.Storage.DataDir)
+	}
+	if cfg.SQLitePath() != "."+string(os.PathSeparator)+filepath.Join("data", "actrail.db") {
+		t.Fatalf("expected default sqlite path under data dir, got %q", cfg.SQLitePath())
 	}
 	if cfg.Auth.Password != "" {
 		t.Fatalf("expected empty auth password by default, got %q", cfg.Auth.Password)
@@ -47,6 +56,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("ACTRAIL_AVAILABLE_PROVIDERS", "openrouter,anthropic")
 	t.Setenv("ACTRAIL_AVAILABLE_MODELS", "claude-sonnet,gemini-2.5-pro")
 	t.Setenv("ACTRAIL_AUTH_PASSWORD", "secret")
+	t.Setenv("ACTRAIL_DATA_DIR", "/tmp/actrail-data")
 
 	cfg := Load()
 
@@ -68,6 +78,12 @@ func TestLoadOverrides(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Launch.Models, []string{"claude-sonnet", "gemini-2.5-pro"}) {
 		t.Fatalf("unexpected model override: %#v", cfg.Launch.Models)
 	}
+	if cfg.Storage.DataDir != "/tmp/actrail-data" {
+		t.Fatalf("expected data dir override, got %q", cfg.Storage.DataDir)
+	}
+	if cfg.SQLitePath() != filepath.Join("/tmp/actrail-data", "actrail.db") {
+		t.Fatalf("expected sqlite path override, got %q", cfg.SQLitePath())
+	}
 	if cfg.Auth.Password != "secret" {
 		t.Fatalf("expected auth password override, got %q", cfg.Auth.Password)
 	}
@@ -76,6 +92,20 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestStorageEnsureDirCreatesNestedDataDir(t *testing.T) {
+	root := t.TempDir()
+	storage := Storage{DataDir: filepath.Join(root, "runtime", "data")}
+
+	if err := storage.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	if info, err := os.Stat(storage.DataDir); err != nil {
+		t.Fatalf("Stat(%q) error = %v", storage.DataDir, err)
+	} else if !info.IsDir() {
+		t.Fatalf("expected %q to be a directory", storage.DataDir)
 	}
 }
 
