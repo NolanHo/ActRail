@@ -38,6 +38,7 @@ export interface MessagesStore {
   getState(): MessagesState;
   subscribe(listener: () => void): () => void;
   applyLive(sessionId: string, events: MessageEvent[], options: { replace: boolean; offset?: number; hasOlder?: boolean; nextBefore?: number }): void;
+  applySnapshot(sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number }): void;
   loadInitial(sessionId: string): Promise<void>;
   poll(sessionId: string): Promise<void>;
   loadOlder(sessionId: string, limit?: number): Promise<void>;
@@ -50,6 +51,44 @@ function isStreamingAssistantEvent(event: MessageEvent | undefined): event is Me
     && event.streaming === true
     && typeof event.stream_id === "string"
     && event.stream_id.length > 0,
+  );
+}
+
+function stableMessageKey(event: MessageEvent | undefined): string | null {
+  if (!event) {
+    return null;
+  }
+  if (typeof event.seq === "number" && Number.isFinite(event.seq)) {
+    return `seq:${Math.floor(event.seq)}`;
+  }
+  const eventId = typeof event.event_id === "string" ? event.event_id.trim() : "";
+  if (eventId) {
+    return `event_id:${eventId}`;
+  }
+  const id = typeof event.id === "string" ? event.id.trim() : "";
+  if (id) {
+    return `id:${id}`;
+  }
+  if (isStreamingAssistantEvent(event)) {
+    return `stream:${event.stream_id}`;
+  }
+  return null;
+}
+
+function canMergeSnapshotEvents(events: MessageEvent[]): boolean {
+  return events.every((event) => stableMessageKey(event) !== null);
+}
+
+function mergeSnapshotEvents(priorEvents: MessageEvent[], snapshotEvents: MessageEvent[]): MessageEvent[] {
+  if (!snapshotEvents.length) {
+    return [];
+  }
+  if (!canMergeSnapshotEvents(snapshotEvents)) {
+    return [...snapshotEvents];
+  }
+  return mergeLiveEvents(
+    priorEvents.filter((event) => stableMessageKey(event) !== null && !isStreamingAssistantEvent(event)),
+    snapshotEvents,
   );
 }
 
@@ -90,18 +129,9 @@ function mergeLiveEvents(priorEvents: MessageEvent[], incomingEvents: MessageEve
   const next = [...priorEvents];
 
   for (const incomingEvent of incomingEvents) {
-    const incomingEventId = typeof incomingEvent.event_id === "string" ? incomingEvent.event_id : "";
-    if (incomingEventId) {
-      const existingIndex = next.findIndex((event) => event.event_id === incomingEventId);
-      if (existingIndex >= 0) {
-        next[existingIndex] = { ...next[existingIndex], ...incomingEvent };
-      } else {
-        next.push(incomingEvent);
-      }
-      continue;
-    }
-    if (isStreamingAssistantEvent(incomingEvent)) {
-      const existingIndex = next.findIndex((event) => event.stream_id === incomingEvent.stream_id);
+    const incomingKey = stableMessageKey(incomingEvent);
+    if (incomingKey) {
+      const existingIndex = next.findIndex((event) => stableMessageKey(event) === incomingKey);
       if (existingIndex >= 0) {
         next[existingIndex] = { ...next[existingIndex], ...incomingEvent };
       } else {
@@ -168,7 +198,7 @@ export function createMessagesStore(): MessagesStore {
       emit();
 
       try {
-        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, init ? undefined : state.offsetsBySessionId[sessionId]));
+        const data = normalizeMessagePage(await api.listMessages(sessionId, init));
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }
@@ -180,7 +210,7 @@ export function createMessagesStore(): MessagesStore {
         state = {
           bySessionId: {
             ...state.bySessionId,
-            [sessionId]: init ? data.events : [...priorEvents, ...data.events],
+            [sessionId]: mergeSnapshotEvents(priorEvents, data.events),
           },
           offsetsBySessionId: {
             ...state.offsetsBySessionId,
@@ -317,6 +347,40 @@ export function createMessagesStore(): MessagesStore {
     }
   };
 
+  const applySnapshot = (sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number }) => {
+    const priorEvents = state.bySessionId[sessionId] ?? [];
+    const nextLoadingBySessionId = {
+      ...state.loadingBySessionId,
+      [sessionId]: false,
+    };
+    state = {
+      ...state,
+      bySessionId: {
+        ...state.bySessionId,
+        [sessionId]: mergeSnapshotEvents(priorEvents, events),
+      },
+      offsetsBySessionId: {
+        ...state.offsetsBySessionId,
+        [sessionId]: typeof options.offset === "number" ? options.offset : state.offsetsBySessionId[sessionId] ?? 0,
+      },
+      hasOlderBySessionId: {
+        ...state.hasOlderBySessionId,
+        [sessionId]: typeof options.hasOlder === "boolean" ? options.hasOlder : state.hasOlderBySessionId[sessionId] ?? false,
+      },
+      olderBeforeBySessionId: {
+        ...state.olderBeforeBySessionId,
+        [sessionId]: typeof options.nextBefore === "number" ? options.nextBefore : state.olderBeforeBySessionId[sessionId] ?? 0,
+      },
+      loadingBySessionId: nextLoadingBySessionId,
+      loadedBySessionId: {
+        ...state.loadedBySessionId,
+        [sessionId]: true,
+      },
+      loading: recomputeLoading(nextLoadingBySessionId),
+    };
+    emit();
+  };
+
   const applyLive = (sessionId: string, events: MessageEvent[], options: { replace: boolean; offset?: number; hasOlder?: boolean; nextBefore?: number }) => {
     const priorEvents = state.bySessionId[sessionId] ?? [];
     const nextLoadingBySessionId = {
@@ -367,6 +431,7 @@ export function createMessagesStore(): MessagesStore {
       return load(sessionId, false);
     },
     applyLive,
+    applySnapshot,
     loadOlder(sessionId: string, limit?: number) {
       return loadOlder(sessionId, limit);
     },
