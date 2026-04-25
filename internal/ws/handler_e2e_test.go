@@ -269,7 +269,145 @@ func TestHandlerPublishSessionStoresReplayAndDeliversLive(t *testing.T) {
 	}
 }
 
-func TestHandlerReturnsUnsupportedErrorForUnimplementedCommand(t *testing.T) {
+func TestHandlerDispatchesCommandFramesThroughTarget(t *testing.T) {
+	start := time.Unix(1760000000, 0)
+	clock := newManualClock(start)
+	hbTicker := newManualTicker()
+	cfg := testWSConfig()
+	target := &fakeCommandTarget{}
+	h := NewHandler(cfg,
+		WithNow(clock.Now),
+		WithTickerFactory(func(time.Duration) Ticker { return hbTicker }),
+		WithCommandTarget(target),
+	)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	conn := dialTestWebSocket(t, server, cfg, "")
+	defer conn.Close()
+	_ = readRawFrame(t, conn)
+
+	frames := []struct {
+		at      time.Time
+		frame   Frame
+		command FrameType
+	}{
+		{
+			at:      start.Add(time.Second),
+			frame:   Frame{Type: FrameTypeSend, RequestID: "req_send_1", TS: UnixTS(start.Add(time.Second)), Stream: "session:s_123", Payload: map[string]any{"session_id": "s_123", "text": "hello"}},
+			command: FrameTypeSend,
+		},
+		{
+			at:      start.Add(2 * time.Second),
+			frame:   Frame{Type: FrameTypeEnqueue, RequestID: "req_enqueue_1", TS: UnixTS(start.Add(2 * time.Second)), Stream: "session:s_123", Payload: map[string]any{"session_id": "s_123", "text": "queued"}},
+			command: FrameTypeEnqueue,
+		},
+		{
+			at:      start.Add(3 * time.Second),
+			frame:   Frame{Type: FrameTypeInterrupt, RequestID: "req_interrupt_1", TS: UnixTS(start.Add(3 * time.Second)), Stream: "session:s_123", Payload: map[string]any{"session_id": "s_123"}},
+			command: FrameTypeInterrupt,
+		},
+		{
+			at:      start.Add(4 * time.Second),
+			frame:   Frame{Type: FrameTypeUIResponse, RequestID: "req_ui_1", TS: UnixTS(start.Add(4 * time.Second)), Stream: "session:s_123:ui", Payload: map[string]any{"session_id": "s_123", "response_to": "ask_1", "value": map[string]any{"choice": "A"}}},
+			command: FrameTypeUIResponse,
+		},
+	}
+
+	for _, tt := range frames {
+		clock.Set(tt.at)
+		writeFrame(t, conn, tt.frame)
+		raw := readRawFrame(t, conn)
+		if raw.Type != FrameTypeAck {
+			t.Fatalf("response type = %q, want %q", raw.Type, FrameTypeAck)
+		}
+		payload := decodePayload[AckPayload](t, raw)
+		if payload.RequestID != tt.frame.RequestID || payload.Command != string(tt.command) || !payload.Accepted {
+			t.Fatalf("ack payload = %#v", payload)
+		}
+	}
+
+	if len(target.sends) != 1 || target.sends[0].Text != "hello" || target.sends[0].SessionID.String() != "s_123" {
+		t.Fatalf("target.sends = %#v", target.sends)
+	}
+	if len(target.enqueues) != 1 || target.enqueues[0].Text != "queued" || target.enqueues[0].SessionID.String() != "s_123" {
+		t.Fatalf("target.enqueues = %#v", target.enqueues)
+	}
+	if len(target.interrupts) != 1 || target.interrupts[0].SessionID.String() != "s_123" {
+		t.Fatalf("target.interrupts = %#v", target.interrupts)
+	}
+	if len(target.uiResponses) != 1 || target.uiResponses[0].ResponseTo != "ask_1" || string(target.uiResponses[0].Value) != `{"choice":"A"}` {
+		t.Fatalf("target.uiResponses = %#v", target.uiResponses)
+	}
+}
+
+func TestHandlerMapsCommandTargetErrorsToWebSocketErrors(t *testing.T) {
+	start := time.Unix(1760000000, 0)
+	clock := newManualClock(start)
+	hbTicker := newManualTicker()
+	cfg := testWSConfig()
+	target := &fakeCommandTarget{
+		sendErr:       NewCommandError(ErrorCodeConflict, "session busy", "session_id"),
+		enqueueErr:    NewCommandError(ErrorCodeNotFound, "session missing", "session_id"),
+		interruptErr:  NewCommandError(ErrorCodeUnsupported, "interrupt disabled", "type"),
+		uiResponseErr: NewCommandError(ErrorCodeInvalidRequest, "stale response", "response_to"),
+	}
+	h := NewHandler(cfg,
+		WithNow(clock.Now),
+		WithTickerFactory(func(time.Duration) Ticker { return hbTicker }),
+		WithCommandTarget(target),
+	)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	conn := dialTestWebSocket(t, server, cfg, "")
+	defer conn.Close()
+	_ = readRawFrame(t, conn)
+
+	tests := []struct {
+		at      time.Time
+		frame   Frame
+		code    ErrorCode
+		message string
+		field   string
+	}{
+		{
+			at:    start.Add(time.Second),
+			frame: Frame{Type: FrameTypeSend, RequestID: "req_send_1", TS: UnixTS(start.Add(time.Second)), Stream: "session:s_123", Payload: map[string]any{"session_id": "s_123", "text": "hello"}},
+			code:  ErrorCodeConflict, message: "session busy", field: "session_id",
+		},
+		{
+			at:    start.Add(2 * time.Second),
+			frame: Frame{Type: FrameTypeEnqueue, RequestID: "req_enqueue_1", TS: UnixTS(start.Add(2 * time.Second)), Stream: "session:s_123", Payload: map[string]any{"session_id": "s_123", "text": "queued"}},
+			code:  ErrorCodeNotFound, message: "session missing", field: "session_id",
+		},
+		{
+			at:    start.Add(3 * time.Second),
+			frame: Frame{Type: FrameTypeInterrupt, RequestID: "req_interrupt_1", TS: UnixTS(start.Add(3 * time.Second)), Stream: "session:s_123", Payload: map[string]any{"session_id": "s_123"}},
+			code:  ErrorCodeUnsupported, message: "interrupt disabled", field: "type",
+		},
+		{
+			at:    start.Add(4 * time.Second),
+			frame: Frame{Type: FrameTypeUIResponse, RequestID: "req_ui_1", TS: UnixTS(start.Add(4 * time.Second)), Stream: "session:s_123:ui", Payload: map[string]any{"session_id": "s_123", "response_to": "ask_1", "value": "A"}},
+			code:  ErrorCodeInvalidRequest, message: "stale response", field: "response_to",
+		},
+	}
+
+	for _, tt := range tests {
+		clock.Set(tt.at)
+		writeFrame(t, conn, tt.frame)
+		raw := readRawFrame(t, conn)
+		if raw.Type != FrameTypeError {
+			t.Fatalf("response type = %q, want %q", raw.Type, FrameTypeError)
+		}
+		payload := decodePayload[ErrorPayload](t, raw)
+		if payload.RequestID != tt.frame.RequestID || payload.Code != tt.code || payload.Message != tt.message || payload.Field != tt.field {
+			t.Fatalf("error payload = %#v", payload)
+		}
+	}
+}
+
+func TestHandlerReturnsUnsupportedErrorWithoutCommandTarget(t *testing.T) {
 	start := time.Unix(1760000000, 0)
 	clock := newManualClock(start)
 	hbTicker := newManualTicker()
@@ -297,7 +435,7 @@ func TestHandlerReturnsUnsupportedErrorForUnimplementedCommand(t *testing.T) {
 		t.Fatalf("error frame type = %q, want %q", raw.Type, FrameTypeError)
 	}
 	payload := decodePayload[ErrorPayload](t, raw)
-	if payload.RequestID != "req_send_1" || payload.Code != ErrorCodeUnsupported {
+	if payload.RequestID != "req_send_1" || payload.Code != ErrorCodeUnsupported || payload.Message != `command "send" requires a command target` {
 		t.Fatalf("error payload = %#v", payload)
 	}
 }

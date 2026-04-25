@@ -214,7 +214,7 @@ func (c *ConnectionState) WriteFrames(now time.Time, frames ...Frame) error {
 	return nil
 }
 
-func (c *ConnectionState) HandleFrame(now time.Time, frame RawFrame, replay *ReplayBuffer) ([]Frame, error) {
+func (c *ConnectionState) HandleFrame(now time.Time, frame RawFrame, replay *ReplayBuffer, target CommandTarget) ([]Frame, error) {
 	switch frame.Type {
 	case FrameTypeSubscribe:
 		cmd, err := DecodeSubscribeCommand(frame)
@@ -242,6 +242,38 @@ func (c *ConnectionState) HandleFrame(now time.Time, frame RawFrame, replay *Rep
 		c.heartbeat.ObserveClientPing(now)
 		c.mu.Unlock()
 		return nil, nil
+	case FrameTypeSend:
+		cmd, err := DecodeSendCommand(frame)
+		if err != nil {
+			return c.errorFrames(now, frame, ErrorCodeInvalidRequest, err.Error(), "payload"), nil
+		}
+		return c.handleCommand(now, cmd.Stream, cmd.RequestID, FrameTypeSend, target, func(target CommandTarget) error {
+			return target.HandleSend(cmd)
+		})
+	case FrameTypeEnqueue:
+		cmd, err := DecodeEnqueueCommand(frame)
+		if err != nil {
+			return c.errorFrames(now, frame, ErrorCodeInvalidRequest, err.Error(), "payload"), nil
+		}
+		return c.handleCommand(now, cmd.Stream, cmd.RequestID, FrameTypeEnqueue, target, func(target CommandTarget) error {
+			return target.HandleEnqueue(cmd)
+		})
+	case FrameTypeInterrupt:
+		cmd, err := DecodeInterruptCommand(frame)
+		if err != nil {
+			return c.errorFrames(now, frame, ErrorCodeInvalidRequest, err.Error(), "payload"), nil
+		}
+		return c.handleCommand(now, cmd.Stream, cmd.RequestID, FrameTypeInterrupt, target, func(target CommandTarget) error {
+			return target.HandleInterrupt(cmd)
+		})
+	case FrameTypeUIResponse:
+		cmd, err := DecodeUIResponseCommand(frame)
+		if err != nil {
+			return c.errorFrames(now, frame, ErrorCodeInvalidRequest, err.Error(), "payload"), nil
+		}
+		return c.handleCommand(now, cmd.Stream, cmd.RequestID, FrameTypeUIResponse, target, func(target CommandTarget) error {
+			return target.HandleUIResponse(cmd)
+		})
 	default:
 		stream := SystemStream
 		if parsed, err := ParseStreamName(frame.Stream); err == nil {
@@ -283,6 +315,17 @@ func (c *ConnectionState) handleSubscribe(now time.Time, cmd SubscribeCommand, r
 	frames := []Frame{NewAckFrame(now, c.ids.Next(), cmd.Stream, cmd.RequestID, FrameTypeSubscribe)}
 	frames = append(frames, replayed...)
 	return c.serverFrames(frames...), nil
+}
+
+func (c *ConnectionState) handleCommand(now time.Time, stream StreamName, requestID string, command FrameType, target CommandTarget, dispatch func(CommandTarget) error) ([]Frame, error) {
+	if target == nil {
+		return c.errorFrames(now, RawFrame{RequestID: requestID, Stream: stream.String()}, ErrorCodeUnsupported, fmt.Sprintf("command %q requires a command target", command), "type", stream), nil
+	}
+	if err := dispatch(target); err != nil {
+		code, message, field := normalizeCommandError(err)
+		return c.errorFrames(now, RawFrame{RequestID: requestID, Stream: stream.String()}, code, message, field, stream), nil
+	}
+	return c.serverFrames(NewAckFrame(now, c.ids.Next(), stream, requestID, command)), nil
 }
 
 func (c *ConnectionState) serverFrames(frames ...Frame) []Frame {
