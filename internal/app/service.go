@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
 )
@@ -26,14 +27,23 @@ type Service interface {
 type Stub struct {
 	cfg      config.Config
 	registry *sessionRegistry
+	launcher runtimeLauncher
 }
 
 func NewStub(cfg config.Config) *Stub {
-	return newStub(cfg, time.Now)
+	return newStubWithRuntime(cfg, time.Now, RuntimeConfig{})
 }
 
 func newStub(cfg config.Config, now func() time.Time) *Stub {
-	return &Stub{cfg: cfg, registry: newSessionRegistry(now)}
+	return newStubWithRuntime(cfg, now, RuntimeConfig{Runner: &process.FakeRunner{}})
+}
+
+func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
+	return &Stub{
+		cfg:      cfg,
+		registry: newSessionRegistry(now),
+		launcher: newRuntimeLauncher(runtimeCfg),
+	}
 }
 
 type BootstrapSnapshot struct {
@@ -145,6 +155,10 @@ func Invalid(field, message string) *Error {
 	return &Error{Code: "invalid_request", Message: message, Field: field}
 }
 
+func Conflict(message string) *Error {
+	return &Error{Code: "conflict", Message: message}
+}
+
 func NotFound(message string) *Error {
 	return &Error{Code: "not_found", Message: message}
 }
@@ -198,7 +212,7 @@ func (s *Stub) ListSessions(_ context.Context, req ListSessionsRequest) (ListSes
 	}, nil
 }
 
-func (s *Stub) CreateSession(_ context.Context, req CreateSessionRequest) (CreateSessionResponse, error) {
+func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (CreateSessionResponse, error) {
 	cwd := strings.TrimSpace(req.CWD)
 	if cwd == "" {
 		return CreateSessionResponse{}, Invalid("cwd", "cwd required")
@@ -217,6 +231,16 @@ func (s *Stub) CreateSession(_ context.Context, req CreateSessionRequest) (Creat
 		}
 		return CreateSessionResponse{}, Unsupported("session resume not implemented")
 	}
+	runtime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
+		Backend:         backend,
+		CWD:             cwd,
+		Provider:        optionalString(req.Provider),
+		Model:           optionalString(req.Model),
+		ReasoningEffort: optionalString(req.ReasoningEffort),
+	})
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
 	record, err := s.registry.Create(sessionCreateSpec{
 		Backend:         backend,
 		CWD:             cwd,
@@ -224,6 +248,7 @@ func (s *Stub) CreateSession(_ context.Context, req CreateSessionRequest) (Creat
 		Model:           optionalString(req.Model),
 		ReasoningEffort: optionalString(req.ReasoningEffort),
 		Title:           optionalString(req.Title),
+		Runtime:         runtime,
 	})
 	if err != nil {
 		return CreateSessionResponse{}, err

@@ -23,6 +23,7 @@ type sessionIDGenerator struct {
 	session uint64
 	runtime uint64
 	thread  uint64
+	queue   uint64
 }
 
 type sessionCreateSpec struct {
@@ -32,6 +33,7 @@ type sessionCreateSpec struct {
 	Model           string
 	ReasoningEffort string
 	Title           string
+	Runtime         sessionRuntime
 }
 
 type sessionRecord struct {
@@ -46,6 +48,8 @@ type sessionRecord struct {
 	activityAt      time.Time
 	state           session.State
 	transcript      message.Transcript
+	runtime         sessionRuntime
+	uiRequest       *SessionUIRequestSnapshot
 }
 
 func newSessionRegistry(now func() time.Time) *sessionRegistry {
@@ -94,6 +98,7 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 		activityAt:      now,
 		state:           state,
 		transcript:      transcript,
+		runtime:         spec.Runtime,
 	}
 	if _, exists := r.sessions[identity.SessionID()]; exists {
 		return sessionRecord{}, fmt.Errorf("session %q already exists", identity.SessionID())
@@ -193,7 +198,11 @@ func (r *sessionRegistry) CommitAssistantTurn(sessionID session.SessionID, turnI
 }
 
 func syncSessionRecordState(record *sessionRecord, busy bool) error {
-	state, err := session.NewState(record.identity, busy, record.state.Queue(), record.transcript.Tail())
+	return syncSessionRecordStateWithQueue(record, busy, record.state.Queue())
+}
+
+func syncSessionRecordStateWithQueue(record *sessionRecord, busy bool, queue session.QueueSnapshot) error {
+	state, err := session.NewState(record.identity, busy, queue, record.transcript.Tail())
 	if err != nil {
 		return err
 	}
@@ -214,6 +223,8 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		activityAt:      record.activityAt,
 		state:           copySessionState(record.state),
 		transcript:      record.transcript.Clone(),
+		runtime:         record.runtime,
+		uiRequest:       copySessionUIRequest(record.uiRequest),
 	}
 }
 
@@ -227,6 +238,14 @@ func copySessionState(state session.State) session.State {
 		panic(err)
 	}
 	return copied
+}
+
+func copySessionUIRequest(raw *SessionUIRequestSnapshot) *SessionUIRequestSnapshot {
+	if raw == nil {
+		return nil
+	}
+	copied := *raw
+	return &copied
 }
 
 func normalizeSessionTitle(raw, cwd string) string {
