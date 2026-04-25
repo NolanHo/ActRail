@@ -1,6 +1,6 @@
 import { configureRealtimeClient } from "../realtime/client";
 import { api } from "../../lib/api";
-import type { CwdGroupMeta, NewSessionDefaults, SessionBootstrapResponse, SessionSummary, SessionsResponse } from "../../lib/types";
+import type { BootstrapCapabilities, CwdGroupMeta, NewSessionDefaults, SessionBootstrapResponse, SessionSummary, SessionsResponse } from "../../lib/types";
 
 export interface UpsertSessionOptions {
   prepend?: boolean;
@@ -12,6 +12,8 @@ export interface SessionsState {
   activeSessionId: string | null;
   loading: boolean;
   bootstrapLoaded: boolean;
+  bootstrapCapabilities: BootstrapCapabilities | null;
+  deferredFeatures: string[];
   remainingCount: number;
   newSessionDefaults: NewSessionDefaults | null;
   recentCwds: string[];
@@ -118,6 +120,8 @@ export function createSessionsStore(): SessionsStore {
     activeSessionId: null,
     loading: false,
     bootstrapLoaded: false,
+    bootstrapCapabilities: null,
+    deferredFeatures: [],
     remainingCount: 0,
     newSessionDefaults: null,
     recentCwds: [],
@@ -221,6 +225,10 @@ export function createSessionsStore(): SessionsStore {
       state = {
         ...state,
         bootstrapLoaded: true,
+        bootstrapCapabilities: data.capabilities ?? state.bootstrapCapabilities,
+        deferredFeatures: Array.isArray(data.ui?.deferred_features)
+          ? data.ui.deferred_features.filter((feature): feature is string => typeof feature === "string" && feature.trim().length > 0)
+          : state.deferredFeatures,
         newSessionDefaults: normalizeNewSessionDefaults(data) ?? state.newSessionDefaults,
         recentCwds: Array.isArray(data.recent_cwds)
           ? data.recent_cwds.filter((cwd): cwd is string => typeof cwd === "string")

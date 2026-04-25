@@ -34,6 +34,8 @@ describe("createSessionsStore", () => {
       activeSessionId: "s1",
       loading: false,
       bootstrapLoaded: false,
+      bootstrapCapabilities: null,
+      deferredFeatures: [],
       remainingCount: 0,
       newSessionDefaults: null,
       recentCwds: [],
@@ -48,6 +50,8 @@ describe("createSessionsStore", () => {
       sessions: [{ session_id: "s1" }, { session_id: "s2" }],
     } as never);
     vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
+      capabilities: { ws_realtime: true, voice: false, harness: false, notifications: false },
+      ui: { deferred_features: ["voice", "harness", "notifications"] },
       recent_cwds: ["/tmp/project"],
       cwd_groups: { "/tmp/project": { label: "Project", collapsed: true } },
       new_session_defaults: { default_backend: "pi" },
@@ -64,6 +68,8 @@ describe("createSessionsStore", () => {
       activeSessionId: "s2",
       loading: false,
       bootstrapLoaded: true,
+      bootstrapCapabilities: { ws_realtime: true, voice: false, harness: false, notifications: false },
+      deferredFeatures: ["voice", "harness", "notifications"],
       remainingCount: 0,
       newSessionDefaults: { default_backend: "pi" },
       recentCwds: ["/tmp/project"],

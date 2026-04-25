@@ -11,10 +11,11 @@ interface HarnessDialogProps {
   open: boolean;
   sessionId: string | null;
   runtimeId?: string | null;
+  supported?: boolean;
   onClose: () => void;
 }
 
-export function HarnessDialog({ open, sessionId, runtimeId = null, onClose }: HarnessDialogProps) {
+export function HarnessDialog({ open, sessionId, runtimeId = null, supported = true, onClose }: HarnessDialogProps) {
   const [enabled, setEnabled] = useState(false);
   const [request, setRequest] = useState("");
   const [cooldownMinutes, setCooldownMinutes] = useState("30");
@@ -25,6 +26,11 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, onClose }: Ha
 
   useEffect(() => {
     if (!open || !sessionId) {
+      return;
+    }
+    if (!supported) {
+      setLoading(false);
+      setStatus("Harness is unavailable on this backend.");
       return;
     }
     let cancelled = false;
@@ -55,6 +61,10 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, onClose }: Ha
 
   const save = async () => {
     if (!sessionId || saving) {
+      return;
+    }
+    if (!supported) {
+      setStatus("Harness is unavailable on this backend.");
       return;
     }
     setSaving(true);
@@ -122,7 +132,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, onClose }: Ha
           {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="button" onClick={() => void save()} disabled={saving || loading || !sessionId}>Save</Button>
+            <Button type="button" onClick={() => void save()} disabled={saving || loading || !sessionId || !supported}>Save</Button>
           </div>
         </div>
       </DialogContent>

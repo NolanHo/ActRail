@@ -33,7 +33,9 @@ type NotificationMessageLookupState = {
 interface UseAppShellNotificationsOptions {
   activeSessionId: string | null;
   activeTitle: string;
+  bootstrapLoaded?: boolean;
   bySessionId: Record<string, unknown[]>;
+  notificationsSupported?: boolean;
   playReplyBeep(): void;
   realtimeConnected?: boolean;
   suppressedReplySoundSessionIdsRef: { current: Set<string> };
@@ -43,7 +45,9 @@ interface UseAppShellNotificationsOptions {
 export function useAppShellNotifications({
   activeSessionId,
   activeTitle,
+  bootstrapLoaded = false,
   bySessionId,
+  notificationsSupported = true,
   playReplyBeep,
   realtimeConnected = false,
   suppressedReplySoundSessionIdsRef,
@@ -100,7 +104,7 @@ export function useAppShellNotifications({
     snapshot?: NotificationSubscriptionStateResponse | null,
     endpointOverride?: string,
   ) => {
-    if (notificationDeviceClass() !== "mobile" || !("serviceWorker" in navigator) || typeof PushManager === "undefined") {
+    if (!bootstrapLoaded || !notificationsSupported || notificationDeviceClass() !== "mobile" || !("serviceWorker" in navigator) || typeof PushManager === "undefined") {
       notificationEndpointRef.current = "";
       setPushNotificationsEnabled(false);
       return;
@@ -118,9 +122,9 @@ export function useAppShellNotifications({
   };
 
   useEffect(() => {
-    if (notificationDeviceClass() !== "mobile") return;
+    if (!bootstrapLoaded || !notificationsSupported || notificationDeviceClass() !== "mobile") return;
     syncNotificationSubscriptionState().catch(() => undefined);
-  }, [voiceSettings.notifications?.vapid_public_key]);
+  }, [bootstrapLoaded, notificationsSupported, voiceSettings.notifications?.vapid_public_key]);
 
   const prunePlayedReplySoundTextKeys = (nowTs: number) => {
     for (const [key, ts] of playedReplySoundTextKeysRef.current.entries()) {
@@ -182,6 +186,9 @@ export function useAppShellNotifications({
   };
 
   const refreshNotificationFeed = useCallback(async (prime = false) => {
+    if (!bootstrapLoaded || !notificationsSupported) {
+      return;
+    }
     const desktopNotificationsEnabled = (
       notificationsEnabled
       && notificationPermission === "granted"
@@ -219,9 +226,12 @@ export function useAppShellNotifications({
       }
     }
     notificationFeedCursorRef.current = maxSeen;
-  }, [notificationPermission, notificationsEnabled, pageVisible, replySoundEnabled]);
+  }, [bootstrapLoaded, notificationPermission, notificationsEnabled, notificationsSupported, pageVisible, replySoundEnabled]);
 
   useEffect(() => {
+    if (!bootstrapLoaded || !notificationsSupported) {
+      return undefined;
+    }
     notificationFeedCursorRef.current = Date.now() / 1000;
     void refreshNotificationFeed(true);
     const intervalId = window.setInterval(() => {
@@ -230,7 +240,7 @@ export function useAppShellNotifications({
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [realtimeConnected, refreshNotificationFeed]);
+  }, [bootstrapLoaded, notificationsSupported, realtimeConnected, refreshNotificationFeed]);
 
   useEffect(() => {
     const nextSeen = new Set<string>();
@@ -262,7 +272,9 @@ export function useAppShellNotifications({
 
   useEffect(() => {
     if (
-      notificationDeviceClass() !== "desktop"
+      !bootstrapLoaded
+      || !notificationsSupported
+      || notificationDeviceClass() !== "desktop"
       || !notificationsEnabled
       || notificationPermission !== "granted"
       || !activeSessionId
@@ -320,19 +332,27 @@ export function useAppShellNotifications({
           resolvingNotificationIdsRef.current.delete(messageId);
         });
     }
-  }, [activeSessionId, activeTitle, bySessionId, notificationPermission, notificationsEnabled]);
+  }, [activeSessionId, activeTitle, bootstrapLoaded, bySessionId, notificationPermission, notificationsEnabled, notificationsSupported]);
 
-  const notificationLabel = notificationsEnabled
-    ? notificationDeviceClass() === "mobile"
-      ? pushNotificationsEnabled
-        ? "Notifications on (push)"
-        : "Notifications pending"
-      : notificationPermission === "granted" || notificationPermission === "unsupported"
-        ? "Notifications on"
-        : "Notifications pending"
-    : "Notifications off";
+  const notificationLabel = !bootstrapLoaded
+    ? "Notifications loading"
+    : !notificationsSupported
+      ? "Notifications unavailable"
+      : notificationsEnabled
+        ? notificationDeviceClass() === "mobile"
+          ? pushNotificationsEnabled
+            ? "Notifications on (push)"
+            : "Notifications pending"
+          : notificationPermission === "granted" || notificationPermission === "unsupported"
+            ? "Notifications on"
+            : "Notifications pending"
+        : "Notifications off";
 
   const toggleNotifications = async () => {
+    if (!bootstrapLoaded || !notificationsSupported) {
+      setNotificationsEnabled(false);
+      return;
+    }
     const next = !notificationsEnabled;
     if (!next) {
       if (notificationDeviceClass() === "mobile" && notificationEndpointRef.current) {
