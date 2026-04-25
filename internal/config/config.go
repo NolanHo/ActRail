@@ -53,6 +53,13 @@ type Auth struct {
 	Password   string
 }
 
+type AuthMode string
+
+const (
+	AuthModeLocal    AuthMode = "local"
+	AuthModePassword AuthMode = "password"
+)
+
 type Features struct {
 	WebSocketRealtime bool
 	Voice             bool
@@ -116,8 +123,29 @@ func (c Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Server.Host, c.Server.Port)
 }
 
+func (c Config) Validate() error {
+	return c.Auth.Validate()
+}
+
 func (c Config) HeartbeatIntervalMillis() int {
 	return int(c.Protocol.HeartbeatInterval / time.Millisecond)
+}
+
+func (a Auth) Mode() AuthMode {
+	if strings.TrimSpace(a.Password) == "" {
+		return AuthModeLocal
+	}
+	return AuthModePassword
+}
+
+func (a Auth) Validate() error {
+	if a.Mode() != AuthModePassword {
+		return nil
+	}
+	if strings.TrimSpace(a.CookieName) == "" {
+		return fmt.Errorf("auth cookie name required when password auth is enabled")
+	}
+	return nil
 }
 
 func envString(key, fallback string) string {
