@@ -268,7 +268,7 @@ describe("api", () => {
     });
   });
 
-  it("includes offsets when polling messages", async () => {
+  it("treats polling messages as a snapshot read even when a legacy offset is passed", async () => {
     const payload: MessagesResponse = { events: [{ id: "m1" }], offset: 9 };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -278,7 +278,7 @@ describe("api", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.listMessages("session-1", false, undefined, 4)).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/messages?offset=4", {
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/messages", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
