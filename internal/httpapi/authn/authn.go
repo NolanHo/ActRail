@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"actrail/internal/config"
 )
@@ -14,7 +13,7 @@ import (
 const sessionTokenNamespace = "actrail-auth-session"
 
 func Configured(cfg config.Auth) bool {
-	return strings.TrimSpace(cfg.CookieName) != "" && strings.TrimSpace(cfg.Password) != ""
+	return cfg.Mode() == config.AuthModePassword
 }
 
 func PasswordMatches(cfg config.Auth, password string) bool {
@@ -26,6 +25,9 @@ func PasswordMatches(cfg config.Auth, password string) bool {
 }
 
 func Authenticated(req *http.Request, cfg config.Auth) bool {
+	if !Configured(cfg) {
+		return true
+	}
 	token, err := SessionToken(cfg)
 	if err != nil {
 		return false

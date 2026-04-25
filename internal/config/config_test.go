@@ -31,6 +31,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Auth.Password != "" {
 		t.Fatalf("expected empty auth password by default, got %q", cfg.Auth.Password)
 	}
+	if cfg.Auth.Mode() != AuthModeLocal {
+		t.Fatalf("expected default auth mode %q, got %q", AuthModeLocal, cfg.Auth.Mode())
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -64,5 +70,31 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Auth.Password != "secret" {
 		t.Fatalf("expected auth password override, got %q", cfg.Auth.Password)
+	}
+	if cfg.Auth.Mode() != AuthModePassword {
+		t.Fatalf("expected auth mode %q, got %q", AuthModePassword, cfg.Auth.Mode())
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestAuthValidateRejectsEmptyCookieNameInPasswordMode(t *testing.T) {
+	cfg := Load()
+	cfg.Auth.Password = "secret"
+	cfg.Auth.CookieName = ""
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() returned nil for password auth without cookie name")
+	}
+}
+
+func TestAuthModeTrimsWhitespacePassword(t *testing.T) {
+	cfg := Load()
+	cfg.Auth.Password = "   "
+
+	if cfg.Auth.Mode() != AuthModeLocal {
+		t.Fatalf("expected whitespace password to select %q mode, got %q", AuthModeLocal, cfg.Auth.Mode())
 	}
 }
