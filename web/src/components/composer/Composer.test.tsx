@@ -2,6 +2,7 @@ import { render } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "../../app/providers";
+import * as realtimeClient from "../../domains/realtime/client";
 import { api } from "../../lib/api";
 
 const { todoPanelRenderLog } = vi.hoisted(() => ({
@@ -551,8 +552,9 @@ describe("Composer", () => {
     expect(sessionUiStore.refresh).toHaveBeenCalledWith("live-pi-1", { agentBackend: "pi" });
   });
 
-  it("continues polling after a successful send so new messages appear without a full refresh", async () => {
+  it("continues recovery polling after a successful send when realtime is disconnected", async () => {
     vi.useFakeTimers();
+    vi.spyOn(realtimeClient, "getRealtimeConnectionState").mockReturnValue("closed");
     const { liveSessionStore, sessionUiStore, sessionsStore } = renderComposer();
     const composerRoot = getRoot();
 
@@ -574,6 +576,30 @@ describe("Composer", () => {
     expect(liveSessionStore.poll).toHaveBeenCalledWith("sess-1");
     expect(sessionUiStore.refresh).toHaveBeenCalledTimes(2);
     expect(sessionsStore.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips delayed post-send polling when realtime is already connected", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(realtimeClient, "getRealtimeConnectionState").mockReturnValue("open");
+    const { liveSessionStore, sessionUiStore, sessionsStore } = renderComposer();
+    const composerRoot = getRoot();
+
+    await act(async () => {
+      (composerRoot.querySelector("button[type='submit']") as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(8000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(liveSessionStore.loadInitial).toHaveBeenCalledWith("sess-1");
+    expect(liveSessionStore.poll).not.toHaveBeenCalled();
+    expect(sessionUiStore.refresh).toHaveBeenCalledTimes(1);
+    expect(sessionsStore.refresh).toHaveBeenCalledTimes(1);
   });
 
   it("submits on ctrl+enter when enter-to-send is disabled", () => {
