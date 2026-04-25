@@ -156,101 +156,139 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 		t.Fatalf("SetSessionUIRequest() error = %v", err)
 	}
 
-	subConn := dialBridgeWebSocket(t, server.URL, cfg, cookie)
-	defer subConn.Close()
-	subscribeBridgeStreams(t, subConn, []Subscription{
-		{Name: StreamName("session:" + sessionID)},
-		{Name: StreamName("session:" + sessionID + ":ui")},
-	})
-
+	mainStream := StreamName("session:" + sessionID)
+	uiStream := StreamName("session:" + sessionID + ":ui")
 	cmdConn := dialBridgeWebSocket(t, server.URL, cfg, cookie)
 	defer cmdConn.Close()
 
+	sendSub := dialBridgeWebSocket(t, server.URL, cfg, cookie)
+	subscribeBridgeStreams(t, sendSub, []Subscription{{Name: mainStream}})
 	writeBridgeFrame(t, cmdConn, Frame{
 		Type:      FrameTypeSend,
 		RequestID: "req_send_1",
 		TS:        UnixTS(time.Now()),
-		Stream:    "session:" + sessionID,
+		Stream:    mainStream.String(),
 		Payload:   map[string]any{"session_id": sessionID, "text": "Implement runtime bridge"},
 	})
 	ack := readBridgeFrame(t, cmdConn)
 	if ack.Type != FrameTypeAck {
 		t.Fatalf("send ack type = %q, want %q", ack.Type, FrameTypeAck)
 	}
-	sendCommit := waitForBridgeFrame(t, subConn, 2*time.Second, func(frame RawFrame) bool { return frame.Type == FrameTypeMessageCommit })
+	sendFrames := readBridgeFrames(t, sendSub, 3)
+	_ = sendSub.Close()
+	assertBridgeFrameCounts(t, sendFrames, map[FrameType]int{
+		FrameTypeMessageCommit: 1,
+		FrameTypeQueueState:    1,
+		FrameTypeSessionState:  1,
+	})
 	var sendPayload messageCommitPayload
-	decodeBridgePayload(t, sendCommit, &sendPayload)
+	decodeBridgePayload(t, firstBridgeFrameOfType(t, sendFrames, FrameTypeMessageCommit), &sendPayload)
 	if sendPayload.Message.Role != "user" || sendPayload.Message.Text != "Implement runtime bridge" {
 		t.Fatalf("send commit payload = %+v", sendPayload)
 	}
+	waitForBridgeCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), app.SessionStateRequest{SessionID: parsed})
+		if err != nil {
+			return false
+		}
+		return state.ResumeCursors.Session == "3" && state.ResumeCursors.UI == ""
+	})
 
+	enqueueSub := dialBridgeWebSocket(t, server.URL, cfg, cookie)
+	subscribeBridgeStreams(t, enqueueSub, []Subscription{{Name: mainStream}})
 	writeBridgeFrame(t, cmdConn, Frame{
 		Type:      FrameTypeEnqueue,
 		RequestID: "req_enqueue_1",
 		TS:        UnixTS(time.Now()),
-		Stream:    "session:" + sessionID,
+		Stream:    mainStream.String(),
 		Payload:   map[string]any{"session_id": sessionID, "text": "queued task"},
 	})
 	ack = readBridgeFrame(t, cmdConn)
 	if ack.Type != FrameTypeAck {
 		t.Fatalf("enqueue ack type = %q, want %q", ack.Type, FrameTypeAck)
 	}
-	enqueueState := waitForBridgeFrame(t, subConn, 2*time.Second, func(frame RawFrame) bool {
-		if frame.Type != FrameTypeQueueState {
-			return false
-		}
-		var payload queueStatePayload
-		decodeBridgePayload(t, frame, &payload)
-		return len(payload.Items) == 1 && payload.Items[0].Text == "queued task"
+	enqueueFrames := readBridgeFrames(t, enqueueSub, 2)
+	_ = enqueueSub.Close()
+	assertBridgeFrameCounts(t, enqueueFrames, map[FrameType]int{
+		FrameTypeQueueState:   1,
+		FrameTypeSessionState: 1,
 	})
 	var queuePayload queueStatePayload
-	decodeBridgePayload(t, enqueueState, &queuePayload)
+	decodeBridgePayload(t, firstBridgeFrameOfType(t, enqueueFrames, FrameTypeQueueState), &queuePayload)
 	if len(queuePayload.Items) != 1 || queuePayload.Items[0].Text != "queued task" {
 		t.Fatalf("enqueue queue payload = %+v", queuePayload)
 	}
+	waitForBridgeCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), app.SessionStateRequest{SessionID: parsed})
+		if err != nil {
+			return false
+		}
+		return state.ResumeCursors.Session == "5" && state.ResumeCursors.UI == ""
+	})
 
+	interruptSub := dialBridgeWebSocket(t, server.URL, cfg, cookie)
+	subscribeBridgeStreams(t, interruptSub, []Subscription{{Name: mainStream}})
 	writeBridgeFrame(t, cmdConn, Frame{
 		Type:      FrameTypeInterrupt,
 		RequestID: "req_interrupt_1",
 		TS:        UnixTS(time.Now()),
-		Stream:    "session:" + sessionID,
+		Stream:    mainStream.String(),
 		Payload:   map[string]any{"session_id": sessionID},
 	})
 	ack = readBridgeFrame(t, cmdConn)
 	if ack.Type != FrameTypeAck {
 		t.Fatalf("interrupt ack type = %q, want %q", ack.Type, FrameTypeAck)
 	}
-	interruptState := waitForBridgeFrame(t, subConn, 2*time.Second, func(frame RawFrame) bool {
-		if frame.Type != FrameTypeSessionState {
-			return false
-		}
-		var payload sessionStatePayload
-		decodeBridgePayload(t, frame, &payload)
-		return !payload.Busy
+	interruptFrames := readBridgeFrames(t, interruptSub, 2)
+	_ = interruptSub.Close()
+	assertBridgeFrameCounts(t, interruptFrames, map[FrameType]int{
+		FrameTypeQueueState:   1,
+		FrameTypeSessionState: 1,
 	})
 	var statePayload sessionStatePayload
-	decodeBridgePayload(t, interruptState, &statePayload)
+	decodeBridgePayload(t, firstBridgeFrameOfType(t, interruptFrames, FrameTypeSessionState), &statePayload)
 	if statePayload.Busy {
 		t.Fatalf("interrupt session.state payload = %+v", statePayload)
 	}
+	waitForBridgeCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), app.SessionStateRequest{SessionID: parsed})
+		if err != nil {
+			return false
+		}
+		return state.ResumeCursors.Session == "7" && state.ResumeCursors.UI == ""
+	})
 
+	uiSub := dialBridgeWebSocket(t, server.URL, cfg, cookie)
+	subscribeBridgeStreams(t, uiSub, []Subscription{{Name: mainStream}, {Name: uiStream}})
 	writeBridgeFrame(t, cmdConn, Frame{
 		Type:      FrameTypeUIResponse,
 		RequestID: "req_ui_1",
 		TS:        UnixTS(time.Now()),
-		Stream:    "session:" + sessionID + ":ui",
+		Stream:    uiStream.String(),
 		Payload:   map[string]any{"session_id": sessionID, "response_to": "ask_1", "value": "A"},
 	})
 	ack = readBridgeFrame(t, cmdConn)
 	if ack.Type != FrameTypeAck {
 		t.Fatalf("ui.response ack type = %q, want %q", ack.Type, FrameTypeAck)
 	}
-	resolved := waitForBridgeFrame(t, subConn, 2*time.Second, func(frame RawFrame) bool { return frame.Type == FrameTypeUIResolved })
+	uiFrames := readBridgeFrames(t, uiSub, 2)
+	_ = uiSub.Close()
+	assertBridgeFrameCounts(t, uiFrames, map[FrameType]int{
+		FrameTypeUIResolved:   1,
+		FrameTypeSessionState: 1,
+	})
 	var resolvedPayload uiResolvedPayload
-	decodeBridgePayload(t, resolved, &resolvedPayload)
+	decodeBridgePayload(t, firstBridgeFrameOfType(t, uiFrames, FrameTypeUIResolved), &resolvedPayload)
 	if resolvedPayload.RequestID != "ask_1" {
 		t.Fatalf("ui.resolved payload = %+v", resolvedPayload)
 	}
+	waitForBridgeCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), app.SessionStateRequest{SessionID: parsed})
+		if err != nil {
+			return false
+		}
+		return state.ResumeCursors.Session == "8" && state.ResumeCursors.UI == "1"
+	})
 
 	writes := pty.Writes()
 	if len(writes) != 2 || writes[0] != "Implement runtime bridge\n" || writes[1] != "A\n" {
@@ -266,8 +304,8 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 	if len(state.Queue.Items) != 1 || state.Queue.Items[0].Text != "queued task" {
 		t.Fatalf("SessionState().Queue = %+v", state.Queue)
 	}
-	if state.ResumeCursors.Session == "" || state.ResumeCursors.UI == "" {
-		t.Fatalf("SessionState().ResumeCursors = %+v, want session/ui cursors", state.ResumeCursors)
+	if state.ResumeCursors.Session != "8" || state.ResumeCursors.UI != "1" {
+		t.Fatalf("SessionState().ResumeCursors = %+v, want session=8 ui=1", state.ResumeCursors)
 	}
 }
 
@@ -363,6 +401,52 @@ func waitForBridgeFrame(t *testing.T, conn *websocket.Conn, timeout time.Duratio
 	}
 	t.Fatal("matching websocket frame not received before timeout")
 	return RawFrame{}
+}
+
+func readBridgeFrames(t *testing.T, conn *websocket.Conn, count int) []RawFrame {
+	t.Helper()
+	frames := make([]RawFrame, 0, count)
+	for i := 0; i < count; i++ {
+		frames = append(frames, readBridgeFrame(t, conn))
+	}
+	return frames
+}
+
+func assertBridgeFrameCounts(t *testing.T, frames []RawFrame, want map[FrameType]int) {
+	t.Helper()
+	counts := make(map[FrameType]int, len(frames))
+	for _, frame := range frames {
+		counts[frame.Type]++
+	}
+	wantTotal := 0
+	for typ, count := range want {
+		wantTotal += count
+		if counts[typ] != count {
+			t.Fatalf("frame counts = %#v, want %q=%d in %#v", counts, typ, count, bridgeFrameTypes(frames))
+		}
+	}
+	if len(frames) != wantTotal {
+		t.Fatalf("frame count = %d, want %d in %#v", len(frames), wantTotal, bridgeFrameTypes(frames))
+	}
+}
+
+func firstBridgeFrameOfType(t *testing.T, frames []RawFrame, typ FrameType) RawFrame {
+	t.Helper()
+	for _, frame := range frames {
+		if frame.Type == typ {
+			return frame
+		}
+	}
+	t.Fatalf("frame type %q not found in %#v", typ, bridgeFrameTypes(frames))
+	return RawFrame{}
+}
+
+func bridgeFrameTypes(frames []RawFrame) []FrameType {
+	out := make([]FrameType, 0, len(frames))
+	for _, frame := range frames {
+		out = append(out, frame.Type)
+	}
+	return out
 }
 
 func collectBridgeFrames(t *testing.T, conn *websocket.Conn, timeout time.Duration, want map[FrameType]bool) map[FrameType]RawFrame {
