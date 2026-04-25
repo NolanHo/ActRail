@@ -16,6 +16,7 @@ import {
   useSessionsStore,
   useSessionsStoreApi,
 } from "../../app/providers";
+import { getRealtimeConnectionState } from "../../domains/realtime/client";
 import { api } from "../../lib/api";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import type {
@@ -727,9 +728,15 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   };
 
   const refreshSessionAfterSend = (sessionId: string, runtimeId?: string | null, agentBackend?: string) => {
+    const refreshLiveSnapshot = () => (
+      runtimeId ? liveSessionStoreApi.loadInitial(sessionId, runtimeId) : liveSessionStoreApi.loadInitial(sessionId)
+    );
+    const refreshWorkspace = () => (
+      runtimeId ? sessionUiStoreApi.refresh(sessionId, { agentBackend, runtimeId }) : sessionUiStoreApi.refresh(sessionId, { agentBackend })
+    );
     const refreshNow = () => Promise.allSettled([
-      runtimeId ? liveSessionStoreApi.loadInitial(sessionId, runtimeId) : liveSessionStoreApi.loadInitial(sessionId),
-      runtimeId ? sessionUiStoreApi.refresh(sessionId, { agentBackend, runtimeId }) : sessionUiStoreApi.refresh(sessionId, { agentBackend }),
+      refreshLiveSnapshot(),
+      refreshWorkspace(),
       sessionsStoreApi.refresh(),
     ]);
 
@@ -738,11 +745,15 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     }
     postSendRefreshTimeoutsRef.current = [];
 
+    if (getRealtimeConnectionState() === "open") {
+      return refreshNow();
+    }
+
     for (const delayMs of POST_SEND_REFRESH_DELAYS_MS) {
       const timeoutId = window.setTimeout(() => {
         void Promise.allSettled([
           runtimeId ? liveSessionStoreApi.poll(sessionId, runtimeId) : liveSessionStoreApi.poll(sessionId),
-          runtimeId ? sessionUiStoreApi.refresh(sessionId, { agentBackend, runtimeId }) : sessionUiStoreApi.refresh(sessionId, { agentBackend }),
+          refreshWorkspace(),
           sessionsStoreApi.refresh(),
         ]);
       }, delayMs);
