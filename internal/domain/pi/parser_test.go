@@ -193,6 +193,55 @@ func TestParseJSONLLiveRuntimeEventsExtractInteractiveRequestDeltaResolutionAndB
 	}
 }
 
+func TestParseJSONLRPCRuntimeEventsExtractDeltasCommittedReplyAndBoundary(t *testing.T) {
+	material, err := ParseJSONLBytes(loadFixture(t, "rpc_runtime_events.jsonl"))
+	if err != nil {
+		t.Fatalf("ParseJSONLBytes() error = %v", err)
+	}
+	if len(material.Events) != 5 {
+		t.Fatalf("len(Events) = %d, want %d", len(material.Events), 5)
+	}
+
+	started := material.Events[0]
+	if started.Boundary == nil || started.Boundary.Kind != BoundaryKindTurnStarted {
+		t.Fatalf("Events[0].Boundary = %#v, want turn_started", started.Boundary)
+	}
+	if started.Boundary.CommitLike {
+		t.Fatal("Events[0].Boundary.CommitLike = true, want false")
+	}
+
+	firstDelta := material.Events[1]
+	if firstDelta.Delta == nil || firstDelta.Delta.Text != "Codoxear serves " {
+		t.Fatalf("Events[1].Delta = %#v, want first assistant delta", firstDelta.Delta)
+	}
+	secondDelta := material.Events[2]
+	if secondDelta.Delta == nil || secondDelta.Delta.Text != "a browser UI for Codex-style sessions." {
+		t.Fatalf("Events[2].Delta = %#v, want second assistant delta", secondDelta.Delta)
+	}
+	if firstDelta.Timestamp != secondDelta.Timestamp {
+		t.Fatalf("delta timestamps = (%v, %v), want stable turn timestamp", firstDelta.Timestamp, secondDelta.Timestamp)
+	}
+
+	committed := material.Events[3]
+	if committed.Message == nil || committed.Message.Class != MessageClassCommitted {
+		t.Fatalf("Events[3].Message = %#v, want committed assistant message", committed.Message)
+	}
+	if !committed.Message.CommitLike {
+		t.Fatal("Events[3].Message.CommitLike = false, want true")
+	}
+	if committed.Message.Text != "Codoxear serves a browser UI for Codex-style sessions." {
+		t.Fatalf("Events[3].Message.Text = %q, want committed reply", committed.Message.Text)
+	}
+
+	completed := material.Events[4]
+	if completed.Boundary == nil || completed.Boundary.Kind != BoundaryKindTurnCompleted {
+		t.Fatalf("Events[4].Boundary = %#v, want turn_completed", completed.Boundary)
+	}
+	if completed.Boundary.Inferred {
+		t.Fatal("Events[4].Boundary.Inferred = true, want false")
+	}
+}
+
 func TestParseJSONLAssistantNarrationAndFinalHeuristics(t *testing.T) {
 	data := []byte("{" +
 		"\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"toolUse\",\"content\":[{\"type\":\"text\",\"text\":\"working\"},{\"type\":\"thinking\",\"thinking\":\"hmm\"},{\"type\":\"toolCall\",\"id\":\"t1\",\"name\":\"bash\",\"arguments\":{\"command\":\"pwd\"}}]}}\n" +

@@ -80,8 +80,8 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 		t.Fatalf("Send().Queue.Items = %+v, want empty", sent.Queue.Items)
 	}
 	writes := pty.Writes()
-	if len(writes) != 1 || writes[0] != "Implement runtime control\n" {
-		t.Fatalf("pty writes after Send() = %#v, want prompt with newline", writes)
+	if len(writes) != 1 || writes[0] != "{\"type\":\"prompt\",\"message\":\"Implement runtime control\"}\n" {
+		t.Fatalf("pty writes after Send() = %#v, want RPC prompt command", writes)
 	}
 	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
@@ -119,8 +119,8 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	if len(interrupted.Queue.Items) != 1 || interrupted.Queue.Items[0].Text != "replacement queued" {
 		t.Fatalf("Interrupt().Queue = %+v, want retained queued item", interrupted.Queue.Items)
 	}
-	if handle.InterruptCalls() != 1 {
-		t.Fatalf("handle.InterruptCalls() = %d, want 1", handle.InterruptCalls())
+	if handle.InterruptCalls() != 0 {
+		t.Fatalf("handle.InterruptCalls() = %d, want 0 when Pi RPC uses abort command", handle.InterruptCalls())
 	}
 	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
@@ -158,8 +158,8 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 		t.Fatalf("SessionState().UIRequest after RespondUI() = %+v, want nil", state.UIRequest)
 	}
 	writes = pty.Writes()
-	if len(writes) != 2 || writes[1] != "A\n" {
-		t.Fatalf("pty writes after RespondUI() = %#v, want response newline", writes)
+	if len(writes) != 3 || writes[1] != "{\"type\":\"abort\"}\n" || writes[2] != "{\"type\":\"extension_ui_response\",\"id\":\"ask_1\",\"value\":\"A\"}\n" {
+		t.Fatalf("pty writes after RespondUI() = %#v, want RPC abort and ui response commands", writes)
 	}
 }
 

@@ -30,8 +30,8 @@ func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
 	})
 
 	writes := pty.Writes()
-	if len(writes) != 1 || writes[0] != "queued prompt\n" {
-		t.Fatalf("pty writes after idle Enqueue() = %#v, want queued prompt newline", writes)
+	if len(writes) != 1 || writes[0] != "{\"type\":\"prompt\",\"message\":\"queued prompt\"}\n" {
+		t.Fatalf("pty writes after idle Enqueue() = %#v, want queued RPC prompt command", writes)
 	}
 	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
 	if err != nil {
@@ -84,8 +84,8 @@ func TestTurnCompletionDispatchesQueuedPromptWithoutManualResend(t *testing.T) {
 	})
 
 	writes := pty.Writes()
-	if len(writes) != 2 || writes[1] != "second prompt\n" {
-		t.Fatalf("pty writes after turn completion = %#v, want queued second prompt dispatched", writes)
+	if len(writes) != 2 || writes[1] != "{\"type\":\"prompt\",\"message\":\"second prompt\"}\n" {
+		t.Fatalf("pty writes after turn completion = %#v, want queued second prompt RPC command", writes)
 	}
 	messages, err = svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
 	if err != nil {
