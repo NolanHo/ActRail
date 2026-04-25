@@ -15,6 +15,7 @@ type Service interface {
 	Bootstrap(context.Context) BootstrapSnapshot
 	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
 	CreateSession(context.Context, CreateSessionRequest) (CreateSessionResponse, error)
+	SessionResumeCandidates(context.Context, SessionResumeCandidatesRequest) (SessionResumeCandidatesResponse, error)
 	SessionDetails(context.Context, SessionDetailsRequest) (SessionDetailsResponse, error)
 	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)
 	SessionState(context.Context, SessionStateRequest) (SessionStateResponse, error)
@@ -22,6 +23,13 @@ type Service interface {
 	WorkspaceFileList(context.Context, WorkspaceFileListRequest) (WorkspaceFileListResponse, error)
 	WorkspaceFileRead(context.Context, WorkspaceFileReadRequest) (WorkspaceFileReadResponse, error)
 	GitFileVersions(context.Context, GitFileVersionsRequest) (GitFileVersionsResponse, error)
+	RenameSession(context.Context, RenameSessionRequest) (RenameSessionResponse, error)
+	FocusSession(context.Context, FocusSessionRequest) (FocusSessionResponse, error)
+	EditSession(context.Context, EditSessionRequest) (EditSessionResponse, error)
+	SwitchSessionModel(context.Context, SwitchSessionModelRequest) (SwitchSessionModelResponse, error)
+	DeleteSession(context.Context, DeleteSessionRequest) (DeleteSessionResponse, error)
+	RestartSession(context.Context, RestartSessionRequest) (RestartSessionResponse, error)
+	HandoffSession(context.Context, HandoffSessionRequest) (HandoffSessionResponse, error)
 }
 
 type Stub struct {
@@ -87,15 +95,27 @@ type UIConfig struct {
 }
 
 type SessionSummary struct {
-	SessionID     string  `json:"session_id"`
-	RuntimeID     string  `json:"runtime_id,omitempty"`
-	ThreadID      string  `json:"thread_id,omitempty"`
-	AgentBackend  string  `json:"agent_backend"`
-	Title         string  `json:"title"`
-	CWD           string  `json:"cwd"`
-	Busy          bool    `json:"busy"`
-	LastUpdatedTS float64 `json:"last_updated_ts"`
-	Historical    bool    `json:"historical"`
+	SessionID           string  `json:"session_id"`
+	RuntimeID           string  `json:"runtime_id,omitempty"`
+	ThreadID            string  `json:"thread_id,omitempty"`
+	AgentBackend        string  `json:"agent_backend"`
+	Title               string  `json:"title"`
+	Alias               string  `json:"alias,omitempty"`
+	DisplayName         string  `json:"display_name,omitempty"`
+	FirstUserMessage    string  `json:"first_user_message,omitempty"`
+	CWD                 string  `json:"cwd"`
+	Busy                bool    `json:"busy"`
+	Focused             bool    `json:"focused,omitempty"`
+	QueueLen            int     `json:"queue_len,omitempty"`
+	LastUpdatedTS       float64 `json:"last_updated_ts"`
+	UpdatedTS           float64 `json:"updated_ts,omitempty"`
+	Historical          bool    `json:"historical"`
+	Model               string  `json:"model,omitempty"`
+	ProviderChoice      string  `json:"provider_choice,omitempty"`
+	ReasoningEffort     string  `json:"reasoning_effort,omitempty"`
+	PriorityOffset      float64 `json:"priority_offset,omitempty"`
+	SnoozeUntil         *int64  `json:"snooze_until,omitempty"`
+	DependencySessionID string  `json:"dependency_session_id,omitempty"`
 }
 
 type ListSessionsRequest struct {
@@ -133,8 +153,10 @@ type CreatedSession struct {
 	RuntimeID    string `json:"runtime_id,omitempty"`
 	ThreadID     string `json:"thread_id,omitempty"`
 	AgentBackend string `json:"agent_backend"`
+	Alias        string `json:"alias,omitempty"`
 	CWD          string `json:"cwd"`
 	Busy         bool   `json:"busy"`
+	Focused      bool   `json:"focused,omitempty"`
 }
 
 type SessionAttachRequest struct {
@@ -277,15 +299,27 @@ func sessionSummaryFromRecord(record sessionRecord) SessionSummary {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
 	return SessionSummary{
-		SessionID:     record.identity.SessionID().String(),
-		RuntimeID:     runtimeID.String(),
-		ThreadID:      threadID.String(),
-		AgentBackend:  record.identity.Backend().String(),
-		Title:         record.title,
-		CWD:           record.cwd,
-		Busy:          record.state.Busy(),
-		LastUpdatedTS: timestampSeconds(record.updatedAt),
-		Historical:    record.identity.Historical(),
+		SessionID:           record.identity.SessionID().String(),
+		RuntimeID:           runtimeID.String(),
+		ThreadID:            threadID.String(),
+		AgentBackend:        record.identity.Backend().String(),
+		Title:               record.title,
+		Alias:               displayAlias(record),
+		DisplayName:         displayAlias(record),
+		FirstUserMessage:    firstUserMessage(record.transcript),
+		CWD:                 record.cwd,
+		Busy:                record.state.Busy(),
+		Focused:             record.focused,
+		QueueLen:            record.state.Queue().Len(),
+		LastUpdatedTS:       timestampSeconds(record.updatedAt),
+		UpdatedTS:           timestampSeconds(record.updatedAt),
+		Historical:          record.identity.Historical(),
+		Model:               record.model,
+		ProviderChoice:      record.provider,
+		ReasoningEffort:     record.reasoningEffort,
+		PriorityOffset:      record.priorityOffset,
+		SnoozeUntil:         unixSecondsPtr(record.snoozeUntil),
+		DependencySessionID: sessionIDString(record.dependencySessionID),
 	}
 }
 
@@ -297,8 +331,10 @@ func createdSessionFromRecord(record sessionRecord) *CreatedSession {
 		RuntimeID:    runtimeID.String(),
 		ThreadID:     threadID.String(),
 		AgentBackend: record.identity.Backend().String(),
+		Alias:        displayAlias(record),
 		CWD:          record.cwd,
 		Busy:         record.state.Busy(),
+		Focused:      record.focused,
 	}
 }
 
@@ -326,6 +362,13 @@ func timestampSeconds(ts time.Time) float64 {
 		return 0
 	}
 	return float64(ts.UnixNano()) / float64(time.Second)
+}
+
+func sessionIDString(id *session.SessionID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
 }
 
 func listWindow(req ListSessionsRequest) (int, int) {

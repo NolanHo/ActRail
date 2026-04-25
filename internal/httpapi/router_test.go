@@ -20,6 +20,7 @@ type serviceStub struct {
 	base              *app.Stub
 	listSessionsFunc  func(context.Context, app.ListSessionsRequest) (app.ListSessionsResponse, error)
 	createSessionFunc func(context.Context, app.CreateSessionRequest) (app.CreateSessionResponse, error)
+	resumeFunc        func(context.Context, app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error)
 	detailsFunc       func(context.Context, app.SessionDetailsRequest) (app.SessionDetailsResponse, error)
 	messagesFunc      func(context.Context, app.SessionMessagesRequest) (app.SessionMessagesResponse, error)
 	stateFunc         func(context.Context, app.SessionStateRequest) (app.SessionStateResponse, error)
@@ -27,6 +28,13 @@ type serviceStub struct {
 	fileListFunc      func(context.Context, app.WorkspaceFileListRequest) (app.WorkspaceFileListResponse, error)
 	fileReadFunc      func(context.Context, app.WorkspaceFileReadRequest) (app.WorkspaceFileReadResponse, error)
 	gitFunc           func(context.Context, app.GitFileVersionsRequest) (app.GitFileVersionsResponse, error)
+	renameFunc        func(context.Context, app.RenameSessionRequest) (app.RenameSessionResponse, error)
+	focusFunc         func(context.Context, app.FocusSessionRequest) (app.FocusSessionResponse, error)
+	editFunc          func(context.Context, app.EditSessionRequest) (app.EditSessionResponse, error)
+	modelFunc         func(context.Context, app.SwitchSessionModelRequest) (app.SwitchSessionModelResponse, error)
+	deleteFunc        func(context.Context, app.DeleteSessionRequest) (app.DeleteSessionResponse, error)
+	restartFunc       func(context.Context, app.RestartSessionRequest) (app.RestartSessionResponse, error)
+	handoffFunc       func(context.Context, app.HandoffSessionRequest) (app.HandoffSessionResponse, error)
 }
 
 func newServiceStub(cfg config.Config) serviceStub {
@@ -49,6 +57,13 @@ func (s serviceStub) CreateSession(ctx context.Context, req app.CreateSessionReq
 		return s.createSessionFunc(ctx, req)
 	}
 	return s.base.CreateSession(ctx, req)
+}
+
+func (s serviceStub) SessionResumeCandidates(ctx context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
+	if s.resumeFunc != nil {
+		return s.resumeFunc(ctx, req)
+	}
+	return s.base.SessionResumeCandidates(ctx, req)
 }
 
 func (s serviceStub) SessionDetails(ctx context.Context, req app.SessionDetailsRequest) (app.SessionDetailsResponse, error) {
@@ -100,9 +115,59 @@ func (s serviceStub) GitFileVersions(ctx context.Context, req app.GitFileVersion
 	return s.base.GitFileVersions(ctx, req)
 }
 
+func (s serviceStub) RenameSession(ctx context.Context, req app.RenameSessionRequest) (app.RenameSessionResponse, error) {
+	if s.renameFunc != nil {
+		return s.renameFunc(ctx, req)
+	}
+	return s.base.RenameSession(ctx, req)
+}
+
+func (s serviceStub) FocusSession(ctx context.Context, req app.FocusSessionRequest) (app.FocusSessionResponse, error) {
+	if s.focusFunc != nil {
+		return s.focusFunc(ctx, req)
+	}
+	return s.base.FocusSession(ctx, req)
+}
+
+func (s serviceStub) EditSession(ctx context.Context, req app.EditSessionRequest) (app.EditSessionResponse, error) {
+	if s.editFunc != nil {
+		return s.editFunc(ctx, req)
+	}
+	return s.base.EditSession(ctx, req)
+}
+
+func (s serviceStub) SwitchSessionModel(ctx context.Context, req app.SwitchSessionModelRequest) (app.SwitchSessionModelResponse, error) {
+	if s.modelFunc != nil {
+		return s.modelFunc(ctx, req)
+	}
+	return s.base.SwitchSessionModel(ctx, req)
+}
+
+func (s serviceStub) DeleteSession(ctx context.Context, req app.DeleteSessionRequest) (app.DeleteSessionResponse, error) {
+	if s.deleteFunc != nil {
+		return s.deleteFunc(ctx, req)
+	}
+	return s.base.DeleteSession(ctx, req)
+}
+
+func (s serviceStub) RestartSession(ctx context.Context, req app.RestartSessionRequest) (app.RestartSessionResponse, error) {
+	if s.restartFunc != nil {
+		return s.restartFunc(ctx, req)
+	}
+	return s.base.RestartSession(ctx, req)
+}
+
+func (s serviceStub) HandoffSession(ctx context.Context, req app.HandoffSessionRequest) (app.HandoffSessionResponse, error) {
+	if s.handoffFunc != nil {
+		return s.handoffFunc(ctx, req)
+	}
+	return s.base.HandoffSession(ctx, req)
+}
+
 type fixtureService struct {
 	listReq      app.ListSessionsRequest
 	createReq    app.CreateSessionRequest
+	resumeReq    app.SessionResumeCandidatesRequest
 	detailsReq   app.SessionDetailsRequest
 	messagesReq  app.SessionMessagesRequest
 	stateReq     app.SessionStateRequest
@@ -110,6 +175,13 @@ type fixtureService struct {
 	fileListReq  app.WorkspaceFileListRequest
 	fileReadReq  app.WorkspaceFileReadRequest
 	gitReq       app.GitFileVersionsRequest
+	renameReq    app.RenameSessionRequest
+	focusReq     app.FocusSessionRequest
+	editReq      app.EditSessionRequest
+	modelReq     app.SwitchSessionModelRequest
+	deleteReq    app.DeleteSessionRequest
+	restartReq   app.RestartSessionRequest
+	handoffReq   app.HandoffSessionRequest
 }
 
 func (s *fixtureService) Bootstrap(_ context.Context) app.BootstrapSnapshot {
@@ -174,6 +246,26 @@ func (s *fixtureService) CreateSession(_ context.Context, req app.CreateSessionR
 			SessionID:            "s_123",
 			SuggestSubscriptions: []string{"session:s_123"},
 		},
+	}, nil
+}
+
+func (s *fixtureService) SessionResumeCandidates(_ context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
+	s.resumeReq = req
+	return app.SessionResumeCandidatesResponse{
+		OK:         true,
+		Exists:     true,
+		WillCreate: false,
+		GitRepo:    false,
+		Offset:     req.Offset,
+		Limit:      req.Limit,
+		Remaining:  0,
+		Sessions: []app.SessionResumeCandidate{{
+			SessionID:        "s_123",
+			Title:            "Current task",
+			Alias:            "Current task",
+			FirstUserMessage: "Investigate backlog",
+			UpdatedTS:        1760000000,
+		}},
 	}, nil
 }
 
@@ -299,6 +391,49 @@ func (s *fixtureService) GitFileVersions(_ context.Context, req app.GitFileVersi
 			Current:    true,
 		}},
 	}, nil
+}
+
+func (s *fixtureService) RenameSession(_ context.Context, req app.RenameSessionRequest) (app.RenameSessionResponse, error) {
+	s.renameReq = req
+	return app.RenameSessionResponse{OK: true, Alias: req.Name}, nil
+}
+
+func (s *fixtureService) FocusSession(_ context.Context, req app.FocusSessionRequest) (app.FocusSessionResponse, error) {
+	s.focusReq = req
+	return app.FocusSessionResponse{OK: true, Focused: req.Focused}, nil
+}
+
+func (s *fixtureService) EditSession(_ context.Context, req app.EditSessionRequest) (app.EditSessionResponse, error) {
+	s.editReq = req
+	return app.EditSessionResponse{OK: true, Alias: "Edited task", PriorityOffset: 0.5, Focused: true}, nil
+}
+
+func (s *fixtureService) SwitchSessionModel(_ context.Context, req app.SwitchSessionModelRequest) (app.SwitchSessionModelResponse, error) {
+	s.modelReq = req
+	model := ""
+	if req.Model.Value != nil {
+		model = *req.Model.Value
+	}
+	provider := ""
+	if req.Provider.Value != nil {
+		provider = *req.Provider.Value
+	}
+	return app.SwitchSessionModelResponse{OK: true, Model: model, Provider: provider}, nil
+}
+
+func (s *fixtureService) DeleteSession(_ context.Context, req app.DeleteSessionRequest) (app.DeleteSessionResponse, error) {
+	s.deleteReq = req
+	return app.DeleteSessionResponse{OK: true, SessionID: req.SessionID.String(), Removed: true}, nil
+}
+
+func (s *fixtureService) RestartSession(_ context.Context, req app.RestartSessionRequest) (app.RestartSessionResponse, error) {
+	s.restartReq = req
+	return app.RestartSessionResponse{}, app.Unsupported("session restart not implemented")
+}
+
+func (s *fixtureService) HandoffSession(_ context.Context, req app.HandoffSessionRequest) (app.HandoffSessionResponse, error) {
+	s.handoffReq = req
+	return app.HandoffSessionResponse{}, app.Unsupported("session handoff not implemented")
 }
 
 func newTestRouter(cfg config.Config, svc app.Service) http.Handler {
@@ -661,14 +796,149 @@ func TestWriteAppErrorMapsTransportResetRequiredToConflict(t *testing.T) {
 	}
 }
 
-func TestUnsupportedMetadataRoutesUseErrorEnvelope(t *testing.T) {
-	h := newTestRouter(config.Load(), app.NewStub(config.Load()))
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/rename", bytes.NewBufferString(`{"name":"New title"}`))
+func TestSessionActionRoutesUseAppSeams(t *testing.T) {
+	svc := &fixtureService{}
+	h := newTestRouter(config.Load(), svc)
+
+	t.Run("resume candidates", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/session_resume_candidates?cwd=/root/code/ActRail&backend=pi&offset=1&limit=5", nil)
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.resumeReq.CWD != "/root/code/ActRail" || svc.resumeReq.AgentBackend != "pi" || svc.resumeReq.Offset != 1 || svc.resumeReq.Limit != 5 {
+			t.Fatalf("resume request = %+v", svc.resumeReq)
+		}
+		var body app.SessionResumeCandidatesResponse
+		decodeJSON(t, res, &body)
+		if !body.OK || len(body.Sessions) != 1 {
+			t.Fatalf("resume response = %+v", body)
+		}
+	})
+
+	t.Run("rename", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/rename", bytes.NewBufferString(`{"name":"New title"}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.renameReq.Name != "New title" || svc.renameReq.SessionID.String() != "s_123" {
+			t.Fatalf("rename request = %+v", svc.renameReq)
+		}
+	})
+
+	t.Run("focus", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/focus", bytes.NewBufferString(`{"focused":true}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if !svc.focusReq.Focused || svc.focusReq.SessionID.String() != "s_123" {
+			t.Fatalf("focus request = %+v", svc.focusReq)
+		}
+	})
+
+	t.Run("edit", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/edit", bytes.NewBufferString(`{"name":"Edited task","priority_offset":0.5,"snooze_until":1760000100,"dependency_session_id":"s_456"}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.editReq.SessionID.String() != "s_123" || svc.editReq.Name.Value == nil || *svc.editReq.Name.Value != "Edited task" {
+			t.Fatalf("edit request = %+v", svc.editReq)
+		}
+		if svc.editReq.PriorityOffset.Value == nil || *svc.editReq.PriorityOffset.Value != 0.5 {
+			t.Fatalf("edit priority request = %+v", svc.editReq.PriorityOffset)
+		}
+		if svc.editReq.SnoozeUntil.Value == nil || *svc.editReq.SnoozeUntil.Value != 1760000100 {
+			t.Fatalf("edit snooze request = %+v", svc.editReq.SnoozeUntil)
+		}
+		if svc.editReq.DependencySessionID.Value == nil || *svc.editReq.DependencySessionID.Value != "s_456" {
+			t.Fatalf("edit dependency request = %+v", svc.editReq.DependencySessionID)
+		}
+	})
+
+	t.Run("model", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/model", bytes.NewBufferString(`{"model":"gpt-next","provider":"openrouter"}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.modelReq.Model.Value == nil || *svc.modelReq.Model.Value != "gpt-next" {
+			t.Fatalf("model request = %+v", svc.modelReq)
+		}
+		if svc.modelReq.Provider.Value == nil || *svc.modelReq.Provider.Value != "openrouter" {
+			t.Fatalf("provider request = %+v", svc.modelReq)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/delete", bytes.NewBufferString(`{}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.deleteReq.SessionID.String() != "s_123" {
+			t.Fatalf("delete request = %+v", svc.deleteReq)
+		}
+	})
+
+	t.Run("restart unsupported", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/restart", bytes.NewBufferString(`{}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		assertErrorEnvelope(t, res, http.StatusNotImplemented, "unsupported", "")
+		if svc.restartReq.SessionID.String() != "s_123" {
+			t.Fatalf("restart request = %+v", svc.restartReq)
+		}
+	})
+
+	t.Run("handoff unsupported", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/handoff", bytes.NewBufferString(`{}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		assertErrorEnvelope(t, res, http.StatusNotImplemented, "unsupported", "")
+		if svc.handoffReq.SessionID.String() != "s_123" {
+			t.Fatalf("handoff request = %+v", svc.handoffReq)
+		}
+	})
+}
+
+func TestSessionActionRoutesSurfaceNotFound(t *testing.T) {
+	cfg := config.Load()
+	svc := newServiceStub(cfg)
+	svc.renameFunc = func(context.Context, app.RenameSessionRequest) (app.RenameSessionResponse, error) {
+		return app.RenameSessionResponse{}, app.NotFound("session \"s_404\" not found")
+	}
+	h := newTestRouter(cfg, svc)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_404/rename", bytes.NewBufferString(`{"name":"Missing"}`))
 	res := httptest.NewRecorder()
 
 	h.ServeHTTP(res, req)
 
-	assertErrorEnvelope(t, res, http.StatusNotImplemented, "unsupported", "")
+	assertErrorEnvelope(t, res, http.StatusNotFound, "not_found", "")
 }
 
 func decodeJSON(t *testing.T, res *httptest.ResponseRecorder, dst any) {
