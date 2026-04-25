@@ -51,6 +51,7 @@ type sessionRecord struct {
 	transcript      message.Transcript
 	runtime         sessionRuntime
 	uiRequest       *SessionUIRequestSnapshot
+	resumeCursors   SessionResumeCursors
 }
 
 func newSessionRegistry(now func() time.Time) *sessionRegistry {
@@ -312,6 +313,37 @@ func (r *sessionRegistry) ClearUIRequest(sessionID session.SessionID, requestID 
 	return resolved, copySessionState(record.state), true, nil
 }
 
+func (r *sessionRegistry) SetResumeCursor(sessionID session.SessionID, kind session.StreamKind, cursor string) error {
+	if err := sessionID.Validate(); err != nil {
+		return err
+	}
+	if err := kind.Validate(); err != nil {
+		return err
+	}
+	value := strings.TrimSpace(cursor)
+	if value == "" {
+		return fmt.Errorf("resume cursor is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return fmt.Errorf("session %q not found", sessionID)
+	}
+	switch kind {
+	case session.StreamKindMain:
+		record.resumeCursors.Session = value
+	case session.StreamKindUI:
+		record.resumeCursors.UI = value
+	case session.StreamKindTransport:
+		record.resumeCursors.Transport = value
+	default:
+		return fmt.Errorf("stream kind %q is not supported", kind)
+	}
+	r.sessions[sessionID] = copySessionRecord(record)
+	return nil
+}
+
 func normalizeSessionUIRequest(raw SessionUIRequestSnapshot) (SessionUIRequestSnapshot, error) {
 	request := SessionUIRequestSnapshot{
 		RequestID: strings.TrimSpace(raw.RequestID),
@@ -358,6 +390,7 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		transcript:      record.transcript.Clone(),
 		runtime:         record.runtime,
 		uiRequest:       copySessionUIRequest(record.uiRequest),
+		resumeCursors:   record.resumeCursors,
 	}
 }
 
