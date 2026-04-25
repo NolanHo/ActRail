@@ -48,10 +48,7 @@ type QueueStateEvent struct {
 
 type UIRequestEvent struct {
 	SessionID session.SessionID
-	RequestID string
-	Kind      string
-	Prompt    string
-	Options   []string
+	Request   SessionUIRequestSnapshot
 }
 
 type UIResolvedEvent struct {
