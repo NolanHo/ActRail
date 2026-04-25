@@ -50,6 +50,34 @@ function withSessionIdentity(sessionId: string, runtimeId?: string | null, extra
   };
 }
 
+function uiResponseValue(payload: Record<string, unknown>) {
+  if (payload.value !== undefined) {
+    return payload.value;
+  }
+  if (payload.confirmed === true) {
+    return "true";
+  }
+  if (payload.cancelled === true) {
+    return "cancelled";
+  }
+  throw new Error("ui.response value required");
+}
+
+function normalizeUiResponsePayload(payload: Record<string, unknown>) {
+  const responseTo = typeof payload.response_to === "string" && payload.response_to.trim()
+    ? payload.response_to.trim()
+    : typeof payload.id === "string" && payload.id.trim()
+      ? payload.id.trim()
+      : "";
+  if (!responseTo) {
+    throw new Error("ui.response response_to required");
+  }
+  return {
+    response_to: responseTo,
+    value: uiResponseValue(payload),
+  };
+}
+
 export const api = {
   me(signal?: AbortSignal) {
     return getJson<{ ok?: boolean }>("/api/me", signal);
@@ -290,7 +318,7 @@ export const api = {
     return sendRealtimeCommand({
       type: "ui.response",
       stream: sessionUiStreamName(sessionId),
-      payload: withSessionIdentity(sessionId, runtimeId, payload),
+      payload: withSessionIdentity(sessionId, runtimeId, normalizeUiResponsePayload(payload)),
     });
   },
 };
