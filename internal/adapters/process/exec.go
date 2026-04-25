@@ -10,16 +10,18 @@ import (
 	"sync"
 )
 
-// ExecRunner starts child processes through os/exec. PTY mode is rejected explicitly.
+// ExecRunner starts child processes through os/exec and optional PTY wiring.
 type ExecRunner struct {
 	lookPath func(string) (string, error)
 	openLog  func(string) (io.WriteCloser, error)
+	startPTY func(*exec.Cmd, PTYSize) (PTY, error)
 }
 
 func NewExecRunner() *ExecRunner {
 	return &ExecRunner{
 		lookPath: exec.LookPath,
 		openLog:  openLogFile,
+		startPTY: startPTYProcess,
 	}
 }
 
@@ -29,9 +31,6 @@ func (r *ExecRunner) Start(ctx context.Context, spec LaunchSpec) (Handle, error)
 	}
 	if err := spec.Validate(); err != nil {
 		return nil, err
-	}
-	if spec.IO().Mode() == IOModePTY {
-		return nil, ErrPTYUnsupported
 	}
 	if err := ensureWorkingDir(spec.CWD()); err != nil {
 		return nil, err
@@ -43,6 +42,13 @@ func (r *ExecRunner) Start(ctx context.Context, spec LaunchSpec) (Handle, error)
 	cmd := exec.Command(path, spec.Command().Args()...)
 	cmd.Dir = spec.CWD().String()
 	cmd.Env = spec.Environment().Resolve(os.Environ())
+	if spec.IO().Mode() == IOModePTY {
+		return r.startWithPTY(spec, cmd)
+	}
+	return r.startWithPipes(spec, cmd)
+}
+
+func (r *ExecRunner) startWithPipes(spec LaunchSpec, cmd *exec.Cmd) (Handle, error) {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
@@ -79,6 +85,30 @@ func (r *ExecRunner) Start(ctx context.Context, spec LaunchSpec) (Handle, error)
 		logs:   logs,
 		stdout: stdoutHook,
 		stderr: stderrHook,
+		waitCh: make(chan waitResult, 1),
+		proc:   cmd.Process,
+	}
+	go handle.await(cmd)
+	return handle, nil
+}
+
+func (r *ExecRunner) startWithPTY(spec LaunchSpec, cmd *exec.Cmd) (Handle, error) {
+	logs := spec.IO().Logs()
+	mirror, err := r.openOptionalLog(logs.PTY)
+	if err != nil {
+		return nil, err
+	}
+	size := spec.IO().PTYSize()
+	dev, err := r.startPTY(cmd, *size)
+	if err != nil {
+		_ = closeWriteCloser(mirror)
+		return nil, fmt.Errorf("start pty for command %q: %w", spec.Command().Path(), err)
+	}
+	handle := &execHandle{
+		spec:   spec,
+		pid:    cmd.Process.Pid,
+		logs:   logs,
+		pty:    wrapMirroredPTY(dev, mirror),
 		waitCh: make(chan waitResult, 1),
 		proc:   cmd.Process,
 	}
@@ -126,6 +156,7 @@ type execHandle struct {
 	logs   LogPaths
 	stdout io.ReadCloser
 	stderr io.ReadCloser
+	pty    PTY
 	waitCh chan waitResult
 
 	mu     sync.Mutex
@@ -159,7 +190,7 @@ func (h *execHandle) Stderr() io.ReadCloser {
 }
 
 func (h *execHandle) PTY() PTY {
-	return nil
+	return h.pty
 }
 
 func (h *execHandle) Signal(sig os.Signal) error {
@@ -270,6 +301,53 @@ func (r *mirroredReadCloser) closeMirror() error {
 	var err error
 	r.closeOnce.Do(func() {
 		err = closeWriteCloser(r.mirror)
+	})
+	return err
+}
+
+type mirroredPTY struct {
+	src       PTY
+	mirror    io.WriteCloser
+	closeOnce sync.Once
+}
+
+func wrapMirroredPTY(src PTY, mirror io.WriteCloser) PTY {
+	if mirror == nil {
+		return src
+	}
+	return &mirroredPTY{src: src, mirror: mirror}
+}
+
+func (p *mirroredPTY) Read(buf []byte) (int, error) {
+	n, err := p.src.Read(buf)
+	if n > 0 {
+		if _, writeErr := p.mirror.Write(buf[:n]); writeErr != nil {
+			_ = p.closeMirror()
+			return n, errors.Join(err, fmt.Errorf("mirror output: %w", writeErr))
+		}
+	}
+	if errors.Is(err, io.EOF) {
+		_ = p.closeMirror()
+	}
+	return n, err
+}
+
+func (p *mirroredPTY) Write(buf []byte) (int, error) {
+	return p.src.Write(buf)
+}
+
+func (p *mirroredPTY) Close() error {
+	return errors.Join(p.src.Close(), p.closeMirror())
+}
+
+func (p *mirroredPTY) Resize(size PTYSize) error {
+	return p.src.Resize(size)
+}
+
+func (p *mirroredPTY) closeMirror() error {
+	var err error
+	p.closeOnce.Do(func() {
+		err = closeWriteCloser(p.mirror)
 	})
 	return err
 }
