@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -29,6 +30,14 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+type renameSessionRequest struct {
+	Name *string `json:"name"`
+}
+
+type focusSessionRequest struct {
+	Focused *bool `json:"focused"`
+}
+
 func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handler {
 	r := Router{cfg: cfg, app: svc, ws: wsHandler}
 	mux := http.NewServeMux()
@@ -40,7 +49,7 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.HandleFunc("GET /api/bootstrap", r.bootstrap)
 	mux.HandleFunc("GET /api/sessions", r.listSessions)
 	mux.HandleFunc("POST /api/sessions", r.createSession)
-	mux.HandleFunc("GET /api/session_resume_candidates", r.notImplemented("session resume candidates not implemented"))
+	mux.HandleFunc("GET /api/session_resume_candidates", r.sessionResumeCandidates)
 	mux.HandleFunc("GET /api/sessions/{session_id}/details", r.sessionDetails)
 	mux.HandleFunc("GET /api/sessions/{session_id}/messages", r.sessionMessages)
 	mux.HandleFunc("GET /api/sessions/{session_id}/state", r.sessionState)
@@ -48,13 +57,13 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.HandleFunc("GET /api/sessions/{session_id}/file/list", r.workspaceFileList)
 	mux.HandleFunc("GET /api/sessions/{session_id}/file/read", r.workspaceFileRead)
 	mux.HandleFunc("GET /api/sessions/{session_id}/git/file_versions", r.gitFileVersions)
-	mux.HandleFunc("POST /api/sessions/{session_id}/rename", r.notImplemented("session rename not implemented"))
-	mux.HandleFunc("POST /api/sessions/{session_id}/focus", r.notImplemented("session focus not implemented"))
-	mux.HandleFunc("POST /api/sessions/{session_id}/edit", r.notImplemented("session edit not implemented"))
-	mux.HandleFunc("POST /api/sessions/{session_id}/model", r.notImplemented("session model switch not implemented"))
-	mux.HandleFunc("POST /api/sessions/{session_id}/delete", r.notImplemented("session delete not implemented"))
-	mux.HandleFunc("POST /api/sessions/{session_id}/restart", r.notImplemented("session restart not implemented"))
-	mux.HandleFunc("POST /api/sessions/{session_id}/handoff", r.notImplemented("session handoff not implemented"))
+	mux.HandleFunc("POST /api/sessions/{session_id}/rename", r.renameSession)
+	mux.HandleFunc("POST /api/sessions/{session_id}/focus", r.focusSession)
+	mux.HandleFunc("POST /api/sessions/{session_id}/edit", r.editSession)
+	mux.HandleFunc("POST /api/sessions/{session_id}/model", r.switchSessionModel)
+	mux.HandleFunc("POST /api/sessions/{session_id}/delete", r.deleteSession)
+	mux.HandleFunc("POST /api/sessions/{session_id}/restart", r.restartSession)
+	mux.HandleFunc("POST /api/sessions/{session_id}/handoff", r.handoffSession)
 	mux.Handle("GET /api/ws", r.ws)
 
 	return mux
@@ -153,6 +162,34 @@ func (r Router) createSession(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	payload, err := r.app.CreateSession(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sessionResumeCandidates(w http.ResponseWriter, req *http.Request) {
+	offset, err := queryInt(req, "offset")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	limit, err := queryInt(req, "limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	backend := strings.TrimSpace(req.URL.Query().Get("backend"))
+	if backend == "" {
+		backend = strings.TrimSpace(req.URL.Query().Get("agent_backend"))
+	}
+	payload, err := r.app.SessionResumeCandidates(req.Context(), app.SessionResumeCandidatesRequest{
+		CWD:          strings.TrimSpace(req.URL.Query().Get("cwd")),
+		AgentBackend: backend,
+		Offset:       offset,
+		Limit:        limit,
+	})
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -302,6 +339,161 @@ func (r Router) gitFileVersions(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
+func (r Router) renameSession(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body renameSessionRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	if body.Name == nil || strings.TrimSpace(*body.Name) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "name required", "name")
+		return
+	}
+	payload, err := r.app.RenameSession(req.Context(), app.RenameSessionRequest{SessionID: sessionID, Name: *body.Name})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) focusSession(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body focusSessionRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	if body.Focused == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "focused required", "focused")
+		return
+	}
+	payload, err := r.app.FocusSession(req.Context(), app.FocusSessionRequest{SessionID: sessionID, Focused: *body.Focused})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) editSession(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	body, err := decodeRawJSONBody(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	name, err := stringPatch(body, "name")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	priorityOffset, err := float64Patch(body, "priority_offset")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	snoozeUntil, err := int64Patch(body, "snooze_until")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	dependencySessionID, err := stringPatch(body, "dependency_session_id")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.EditSession(req.Context(), app.EditSessionRequest{
+		SessionID:           sessionID,
+		Name:                name,
+		PriorityOffset:      priorityOffset,
+		SnoozeUntil:         snoozeUntil,
+		DependencySessionID: dependencySessionID,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) switchSessionModel(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	body, err := decodeRawJSONBody(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	model, err := stringPatch(body, "model")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	provider, err := stringPatch(body, "provider")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.SwitchSessionModel(req.Context(), app.SwitchSessionModelRequest{SessionID: sessionID, Model: model, Provider: provider})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) deleteSession(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.DeleteSession(req.Context(), app.DeleteSessionRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) restartSession(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.RestartSession(req.Context(), app.RestartSessionRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) handoffSession(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.HandoffSession(req.Context(), app.HandoffSessionRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (r Router) notImplemented(message string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotImplemented, "unsupported", message, "")
@@ -341,6 +533,62 @@ func decodeJSONBody(req *http.Request, dst any) error {
 		return err
 	}
 	return nil
+}
+
+func decodeRawJSONBody(req *http.Request) (map[string]json.RawMessage, error) {
+	var body map[string]json.RawMessage
+	if err := decodeJSONBody(req, &body); err != nil {
+		return nil, err
+	}
+	if body == nil {
+		body = map[string]json.RawMessage{}
+	}
+	return body, nil
+}
+
+func stringPatch(body map[string]json.RawMessage, key string) (app.StringPatch, error) {
+	raw, ok := body[key]
+	if !ok {
+		return app.StringPatch{}, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return app.StringPatch{Present: true}, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return app.StringPatch{}, app.Invalid(key, key+" must be a string")
+	}
+	return app.StringPatch{Present: true, Value: &value}, nil
+}
+
+func float64Patch(body map[string]json.RawMessage, key string) (app.Float64Patch, error) {
+	raw, ok := body[key]
+	if !ok {
+		return app.Float64Patch{}, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return app.Float64Patch{Present: true}, nil
+	}
+	var value float64
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return app.Float64Patch{}, app.Invalid(key, key+" must be a number")
+	}
+	return app.Float64Patch{Present: true, Value: &value}, nil
+}
+
+func int64Patch(body map[string]json.RawMessage, key string) (app.Int64Patch, error) {
+	raw, ok := body[key]
+	if !ok {
+		return app.Int64Patch{}, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return app.Int64Patch{Present: true}, nil
+	}
+	var value int64
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return app.Int64Patch{}, app.Invalid(key, key+" must be an integer")
+	}
+	return app.Int64Patch{Present: true, Value: &value}, nil
 }
 
 func routeSessionID(w http.ResponseWriter, req *http.Request) (session.SessionID, bool) {

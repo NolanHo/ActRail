@@ -13,20 +13,27 @@ type SessionDetailsRequest struct {
 }
 
 type SessionDetailsResponse struct {
-	SessionID      string                    `json:"session_id"`
-	RuntimeID      string                    `json:"runtime_id,omitempty"`
-	ThreadID       string                    `json:"thread_id,omitempty"`
-	Title          string                    `json:"title"`
-	CWD            string                    `json:"cwd"`
-	AgentBackend   string                    `json:"agent_backend"`
-	Provider       string                    `json:"provider,omitempty"`
-	Model          string                    `json:"model,omitempty"`
-	Busy           bool                      `json:"busy"`
-	QueueLength    int                       `json:"queue_length"`
-	LastUpdatedTS  float64                   `json:"last_updated_ts"`
-	LastActivityTS float64                   `json:"last_activity_ts"`
-	Historical     bool                      `json:"historical"`
-	Capabilities   SessionCapabilitySnapshot `json:"capabilities"`
+	SessionID           string                    `json:"session_id"`
+	RuntimeID           string                    `json:"runtime_id,omitempty"`
+	ThreadID            string                    `json:"thread_id,omitempty"`
+	Title               string                    `json:"title"`
+	Alias               string                    `json:"alias,omitempty"`
+	DisplayName         string                    `json:"display_name,omitempty"`
+	FirstUserMessage    string                    `json:"first_user_message,omitempty"`
+	CWD                 string                    `json:"cwd"`
+	AgentBackend        string                    `json:"agent_backend"`
+	Provider            string                    `json:"provider,omitempty"`
+	Model               string                    `json:"model,omitempty"`
+	Busy                bool                      `json:"busy"`
+	Focused             bool                      `json:"focused,omitempty"`
+	QueueLength         int                       `json:"queue_length"`
+	PriorityOffset      float64                   `json:"priority_offset,omitempty"`
+	SnoozeUntil         *int64                    `json:"snooze_until,omitempty"`
+	DependencySessionID string                    `json:"dependency_session_id,omitempty"`
+	LastUpdatedTS       float64                   `json:"last_updated_ts"`
+	LastActivityTS      float64                   `json:"last_activity_ts"`
+	Historical          bool                      `json:"historical"`
+	Capabilities        SessionCapabilitySnapshot `json:"capabilities"`
 }
 
 type SessionCapabilitySnapshot struct {
@@ -183,20 +190,27 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
 	return SessionDetailsResponse{
-		SessionID:      record.identity.SessionID().String(),
-		RuntimeID:      runtimeID.String(),
-		ThreadID:       threadID.String(),
-		Title:          record.title,
-		CWD:            record.cwd,
-		AgentBackend:   record.identity.Backend().String(),
-		Provider:       record.provider,
-		Model:          record.model,
-		Busy:           record.state.Busy(),
-		QueueLength:    record.state.Queue().Len(),
-		LastUpdatedTS:  timestampSeconds(record.updatedAt),
-		LastActivityTS: timestampSeconds(record.activityAt),
-		Historical:     record.identity.Historical(),
-		Capabilities:   s.capabilitiesSnapshot(),
+		SessionID:           record.identity.SessionID().String(),
+		RuntimeID:           runtimeID.String(),
+		ThreadID:            threadID.String(),
+		Title:               record.title,
+		Alias:               displayAlias(record),
+		DisplayName:         displayAlias(record),
+		FirstUserMessage:    firstUserMessage(record.transcript),
+		CWD:                 record.cwd,
+		AgentBackend:        record.identity.Backend().String(),
+		Provider:            record.provider,
+		Model:               record.model,
+		Busy:                record.state.Busy(),
+		Focused:             record.focused,
+		QueueLength:         record.state.Queue().Len(),
+		PriorityOffset:      record.priorityOffset,
+		SnoozeUntil:         unixSecondsPtr(record.snoozeUntil),
+		DependencySessionID: sessionIDString(record.dependencySessionID),
+		LastUpdatedTS:       timestampSeconds(record.updatedAt),
+		LastActivityTS:      timestampSeconds(record.activityAt),
+		Historical:          record.identity.Historical(),
+		Capabilities:        s.capabilitiesSnapshot(),
 	}, nil
 }
 
@@ -244,7 +258,7 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 }
 
 func (s *Stub) lookupSession(sessionID session.SessionID) (sessionRecord, error) {
-	record, ok := s.registry.Lookup(sessionID)
+	record, ok := s.registry.LookupRoute(sessionID)
 	if !ok {
 		return sessionRecord{}, NotFound(fmt.Sprintf("session %q not found", sessionID))
 	}
