@@ -2,6 +2,7 @@ package ws
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -44,4 +45,24 @@ func (r *Registry) Count() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.items)
+}
+
+func (r *Registry) Subscribers(stream StreamName) []*ConnectionState {
+	r.mu.RLock()
+	items := make([]*ConnectionState, 0, len(r.items))
+	for _, conn := range r.items {
+		items = append(items, conn)
+	}
+	r.mu.RUnlock()
+
+	out := make([]*ConnectionState, 0, len(items))
+	for _, conn := range items {
+		if conn.HasSubscription(stream) {
+			out = append(out, conn)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ID() < out[j].ID()
+	})
+	return out
 }
