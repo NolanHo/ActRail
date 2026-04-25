@@ -73,7 +73,7 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 	}
 	var response SendResponse
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
-		if err := record.runtime.WriteInput(ctx, text); err != nil {
+		if err := record.runtime.SendPrompt(ctx, text); err != nil {
 			return mapRuntimeControlError(err)
 		}
 		item, state, uiRequest, ok, err := s.registry.ActivateSend(req.SessionID, text)
@@ -161,7 +161,7 @@ func (s *Stub) RespondUI(ctx context.Context, req UIResponseRequest) (UIResponse
 		if record.uiRequest.RequestID != responseTo {
 			return Conflict(fmt.Sprintf("session %q pending ui request is %q", req.SessionID, record.uiRequest.RequestID))
 		}
-		if err := record.runtime.WriteInput(ctx, value); err != nil {
+		if err := record.runtime.RespondUI(ctx, responseTo, value); err != nil {
 			return mapRuntimeControlError(err)
 		}
 		resolved, state, ok, err := s.registry.ClearUIRequest(req.SessionID, responseTo)
