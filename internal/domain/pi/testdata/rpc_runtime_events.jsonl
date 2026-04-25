@@ -1,0 +1,6 @@
+{"id":"req_prompt_1","type":"response","command":"prompt","success":true}
+{"type":"turn_start"}
+{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"Codoxear serves "}],"timestamp":1774708716099},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Codoxear serves ","partial":{"role":"assistant","content":[{"type":"text","text":"Codoxear serves "}],"timestamp":1774708716099}}}
+{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"Codoxear serves a browser UI for Codex-style sessions."}],"timestamp":1774708716099},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"a browser UI for Codex-style sessions.","partial":{"role":"assistant","content":[{"type":"text","text":"Codoxear serves a browser UI for Codex-style sessions."}],"timestamp":1774708716099}}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Codoxear serves a browser UI for Codex-style sessions."}],"stopReason":"stop","timestamp":1774708716099}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"Codoxear serves a browser UI for Codex-style sessions."}],"stopReason":"stop","timestamp":1774708716099},"toolResults":[]}

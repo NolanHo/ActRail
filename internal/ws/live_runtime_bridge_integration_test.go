@@ -23,10 +23,20 @@ import (
 type testPTY struct {
 	mu     sync.Mutex
 	writes []string
+	reader *io.PipeReader
+	writer *io.PipeWriter
 }
 
-func (p *testPTY) Read([]byte) (int, error) {
-	return 0, io.EOF
+func newStreamingPTY() *testPTY {
+	reader, writer := io.Pipe()
+	return &testPTY{reader: reader, writer: writer}
+}
+
+func (p *testPTY) Read(data []byte) (int, error) {
+	if p.reader == nil {
+		return 0, io.EOF
+	}
+	return p.reader.Read(data)
 }
 
 func (p *testPTY) Write(data []byte) (int, error) {
@@ -37,6 +47,12 @@ func (p *testPTY) Write(data []byte) (int, error) {
 }
 
 func (p *testPTY) Close() error {
+	if p.reader != nil {
+		_ = p.reader.Close()
+	}
+	if p.writer != nil {
+		return p.writer.Close()
+	}
 	return nil
 }
 
@@ -52,11 +68,26 @@ func (p *testPTY) Writes() []string {
 	return out
 }
 
-func TestLiveRuntimeBridgePublishesRuntimeEventsOverWebSocket(t *testing.T) {
-	stdoutR, stdoutW := io.Pipe()
-	defer stdoutR.Close()
+func (p *testPTY) PushOutput(data string) {
+	if p.writer == nil {
+		return
+	}
+	_, _ = io.WriteString(p.writer, data)
+}
+
+func (p *testPTY) FinishOutput() {
+	if p.writer == nil {
+		return
+	}
+	_ = p.writer.Close()
+	p.writer = nil
+}
+
+func TestLiveRuntimeBridgePublishesAssistantReplyPathOverWebSocketAndMessages(t *testing.T) {
+	pty := newStreamingPTY()
+	defer pty.Close()
 	handle := process.NewFakeHandle(process.LaunchSpec{})
-	handle.SetStdout(stdoutR)
+	handle.SetPTY(pty)
 	svc, cfg, server, cookie := newLiveBridgeServer(t, &process.FakeRunner{NextHandle: handle})
 	defer server.Close()
 
@@ -67,49 +98,67 @@ func TestLiveRuntimeBridgePublishesRuntimeEventsOverWebSocket(t *testing.T) {
 	if created.Session == nil || created.WSAttach == nil {
 		t.Fatalf("CreateSessionResponse = %+v, want session and ws attach", created)
 	}
+	mainStream := StreamName(created.WSAttach.SuggestSubscriptions[0])
 
-	conn := dialBridgeWebSocket(t, server.URL, cfg, cookie)
-	defer conn.Close()
-	subscribeBridgeStreams(t, conn, []Subscription{
-		{Name: StreamName(created.WSAttach.SuggestSubscriptions[0])},
-		{Name: StreamName("session:" + created.Session.SessionID + ":ui")},
+	subConn := dialBridgeWebSocket(t, server.URL, cfg, cookie)
+	defer subConn.Close()
+	subscribeBridgeStreams(t, subConn, []Subscription{{Name: mainStream}})
+
+	cmdConn := dialBridgeWebSocket(t, server.URL, cfg, cookie)
+	defer cmdConn.Close()
+	writeBridgeFrame(t, cmdConn, Frame{
+		Type:      FrameTypeSend,
+		RequestID: "req_send_reply_1",
+		TS:        UnixTS(time.Now()),
+		Stream:    mainStream.String(),
+		Payload:   map[string]any{"session_id": created.Session.SessionID, "text": "Explain ActRail"},
 	})
+	ack := readBridgeFrame(t, cmdConn)
+	if ack.Type != FrameTypeAck {
+		t.Fatalf("send ack type = %q, want %q", ack.Type, FrameTypeAck)
+	}
 
-	_, _ = stdoutW.Write([]byte("{" +
-		"\"type\":\"extension_ui_request\",\"id\":\"ui-req-1\",\"method\":\"select\",\"question\":\"Where should this go?\",\"options\":[\"Details\",\"Sidebar\"]}" + "\n" +
-		"{\"type\":\"message.delta\",\"turn_id\":\"turn-001\",\"role\":\"assistant\",\"delta\":\"Codoxear serves a browser UI for Codex-style sessions.\"}" + "\n" +
-		"{\"type\":\"message_end\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"ui-req-1\",\"toolName\":\"ask_user\",\"details\":{\"answer\":\"Sidebar\",\"cancelled\":false}}}" + "\n" +
-		"{\"type\":\"turn.completed\",\"turn_id\":\"turn-001\",\"role\":\"assistant\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}" + "\n"))
-	_ = stdoutW.Close()
+	waitForBridgeCondition(t, func() bool {
+		writes := pty.Writes()
+		return len(writes) == 1
+	})
+	writes := pty.Writes()
+	if len(writes) != 1 || writes[0] != "{\"type\":\"prompt\",\"message\":\"Explain ActRail\"}\n" {
+		t.Fatalf("pty writes after send = %#v, want RPC prompt command", writes)
+	}
 
-	frames := collectBridgeFrames(t, conn, 2*time.Second, map[FrameType]bool{
-		FrameTypeMessageDelta:  false,
-		FrameTypeMessageCommit: false,
-		FrameTypeUIRequest:     false,
-		FrameTypeUIResolved:    false,
+	pty.PushOutput("{" +
+		"\"id\":\"req_prompt_1\",\"type\":\"response\",\"command\":\"prompt\",\"success\":true}" + "\n" +
+		"{\"type\":\"turn_start\"}" + "\n" +
+		"{\"type\":\"message_update\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves \"}],\"timestamp\":1774708716099},\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"Codoxear serves \",\"partial\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves \"}],\"timestamp\":1774708716099}}}" + "\n" +
+		"{\"type\":\"message_update\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"timestamp\":1774708716099},\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"a browser UI for Codex-style sessions.\",\"partial\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"timestamp\":1774708716099}}}" + "\n" +
+		"{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"stopReason\":\"stop\",\"timestamp\":1774708716099}}" + "\n" +
+		"{\"type\":\"turn_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"stopReason\":\"stop\",\"timestamp\":1774708716099},\"toolResults\":[]}" + "\n")
+	pty.FinishOutput()
+
+	deltaFrame := waitForBridgeFrame(t, subConn, 2*time.Second, func(frame RawFrame) bool {
+		return frame.Type == FrameTypeMessageDelta
 	})
 	var delta messageDeltaPayload
-	decodeBridgePayload(t, frames[FrameTypeMessageDelta], &delta)
-	if delta.Delta != "Codoxear serves a browser UI for Codex-style sessions." {
+	decodeBridgePayload(t, deltaFrame, &delta)
+	if delta.Delta != "Codoxear serves " {
 		t.Fatalf("message.delta payload = %+v", delta)
 	}
+
+	commitFrame := waitForBridgeFrame(t, subConn, 2*time.Second, func(frame RawFrame) bool {
+		if frame.Type != FrameTypeMessageCommit {
+			return false
+		}
+		var payload messageCommitPayload
+		if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+			return false
+		}
+		return payload.Message.Role == "assistant"
+	})
 	var commit messageCommitPayload
-	decodeBridgePayload(t, frames[FrameTypeMessageCommit], &commit)
+	decodeBridgePayload(t, commitFrame, &commit)
 	if commit.Message.Role != "assistant" || commit.Message.Text != "Codoxear serves a browser UI for Codex-style sessions." {
 		t.Fatalf("message.commit payload = %+v", commit)
-	}
-	var request uiRequestPayload
-	decodeBridgePayload(t, frames[FrameTypeUIRequest], &request)
-	if request.Request.RequestID != "ui-req-1" || request.Request.Prompt != "Where should this go?" {
-		t.Fatalf("ui.request payload = %+v", request)
-	}
-	if len(request.Request.Options) != 2 || request.Request.Options[1].Label != "Sidebar" {
-		t.Fatalf("ui.request options = %#v", request.Request.Options)
-	}
-	var resolved uiResolvedPayload
-	decodeBridgePayload(t, frames[FrameTypeUIResolved], &resolved)
-	if resolved.RequestID != "ui-req-1" {
-		t.Fatalf("ui.resolved payload = %+v", resolved)
 	}
 
 	waitForBridgeCondition(t, func() bool {
@@ -117,22 +166,28 @@ func TestLiveRuntimeBridgePublishesRuntimeEventsOverWebSocket(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		return state.TailSeq == 1 && state.ResumeCursors.Session != "" && state.ResumeCursors.UI != ""
+		return !state.Busy && state.TailSeq == 2 && state.ResumeCursors.Session != ""
 	})
 
 	messages, err := svc.SessionMessages(context.Background(), app.SessionMessagesRequest{SessionID: mustSessionID(t, created.Session.SessionID)})
 	if err != nil {
 		t.Fatalf("SessionMessages() error = %v", err)
 	}
-	if len(messages.Items) != 1 || messages.Items[0].Text != "Codoxear serves a browser UI for Codex-style sessions." {
-		t.Fatalf("SessionMessages() = %+v", messages)
+	if len(messages.Items) != 2 {
+		t.Fatalf("len(SessionMessages().Items) = %d, want 2", len(messages.Items))
+	}
+	if messages.Items[0].Role != "user" || messages.Items[0].Text != "Explain ActRail" {
+		t.Fatalf("SessionMessages().Items[0] = %+v, want committed user prompt", messages.Items[0])
+	}
+	if messages.Items[1].Role != "assistant" || messages.Items[1].Text != "Codoxear serves a browser UI for Codex-style sessions." {
+		t.Fatalf("SessionMessages().Items[1] = %+v, want committed assistant reply", messages.Items[1])
 	}
 	state, err := svc.SessionState(context.Background(), app.SessionStateRequest{SessionID: mustSessionID(t, created.Session.SessionID)})
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.ResumeCursors.Session == "" || state.ResumeCursors.UI == "" {
-		t.Fatalf("SessionState().ResumeCursors = %+v, want session/ui cursors", state.ResumeCursors)
+	if state.ResumeCursors.Session == "" {
+		t.Fatalf("SessionState().ResumeCursors = %+v, want session cursor", state.ResumeCursors)
 	}
 }
 
@@ -291,7 +346,7 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 	})
 
 	writes := pty.Writes()
-	if len(writes) != 2 || writes[0] != "Implement runtime bridge\n" || writes[1] != "A\n" {
+	if len(writes) != 3 || writes[0] != "{\"type\":\"prompt\",\"message\":\"Implement runtime bridge\"}\n" || writes[1] != "{\"type\":\"abort\"}\n" || writes[2] != "{\"type\":\"extension_ui_response\",\"id\":\"ask_1\",\"value\":\"A\"}\n" {
 		t.Fatalf("pty writes = %#v", writes)
 	}
 	state, err := svc.SessionState(context.Background(), app.SessionStateRequest{SessionID: parsed})
