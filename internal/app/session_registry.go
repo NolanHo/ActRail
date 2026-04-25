@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,7 @@ type sessionIDGenerator struct {
 	session uint64
 	runtime uint64
 	thread  uint64
+	queue   uint64
 }
 
 type sessionCreateSpec struct {
@@ -32,6 +34,7 @@ type sessionCreateSpec struct {
 	Model           string
 	ReasoningEffort string
 	Title           string
+	Runtime         sessionRuntime
 }
 
 type sessionRecord struct {
@@ -46,6 +49,8 @@ type sessionRecord struct {
 	activityAt      time.Time
 	state           session.State
 	transcript      message.Transcript
+	runtime         sessionRuntime
+	uiRequest       *SessionUIRequestSnapshot
 }
 
 func newSessionRegistry(now func() time.Time) *sessionRegistry {
@@ -94,6 +99,7 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 		activityAt:      now,
 		state:           state,
 		transcript:      transcript,
+		runtime:         spec.Runtime,
 	}
 	if _, exists := r.sessions[identity.SessionID()]; exists {
 		return sessionRecord{}, fmt.Errorf("session %q already exists", identity.SessionID())
@@ -192,8 +198,144 @@ func (r *sessionRegistry) CommitAssistantTurn(sessionID session.SessionID, turnI
 	return item, true, nil
 }
 
+var (
+	errNoPendingUIRequest  = errors.New("session ui request not found")
+	errUnexpectedUIRequest = errors.New("session ui request does not match")
+)
+
+func (r *sessionRegistry) ActivateSend(sessionID session.SessionID, text string) (message.CommittedMessage, session.State, *SessionUIRequestSnapshot, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return message.CommittedMessage{}, session.State{}, nil, false, nil
+	}
+	now := r.now().UTC()
+	item, err := record.transcript.AppendMessage(message.RoleUser.String(), message.KindMessage.String(), strings.TrimSpace(text), now)
+	if err != nil {
+		return message.CommittedMessage{}, session.State{}, nil, true, err
+	}
+	record.updatedAt = now
+	record.activityAt = now
+	if err := syncSessionRecordStateWithQueue(&record, true, session.EmptyQueueSnapshot()); err != nil {
+		return message.CommittedMessage{}, session.State{}, nil, true, err
+	}
+	r.sessions[sessionID] = copySessionRecord(record)
+	return item, copySessionState(record.state), copySessionUIRequest(record.uiRequest), true, nil
+}
+
+func (r *sessionRegistry) ReplaceQueue(sessionID session.SessionID, text string) (session.State, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return session.State{}, false, nil
+	}
+	now := r.now().UTC()
+	r.nextID.queue++
+	item, err := session.NewQueueItem(fmt.Sprintf("q_%d", r.nextID.queue), strings.TrimSpace(text), session.QueueItemStateQueued)
+	if err != nil {
+		return session.State{}, true, err
+	}
+	queue, err := session.NewQueueSnapshot([]session.QueueItem{item})
+	if err != nil {
+		return session.State{}, true, err
+	}
+	record.updatedAt = now
+	record.activityAt = now
+	if err := syncSessionRecordStateWithQueue(&record, record.state.Busy(), queue); err != nil {
+		return session.State{}, true, err
+	}
+	r.sessions[sessionID] = copySessionRecord(record)
+	return copySessionState(record.state), true, nil
+}
+
+func (r *sessionRegistry) SetBusy(sessionID session.SessionID, busy bool) (session.State, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return session.State{}, false, nil
+	}
+	now := r.now().UTC()
+	record.updatedAt = now
+	record.activityAt = now
+	if err := syncSessionRecordState(&record, busy); err != nil {
+		return session.State{}, true, err
+	}
+	r.sessions[sessionID] = copySessionRecord(record)
+	return copySessionState(record.state), true, nil
+}
+
+func (r *sessionRegistry) SetUIRequest(sessionID session.SessionID, request SessionUIRequestSnapshot) (*SessionUIRequestSnapshot, bool, error) {
+	normalized, err := normalizeSessionUIRequest(request)
+	if err != nil {
+		return nil, true, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return nil, false, nil
+	}
+	now := r.now().UTC()
+	record.updatedAt = now
+	record.activityAt = now
+	record.uiRequest = &normalized
+	r.sessions[sessionID] = copySessionRecord(record)
+	return copySessionUIRequest(record.uiRequest), true, nil
+}
+
+func (r *sessionRegistry) ClearUIRequest(sessionID session.SessionID, requestID string) (SessionUIRequestSnapshot, session.State, bool, error) {
+	id := strings.TrimSpace(requestID)
+	if id == "" {
+		return SessionUIRequestSnapshot{}, session.State{}, true, fmt.Errorf("ui request id is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return SessionUIRequestSnapshot{}, session.State{}, false, nil
+	}
+	if record.uiRequest == nil {
+		return SessionUIRequestSnapshot{}, session.State{}, true, errNoPendingUIRequest
+	}
+	if record.uiRequest.RequestID != id {
+		return SessionUIRequestSnapshot{}, session.State{}, true, errUnexpectedUIRequest
+	}
+	resolved := *record.uiRequest
+	now := r.now().UTC()
+	record.updatedAt = now
+	record.activityAt = now
+	record.uiRequest = nil
+	r.sessions[sessionID] = copySessionRecord(record)
+	return resolved, copySessionState(record.state), true, nil
+}
+
+func normalizeSessionUIRequest(raw SessionUIRequestSnapshot) (SessionUIRequestSnapshot, error) {
+	request := SessionUIRequestSnapshot{
+		RequestID: strings.TrimSpace(raw.RequestID),
+		Kind:      strings.TrimSpace(raw.Kind),
+		Prompt:    strings.TrimSpace(raw.Prompt),
+	}
+	if request.RequestID == "" {
+		return SessionUIRequestSnapshot{}, fmt.Errorf("ui request id is required")
+	}
+	if request.Kind == "" {
+		return SessionUIRequestSnapshot{}, fmt.Errorf("ui request kind is required")
+	}
+	if request.Prompt == "" {
+		return SessionUIRequestSnapshot{}, fmt.Errorf("ui request prompt is required")
+	}
+	return request, nil
+}
+
 func syncSessionRecordState(record *sessionRecord, busy bool) error {
-	state, err := session.NewState(record.identity, busy, record.state.Queue(), record.transcript.Tail())
+	return syncSessionRecordStateWithQueue(record, busy, record.state.Queue())
+}
+
+func syncSessionRecordStateWithQueue(record *sessionRecord, busy bool, queue session.QueueSnapshot) error {
+	state, err := session.NewState(record.identity, busy, queue, record.transcript.Tail())
 	if err != nil {
 		return err
 	}
@@ -214,6 +356,8 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		activityAt:      record.activityAt,
 		state:           copySessionState(record.state),
 		transcript:      record.transcript.Clone(),
+		runtime:         record.runtime,
+		uiRequest:       copySessionUIRequest(record.uiRequest),
 	}
 }
 
@@ -227,6 +371,14 @@ func copySessionState(state session.State) session.State {
 		panic(err)
 	}
 	return copied
+}
+
+func copySessionUIRequest(raw *SessionUIRequestSnapshot) *SessionUIRequestSnapshot {
+	if raw == nil {
+		return nil
+	}
+	copied := *raw
+	return &copied
 }
 
 func normalizeSessionTitle(raw, cwd string) string {
