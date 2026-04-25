@@ -2,14 +2,23 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"actrail/internal/config"
+	"actrail/internal/domain/session"
 )
 
 type Service interface {
 	Bootstrap(context.Context) BootstrapSnapshot
 	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
 	CreateSession(context.Context, CreateSessionRequest) (CreateSessionResponse, error)
+	SessionDetails(context.Context, SessionDetailsRequest) (SessionDetailsResponse, error)
+	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)
+	SessionState(context.Context, SessionStateRequest) (SessionStateResponse, error)
+	SessionWorkspace(context.Context, SessionWorkspaceRequest) (SessionWorkspaceResponse, error)
+	WorkspaceFileList(context.Context, WorkspaceFileListRequest) (WorkspaceFileListResponse, error)
+	WorkspaceFileRead(context.Context, WorkspaceFileReadRequest) (WorkspaceFileReadResponse, error)
+	GitFileVersions(context.Context, GitFileVersionsRequest) (GitFileVersionsResponse, error)
 }
 
 type Stub struct {
@@ -92,7 +101,23 @@ type CreateSessionRequest struct {
 }
 
 type CreateSessionResponse struct {
-	OK bool `json:"ok"`
+	OK       bool                  `json:"ok"`
+	Session  *CreatedSession       `json:"session,omitempty"`
+	WSAttach *SessionAttachRequest `json:"ws_attach,omitempty"`
+}
+
+type CreatedSession struct {
+	SessionID    string `json:"session_id"`
+	RuntimeID    string `json:"runtime_id,omitempty"`
+	ThreadID     string `json:"thread_id,omitempty"`
+	AgentBackend string `json:"agent_backend"`
+	CWD          string `json:"cwd"`
+	Busy         bool   `json:"busy"`
+}
+
+type SessionAttachRequest struct {
+	SessionID            string   `json:"session_id"`
+	SuggestSubscriptions []string `json:"suggest_subscriptions"`
 }
 
 type Error struct {
@@ -107,6 +132,10 @@ func (e *Error) Error() string {
 
 func Unsupported(message string) *Error {
 	return &Error{Code: "unsupported", Message: message}
+}
+
+func Invalid(field, message string) *Error {
+	return &Error{Code: "invalid_request", Message: message, Field: field}
 }
 
 func (s *Stub) Bootstrap(_ context.Context) BootstrapSnapshot {
@@ -151,6 +180,12 @@ func (s *Stub) ListSessions(_ context.Context, req ListSessionsRequest) (ListSes
 	}, nil
 }
 
-func (s *Stub) CreateSession(_ context.Context, _ CreateSessionRequest) (CreateSessionResponse, error) {
+func (s *Stub) CreateSession(_ context.Context, req CreateSessionRequest) (CreateSessionResponse, error) {
+	if strings.TrimSpace(req.CWD) == "" {
+		return CreateSessionResponse{}, Invalid("cwd", "cwd required")
+	}
+	if _, err := session.ParseBackend(req.AgentBackend); err != nil {
+		return CreateSessionResponse{}, Invalid("agent_backend", err.Error())
+	}
 	return CreateSessionResponse{}, Unsupported("session creation not implemented")
 }

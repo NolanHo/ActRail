@@ -3,14 +3,15 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
 	"actrail/internal/app"
 	"actrail/internal/config"
+	"actrail/internal/domain/session"
 	"actrail/internal/httpapi/authn"
 )
 
@@ -40,13 +41,13 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.HandleFunc("GET /api/sessions", r.listSessions)
 	mux.HandleFunc("POST /api/sessions", r.createSession)
 	mux.HandleFunc("GET /api/session_resume_candidates", r.notImplemented("session resume candidates not implemented"))
-	mux.HandleFunc("GET /api/sessions/{session_id}/details", r.notImplemented("session details not implemented"))
-	mux.HandleFunc("GET /api/sessions/{session_id}/messages", r.notImplemented("session message snapshot not implemented"))
-	mux.HandleFunc("GET /api/sessions/{session_id}/state", r.notImplemented("session state snapshot not implemented"))
-	mux.HandleFunc("GET /api/sessions/{session_id}/workspace", r.notImplemented("session workspace snapshot not implemented"))
-	mux.HandleFunc("GET /api/sessions/{session_id}/file/list", r.notImplemented("workspace file listing not implemented"))
-	mux.HandleFunc("GET /api/sessions/{session_id}/file/read", r.notImplemented("workspace file read not implemented"))
-	mux.HandleFunc("GET /api/sessions/{session_id}/git/file_versions", r.notImplemented("git file versions not implemented"))
+	mux.HandleFunc("GET /api/sessions/{session_id}/details", r.sessionDetails)
+	mux.HandleFunc("GET /api/sessions/{session_id}/messages", r.sessionMessages)
+	mux.HandleFunc("GET /api/sessions/{session_id}/state", r.sessionState)
+	mux.HandleFunc("GET /api/sessions/{session_id}/workspace", r.sessionWorkspace)
+	mux.HandleFunc("GET /api/sessions/{session_id}/file/list", r.workspaceFileList)
+	mux.HandleFunc("GET /api/sessions/{session_id}/file/read", r.workspaceFileRead)
+	mux.HandleFunc("GET /api/sessions/{session_id}/git/file_versions", r.gitFileVersions)
 	mux.HandleFunc("POST /api/sessions/{session_id}/rename", r.notImplemented("session rename not implemented"))
 	mux.HandleFunc("POST /api/sessions/{session_id}/focus", r.notImplemented("session focus not implemented"))
 	mux.HandleFunc("POST /api/sessions/{session_id}/edit", r.notImplemented("session edit not implemented"))
@@ -111,28 +112,28 @@ func (r Router) bootstrap(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r Router) listSessions(w http.ResponseWriter, req *http.Request) {
-	offset, err := queryNonNegativeInt(req, "offset")
+	offset, err := queryInt(req, "offset")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "offset")
+		writeAppError(w, err)
 		return
 	}
-	limit, err := queryNonNegativeInt(req, "limit")
+	limit, err := queryInt(req, "limit")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "limit")
+		writeAppError(w, err)
 		return
 	}
-	groupOffset, err := queryNonNegativeInt(req, "group_offset")
+	groupOffset, err := queryInt(req, "group_offset")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "group_offset")
+		writeAppError(w, err)
 		return
 	}
-	groupLimit, err := queryNonNegativeInt(req, "group_limit")
+	groupLimit, err := queryInt(req, "group_limit")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "group_limit")
+		writeAppError(w, err)
 		return
 	}
 	payload, err := r.app.ListSessions(req.Context(), app.ListSessionsRequest{
-		GroupKey:    req.URL.Query().Get("group_key"),
+		GroupKey:    strings.TrimSpace(req.URL.Query().Get("group_key")),
 		Offset:      offset,
 		Limit:       limit,
 		GroupOffset: groupOffset,
@@ -147,11 +148,153 @@ func (r Router) listSessions(w http.ResponseWriter, req *http.Request) {
 
 func (r Router) createSession(w http.ResponseWriter, req *http.Request) {
 	var body app.CreateSessionRequest
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+	if err := decodeJSONBody(req, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
 	payload, err := r.app.CreateSession(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sessionDetails(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.SessionDetails(req.Context(), app.SessionDetailsRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	beforeSeq, err := queryUint64(req, "before_seq")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	limit, err := queryInt(req, "limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	init, err := queryBool(req, "init")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.SessionMessages(req.Context(), app.SessionMessagesRequest{
+		SessionID: sessionID,
+		BeforeSeq: beforeSeq,
+		Limit:     limit,
+		Init:      init,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sessionState(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.SessionState(req.Context(), app.SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sessionWorkspace(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.SessionWorkspace(req.Context(), app.SessionWorkspaceRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) workspaceFileList(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	pathValue, err := queryRelativePath(req, "path", false)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	limit, err := queryInt(req, "limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.WorkspaceFileList(req.Context(), app.WorkspaceFileListRequest{
+		SessionID: sessionID,
+		Path:      pathValue,
+		Search:    strings.TrimSpace(req.URL.Query().Get("search")),
+		Limit:     limit,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) workspaceFileRead(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	pathValue, err := queryRelativePath(req, "path", true)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.WorkspaceFileRead(req.Context(), app.WorkspaceFileReadRequest{
+		SessionID: sessionID,
+		Path:      pathValue,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) gitFileVersions(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	pathValue, err := queryRelativePath(req, "path", true)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.GitFileVersions(req.Context(), app.GitFileVersionsRequest{
+		SessionID: sessionID,
+		Path:      pathValue,
+	})
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -178,12 +321,10 @@ func writeAppError(w http.ResponseWriter, err error) {
 			status = http.StatusForbidden
 		case "not_found":
 			status = http.StatusNotFound
-		case "conflict":
+		case "conflict", "transport_reset_required":
 			status = http.StatusConflict
 		case "unsupported":
 			status = http.StatusNotImplemented
-		case "transport_reset_required":
-			status = http.StatusConflict
 		}
 		writeError(w, status, appErr.Code, appErr.Message, appErr.Field)
 		return
@@ -202,17 +343,75 @@ func decodeJSONBody(req *http.Request, dst any) error {
 	return nil
 }
 
-func queryNonNegativeInt(req *http.Request, key string) (int, error) {
+func routeSessionID(w http.ResponseWriter, req *http.Request) (session.SessionID, bool) {
+	value := strings.TrimSpace(req.PathValue("session_id"))
+	sessionID, err := session.ParseSessionID(value)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "session_id")
+		return "", false
+	}
+	return sessionID, true
+}
+
+func queryInt(req *http.Request, key string) (int, error) {
 	value := strings.TrimSpace(req.URL.Query().Get(key))
 	if value == "" {
 		return 0, nil
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil {
-		return 0, fmt.Errorf("query parameter %q must be an integer", key)
+		return 0, app.Invalid(key, key+" must be an integer")
 	}
 	if n < 0 {
-		return 0, fmt.Errorf("query parameter %q must be a non-negative integer", key)
+		return 0, app.Invalid(key, key+" must be non-negative")
 	}
 	return n, nil
+}
+
+func queryUint64(req *http.Request, key string) (*uint64, error) {
+	value := strings.TrimSpace(req.URL.Query().Get(key))
+	if value == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return nil, app.Invalid(key, key+" must be an unsigned integer")
+	}
+	return &n, nil
+}
+
+func queryBool(req *http.Request, key string) (bool, error) {
+	value := strings.TrimSpace(req.URL.Query().Get(key))
+	if value == "" {
+		return false, nil
+	}
+	v, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, app.Invalid(key, key+" must be a boolean")
+	}
+	return v, nil
+}
+
+func queryRelativePath(req *http.Request, key string, required bool) (string, error) {
+	value := strings.TrimSpace(req.URL.Query().Get(key))
+	if value == "" {
+		if required {
+			return "", app.Invalid(key, key+" required")
+		}
+		return "", nil
+	}
+	if strings.HasPrefix(value, "/") {
+		return "", app.Invalid(key, key+" must be relative")
+	}
+	cleaned := path.Clean(value)
+	if cleaned == "." {
+		if required {
+			return "", app.Invalid(key, key+" must identify a file")
+		}
+		return "", nil
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", app.Invalid(key, key+" escapes workspace root")
+	}
+	return strings.TrimPrefix(cleaned, "./"), nil
 }
