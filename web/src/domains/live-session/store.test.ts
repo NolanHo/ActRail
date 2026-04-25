@@ -46,7 +46,7 @@ describe("createLiveSessionStore", () => {
 
     await liveStore.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true);
     expect(api.getSessionState).toHaveBeenCalledWith("s1");
     expect(messagesStore.getState().bySessionId.s1).toEqual([
       { seq: 1, role: "assistant", text: "durable" },
@@ -70,7 +70,7 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(1);
   });
 
-  it("polls with the saved transcript offset and replaces stale snapshot-only state", async () => {
+  it("polls snapshot state without appending duplicate transcript rows", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({
         items: [{ seq: 1, role: "assistant", text: "durable" }],
@@ -113,7 +113,7 @@ describe("createLiveSessionStore", () => {
     await liveStore.loadInitial("s1");
     await liveStore.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false);
     expect(messagesStore.getState().bySessionId.s1).toEqual([
       { seq: 1, role: "assistant", text: "durable" },
       { seq: 2, role: "assistant", text: "committed" },
@@ -122,6 +122,38 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().busyBySessionId.s1).toBe(false);
     expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(13);
     expect(liveStore.getState().uiStreamCursorsBySessionId.s1).toBe(19);
+    expect(liveStore.getState().offsetsBySessionId.s1).toBe(2);
+  });
+
+  it("keeps transcript cardinality stable across repeated post-send snapshot polls", async () => {
+    vi.mocked(api.listMessages)
+      .mockResolvedValueOnce({
+        items: [{ seq: 1, role: "user", text: "hello" }],
+        tail_seq: 1,
+      } as never)
+      .mockResolvedValueOnce({
+        items: [{ seq: 1, role: "user", text: "hello" }, { seq: 2, role: "assistant", text: "world" }],
+        tail_seq: 2,
+      } as never)
+      .mockResolvedValueOnce({
+        items: [{ seq: 1, role: "user", text: "hello" }, { seq: 2, role: "assistant", text: "world" }],
+        tail_seq: 2,
+      } as never);
+    vi.mocked(api.getSessionState)
+      .mockResolvedValueOnce({ busy: true, tail_seq: 1, resume_cursors: { session: "1", ui: "1" } } as never)
+      .mockResolvedValueOnce({ busy: false, tail_seq: 2, resume_cursors: { session: "2", ui: "2" } } as never)
+      .mockResolvedValueOnce({ busy: false, tail_seq: 2, resume_cursors: { session: "2", ui: "2" } } as never);
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    await liveStore.loadInitial("s1");
+    await liveStore.poll("s1");
+    await liveStore.poll("s1");
+
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { seq: 1, role: "user", text: "hello" },
+      { seq: 2, role: "assistant", text: "world" },
+    ]);
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(2);
   });
 
