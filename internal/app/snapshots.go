@@ -92,9 +92,32 @@ type QueuedPromptSnapshot struct {
 }
 
 type SessionUIRequestSnapshot struct {
-	RequestID string `json:"request_id"`
-	Kind      string `json:"kind"`
-	Prompt    string `json:"prompt"`
+	RequestID     string                      `json:"request_id"`
+	Kind          string                      `json:"kind"`
+	Method        string                      `json:"method,omitempty"`
+	Title         string                      `json:"title,omitempty"`
+	Message       string                      `json:"message,omitempty"`
+	Prompt        string                      `json:"prompt"`
+	Question      string                      `json:"question,omitempty"`
+	Context       string                      `json:"context,omitempty"`
+	AllowFreeform bool                        `json:"allow_freeform,omitempty"`
+	AllowMultiple bool                        `json:"allow_multiple,omitempty"`
+	Options       []SessionUIOptionSnapshot   `json:"options,omitempty"`
+	Questions     []SessionUIQuestionSnapshot `json:"questions,omitempty"`
+	Metadata      map[string]any              `json:"metadata,omitempty"`
+}
+
+type SessionUIOptionSnapshot struct {
+	Label       string `json:"label,omitempty"`
+	Value       string `json:"value,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type SessionUIQuestionSnapshot struct {
+	Header      string                    `json:"header,omitempty"`
+	Question    string                    `json:"question"`
+	Options     []SessionUIOptionSnapshot `json:"options,omitempty"`
+	MultiSelect bool                      `json:"multiSelect,omitempty"`
 }
 
 type PartialAssistantTurnSnapshot struct {

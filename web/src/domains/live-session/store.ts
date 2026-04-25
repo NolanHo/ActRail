@@ -81,18 +81,82 @@ function resolveSessionId(frame: RealtimeEnvelope) {
   return String(rest || "").split(":")[0] || "";
 }
 
-function nextCursor(prior: number | undefined, value: unknown) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return prior ?? 0;
+function parseSnapshotCursor(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
   }
-  return Math.max(prior ?? 0, Math.floor(value));
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.floor(parsed));
+    }
+  }
+  return undefined;
 }
 
-function normalizeSnapshotEvents(payload: LiveSessionResponse) {
-  if (Array.isArray(payload.events)) {
-    return payload.events;
+function nextCursor(prior: number | undefined, value: unknown) {
+  const parsed = parseSnapshotCursor(value);
+  if (parsed === undefined) {
+    return prior ?? 0;
   }
-  return [] as MessageEvent[];
+  return Math.max(prior ?? 0, parsed);
+}
+
+function normalizeMessageSnapshot(payload: Awaited<ReturnType<typeof api.listMessages>>) {
+  const events = Array.isArray(payload.items)
+    ? payload.items
+    : Array.isArray(payload.events)
+      ? payload.events
+      : [];
+  return {
+    events,
+    offset: typeof payload.offset === "number" ? payload.offset : typeof payload.tail_seq === "number" ? payload.tail_seq : undefined,
+    hasOlder: payload.has_older === true || payload.has_more === true,
+    nextBefore: typeof payload.next_before === "number"
+      ? payload.next_before
+      : typeof payload.next_before_seq === "number"
+        ? payload.next_before_seq
+        : undefined,
+  };
+}
+
+function partialAssistantTurnEvent(payload: LiveSessionResponse) {
+  const turn = toObjectRecord(payload.partial_assistant_turn);
+  const turnId = typeof turn?.turn_id === "string" && turn.turn_id.trim() ? turn.turn_id.trim() : "";
+  const text = typeof turn?.text === "string" ? turn.text : "";
+  if (!turnId || !text) {
+    return [] as MessageEvent[];
+  }
+  return [{
+    role: "assistant",
+    streaming: true,
+    completed: false,
+    stream_id: turnId,
+    turn_id: turnId,
+    text,
+  }] as MessageEvent[];
+}
+
+function normalizeSnapshotEvents(messagePayload: Awaited<ReturnType<typeof api.listMessages>>, statePayload: LiveSessionResponse) {
+  return [...normalizeMessageSnapshot(messagePayload).events, ...partialAssistantTurnEvent(statePayload)];
+}
+
+function isStreamingAssistantEvent(event: MessageEvent | undefined) {
+  return Boolean(
+    event
+    && event.role === "assistant"
+    && event.streaming === true
+    && typeof event.stream_id === "string"
+    && event.stream_id.length > 0,
+  );
+}
+
+function normalizeSnapshotRequests(payload: LiveSessionResponse) {
+  if (Array.isArray(payload.requests)) {
+    return payload.requests.map((request) => normalizeRequest(request)).filter((request): request is SessionUiRequest => request !== null);
+  }
+  const request = normalizeRequest(payload.ui_request);
+  return request ? [request] : [];
 }
 
 export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessionStore {
@@ -121,49 +185,56 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     }
   };
 
-  const applySnapshot = (sessionId: string, payload: LiveSessionResponse, replace: boolean) => {
-    messagesStore.applyLive(sessionId, normalizeSnapshotEvents(payload), {
-      replace,
-      offset: typeof payload.offset === "number" ? payload.offset : state.offsetsBySessionId[sessionId],
-      hasOlder: payload.has_older === true,
-      nextBefore: typeof payload.next_before === "number" ? payload.next_before : undefined,
+  const applySnapshot = (
+    sessionId: string,
+    messagePayload: Awaited<ReturnType<typeof api.listMessages>>,
+    statePayload: LiveSessionResponse,
+    replace: boolean,
+  ) => {
+    const normalizedMessages = normalizeMessageSnapshot(messagePayload);
+    const priorEvents = replace ? [] : (messagesStore.getState().bySessionId[sessionId] ?? []).filter((event) => !isStreamingAssistantEvent(event));
+    messagesStore.applyLive(sessionId, [...priorEvents, ...normalizeSnapshotEvents(messagePayload, statePayload)], {
+      replace: true,
+      offset: normalizedMessages.offset,
+      hasOlder: normalizedMessages.hasOlder,
+      nextBefore: normalizedMessages.nextBefore,
     });
-    const nextRequests = Array.isArray(payload.requests)
-      ? payload.requests.map((request) => normalizeRequest(request)).filter((request): request is SessionUiRequest => request !== null)
-      : state.requestsBySessionId[sessionId] ?? [];
+    const nextRequests = normalizeSnapshotRequests(statePayload);
     const nextRequestVersionsBySessionId = { ...state.requestVersionsBySessionId };
-    if (typeof payload.requests_version === "string") {
-      nextRequestVersionsBySessionId[sessionId] = payload.requests_version;
+    if (typeof statePayload.requests_version === "string") {
+      nextRequestVersionsBySessionId[sessionId] = statePayload.requests_version;
     }
     state = {
       ...state,
       offsetsBySessionId: {
         ...state.offsetsBySessionId,
-        [sessionId]: typeof payload.offset === "number" ? payload.offset : state.offsetsBySessionId[sessionId] ?? 0,
+        [sessionId]: typeof normalizedMessages.offset === "number"
+          ? normalizedMessages.offset
+          : typeof statePayload.tail_seq === "number"
+            ? statePayload.tail_seq
+            : state.offsetsBySessionId[sessionId] ?? 0,
       },
       liveOffsetsBySessionId: {
         ...state.liveOffsetsBySessionId,
-        [sessionId]: typeof payload.live_offset === "number" ? payload.live_offset : state.liveOffsetsBySessionId[sessionId] ?? 0,
+        [sessionId]: 0,
       },
       bridgeOffsetsBySessionId: {
         ...state.bridgeOffsetsBySessionId,
-        [sessionId]: typeof payload.bridge_offset === "number" ? payload.bridge_offset : state.bridgeOffsetsBySessionId[sessionId] ?? 0,
+        [sessionId]: 0,
       },
       streamCursorsBySessionId: {
         ...state.streamCursorsBySessionId,
-        [sessionId]: typeof payload.stream_cursors?.session === "number"
-          ? payload.stream_cursors.session
-          : typeof payload.stream_seq === "number"
-            ? payload.stream_seq
-            : state.streamCursorsBySessionId[sessionId] ?? 0,
+        [sessionId]: nextCursor(
+          state.streamCursorsBySessionId[sessionId],
+          statePayload.resume_cursors?.session ?? statePayload.stream_cursors?.session ?? statePayload.stream_seq,
+        ),
       },
       uiStreamCursorsBySessionId: {
         ...state.uiStreamCursorsBySessionId,
-        [sessionId]: typeof payload.stream_cursors?.ui === "number"
-          ? payload.stream_cursors.ui
-          : typeof payload.ui_stream_seq === "number"
-            ? payload.ui_stream_seq
-            : state.uiStreamCursorsBySessionId[sessionId] ?? 0,
+        [sessionId]: nextCursor(
+          state.uiStreamCursorsBySessionId[sessionId],
+          statePayload.resume_cursors?.ui ?? statePayload.stream_cursors?.ui ?? statePayload.ui_stream_seq,
+        ),
       },
       requestsBySessionId: {
         ...state.requestsBySessionId,
@@ -172,7 +243,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       requestVersionsBySessionId: nextRequestVersionsBySessionId,
       busyBySessionId: {
         ...state.busyBySessionId,
-        [sessionId]: payload.busy === true,
+        [sessionId]: statePayload.busy === true,
       },
       loadingBySessionId: {
         ...state.loadingBySessionId,
@@ -184,15 +255,15 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       },
       tokenBySessionId: {
         ...state.tokenBySessionId,
-        [sessionId]: toObjectRecord(payload.token),
+        [sessionId]: toObjectRecord(statePayload.token),
       },
       contextUsageBySessionId: {
         ...state.contextUsageBySessionId,
-        [sessionId]: toObjectRecord(payload.context_usage) as ContextUsagePayload | null,
+        [sessionId]: toObjectRecord(statePayload.context_usage) as ContextUsagePayload | null,
       },
       turnTimingBySessionId: {
         ...state.turnTimingBySessionId,
-        [sessionId]: toObjectRecord(payload.turn_timing) as TurnTimingPayload | null,
+        [sessionId]: toObjectRecord(statePayload.turn_timing) as TurnTimingPayload | null,
       },
     };
     emit();
@@ -216,17 +287,19 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
 
       try {
         const offset = replace ? undefined : state.offsetsBySessionId[sessionId];
-        const liveOffset = replace ? undefined : state.liveOffsetsBySessionId[sessionId];
-        const bridgeOffset = replace ? undefined : state.bridgeOffsetsBySessionId[sessionId];
-        const requestsVersion = replace ? undefined : state.requestVersionsBySessionId[sessionId];
-        const payload = typeof (api as { getSessionState?: unknown }).getSessionState === "function"
-          ? runtimeId
-            ? await (api as { getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null): Promise<LiveSessionResponse> }).getSessionState(sessionId, undefined, runtimeId)
-            : await (api as { getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null): Promise<LiveSessionResponse> }).getSessionState(sessionId)
-          : runtimeId
-            ? await (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, offset, requestsVersion, undefined, liveOffset, runtimeId, bridgeOffset)
-            : await (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, offset, requestsVersion, undefined, liveOffset, undefined, bridgeOffset);
-        applySnapshot(sessionId, payload, replace);
+        const [messagePayload, statePayload] = await Promise.all([
+          runtimeId
+            ? api.listMessages(sessionId, replace, undefined, offset, undefined, undefined, runtimeId)
+            : api.listMessages(sessionId, replace, undefined, offset),
+          typeof (api as { getSessionState?: unknown }).getSessionState === "function"
+            ? runtimeId
+              ? (api as { getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null): Promise<LiveSessionResponse> }).getSessionState(sessionId, undefined, runtimeId)
+              : (api as { getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null): Promise<LiveSessionResponse> }).getSessionState(sessionId)
+            : runtimeId
+              ? (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, offset, undefined, undefined, undefined, runtimeId, undefined)
+              : (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, offset),
+        ]);
+        applySnapshot(sessionId, messagePayload, statePayload, replace);
       } catch (error) {
         const message = liveSessionErrorMessage(error);
         state = {

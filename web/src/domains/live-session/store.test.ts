@@ -5,7 +5,8 @@ import { createLiveSessionStore } from "./store";
 
 vi.mock("../../lib/api", () => ({
   api: {
-    getLiveSession: vi.fn(),
+    getSessionState: vi.fn(),
+    listMessages: vi.fn(),
   },
 }));
 
@@ -14,49 +15,97 @@ describe("createLiveSessionStore", () => {
     vi.resetAllMocks();
   });
 
-  it("loads initial live data into messages and live state", async () => {
-    vi.mocked(api.getLiveSession).mockResolvedValue({
-      events: [{ id: "m1" }],
-      requests: [{ id: "r1", method: "select" }],
+  it("loads canonical state snapshots into pending ui state, partial turns, and resume cursors", async () => {
+    vi.mocked(api.listMessages).mockResolvedValue({
+      items: [{ seq: 1, role: "assistant", text: "durable" }],
+      has_more: true,
+      next_before_seq: 40,
+      tail_seq: 1,
+    } as never);
+    vi.mocked(api.getSessionState).mockResolvedValue({
       busy: true,
-      offset: 3,
-      has_older: true,
-      next_before: 40,
-      turn_timing: { started_ts: 100, last_event_ts: 104 },
+      ui_request: {
+        request_id: "ask-1",
+        method: "select",
+        question: "Choose one option",
+        options: [{ label: "A", value: "A" }, { label: "B", value: "B" }],
+        allow_freeform: false,
+      },
+      partial_assistant_turn: {
+        turn_id: "turn-1",
+        text: "partial",
+      },
+      tail_seq: 1,
+      resume_cursors: {
+        session: "12",
+        ui: "18",
+      },
     } as never);
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
 
     await liveStore.loadInitial("s1");
 
-    expect(api.getLiveSession).toHaveBeenCalledWith("s1", undefined, undefined, undefined, undefined, undefined, undefined);
-    expect(messagesStore.getState().bySessionId.s1).toEqual([{ id: "m1" }]);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined);
+    expect(api.getSessionState).toHaveBeenCalledWith("s1");
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { seq: 1, role: "assistant", text: "durable" },
+      { role: "assistant", streaming: true, completed: false, stream_id: "turn-1", turn_id: "turn-1", text: "partial" },
+    ]);
     expect(messagesStore.getState().hasOlderBySessionId.s1).toBe(true);
     expect(messagesStore.getState().olderBeforeBySessionId.s1).toBe(40);
-    expect(liveStore.getState().offsetsBySessionId.s1).toBe(3);
-    expect(liveStore.getState().liveOffsetsBySessionId.s1).toBe(0);
-    expect(liveStore.getState().requestsBySessionId.s1).toEqual([{ id: "r1", method: "select" }]);
+    expect(liveStore.getState().requestsBySessionId.s1).toEqual([
+      {
+        id: "ask-1",
+        request_id: "ask-1",
+        method: "select",
+        question: "Choose one option",
+        options: [{ label: "A", value: "A" }, { label: "B", value: "B" }],
+        allow_freeform: false,
+      },
+    ]);
     expect(liveStore.getState().busyBySessionId.s1).toBe(true);
-    expect(liveStore.getState().turnTimingBySessionId.s1).toEqual({ started_ts: 100, last_event_ts: 104 });
+    expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(12);
+    expect(liveStore.getState().uiStreamCursorsBySessionId.s1).toBe(18);
+    expect(liveStore.getState().offsetsBySessionId.s1).toBe(1);
   });
 
-  it("polls live data with the saved offset and appends messages", async () => {
-    vi.mocked(api.getLiveSession)
+  it("polls with the saved transcript offset and replaces stale snapshot-only state", async () => {
+    vi.mocked(api.listMessages)
       .mockResolvedValueOnce({
-        events: [{ id: "m1" }],
-        requests: [{ id: "r1" }],
-        busy: true,
-        offset: 3,
-        has_older: true,
-        next_before: 20,
+        items: [{ seq: 1, role: "assistant", text: "durable" }],
+        tail_seq: 1,
       } as never)
       .mockResolvedValueOnce({
-        events: [{ id: "m2" }],
-        requests: [{ id: "r2" }],
+        items: [{ seq: 2, role: "assistant", text: "committed" }],
+        tail_seq: 2,
+      } as never);
+    vi.mocked(api.getSessionState)
+      .mockResolvedValueOnce({
+        busy: true,
+        ui_request: {
+          request_id: "ask-1",
+          method: "select",
+          question: "Choose one option",
+          options: [{ label: "A", value: "A" }],
+        },
+        partial_assistant_turn: {
+          turn_id: "turn-1",
+          text: "partial",
+        },
+        tail_seq: 1,
+        resume_cursors: {
+          session: "12",
+          ui: "18",
+        },
+      } as never)
+      .mockResolvedValueOnce({
         busy: false,
-        offset: 4,
-        has_older: true,
-        next_before: 20,
+        tail_seq: 2,
+        resume_cursors: {
+          session: "13",
+          ui: "19",
+        },
       } as never);
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
@@ -64,45 +113,26 @@ describe("createLiveSessionStore", () => {
     await liveStore.loadInitial("s1");
     await liveStore.poll("s1");
 
-    expect(api.getLiveSession).toHaveBeenNthCalledWith(2, "s1", 3, undefined, undefined, 0, undefined, 0);
-    expect(messagesStore.getState().bySessionId.s1).toEqual([{ id: "m1" }, { id: "m2" }]);
-    expect(messagesStore.getState().hasOlderBySessionId.s1).toBe(true);
-    expect(messagesStore.getState().olderBeforeBySessionId.s1).toBe(20);
-    expect(liveStore.getState().offsetsBySessionId.s1).toBe(4);
-    expect(liveStore.getState().liveOffsetsBySessionId.s1).toBe(0);
-    expect(liveStore.getState().requestsBySessionId.s1).toEqual([{ id: "r2" }]);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { seq: 1, role: "assistant", text: "durable" },
+      { seq: 2, role: "assistant", text: "committed" },
+    ]);
+    expect(liveStore.getState().requestsBySessionId.s1).toEqual([]);
     expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+    expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(13);
+    expect(liveStore.getState().uiStreamCursorsBySessionId.s1).toBe(19);
+    expect(liveStore.getState().offsetsBySessionId.s1).toBe(2);
   });
 
-  it("preserves cached requests when the server omits unchanged requests", async () => {
-    vi.mocked(api.getLiveSession)
-      .mockResolvedValueOnce({
-        events: [{ id: "m1" }],
-        requests: [{ id: "r1" }],
-        requests_version: "v1",
-        busy: true,
-        offset: 3,
-      } as never)
-      .mockResolvedValueOnce({
-        events: [{ id: "m2" }],
-        requests_version: "v1",
-        busy: false,
-        offset: 4,
-      } as never);
-    const messagesStore = createMessagesStore();
-    const liveStore = createLiveSessionStore(messagesStore);
-
-    await liveStore.loadInitial("s1");
-    await liveStore.poll("s1");
-
-    expect(api.getLiveSession).toHaveBeenNthCalledWith(2, "s1", 3, "v1", undefined, 0, undefined, 0);
-    expect(liveStore.getState().requestsBySessionId.s1).toEqual([{ id: "r1" }]);
-  });
-
-  it("does not start overlapping live polls for the same session", async () => {
-    let resolveFirst!: (value: unknown) => void;
-    vi.mocked(api.getLiveSession).mockReturnValueOnce(new Promise((resolve) => {
-      resolveFirst = resolve;
+  it("does not start overlapping state polls for the same session", async () => {
+    let resolveMessages!: (value: unknown) => void;
+    let resolveState!: (value: unknown) => void;
+    vi.mocked(api.listMessages).mockReturnValueOnce(new Promise((resolve) => {
+      resolveMessages = resolve;
+    }) as never);
+    vi.mocked(api.getSessionState).mockReturnValueOnce(new Promise((resolve) => {
+      resolveState = resolve;
     }) as never);
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
@@ -110,107 +140,23 @@ describe("createLiveSessionStore", () => {
     const first = liveStore.poll("s1");
     const second = liveStore.poll("s1");
 
-    expect(api.getLiveSession).toHaveBeenCalledTimes(1);
-    resolveFirst({ events: [{ id: "m1" }], requests: [], busy: false, offset: 1 });
+    expect(api.listMessages).toHaveBeenCalledTimes(1);
+    expect(api.getSessionState).toHaveBeenCalledTimes(1);
+    resolveMessages({ items: [{ seq: 1, role: "assistant", text: "durable" }], tail_seq: 1 });
+    resolveState({ busy: false, tail_seq: 1, resume_cursors: { session: "1", ui: "1" } });
     await Promise.all([first, second]);
 
-    expect(messagesStore.getState().bySessionId.s1).toEqual([{ id: "m1" }]);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([{ seq: 1, role: "assistant", text: "durable" }]);
     expect(liveStore.getState().loadingBySessionId.s1).toBe(false);
   });
 
-  it("passes streamed pi assistant events through repeated live polls without duplication", async () => {
-    vi.mocked(api.getLiveSession)
-      .mockResolvedValueOnce({
-        events: [{ role: "assistant", text: "hel", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" }],
-        requests: [],
-        busy: true,
-        offset: 1,
-      } as never)
-      .mockResolvedValueOnce({
-        events: [{ role: "assistant", text: "hello", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" }],
-        requests: [],
-        busy: true,
-        offset: 2,
-      } as never);
-    const messagesStore = createMessagesStore();
-    const liveStore = createLiveSessionStore(messagesStore);
-
-    await liveStore.loadInitial("s1");
-    await liveStore.poll("s1");
-
-    expect(messagesStore.getState().bySessionId.s1).toEqual([
-      { role: "assistant", text: "hello", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" },
-    ]);
-    expect(liveStore.getState().offsetsBySessionId.s1).toBe(2);
-  });
-
-  it("tracks separate live and bridge offsets for broker-streamed session events", async () => {
-    vi.mocked(api.getLiveSession)
-      .mockResolvedValueOnce({
-        events: [{ role: "assistant", text: "hel", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" }],
-        requests: [],
-        busy: true,
-        offset: 100,
-        live_offset: 7,
-        bridge_offset: 3,
-      } as never)
-      .mockResolvedValueOnce({
-        events: [{ role: "assistant", text: "hello", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" }],
-        requests: [],
-        busy: true,
-        offset: 101,
-        live_offset: 8,
-        bridge_offset: 4,
-      } as never);
-    const messagesStore = createMessagesStore();
-    const liveStore = createLiveSessionStore(messagesStore);
-
-    await liveStore.loadInitial("s1");
-    await liveStore.poll("s1");
-
-    expect(api.getLiveSession).toHaveBeenNthCalledWith(2, "s1", 100, undefined, undefined, 7, undefined, 3);
-    expect(messagesStore.getState().bySessionId.s1).toEqual([
-      { role: "assistant", text: "hello", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" },
-    ]);
-    expect(liveStore.getState().bridgeOffsetsBySessionId.s1).toBe(4);
-  });
-
-  it("deduplicates bridge events by event_id across repeated live polls", async () => {
-    vi.mocked(api.getLiveSession)
-      .mockResolvedValueOnce({
-        events: [{ type: "pi_event", summary: "Bridge failed", event_id: "bridge:1", request_state: "failed" }],
-        requests: [],
-        busy: false,
-        offset: 1,
-        bridge_offset: 1,
-      } as never)
-      .mockResolvedValueOnce({
-        events: [{ type: "pi_event", summary: "Bridge failed", event_id: "bridge:1", request_state: "failed" }],
-        requests: [],
-        busy: false,
-        offset: 2,
-        bridge_offset: 1,
-      } as never);
-    const messagesStore = createMessagesStore();
-    const liveStore = createLiveSessionStore(messagesStore);
-
-    await liveStore.loadInitial("s1");
-    await liveStore.poll("s1");
-
-    expect(messagesStore.getState().bySessionId.s1).toEqual([
-      { type: "pi_event", summary: "Bridge failed", event_id: "bridge:1", request_state: "failed" },
-    ]);
-  });
-
-  it("records and clears live transport errors per session", async () => {
-    vi.mocked(api.getLiveSession)
+  it("records and clears transport errors per session", async () => {
+    vi.mocked(api.listMessages)
       .mockRejectedValueOnce(new Error("broker unavailable"))
-      .mockResolvedValueOnce({
-        events: [{ id: "m1" }],
-        requests: [],
-        busy: false,
-        offset: 1,
-      } as never);
+      .mockResolvedValueOnce({ items: [{ seq: 1, role: "assistant", text: "durable" }], tail_seq: 1 } as never);
+    vi.mocked(api.getSessionState)
+      .mockResolvedValueOnce({ busy: false, tail_seq: 0, resume_cursors: { session: "0", ui: "0" } } as never)
+      .mockResolvedValueOnce({ busy: false, tail_seq: 1, resume_cursors: { session: "1", ui: "1" } } as never);
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
 
