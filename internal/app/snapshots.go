@@ -220,27 +220,6 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 	}, nil
 }
 
-func (s *Stub) SessionWorkspace(_ context.Context, req SessionWorkspaceRequest) (SessionWorkspaceResponse, error) {
-	if _, err := s.lookupSession(req.SessionID); err != nil {
-		return SessionWorkspaceResponse{}, err
-	}
-	return SessionWorkspaceResponse{}, Unsupported("session workspace snapshot not implemented")
-}
-
-func (s *Stub) WorkspaceFileList(_ context.Context, req WorkspaceFileListRequest) (WorkspaceFileListResponse, error) {
-	if _, err := s.lookupSession(req.SessionID); err != nil {
-		return WorkspaceFileListResponse{}, err
-	}
-	return WorkspaceFileListResponse{}, Unsupported("workspace file listing not implemented")
-}
-
-func (s *Stub) WorkspaceFileRead(_ context.Context, req WorkspaceFileReadRequest) (WorkspaceFileReadResponse, error) {
-	if _, err := s.lookupSession(req.SessionID); err != nil {
-		return WorkspaceFileReadResponse{}, err
-	}
-	return WorkspaceFileReadResponse{}, Unsupported("workspace file read not implemented")
-}
-
 func (s *Stub) GitFileVersions(_ context.Context, req GitFileVersionsRequest) (GitFileVersionsResponse, error) {
 	if _, err := s.lookupSession(req.SessionID); err != nil {
 		return GitFileVersionsResponse{}, err
