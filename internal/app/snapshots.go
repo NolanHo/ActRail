@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
 )
 
@@ -200,10 +201,31 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 }
 
 func (s *Stub) SessionMessages(_ context.Context, req SessionMessagesRequest) (SessionMessagesResponse, error) {
-	if _, err := s.lookupSession(req.SessionID); err != nil {
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
 		return SessionMessagesResponse{}, err
 	}
-	return SessionMessagesResponse{}, Unsupported("session message snapshot not implemented")
+	page := record.transcript.History(messageBeforeSeq(req.BeforeSeq), req.Limit)
+	items := page.Items()
+	response := SessionMessagesResponse{
+		Items:   make([]SessionMessage, 0, len(items)),
+		HasMore: page.HasMore(),
+		TailSeq: record.transcript.TailSeq().Uint64(),
+	}
+	for _, item := range items {
+		response.Items = append(response.Items, SessionMessage{
+			Seq:  item.Seq().Uint64(),
+			Role: item.Role().String(),
+			Kind: item.Kind().String(),
+			Text: item.Text(),
+			TS:   timestampSeconds(item.TS()),
+		})
+	}
+	if nextBefore, ok := page.NextBefore(); ok {
+		value := nextBefore.Uint64()
+		response.NextBeforeSeq = &value
+	}
+	return response, nil
 }
 
 func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (SessionStateResponse, error) {
@@ -215,12 +237,11 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 		Busy:                 record.state.Busy(),
 		Queue:                queueSnapshotFromState(record.state),
 		UIRequest:            nil,
-		PartialAssistantTurn: partialAssistantTurn(record.state),
-		TailSeq:              record.state.Tail().Seq().Uint64(),
+		PartialAssistantTurn: partialAssistantTurn(record.transcript),
+		TailSeq:              record.transcript.TailSeq().Uint64(),
 		ResumeCursors:        SessionResumeCursors{},
 	}, nil
 }
-
 
 func (s *Stub) lookupSession(sessionID session.SessionID) (sessionRecord, error) {
 	record, ok := s.registry.Lookup(sessionID)
@@ -243,13 +264,18 @@ func queueSnapshotFromState(state session.State) SessionQueueSnapshot {
 	return snapshot
 }
 
-func partialAssistantTurn(state session.State) *PartialAssistantTurnSnapshot {
-	if !state.Tail().Live() {
-		return nil
-	}
-	turnID, ok := state.Tail().TurnID()
+func partialAssistantTurn(transcript message.Transcript) *PartialAssistantTurnSnapshot {
+	partial, ok := transcript.PartialAssistantTurn()
 	if !ok {
 		return nil
 	}
-	return &PartialAssistantTurnSnapshot{TurnID: turnID.String()}
+	return &PartialAssistantTurnSnapshot{TurnID: partial.TurnID().String(), Text: partial.Text()}
+}
+
+func messageBeforeSeq(raw *uint64) *message.Seq {
+	if raw == nil {
+		return nil
+	}
+	seq := message.Seq(*raw)
+	return &seq
 }
