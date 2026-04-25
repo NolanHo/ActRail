@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"actrail/internal/domain/session"
 )
 
 type Subscription struct {
@@ -88,6 +90,34 @@ type PingCommand struct {
 	Stream    StreamName
 }
 
+type SendCommand struct {
+	RequestID string
+	Stream    StreamName
+	SessionID session.SessionID
+	Text      string
+}
+
+type EnqueueCommand struct {
+	RequestID string
+	Stream    StreamName
+	SessionID session.SessionID
+	Text      string
+}
+
+type InterruptCommand struct {
+	RequestID string
+	Stream    StreamName
+	SessionID session.SessionID
+}
+
+type UIResponseCommand struct {
+	RequestID  string
+	Stream     StreamName
+	SessionID  session.SessionID
+	ResponseTo string
+	Value      json.RawMessage
+}
+
 func DecodeSubscribeCommand(frame RawFrame) (SubscribeCommand, error) {
 	if err := frame.Validate(); err != nil {
 		return SubscribeCommand{}, err
@@ -158,4 +188,131 @@ func DecodePingCommand(frame RawFrame) (PingCommand, error) {
 		return PingCommand{}, fmt.Errorf("ping stream must be %q", SystemStream)
 	}
 	return PingCommand{RequestID: frame.RequestID, Stream: stream}, nil
+}
+
+func DecodeSendCommand(frame RawFrame) (SendCommand, error) {
+	requestID, stream, route, err := decodeSessionCommand(frame, FrameTypeSend, session.StreamKindMain)
+	if err != nil {
+		return SendCommand{}, err
+	}
+	var payload struct {
+		SessionID string `json:"session_id"`
+		Text      string `json:"text"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return SendCommand{}, fmt.Errorf("decode send payload: %w", err)
+	}
+	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeSend)
+	if err != nil {
+		return SendCommand{}, err
+	}
+	text := strings.TrimSpace(payload.Text)
+	if text == "" {
+		return SendCommand{}, fmt.Errorf("send text is required")
+	}
+	return SendCommand{RequestID: requestID, Stream: stream, SessionID: sessionID, Text: text}, nil
+}
+
+func DecodeEnqueueCommand(frame RawFrame) (EnqueueCommand, error) {
+	requestID, stream, route, err := decodeSessionCommand(frame, FrameTypeEnqueue, session.StreamKindMain)
+	if err != nil {
+		return EnqueueCommand{}, err
+	}
+	var payload struct {
+		SessionID string `json:"session_id"`
+		Text      string `json:"text"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return EnqueueCommand{}, fmt.Errorf("decode enqueue payload: %w", err)
+	}
+	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeEnqueue)
+	if err != nil {
+		return EnqueueCommand{}, err
+	}
+	text := strings.TrimSpace(payload.Text)
+	if text == "" {
+		return EnqueueCommand{}, fmt.Errorf("enqueue text is required")
+	}
+	return EnqueueCommand{RequestID: requestID, Stream: stream, SessionID: sessionID, Text: text}, nil
+}
+
+func DecodeInterruptCommand(frame RawFrame) (InterruptCommand, error) {
+	requestID, stream, route, err := decodeSessionCommand(frame, FrameTypeInterrupt, session.StreamKindMain)
+	if err != nil {
+		return InterruptCommand{}, err
+	}
+	var payload struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return InterruptCommand{}, fmt.Errorf("decode interrupt payload: %w", err)
+	}
+	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeInterrupt)
+	if err != nil {
+		return InterruptCommand{}, err
+	}
+	return InterruptCommand{RequestID: requestID, Stream: stream, SessionID: sessionID}, nil
+}
+
+func DecodeUIResponseCommand(frame RawFrame) (UIResponseCommand, error) {
+	requestID, stream, route, err := decodeSessionCommand(frame, FrameTypeUIResponse, session.StreamKindUI)
+	if err != nil {
+		return UIResponseCommand{}, err
+	}
+	var payload struct {
+		SessionID  string          `json:"session_id"`
+		ResponseTo string          `json:"response_to"`
+		Value      json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return UIResponseCommand{}, fmt.Errorf("decode ui.response payload: %w", err)
+	}
+	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeUIResponse)
+	if err != nil {
+		return UIResponseCommand{}, err
+	}
+	responseTo := strings.TrimSpace(payload.ResponseTo)
+	if responseTo == "" {
+		return UIResponseCommand{}, fmt.Errorf("ui.response response_to is required")
+	}
+	if len(payload.Value) == 0 {
+		return UIResponseCommand{}, fmt.Errorf("ui.response value is required")
+	}
+	value := append(json.RawMessage(nil), payload.Value...)
+	return UIResponseCommand{RequestID: requestID, Stream: stream, SessionID: sessionID, ResponseTo: responseTo, Value: value}, nil
+}
+
+func decodeSessionCommand(frame RawFrame, want FrameType, kind session.StreamKind) (string, StreamName, session.StreamRoute, error) {
+	if err := frame.Validate(); err != nil {
+		return "", "", session.StreamRoute{}, err
+	}
+	if frame.Type != want {
+		return "", "", session.StreamRoute{}, fmt.Errorf("frame type %q is not %s", frame.Type, want)
+	}
+	if strings.TrimSpace(frame.RequestID) == "" {
+		return "", "", session.StreamRoute{}, fmt.Errorf("%s request_id is required", want)
+	}
+	stream, err := ParseStreamName(frame.Stream)
+	if err != nil {
+		return "", "", session.StreamRoute{}, err
+	}
+	route, err := ParseSessionStream(stream)
+	if err != nil {
+		return "", "", session.StreamRoute{}, fmt.Errorf("%s stream must target a session stream: %w", want, err)
+	}
+	if route.Kind() != kind {
+		return "", "", session.StreamRoute{}, fmt.Errorf("%s stream must target session stream kind %q", want, kind)
+	}
+	return frame.RequestID, stream, route, nil
+}
+
+func validatePayloadSessionID(raw string, route session.StreamRoute, command FrameType) (session.SessionID, error) {
+	sessionID, err := session.ParseSessionID(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s payload session_id: %w", command, err)
+	}
+	if sessionID != route.SessionID() {
+		return "", fmt.Errorf("%s payload session_id %q does not match stream session %q", command, sessionID, route.SessionID())
+	}
+	return sessionID, nil
 }
