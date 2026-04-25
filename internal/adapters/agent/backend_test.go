@@ -89,7 +89,7 @@ func TestPICommandArgsIncludeProviderModelThinking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"--provider", "openrouter", "--model", "google/gemini-2.5-pro", "--thinking", "high"}
+	want := []string{"--mode", "rpc", "--provider", "openrouter", "--model", "google/gemini-2.5-pro", "--thinking", "high"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,9 +43,32 @@ type processRuntimeLauncher struct {
 	io             process.IO
 }
 
+type runtimeProtocol string
+
+const (
+	runtimeProtocolTTY   runtimeProtocol = "tty"
+	runtimeProtocolPIRPC runtimeProtocol = "pi_rpc"
+)
+
 type sessionRuntime struct {
 	launchSpec process.LaunchSpec
 	handle     process.Handle
+	protocol   runtimeProtocol
+}
+
+type piRPCPromptCommand struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+type piRPCExtensionUIResponseCommand struct {
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+
+type piRPCAbortCommand struct {
+	Type string `json:"type"`
 }
 
 var errRuntimeInputUnavailable = errors.New("session runtime input is unavailable")
@@ -93,6 +117,13 @@ func defaultRuntimeBinPath(backend session.Backend) (string, error) {
 	return backend.String(), nil
 }
 
+func runtimeProtocolForBackend(backend session.Backend) runtimeProtocol {
+	if backend == session.BackendPI {
+		return runtimeProtocolPIRPC
+	}
+	return runtimeProtocolTTY
+}
+
 func (l processRuntimeLauncher) Launch(ctx context.Context, req runtimeLaunchRequest) (sessionRuntime, error) {
 	if err := ctx.Err(); err != nil {
 		return sessionRuntime{}, err
@@ -123,29 +154,74 @@ func (l processRuntimeLauncher) Launch(ctx context.Context, req runtimeLaunchReq
 	if handle == nil {
 		return sessionRuntime{}, fmt.Errorf("start runtime %q: nil process handle", req.Backend)
 	}
-	return sessionRuntime{launchSpec: launchSpec, handle: handle}, nil
+	return sessionRuntime{launchSpec: launchSpec, handle: handle, protocol: runtimeProtocolForBackend(req.Backend)}, nil
 }
 
-func (r sessionRuntime) WriteInput(ctx context.Context, text string) error {
+func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
+	payload := strings.TrimSpace(text)
+	if payload == "" {
+		return fmt.Errorf("runtime prompt is required")
+	}
+	if r.protocol == runtimeProtocolPIRPC {
+		return r.writeRPCCommand(ctx, piRPCPromptCommand{Type: "prompt", Message: payload})
+	}
+	return r.writeLine(ctx, payload)
+}
+
+func (r sessionRuntime) RespondUI(ctx context.Context, requestID, value string) error {
+	resolvedID := strings.TrimSpace(requestID)
+	if resolvedID == "" {
+		return fmt.Errorf("runtime ui request id is required")
+	}
+	payload := strings.TrimSpace(value)
+	if payload == "" {
+		return fmt.Errorf("runtime ui response value is required")
+	}
+	if r.protocol == runtimeProtocolPIRPC {
+		return r.writeRPCCommand(ctx, piRPCExtensionUIResponseCommand{Type: "extension_ui_response", ID: resolvedID, Value: payload})
+	}
+	return r.writeLine(ctx, payload)
+}
+
+func (r sessionRuntime) writeLine(ctx context.Context, text string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if r.handle == nil || r.handle.PTY() == nil {
-		return errRuntimeInputUnavailable
+	writer, err := r.inputWriter()
+	if err != nil {
+		return err
 	}
 	payload := text
 	if !strings.HasSuffix(payload, "\n") {
 		payload += "\n"
 	}
-	if _, err := io.WriteString(r.handle.PTY(), payload); err != nil {
+	if _, err := io.WriteString(writer, payload); err != nil {
 		return fmt.Errorf("write runtime input: %w", err)
 	}
 	return nil
 }
 
+func (r sessionRuntime) writeRPCCommand(ctx context.Context, command any) error {
+	payload, err := json.Marshal(command)
+	if err != nil {
+		return fmt.Errorf("marshal runtime command: %w", err)
+	}
+	return r.writeLine(ctx, string(payload))
+}
+
+func (r sessionRuntime) inputWriter() (io.Writer, error) {
+	if r.handle == nil || r.handle.PTY() == nil {
+		return nil, errRuntimeInputUnavailable
+	}
+	return r.handle.PTY(), nil
+}
+
 func (r sessionRuntime) Interrupt(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if r.protocol == runtimeProtocolPIRPC {
+		return r.writeRPCCommand(ctx, piRPCAbortCommand{Type: "abort"})
 	}
 	if r.handle == nil {
 		return fmt.Errorf("interrupt runtime: nil process handle")
