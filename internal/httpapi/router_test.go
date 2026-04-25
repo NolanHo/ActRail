@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -708,6 +709,69 @@ func TestMeReportsTrueForConfiguredValidCookie(t *testing.T) {
 	}
 }
 
+func TestMeReportsTrueInLocalNoAuthMode(t *testing.T) {
+	cfg := config.Load()
+	h := newTestRouter(cfg, newServiceStub(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	var body authStatus
+	decodeJSON(t, res, &body)
+	if !body.OK {
+		t.Fatal("GET /api/me returned ok=false in local no-auth mode")
+	}
+}
+
+func TestProtectedRoutesRequireAuthCookieInPasswordMode(t *testing.T) {
+	cfg := config.Load()
+	cfg.Auth.Password = "secret"
+	h := newTestRouter(cfg, newServiceStub(cfg))
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   string
+	}{
+		{name: "bootstrap", method: http.MethodGet, target: "/api/bootstrap"},
+		{name: "list sessions", method: http.MethodGet, target: "/api/sessions"},
+		{name: "create session", method: http.MethodPost, target: "/api/sessions"},
+		{name: "resume candidates", method: http.MethodGet, target: "/api/session_resume_candidates"},
+		{name: "session details", method: http.MethodGet, target: "/api/sessions/s_123/details"},
+		{name: "session messages", method: http.MethodGet, target: "/api/sessions/s_123/messages"},
+		{name: "session state", method: http.MethodGet, target: "/api/sessions/s_123/state"},
+		{name: "session workspace", method: http.MethodGet, target: "/api/sessions/s_123/workspace"},
+		{name: "file list", method: http.MethodGet, target: "/api/sessions/s_123/file/list"},
+		{name: "file read", method: http.MethodGet, target: "/api/sessions/s_123/file/read?path=README.md"},
+		{name: "git file versions", method: http.MethodGet, target: "/api/sessions/s_123/git/file_versions?path=README.md"},
+		{name: "rename", method: http.MethodPost, target: "/api/sessions/s_123/rename"},
+		{name: "focus", method: http.MethodPost, target: "/api/sessions/s_123/focus"},
+		{name: "edit", method: http.MethodPost, target: "/api/sessions/s_123/edit"},
+		{name: "model", method: http.MethodPost, target: "/api/sessions/s_123/model"},
+		{name: "delete", method: http.MethodPost, target: "/api/sessions/s_123/delete"},
+		{name: "restart", method: http.MethodPost, target: "/api/sessions/s_123/restart"},
+		{name: "handoff", method: http.MethodPost, target: "/api/sessions/s_123/handoff"},
+		{name: "websocket", method: http.MethodGet, target: "/api/ws"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var body io.Reader
+			if tc.body != "" {
+				body = strings.NewReader(tc.body)
+			}
+			req := httptest.NewRequest(tc.method, tc.target, body)
+			res := httptest.NewRecorder()
+
+			h.ServeHTTP(res, req)
+
+			assertErrorEnvelope(t, res, http.StatusUnauthorized, "unauthorized", "")
+		})
+	}
+}
+
 func TestLoginRejectsInvalidPasswordWithSharedErrorEnvelope(t *testing.T) {
 	cfg := config.Load()
 	cfg.Auth.Password = "secret"
@@ -728,6 +792,17 @@ func TestLoginRejectsInvalidPasswordWithSharedErrorEnvelope(t *testing.T) {
 	if body.Error.Message != "invalid password" {
 		t.Fatalf("error message = %q, want %q", body.Error.Message, "invalid password")
 	}
+}
+
+func TestLoginReturnsUnsupportedInLocalNoAuthMode(t *testing.T) {
+	cfg := config.Load()
+	h := newTestRouter(cfg, newServiceStub(cfg))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password":"secret"}`))
+	res := httptest.NewRecorder()
+
+	h.ServeHTTP(res, req)
+
+	assertErrorEnvelope(t, res, http.StatusNotImplemented, "unsupported", "")
 }
 
 func TestLoginRejectsInvalidJSONWithSharedErrorEnvelope(t *testing.T) {
