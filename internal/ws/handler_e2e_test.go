@@ -189,6 +189,86 @@ func TestHandlerHandlesCoreCommandsAndHeartbeats(t *testing.T) {
 	}
 }
 
+func TestHandlerPublishSessionStoresReplayAndDeliversLive(t *testing.T) {
+	start := time.Unix(1760000000, 0)
+	clock := newManualClock(start)
+	hbTicker := newManualTicker()
+	cfg := testWSConfig()
+	h := NewHandler(cfg,
+		WithNow(clock.Now),
+		WithTickerFactory(func(time.Duration) Ticker { return hbTicker }),
+		WithRegistry(NewRegistry()),
+	)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	connA := dialTestWebSocket(t, server, cfg, "")
+	defer connA.Close()
+	_ = readRawFrame(t, connA)
+
+	subscribeAt := start.Add(time.Second)
+	clock.Set(subscribeAt)
+	writeFrame(t, connA, Frame{
+		Type:      FrameTypeSubscribe,
+		RequestID: "req_sub_live",
+		TS:        UnixTS(subscribeAt),
+		Stream:    SystemStream.String(),
+		Payload:   SubscribePayload{Streams: []Subscription{{Name: StreamName("session:s_123")}}},
+	})
+	ack := readRawFrame(t, connA)
+	if ack.Type != FrameTypeAck {
+		t.Fatalf("subscribe ack type = %q, want %q", ack.Type, FrameTypeAck)
+	}
+
+	publishAt := subscribeAt.Add(time.Second)
+	clock.Set(publishAt)
+	frame := Frame{
+		Type:   FrameTypeSessionState,
+		ID:     "evt_pub_1",
+		TS:     UnixTS(publishAt),
+		Stream: "session:s_123",
+		Payload: map[string]any{
+			"session_id": "s_123",
+			"stream_seq": 41,
+			"busy":       true,
+		},
+	}
+	report, err := h.PublishSession(41, frame)
+	if err != nil {
+		t.Fatalf("PublishSession() error = %v", err)
+	}
+	if !report.Stored || report.Delivered != 1 {
+		t.Fatalf("PublishSession() report = %#v", report)
+	}
+	live := readRawFrame(t, connA)
+	if live.Type != FrameTypeSessionState || live.ID != frame.ID {
+		t.Fatalf("live frame = %#v, want id %q", live, frame.ID)
+	}
+
+	connB := dialTestWebSocket(t, server, cfg, "")
+	defer connB.Close()
+	_ = readRawFrame(t, connB)
+
+	resumeAt := publishAt.Add(time.Second)
+	clock.Set(resumeAt)
+	cursor := int64(40)
+	writeFrame(t, connB, Frame{
+		Type:      FrameTypeSubscribe,
+		RequestID: "req_sub_resume",
+		TS:        UnixTS(resumeAt),
+		Stream:    SystemStream.String(),
+		Payload:   SubscribePayload{Streams: []Subscription{{Name: StreamName("session:s_123"), ResumeFrom: &cursor}}},
+	})
+	ack = readRawFrame(t, connB)
+	if ack.Type != FrameTypeAck {
+		t.Fatalf("resume ack type = %q, want %q", ack.Type, FrameTypeAck)
+	}
+	replayed := readRawFrame(t, connB)
+	if replayed.Type != FrameTypeSessionState || replayed.ID != frame.ID {
+		t.Fatalf("replayed frame = %#v, want id %q", replayed, frame.ID)
+	}
+}
+
 func TestHandlerReturnsUnsupportedErrorForUnimplementedCommand(t *testing.T) {
 	start := time.Unix(1760000000, 0)
 	clock := newManualClock(start)
