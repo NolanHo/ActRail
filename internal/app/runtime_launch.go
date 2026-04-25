@@ -156,6 +156,19 @@ func (r sessionRuntime) Interrupt(ctx context.Context) error {
 	return nil
 }
 
+func (r sessionRuntime) Kill(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r.handle == nil {
+		return nil
+	}
+	if err := r.handle.Kill(); err != nil {
+		return fmt.Errorf("kill runtime: %w", err)
+	}
+	return nil
+}
+
 func (r sessionRuntime) PID() int {
 	if r.handle == nil {
 		return 0

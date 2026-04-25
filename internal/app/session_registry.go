@@ -38,20 +38,25 @@ type sessionCreateSpec struct {
 }
 
 type sessionRecord struct {
-	identity        session.Identity
-	title           string
-	cwd             string
-	provider        string
-	model           string
-	reasoningEffort string
-	createdAt       time.Time
-	updatedAt       time.Time
-	activityAt      time.Time
-	state           session.State
-	transcript      message.Transcript
-	runtime         sessionRuntime
-	uiRequest       *SessionUIRequestSnapshot
-	resumeCursors   SessionResumeCursors
+	identity            session.Identity
+	title               string
+	alias               string
+	cwd                 string
+	provider            string
+	model               string
+	reasoningEffort     string
+	focused             bool
+	priorityOffset      float64
+	snoozeUntil         *time.Time
+	dependencySessionID *session.SessionID
+	createdAt           time.Time
+	updatedAt           time.Time
+	activityAt          time.Time
+	state               session.State
+	transcript          message.Transcript
+	runtime             sessionRuntime
+	uiRequest           *SessionUIRequestSnapshot
+	resumeCursors       SessionResumeCursors
 }
 
 func newSessionRegistry(now func() time.Time) *sessionRegistry {
@@ -88,9 +93,11 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 	if err != nil {
 		return sessionRecord{}, err
 	}
+	name := normalizeSessionTitle(spec.Title, spec.CWD)
 	record := sessionRecord{
 		identity:        identity,
-		title:           normalizeSessionTitle(spec.Title, spec.CWD),
+		title:           name,
+		alias:           name,
 		cwd:             strings.TrimSpace(spec.CWD),
 		provider:        strings.TrimSpace(spec.Provider),
 		model:           strings.TrimSpace(spec.Model),
@@ -122,6 +129,16 @@ func (r *sessionRegistry) Lookup(sessionID session.SessionID) (sessionRecord, bo
 	return copySessionRecord(record), true
 }
 
+func (r *sessionRegistry) LookupRoute(routeID session.SessionID) (sessionRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, record, ok := r.resolveLocked(routeID)
+	if !ok {
+		return sessionRecord{}, false
+	}
+	return copySessionRecord(record), true
+}
+
 func (r *sessionRegistry) List() []sessionRecord {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -134,6 +151,61 @@ func (r *sessionRegistry) List() []sessionRecord {
 		items = append(items, copySessionRecord(record))
 	}
 	return items
+}
+
+func (r *sessionRegistry) Update(routeID session.SessionID, touchActivity bool, apply func(*sessionRecord) error) (sessionRecord, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actualID, record, ok := r.resolveLocked(routeID)
+	if !ok {
+		return sessionRecord{}, false, nil
+	}
+	if err := apply(&record); err != nil {
+		return sessionRecord{}, true, err
+	}
+	now := r.now().UTC()
+	record.updatedAt = now
+	if touchActivity {
+		record.activityAt = now
+	}
+	cp := copySessionRecord(record)
+	r.sessions[actualID] = cp
+	return copySessionRecord(cp), true, nil
+}
+
+func (r *sessionRegistry) Delete(routeID session.SessionID) (sessionRecord, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actualID, record, ok := r.resolveLocked(routeID)
+	if !ok {
+		return sessionRecord{}, false
+	}
+	delete(r.sessions, actualID)
+	for idx, sessionID := range r.order {
+		if sessionID != actualID {
+			continue
+		}
+		r.order = append(r.order[:idx], r.order[idx+1:]...)
+		break
+	}
+	return copySessionRecord(record), true
+}
+
+func (r *sessionRegistry) resolveLocked(routeID session.SessionID) (session.SessionID, sessionRecord, bool) {
+	if record, ok := r.sessions[routeID]; ok {
+		return routeID, record, true
+	}
+	token := routeID.String()
+	for actualID, record := range r.sessions {
+		runtimeID, ok := record.identity.RuntimeID()
+		if !ok {
+			continue
+		}
+		if runtimeID.String() == token {
+			return actualID, record, true
+		}
+	}
+	return "", sessionRecord{}, false
 }
 
 func (r *sessionRegistry) AppendMessage(sessionID session.SessionID, role, kind, text string) (message.CommittedMessage, bool, error) {
@@ -377,20 +449,25 @@ func syncSessionRecordStateWithQueue(record *sessionRecord, busy bool, queue ses
 
 func copySessionRecord(record sessionRecord) sessionRecord {
 	return sessionRecord{
-		identity:        record.identity,
-		title:           record.title,
-		cwd:             record.cwd,
-		provider:        record.provider,
-		model:           record.model,
-		reasoningEffort: record.reasoningEffort,
-		createdAt:       record.createdAt,
-		updatedAt:       record.updatedAt,
-		activityAt:      record.activityAt,
-		state:           copySessionState(record.state),
-		transcript:      record.transcript.Clone(),
-		runtime:         record.runtime,
-		uiRequest:       copySessionUIRequest(record.uiRequest),
-		resumeCursors:   record.resumeCursors,
+		identity:            record.identity,
+		title:               record.title,
+		alias:               record.alias,
+		cwd:                 record.cwd,
+		provider:            record.provider,
+		model:               record.model,
+		reasoningEffort:     record.reasoningEffort,
+		focused:             record.focused,
+		priorityOffset:      record.priorityOffset,
+		snoozeUntil:         copyTimePtr(record.snoozeUntil),
+		dependencySessionID: copySessionIDPtr(record.dependencySessionID),
+		createdAt:           record.createdAt,
+		updatedAt:           record.updatedAt,
+		activityAt:          record.activityAt,
+		state:               copySessionState(record.state),
+		transcript:          record.transcript.Clone(),
+		runtime:             record.runtime,
+		uiRequest:           copySessionUIRequest(record.uiRequest),
+		resumeCursors:       record.resumeCursors,
 	}
 }
 
@@ -407,6 +484,22 @@ func copySessionState(state session.State) session.State {
 }
 
 func copySessionUIRequest(raw *SessionUIRequestSnapshot) *SessionUIRequestSnapshot {
+	if raw == nil {
+		return nil
+	}
+	copied := *raw
+	return &copied
+}
+
+func copyTimePtr(raw *time.Time) *time.Time {
+	if raw == nil {
+		return nil
+	}
+	copied := raw.UTC()
+	return &copied
+}
+
+func copySessionIDPtr(raw *session.SessionID) *session.SessionID {
 	if raw == nil {
 		return nil
 	}
