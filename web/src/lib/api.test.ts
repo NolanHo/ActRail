@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sendRealtimeCommand } from "../domains/realtime/client";
 import { api } from "./api";
 import { getJson, HttpError, subscribeUnauthorized } from "./http";
 import type { LiveSessionResponse, MessagesResponse, SessionBootstrapResponse, SessionDetailsResponse, SessionUiStateResponse, SessionsResponse, WorkspaceResponse } from "./types";
+
+vi.mock("../domains/realtime/client", () => ({
+  sendRealtimeCommand: vi.fn(),
+}));
 
 describe("getJson", () => {
   afterEach(() => {
@@ -61,6 +66,7 @@ describe("getJson", () => {
 describe("api", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.clearAllMocks();
   });
 
   it("requests sessions with the provided abort signal", async () => {
@@ -644,5 +650,46 @@ describe("api", () => {
       method: "POST",
       body: JSON.stringify({ cwd: "/tmp", label: "New Label", collapsed: true }),
     }));
+  });
+
+  it("submits ui.response frames with protocol payload keys", async () => {
+    vi.mocked(sendRealtimeCommand).mockResolvedValue({ accepted: true });
+
+    await expect(api.submitUiResponse("sess-1", { id: "ask-1", value: "A" })).resolves.toEqual({ accepted: true });
+    expect(sendRealtimeCommand).toHaveBeenCalledWith({
+      type: "ui.response",
+      stream: "session:sess-1:ui",
+      payload: {
+        session_id: "sess-1",
+        response_to: "ask-1",
+        value: "A",
+      },
+    });
+  });
+
+  it("maps confirm and cancel payloads onto protocol value fields", async () => {
+    vi.mocked(sendRealtimeCommand).mockResolvedValue({ accepted: true });
+
+    await api.submitUiResponse("sess-1", { id: "ask-1", confirmed: true });
+    await api.submitUiResponse("sess-1", { id: "ask-2", cancelled: true });
+
+    expect(sendRealtimeCommand).toHaveBeenNthCalledWith(1, {
+      type: "ui.response",
+      stream: "session:sess-1:ui",
+      payload: {
+        session_id: "sess-1",
+        response_to: "ask-1",
+        value: "true",
+      },
+    });
+    expect(sendRealtimeCommand).toHaveBeenNthCalledWith(2, {
+      type: "ui.response",
+      stream: "session:sess-1:ui",
+      payload: {
+        session_id: "sess-1",
+        response_to: "ask-2",
+        value: "cancelled",
+      },
+    });
   });
 });

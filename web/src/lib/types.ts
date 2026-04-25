@@ -321,12 +321,29 @@ export interface MessagesResponse {
   ui_version?: string;
 }
 
+export interface SessionUiRequestOption {
+  label?: string;
+  value?: string;
+  title?: string;
+  description?: string;
+}
+
+export interface SessionUiRequestQuestion {
+  header?: string;
+  question?: string;
+  options?: SessionUiRequestOption[];
+  multiSelect?: boolean;
+}
+
 export interface SessionUiRequest {
   id?: string;
+  request_id?: string;
+  kind?: string;
   method?: "select" | "confirm" | "input" | "editor" | string;
   label?: string;
   title?: string;
   message?: string;
+  prompt?: string;
   question?: string;
   context?: string;
   prefill?: string;
@@ -335,7 +352,9 @@ export interface SessionUiRequest {
   cancelled?: boolean;
   allow_freeform?: boolean;
   allow_multiple?: boolean;
-  options?: Array<{ label?: string; value?: string; title?: string; description?: string } | string>;
+  options?: Array<SessionUiRequestOption | string>;
+  questions?: SessionUiRequestQuestion[];
+  metadata?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -359,6 +378,24 @@ export interface SessionStreamCursors {
   ui?: number;
 }
 
+export interface SessionResumeCursors {
+  session?: string | number;
+  ui?: string | number;
+  transport?: string | number;
+}
+
+export interface SessionQueueItem {
+  id?: string;
+  queue_id?: string;
+  text?: string;
+  state?: string;
+}
+
+export interface PartialAssistantTurnSnapshot {
+  turn_id?: string;
+  text?: string;
+}
+
 export interface LiveSessionResponse {
   ok?: boolean;
   session_id?: string;
@@ -379,7 +416,11 @@ export interface LiveSessionResponse {
   stream_seq?: number;
   ui_stream_seq?: number;
   stream_cursors?: SessionStreamCursors | null;
-  events: MessageEvent[];
+  resume_cursors?: SessionResumeCursors | null;
+  queue?: { items?: SessionQueueItem[] } | null;
+  ui_request?: SessionUiRequest | null;
+  partial_assistant_turn?: PartialAssistantTurnSnapshot | null;
+  events?: MessageEvent[];
   requests?: SessionUiRequest[];
 }
 

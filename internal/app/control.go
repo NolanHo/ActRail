@@ -71,25 +71,27 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 	if text == "" {
 		return SendResponse{}, Invalid("text", "text required")
 	}
-	record, err := s.lookupSession(req.SessionID)
-	if err != nil {
+	var response SendResponse
+	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
+		if err := record.runtime.WriteInput(ctx, text); err != nil {
+			return mapRuntimeControlError(err)
+		}
+		item, state, uiRequest, ok, err := s.registry.ActivateSend(req.SessionID, text)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+		}
+		response = SendResponse{
+			Message: sessionMessageFromCommitted(item),
+			Busy:    state.Busy(),
+			Queue:   queueSnapshotFromState(state),
+			UI:      copySessionUIRequest(uiRequest),
+		}
+		return nil
+	}); err != nil {
 		return SendResponse{}, err
-	}
-	if err := record.runtime.WriteInput(ctx, text); err != nil {
-		return SendResponse{}, mapRuntimeControlError(err)
-	}
-	item, state, uiRequest, ok, err := s.registry.ActivateSend(req.SessionID, text)
-	if err != nil {
-		return SendResponse{}, err
-	}
-	if !ok {
-		return SendResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
-	}
-	response := SendResponse{
-		Message: sessionMessageFromCommitted(item),
-		Busy:    state.Busy(),
-		Queue:   queueSnapshotFromState(state),
-		UI:      copySessionUIRequest(uiRequest),
 	}
 	s.emitMessageCommit(req.SessionID, "", response.Message)
 	s.emitQueueState(req.SessionID, response.Queue)
@@ -112,6 +114,9 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 	response := EnqueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
+	if !state.Busy() {
+		s.scheduleQueuedDispatch(req.SessionID)
+	}
 	return response, nil
 }
 
@@ -133,6 +138,9 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 	response := InterruptResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
+	if !state.Busy() {
+		s.scheduleQueuedDispatch(req.SessionID)
+	}
 	return response, nil
 }
 
@@ -145,38 +153,40 @@ func (s *Stub) RespondUI(ctx context.Context, req UIResponseRequest) (UIResponse
 	if value == "" {
 		return UIResponseResponse{}, Invalid("value", "value required")
 	}
-	record, err := s.lookupSession(req.SessionID)
-	if err != nil {
+	var response UIResponseResponse
+	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
+		if record.uiRequest == nil {
+			return NotFound(fmt.Sprintf("session %q ui request not found", req.SessionID))
+		}
+		if record.uiRequest.RequestID != responseTo {
+			return Conflict(fmt.Sprintf("session %q pending ui request is %q", req.SessionID, record.uiRequest.RequestID))
+		}
+		if err := record.runtime.WriteInput(ctx, value); err != nil {
+			return mapRuntimeControlError(err)
+		}
+		resolved, state, ok, err := s.registry.ClearUIRequest(req.SessionID, responseTo)
+		if err != nil {
+			if errors.Is(err, errNoPendingUIRequest) {
+				return NotFound(fmt.Sprintf("session %q ui request not found", req.SessionID))
+			}
+			if errors.Is(err, errUnexpectedUIRequest) {
+				return Conflict(fmt.Sprintf("session %q pending ui request does not match %q", req.SessionID, responseTo))
+			}
+			return err
+		}
+		if !ok {
+			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+		}
+		response = UIResponseResponse{
+			ResolvedRequestID: resolved.RequestID,
+			Busy:              state.Busy(),
+			Queue:             queueSnapshotFromState(state),
+		}
+		return nil
+	}); err != nil {
 		return UIResponseResponse{}, err
 	}
-	if record.uiRequest == nil {
-		return UIResponseResponse{}, NotFound(fmt.Sprintf("session %q ui request not found", req.SessionID))
-	}
-	if record.uiRequest.RequestID != responseTo {
-		return UIResponseResponse{}, Conflict(fmt.Sprintf("session %q pending ui request is %q", req.SessionID, record.uiRequest.RequestID))
-	}
-	if err := record.runtime.WriteInput(ctx, value); err != nil {
-		return UIResponseResponse{}, mapRuntimeControlError(err)
-	}
-	resolved, state, ok, err := s.registry.ClearUIRequest(req.SessionID, responseTo)
-	if err != nil {
-		if errors.Is(err, errNoPendingUIRequest) {
-			return UIResponseResponse{}, NotFound(fmt.Sprintf("session %q ui request not found", req.SessionID))
-		}
-		if errors.Is(err, errUnexpectedUIRequest) {
-			return UIResponseResponse{}, Conflict(fmt.Sprintf("session %q pending ui request does not match %q", req.SessionID, responseTo))
-		}
-		return UIResponseResponse{}, err
-	}
-	if !ok {
-		return UIResponseResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
-	}
-	response := UIResponseResponse{
-		ResolvedRequestID: resolved.RequestID,
-		Busy:              state.Busy(),
-		Queue:             queueSnapshotFromState(state),
-	}
-	s.emitUIResolved(req.SessionID, resolved.RequestID)
+	s.emitUIResolved(req.SessionID, response.ResolvedRequestID)
 	s.emitSessionState(req.SessionID)
 	return response, nil
 }

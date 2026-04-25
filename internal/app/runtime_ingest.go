@@ -145,20 +145,24 @@ func (s *Stub) applyPIUIRequest(sessionID session.SessionID, event pi.Event) {
 		return
 	}
 	snapshot := SessionUIRequestSnapshot{
-		RequestID: strings.TrimSpace(event.UIRequest.RequestID),
-		Kind:      strings.TrimSpace(string(event.UIRequest.Kind)),
-		Prompt:    runtimeUIPrompt(*event.UIRequest),
+		RequestID:     strings.TrimSpace(event.UIRequest.RequestID),
+		Kind:          strings.TrimSpace(string(event.UIRequest.Kind)),
+		Method:        strings.TrimSpace(string(event.UIRequest.Method)),
+		Title:         strings.TrimSpace(event.UIRequest.Title),
+		Message:       strings.TrimSpace(event.UIRequest.Message),
+		Prompt:        runtimeUIPrompt(*event.UIRequest),
+		Question:      strings.TrimSpace(event.UIRequest.Prompt),
+		Context:       strings.TrimSpace(event.UIRequest.Context),
+		AllowFreeform: event.UIRequest.AllowFreeform,
+		AllowMultiple: event.UIRequest.AllowMultiple,
+		Options:       runtimeUIOptionsSnapshot(*event.UIRequest),
+		Questions:     runtimeUIQuestionsSnapshot(*event.UIRequest),
+		Metadata:      copyAnyMap(event.UIRequest.Metadata),
 	}
 	if err := s.SetSessionUIRequest(sessionID, snapshot); err != nil {
 		return
 	}
-	s.emitUIRequest(UIRequestEvent{
-		SessionID: sessionID,
-		RequestID: snapshot.RequestID,
-		Kind:      snapshot.Kind,
-		Prompt:    snapshot.Prompt,
-		Options:   runtimeUIOptions(*event.UIRequest),
-	})
+	s.emitUIRequest(UIRequestEvent{SessionID: sessionID, Request: snapshot})
 	s.emitSessionState(sessionID)
 }
 
@@ -173,6 +177,7 @@ func (s *Stub) applyPIUIResolved(sessionID session.SessionID, event pi.Event) {
 	_ = s.ClearSessionUIRequest(sessionID, requestID)
 	s.emitUIResolved(sessionID, requestID)
 	s.emitSessionState(sessionID)
+	s.scheduleQueuedDispatch(sessionID)
 }
 
 func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) {
@@ -185,8 +190,11 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) {
 			s.emitSessionState(sessionID)
 		}
 	case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
-		if _, _, err := s.registry.SetBusy(sessionID, false); err == nil {
+		if state, ok, err := s.registry.SetBusy(sessionID, false); err == nil && ok {
 			s.emitSessionState(sessionID)
+			if !state.Busy() {
+				s.scheduleQueuedDispatch(sessionID)
+			}
 		}
 	}
 }
@@ -233,6 +241,61 @@ func runtimeUIOptions(request pi.UIRequest) []string {
 		for _, option := range question.Options {
 			appendOption(option)
 		}
+	}
+	return options
+}
+
+func runtimeUIOptionsSnapshot(request pi.UIRequest) []SessionUIOptionSnapshot {
+	options := make([]SessionUIOptionSnapshot, 0, len(request.Options))
+	for _, option := range request.Options {
+		options = append(options, SessionUIOptionSnapshot{
+			Label:       strings.TrimSpace(option.Label),
+			Value:       strings.TrimSpace(option.Value),
+			Description: strings.TrimSpace(option.Description),
+		})
+	}
+	if len(options) > 0 {
+		return options
+	}
+	for _, question := range request.Questions {
+		for _, option := range question.Options {
+			options = append(options, SessionUIOptionSnapshot{
+				Label:       strings.TrimSpace(option.Label),
+				Value:       strings.TrimSpace(option.Value),
+				Description: strings.TrimSpace(option.Description),
+			})
+		}
+	}
+	return options
+}
+
+func runtimeUIQuestionsSnapshot(request pi.UIRequest) []SessionUIQuestionSnapshot {
+	if len(request.Questions) == 0 {
+		return nil
+	}
+	questions := make([]SessionUIQuestionSnapshot, 0, len(request.Questions))
+	for _, question := range request.Questions {
+		questions = append(questions, SessionUIQuestionSnapshot{
+			Header:      strings.TrimSpace(question.Header),
+			Question:    strings.TrimSpace(question.Prompt),
+			Options:     runtimeUIQuestionOptionsSnapshot(question.Options),
+			MultiSelect: question.MultiSelect,
+		})
+	}
+	return questions
+}
+
+func runtimeUIQuestionOptionsSnapshot(raw []pi.UIOption) []SessionUIOptionSnapshot {
+	if len(raw) == 0 {
+		return nil
+	}
+	options := make([]SessionUIOptionSnapshot, 0, len(raw))
+	for _, option := range raw {
+		options = append(options, SessionUIOptionSnapshot{
+			Label:       strings.TrimSpace(option.Label),
+			Value:       strings.TrimSpace(option.Value),
+			Description: strings.TrimSpace(option.Description),
+		})
 	}
 	return options
 }

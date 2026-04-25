@@ -103,7 +103,7 @@ func TestLiveRuntimeBridgePublishesRuntimeEventsOverWebSocket(t *testing.T) {
 	if request.Request.RequestID != "ui-req-1" || request.Request.Prompt != "Where should this go?" {
 		t.Fatalf("ui.request payload = %+v", request)
 	}
-	if len(request.Request.Options) != 2 || request.Request.Options[1] != "Sidebar" {
+	if len(request.Request.Options) != 2 || request.Request.Options[1].Label != "Sidebar" {
 		t.Fatalf("ui.request options = %#v", request.Request.Options)
 	}
 	var resolved uiResolvedPayload

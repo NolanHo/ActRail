@@ -140,7 +140,7 @@ func TestCreateSessionConsumesPIRuntimeOutputIntoStateAndTranscript(t *testing.T
 	if len(snapshot.commits) != 1 || snapshot.commits[0].Message.Text != "Codoxear serves a browser UI for Codex-style sessions." {
 		t.Fatalf("runtime commit events = %#v", snapshot.commits)
 	}
-	if len(snapshot.uiRequests) != 1 || snapshot.uiRequests[0].RequestID != "ui-req-1" {
+	if len(snapshot.uiRequests) != 1 || snapshot.uiRequests[0].Request.RequestID != "ui-req-1" {
 		t.Fatalf("runtime ui request events = %#v", snapshot.uiRequests)
 	}
 	if len(snapshot.uiResolved) != 1 || snapshot.uiResolved[0].RequestID != "ui-req-1" {

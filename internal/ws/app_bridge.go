@@ -53,17 +53,10 @@ type queueStatePayload struct {
 	Items     []queueItemPayload `json:"items"`
 }
 
-type uiRequestBody struct {
-	RequestID string   `json:"request_id"`
-	Kind      string   `json:"kind"`
-	Prompt    string   `json:"prompt"`
-	Options   []string `json:"options,omitempty"`
-}
-
 type uiRequestPayload struct {
-	SessionID string        `json:"session_id"`
-	StreamSeq int64         `json:"stream_seq"`
-	Request   uiRequestBody `json:"request"`
+	SessionID string                       `json:"session_id"`
+	StreamSeq int64                        `json:"stream_seq"`
+	Request   app.SessionUIRequestSnapshot `json:"request"`
 }
 
 type uiResolvedPayload struct {
@@ -214,12 +207,7 @@ func (b *AppBridge) PublishUIRequest(event app.UIRequestEvent) {
 		return uiRequestPayload{
 			SessionID: event.SessionID.String(),
 			StreamSeq: cursor,
-			Request: uiRequestBody{
-				RequestID: event.RequestID,
-				Kind:      event.Kind,
-				Prompt:    event.Prompt,
-				Options:   append([]string(nil), event.Options...),
-			},
+			Request:   event.Request,
 		}
 	})
 }
