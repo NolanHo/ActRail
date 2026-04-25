@@ -10,6 +10,8 @@ vi.mock("../../lib/api", () => ({
     getFiles: vi.fn(),
     getFileRead: vi.fn(),
     getGitFileVersions: vi.fn(),
+    getWorkspace: vi.fn().mockResolvedValue({}),
+    updateWorkspace: vi.fn().mockResolvedValue({}),
   },
 }));
 
@@ -49,6 +51,41 @@ describe("FileViewerDialog", () => {
       root.remove();
       root = null;
     }
+  });
+
+  it("restores persisted workspace selection and writes it back after load", async () => {
+    const { api } = await import("../../lib/api");
+    (api as any).getWorkspace.mockResolvedValue({
+      selected_path: "src/main.tsx",
+      history_items: [{ path: "README.md", label: "README" }],
+    });
+    (api as any).getFiles.mockResolvedValue({ path: "", items: [] });
+    (api as any).getGitFileVersions.mockResolvedValue({
+      path: "src/main.tsx",
+      items: [{ version_id: "workspace", label: "Workspace", current: true }],
+    } as any);
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <FileViewerDialog open sessionId="sess-persisted" onClose={() => undefined} />,
+        root!,
+      );
+      await settle(16);
+    });
+    await settle(16);
+
+    expect((api as any).getWorkspace).toHaveBeenCalledWith("sess-persisted", expect.any(AbortSignal));
+    expect((api as any).getGitFileVersions).toHaveBeenCalledWith("sess-persisted", "src/main.tsx", expect.any(AbortSignal));
+    expect((api as any).updateWorkspace).toHaveBeenCalledWith("sess-persisted", {
+      selected_path: "src/main.tsx",
+      open_paths: ["src/main.tsx", "src"],
+      history_items: [
+        { path: "src/main.tsx", label: "main.tsx" },
+        { path: "README.md", label: "README" },
+      ],
+    });
   });
 
   it("loads the root directory, expands a folder, and opens a selected file in diff mode", async () => {

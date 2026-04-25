@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { api } from "../../lib/api";
-import type { GitFileVersion, GitFileVersionsResponse, SessionFileListEntry, SessionFileReadResponse } from "../../lib/types";
+import type { GitFileVersion, GitFileVersionsResponse, SessionFileListEntry, SessionFileReadResponse, WorkspaceHistoryItem, WorkspaceResponse } from "../../lib/types";
 import { MonacoWorkspace } from "./MonacoWorkspace";
 import { normalizeRememberedLine, preferredFileSelectionForSession, rememberFileSelection } from "./fileSelectionState";
 
@@ -115,6 +115,53 @@ function normalizeViewMode(value?: FileViewMode | null) {
     return value;
   }
   return "diff";
+}
+
+function workspaceHistoryLabel(path: string) {
+  const parts = path.trim().split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path.trim();
+}
+
+function workspaceOpenPaths(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return [] as string[];
+  }
+  const parts = trimmed.split("/").filter(Boolean);
+  const items = [trimmed];
+  for (let index = parts.length - 1; index > 0; index -= 1) {
+    items.push(parts.slice(0, index).join("/"));
+  }
+  return Array.from(new Set(items));
+}
+
+function pushWorkspaceHistory(items: WorkspaceHistoryItem[], path: string) {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return items;
+  }
+  return [{ path: trimmed, label: workspaceHistoryLabel(trimmed) }, ...items.filter((item) => item.path !== trimmed)];
+}
+
+function normalizeWorkspaceHistoryItems(value: WorkspaceResponse | null | undefined) {
+  if (!Array.isArray(value?.history_items)) {
+    return [] as WorkspaceHistoryItem[];
+  }
+  const seen = new Set<string>();
+  return value.history_items.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [] as WorkspaceHistoryItem[];
+    }
+    const path = typeof item.path === "string" ? item.path.trim() : "";
+    if (!path || seen.has(path)) {
+      return [] as WorkspaceHistoryItem[];
+    }
+    seen.add(path);
+    return [{
+      path,
+      label: typeof item.label === "string" && item.label.trim() ? item.label.trim() : workspaceHistoryLabel(path),
+    }];
+  });
 }
 
 function isMarkdownFile(path: string) {
@@ -323,10 +370,14 @@ export function FileViewerDialog({
   const [error, setError] = useState("");
   const [payload, setPayload] = useState<SessionFileReadResponse | null>(null);
   const [diffPayload, setDiffPayload] = useState<GitFileVersionsResponse | null>(null);
+  const [persistedSelectedPath, setPersistedSelectedPath] = useState("");
+  const [historyItems, setHistoryItems] = useState<WorkspaceHistoryItem[]>([]);
   const [compactLayout, setCompactLayout] = useState(() => shouldUseCompactFileViewer());
   const [showBrowser, setShowBrowser] = useState(() => !shouldUseCompactFileViewer());
   const listRequestIdRef = useRef(0);
   const openRequestIdRef = useRef(0);
+  const workspaceRequestIdRef = useRef(0);
+  const workspacePersistKeyRef = useRef("");
   const fileOpenAbortRef = useRef<AbortController | null>(null);
   const treeRequestControllersRef = useRef(new Map<string, AbortController>());
 
@@ -387,6 +438,47 @@ export function FileViewerDialog({
   }, [open, openRequestKey, runtimeId, sessionId]);
 
   useEffect(() => {
+    if (!open || !sessionId) {
+      setPersistedSelectedPath("");
+      setHistoryItems([]);
+      workspacePersistKeyRef.current = "";
+      return;
+    }
+
+    workspaceRequestIdRef.current += 1;
+    const requestId = workspaceRequestIdRef.current;
+    const controller = new AbortController();
+
+    void (runtimeId
+      ? api.getWorkspace(sessionId, controller.signal, runtimeId)
+      : api.getWorkspace(sessionId, controller.signal)).then((workspaceState) => {
+      if (controller.signal.aborted || requestId !== workspaceRequestIdRef.current) {
+        return;
+      }
+      const selectedPath = typeof workspaceState?.selected_path === "string" ? workspaceState.selected_path.trim() : "";
+      const nextHistoryItems = normalizeWorkspaceHistoryItems(workspaceState);
+      setPersistedSelectedPath(selectedPath);
+      setHistoryItems(nextHistoryItems);
+      if (selectedPath && !initialPath && !rememberedPath) {
+        setPath((current) => normalizePath(current) || selectedPath);
+        setViewMode("diff");
+        if (compactLayout) {
+          setShowBrowser(false);
+        }
+      }
+      workspacePersistKeyRef.current = JSON.stringify({
+        selectedPath,
+        openPaths: workspaceOpenPaths(selectedPath),
+        historyItems: nextHistoryItems,
+      });
+    }).catch(() => undefined);
+
+    return () => {
+      controller.abort();
+    };
+  }, [compactLayout, initialPath, open, openRequestKey, rememberedPath, runtimeId, sessionId]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return;
     }
@@ -419,7 +511,7 @@ export function FileViewerDialog({
       return;
     }
 
-    const preferredPath = normalizePath(initialPath || rememberedPath || "");
+    const preferredPath = normalizePath(initialPath || persistedSelectedPath || rememberedPath || "");
     if (!preferredPath) {
       setPath("");
       setLine(null);
@@ -437,7 +529,7 @@ export function FileViewerDialog({
     setViewMode(initialPath ? normalizeViewMode(initialMode || "file") : "diff");
     setShowBrowser(compactLayout ? !preferredPath : true);
     setError("");
-  }, [compactLayout, initialLine, initialMode, initialPath, open, openRequestKey, rememberedPath, rememberedSelection?.line]);
+  }, [compactLayout, initialLine, initialMode, initialPath, open, openRequestKey, persistedSelectedPath, rememberedPath, rememberedSelection?.line]);
 
   useEffect(() => {
     if (!open || !sessionId) {
@@ -503,6 +595,35 @@ export function FileViewerDialog({
       controller.abort();
     };
   }, [open, openRequestKey, path, runtimeId, sessionId, viewMode]);
+
+  useEffect(() => {
+    const normalizedPath = normalizePath(path);
+    if (!open || !sessionId || !normalizedPath || loading || error) {
+      return;
+    }
+    if (!payload && !diffPayload) {
+      return;
+    }
+    const nextHistoryItems = pushWorkspaceHistory(historyItems, normalizedPath);
+    const nextPayload = {
+      selected_path: normalizedPath,
+      open_paths: workspaceOpenPaths(normalizedPath),
+      history_items: nextHistoryItems,
+    };
+    const nextKey = JSON.stringify({
+      selectedPath: nextPayload.selected_path,
+      openPaths: nextPayload.open_paths,
+      historyItems: nextPayload.history_items,
+    });
+    if (workspacePersistKeyRef.current === nextKey) {
+      return;
+    }
+    workspacePersistKeyRef.current = nextKey;
+    setHistoryItems(nextHistoryItems);
+    void (runtimeId
+      ? api.updateWorkspace(sessionId, nextPayload, runtimeId)
+      : api.updateWorkspace(sessionId, nextPayload)).catch(() => undefined);
+  }, [diffPayload, error, historyItems, loading, open, path, payload, runtimeId, sessionId]);
 
   const normalizedPath = normalizePath(path);
   const canPreview = isMarkdownFile(normalizedPath);
