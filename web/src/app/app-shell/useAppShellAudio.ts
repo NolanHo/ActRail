@@ -15,7 +15,12 @@ interface StartPlaybackOptions {
   resetSource?: boolean;
 }
 
-export function useAppShellAudio() {
+interface UseAppShellAudioOptions {
+  bootstrapLoaded?: boolean;
+  voiceSupported?: boolean;
+}
+
+export function useAppShellAudio({ bootstrapLoaded = false, voiceSupported = true }: UseAppShellAudioOptions = {}) {
   const [announcementEnabled, setAnnouncementEnabled] = useState(() => readLocalToggle("codoxear.announcementEnabled"));
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsResponse>(DEFAULT_VOICE_SETTINGS);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
@@ -30,6 +35,13 @@ export function useAppShellAudio() {
   const announcementClientId = useMemo(() => getAnnouncementClientId(), []);
 
   useEffect(() => {
+    if (!bootstrapLoaded) {
+      return;
+    }
+    if (!voiceSupported) {
+      setVoiceSettings(DEFAULT_VOICE_SETTINGS);
+      return;
+    }
     let cancelled = false;
     api.getVoiceSettings().then((response) => {
       if (cancelled) return;
@@ -45,13 +57,14 @@ export function useAppShellAudio() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bootstrapLoaded, voiceSupported]);
 
   useEffect(() => {
     writeLocalToggle("codoxear.announcementEnabled", announcementEnabled);
   }, [announcementEnabled]);
 
   const startAnnouncementPlayback = (settings: VoiceSettingsResponse, { resetSource = false, force = false }: StartPlaybackOptions = {}) => {
+    if (!voiceSupported) return;
     const audio = liveAudioRef.current;
     if (!audio) return;
     if (!force && !announcementEnabled) return;
@@ -131,6 +144,9 @@ export function useAppShellAudio() {
   };
 
   useEffect(() => {
+    if (!bootstrapLoaded || !voiceSupported) {
+      return;
+    }
     let intervalId: number | undefined;
     api.setAudioListener(announcementClientId, announcementEnabled).catch(() => undefined);
     if (announcementEnabled) {
@@ -144,7 +160,7 @@ export function useAppShellAudio() {
       }
       api.setAudioListener(announcementClientId, false).catch(() => undefined);
     };
-  }, [announcementClientId, announcementEnabled]);
+  }, [announcementClientId, announcementEnabled, bootstrapLoaded, voiceSupported]);
 
   useEffect(() => {
     const audio = liveAudioRef.current;
@@ -181,7 +197,12 @@ export function useAppShellAudio() {
   }, [announcementEnabled, voiceSettings]);
 
   const openVoiceSettings = (status = "") => {
-    setVoiceSettingsStatus(status);
+    const initialStatus = !bootstrapLoaded
+      ? "Loading feature flags..."
+      : !voiceSupported
+        ? "Announcements are unavailable on this backend."
+        : status;
+    setVoiceSettingsStatus(initialStatus);
     setVoiceBaseUrlDraft(String(voiceSettings.tts_base_url || ""));
     setVoiceApiKeyDraft(String(voiceSettings.tts_api_key || ""));
     setNarrationEnabledDraft(!!voiceSettings.tts_enabled_for_narration);
@@ -195,9 +216,22 @@ export function useAppShellAudio() {
   };
 
   const hasAnnouncementCredentials = Boolean(String(voiceSettings.tts_base_url || "").trim() && String(voiceSettings.tts_api_key || "").trim());
-  const announcementLabel = announcementEnabled ? "Announcements on" : "Announcements off";
+  const announcementLabel = !bootstrapLoaded
+    ? "Announcements loading"
+    : !voiceSupported
+      ? "Announcements unavailable"
+      : announcementEnabled ? "Announcements on" : "Announcements off";
 
   const toggleAnnouncements = async () => {
+    if (!bootstrapLoaded) {
+      setVoiceSettingsStatus("Loading feature flags...");
+      return;
+    }
+    if (!voiceSupported) {
+      setAnnouncementEnabled(false);
+      setVoiceSettingsStatus("Announcements are unavailable on this backend.");
+      return;
+    }
     const next = !announcementEnabled;
     if (next && !hasAnnouncementCredentials) {
       openVoiceSettings("Set the OpenAI-compatible API base URL and API key before enabling announcements.");
@@ -207,6 +241,10 @@ export function useAppShellAudio() {
   };
 
   const saveVoiceSettings = async () => {
+    if (!voiceSupported) {
+      setVoiceSettingsStatus("Announcements are unavailable on this backend.");
+      return;
+    }
     setVoiceSettingsStatus("Saving...");
     try {
       const payload = {
@@ -253,6 +291,10 @@ export function useAppShellAudio() {
   };
 
   const triggerTestAnnouncement = async () => {
+    if (!voiceSupported) {
+      setVoiceSettingsStatus("Announcements are unavailable on this backend.");
+      return;
+    }
     setVoiceSettingsStatus("Requesting test announcement...");
     try {
       await api.triggerTestAnnouncement();

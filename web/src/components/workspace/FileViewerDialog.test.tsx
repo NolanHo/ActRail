@@ -56,26 +56,21 @@ describe("FileViewerDialog", () => {
     (api as any).getFiles.mockImplementation((_sessionId: string, nextPath?: string) => Promise.resolve(
       nextPath === "src"
         ? {
-            ok: true,
             path: "src",
-            entries: [{ name: "main.tsx", path: "src/main.tsx", kind: "file" }],
+            items: [{ name: "main.tsx", path: "src/main.tsx", kind: "file" }],
           }
         : {
-            ok: true,
             path: "",
-            entries: [
+            items: [
               { name: "src", path: "src", kind: "dir" },
               { name: "README.md", path: "README.md", kind: "file" },
             ],
           },
     ));
     (api as any).getGitFileVersions.mockResolvedValue({
-      ok: true,
       path: "src/main.tsx",
-      base_exists: true,
-      current_exists: true,
-      base_text: "const before = true;",
-      current_text: "const after = true;",
+      fallback_reason: "workspace only",
+      items: [{ version_id: "workspace", label: "Workspace", current: true }],
     } as any);
     (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "const after = true;" });
 
@@ -111,7 +106,8 @@ describe("FileViewerDialog", () => {
     await settle(8);
 
     expect((api as any).getGitFileVersions).toHaveBeenCalledWith("sess-diff", "src/main.tsx", expect.any(AbortSignal));
-    expect(root.textContent).toContain("Diff");
+    expect(root.textContent).toContain("Workspace");
+    expect(root.textContent).toContain("workspace only");
   });
 
   it("loads a directory only once when it is collapsed and re-expanded", async () => {
@@ -119,14 +115,12 @@ describe("FileViewerDialog", () => {
     (api as any).getFiles.mockImplementation((_sessionId: string, nextPath?: string) => Promise.resolve(
       nextPath === "docs"
         ? {
-            ok: true,
             path: "docs",
-            entries: [{ name: "intro.md", path: "docs/intro.md", kind: "file" }],
+            items: [{ name: "intro.md", path: "docs/intro.md", kind: "file" }],
           }
         : {
-            ok: true,
             path: "",
-            entries: [{ name: "docs", path: "docs", kind: "dir" }],
+            items: [{ name: "docs", path: "docs", kind: "dir" }],
           },
     ));
 
@@ -183,7 +177,7 @@ describe("FileViewerDialog", () => {
     });
 
     const { api } = await import("../../lib/api");
-    (api as any).getFiles.mockResolvedValue({ ok: true, path: "", entries: [] });
+    (api as any).getFiles.mockResolvedValue({ path: "", items: [] });
     (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "# Hello\n\nBody" });
 
     root = document.createElement("div");
@@ -210,14 +204,11 @@ describe("FileViewerDialog", () => {
 
   it("can switch from diff mode to file and markdown preview modes", async () => {
     const { api } = await import("../../lib/api");
-    (api as any).getFiles.mockResolvedValue({ ok: true, path: "", entries: [] });
+    (api as any).getFiles.mockResolvedValue({ path: "", items: [] });
     (api as any).getGitFileVersions.mockResolvedValue({
-      ok: true,
       path: "docs/intro.md",
-      base_exists: true,
-      current_exists: true,
-      base_text: "# Before",
-      current_text: "# After",
+      items: [{ version_id: "workspace", label: "Workspace", current: true }],
+      fallback_reason: "workspace only",
     } as any);
     (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "# Hello\n\nBody" });
 
@@ -253,7 +244,7 @@ describe("FileViewerDialog", () => {
 
   it("opens explicit file references in file mode and preserves the requested line", async () => {
     const { api } = await import("../../lib/api");
-    (api as any).getFiles.mockResolvedValue({ ok: true, path: "", entries: [] });
+    (api as any).getFiles.mockResolvedValue({ path: "", items: [] });
     (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "line 1\nline 2" });
 
     root = document.createElement("div");
@@ -279,7 +270,7 @@ describe("FileViewerDialog", () => {
 
   it("shows a friendly error when the file list payload is malformed", async () => {
     const { api } = await import("../../lib/api");
-    (api as any).getFiles.mockResolvedValue({ ok: true, path: "", entries: null });
+    (api as any).getFiles.mockResolvedValue({ path: "", items: null });
 
     root = document.createElement("div");
     document.body.appendChild(root);

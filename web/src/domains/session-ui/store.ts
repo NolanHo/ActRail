@@ -5,6 +5,7 @@ export interface SessionUiState {
   runtimeId: string | null;
   diagnostics: Record<string, unknown> | null;
   queue: Record<string, unknown> | null;
+  files: string[];
   loading: boolean;
 }
 
@@ -25,6 +26,7 @@ export function createSessionUiStore(): SessionUiStore {
     runtimeId: null,
     diagnostics: null,
     queue: null,
+    files: [],
     loading: false,
   };
   const listeners = new Set<() => void>();
@@ -58,6 +60,7 @@ export function createSessionUiStore(): SessionUiStore {
         runtimeId: preserveCurrentState ? state.runtimeId : (_options?.runtimeId ?? null),
         diagnostics: preserveCurrentState ? state.diagnostics : null,
         queue: preserveCurrentState ? state.queue : null,
+        files: preserveCurrentState ? state.files : [],
         loading: true,
       };
       emit();
@@ -72,13 +75,38 @@ export function createSessionUiStore(): SessionUiStore {
             return;
           }
 
+          const openPaths = Array.isArray(workspace.open_paths)
+            ? workspace.open_paths.filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+            : [];
+          const historyPaths = Array.isArray(workspace.history_items)
+            ? workspace.history_items.flatMap((item) => {
+                if (!item || typeof item !== "object") {
+                  return [] as string[];
+                }
+                const path = typeof item.path === "string" ? item.path.trim() : "";
+                return path ? [path] : [];
+              })
+            : [];
+          const files = Array.from(new Set([...openPaths, ...historyPaths]));
+          const diagnosticsEntries: Array<[string, unknown]> = [];
+          if (typeof workspace.root_path === "string" && workspace.root_path.trim()) {
+            diagnosticsEntries.push(["root_path", workspace.root_path.trim()]);
+          }
+          if (typeof workspace.selected_path === "string" && workspace.selected_path.trim()) {
+            diagnosticsEntries.push(["selected_path", workspace.selected_path.trim()]);
+          }
+          if (Array.isArray(workspace.history_items) && workspace.history_items.length > 0) {
+            diagnosticsEntries.push(["history_items", workspace.history_items]);
+          }
+
           state = {
             sessionId,
             runtimeId: typeof workspace.runtime_id === "string" && workspace.runtime_id.trim()
               ? workspace.runtime_id
               : (_options?.runtimeId ?? null),
-            diagnostics: (workspace.diagnostics ?? null) as Record<string, unknown> | null,
-            queue: (workspace.queue ?? null) as Record<string, unknown> | null,
+            diagnostics: diagnosticsEntries.length ? Object.fromEntries(diagnosticsEntries) : null,
+            queue: null,
+            files,
             loading: false,
           };
           emit();

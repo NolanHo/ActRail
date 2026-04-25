@@ -16,17 +16,23 @@ vi.mock("../../lib/api", () => ({
 
 function Harness({
   activeSessionId,
+  bootstrapLoaded = true,
   bySessionId,
+  notificationsSupported = true,
   voiceSettings,
 }: {
   activeSessionId: string | null;
+  bootstrapLoaded?: boolean;
   bySessionId: Record<string, unknown[]>;
+  notificationsSupported?: boolean;
   voiceSettings: any;
 }) {
   const state = useAppShellNotifications({
     activeSessionId,
     activeTitle: "Legacy shell",
+    bootstrapLoaded,
     bySessionId,
+    notificationsSupported,
     playReplyBeep: vi.fn(),
     suppressedReplySoundSessionIdsRef: { current: new Set<string>() },
     voiceSettings,
@@ -110,4 +116,28 @@ it("reads the persisted reply-sound preference", async () => {
   });
 
   expect(root.querySelector("[data-reply-sound]")?.getAttribute("data-reply-sound")).toBe("no");
+});
+
+it("skips notification routes when bootstrap disables notifications", async () => {
+  const { api } = await import("../../lib/api");
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        activeSessionId="sess-1"
+        bootstrapLoaded
+        bySessionId={{ "sess-1": [] }}
+        notificationsSupported={false}
+        voiceSettings={{ notifications: { vapid_public_key: "ZmFrZS1rZXk" } }}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  expect(api.getNotificationSubscriptionState).not.toHaveBeenCalled();
+  expect(api.getNotificationsFeed).not.toHaveBeenCalled();
+  expect(root.querySelector("[data-label]")?.getAttribute("data-label")).toBe("Notifications unavailable");
 });
