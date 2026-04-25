@@ -17,6 +17,10 @@ import (
 func main() {
 	cfg := config.Load()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if err := ensureDataDir(cfg); err != nil {
+		logger.Error("actrail data dir init failed", "dir", cfg.Storage.DataDir, "err", err)
+		os.Exit(1)
+	}
 
 	service := app.NewStub(cfg)
 	replay, err := ws.NewReplayBuffer(cfg.Protocol.ResumeBuffer)
@@ -46,7 +50,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("actrail server starting", "addr", cfg.Addr(), "protocol_version", cfg.Protocol.Version)
+		logger.Info("actrail server starting", "addr", cfg.Addr(), "protocol_version", cfg.Protocol.Version, "data_dir", cfg.Storage.DataDir, "sqlite_path", cfg.SQLitePath())
 		errCh <- server.ListenAndServe()
 	}()
 
@@ -65,4 +69,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func ensureDataDir(cfg config.Config) error {
+	return cfg.Storage.EnsureDir()
 }
