@@ -23,8 +23,13 @@ describe("createSessionUiStore", () => {
     return { promise, resolve, reject };
   }
 
-  it("refreshes all workspace panels and emits loading transitions", async () => {
-    vi.mocked(api.getWorkspace).mockResolvedValue({ diagnostics: { status: "ok" }, queue: { items: [] } } as any);
+  it("refreshes workspace panels from the backend workspace snapshot", async () => {
+    vi.mocked(api.getWorkspace).mockResolvedValue({
+      root_path: "/tmp/project",
+      selected_path: "src/main.tsx",
+      open_paths: ["src/main.tsx"],
+      history_items: [{ path: "README.md", label: "README" }],
+    } as any);
 
     const store = createSessionUiStore();
     await store.refresh("s1");
@@ -33,26 +38,31 @@ describe("createSessionUiStore", () => {
     expect(store.getState()).toEqual({
       sessionId: "s1",
       runtimeId: null,
-      diagnostics: { status: "ok" },
-      queue: { items: [] },
+      diagnostics: {
+        root_path: "/tmp/project",
+        selected_path: "src/main.tsx",
+        history_items: [{ path: "README.md", label: "README" }],
+      },
+      queue: null,
+      files: ["src/main.tsx", "README.md"],
       loading: false,
     });
   });
 
   it("refreshes workspace data the same way for non-pi sessions", async () => {
-    vi.mocked(api.getWorkspace).mockResolvedValue({ diagnostics: { status: "ok" }, queue: { items: [] } } as any);
+    vi.mocked(api.getWorkspace).mockResolvedValue({ root_path: "/tmp/project" } as any);
 
     const store = createSessionUiStore();
     await store.refresh("s1", { agentBackend: "codex" });
 
     expect(api.getWorkspace).toHaveBeenCalledWith("s1");
-    expect(store.getState().diagnostics).toEqual({ status: "ok" });
+    expect(store.getState().diagnostics).toEqual({ root_path: "/tmp/project" });
   });
 
   it("keeps same-session workspace data visible while a refresh is in flight", async () => {
     vi.mocked(api.getWorkspace).mockResolvedValueOnce({
-      diagnostics: { todo_snapshot: { progress_text: "1/2 completed" } },
-      queue: { items: [] },
+      root_path: "/tmp/project-a",
+      open_paths: ["src/a.ts"],
     } as any);
 
     const nextWorkspace = createDeferred<Record<string, unknown>>();
@@ -68,30 +78,32 @@ describe("createSessionUiStore", () => {
     expect(store.getState()).toEqual({
       sessionId: "s1",
       runtimeId: null,
-      diagnostics: { todo_snapshot: { progress_text: "1/2 completed" } },
-      queue: { items: [] },
+      diagnostics: { root_path: "/tmp/project-a" },
+      queue: null,
+      files: ["src/a.ts"],
       loading: true,
     });
 
     nextWorkspace.resolve({
-      diagnostics: { todo_snapshot: { progress_text: "2/2 completed" } },
-      queue: { items: ["queued"] },
+      root_path: "/tmp/project-b",
+      open_paths: ["src/b.ts"],
     });
     await refreshPromise;
 
     expect(store.getState()).toEqual({
       sessionId: "s1",
       runtimeId: null,
-      diagnostics: { todo_snapshot: { progress_text: "2/2 completed" } },
-      queue: { items: ["queued"] },
+      diagnostics: { root_path: "/tmp/project-b" },
+      queue: null,
+      files: ["src/b.ts"],
       loading: false,
     });
   });
 
   it("clears workspace data immediately when switching sessions", async () => {
     vi.mocked(api.getWorkspace).mockResolvedValueOnce({
-      diagnostics: { todo_snapshot: { progress_text: "1/2 completed" } },
-      queue: { items: [] },
+      root_path: "/tmp/project-a",
+      open_paths: ["src/a.ts"],
     } as any);
 
     const nextWorkspace = createDeferred<Record<string, unknown>>();
@@ -109,20 +121,22 @@ describe("createSessionUiStore", () => {
       runtimeId: null,
       diagnostics: null,
       queue: null,
+      files: [],
       loading: true,
     });
 
     nextWorkspace.resolve({
-      diagnostics: { todo_snapshot: { progress_text: "0/1 completed" } },
-      queue: { items: [] },
+      root_path: "/tmp/project-b",
+      open_paths: ["src/b.ts"],
     });
     await refreshPromise;
 
     expect(store.getState()).toEqual({
       sessionId: "s2",
       runtimeId: null,
-      diagnostics: { todo_snapshot: { progress_text: "0/1 completed" } },
-      queue: { items: [] },
+      diagnostics: { root_path: "/tmp/project-b" },
+      queue: null,
+      files: ["src/b.ts"],
       loading: false,
     });
   });
@@ -139,16 +153,17 @@ describe("createSessionUiStore", () => {
 
     deferred.resolve({
       runtime_id: "rt-1",
-      diagnostics: { todo_snapshot: { progress_text: "1/1 completed" } },
-      queue: { items: ["queued"] },
+      root_path: "/tmp/project",
+      open_paths: ["src/main.tsx"],
     });
     await Promise.all([first, second]);
 
     expect(store.getState()).toEqual({
       sessionId: "s1",
       runtimeId: "rt-1",
-      diagnostics: { todo_snapshot: { progress_text: "1/1 completed" } },
-      queue: { items: ["queued"] },
+      diagnostics: { root_path: "/tmp/project" },
+      queue: null,
+      files: ["src/main.tsx"],
       loading: false,
     });
   });

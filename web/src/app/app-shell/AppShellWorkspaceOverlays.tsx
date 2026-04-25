@@ -17,6 +17,7 @@ interface AppShellWorkspaceOverlaysProps {
   fileViewerPath: string;
   fileViewerRequestKey: number;
   harnessOpen: boolean;
+  harnessSupported?: boolean;
   newSessionOpen: boolean;
   sessionsRail: ComponentChildren;
   sidebarOpen: boolean;
@@ -44,6 +45,7 @@ export function AppShellWorkspaceOverlays({
   fileViewerPath,
   fileViewerRequestKey,
   harnessOpen,
+  harnessSupported = true,
   newSessionOpen,
   sessionsRail,
   sidebarOpen,
@@ -143,7 +145,7 @@ export function AppShellWorkspaceOverlays({
         openRequestKey={fileViewerRequestKey}
         onClose={onCloseFileViewer}
       />
-      <HarnessDialog open={harnessOpen} sessionId={activeSessionId} runtimeId={activeSessionRuntimeId} onClose={onCloseHarness} />
+      <HarnessDialog open={harnessOpen} sessionId={activeSessionId} runtimeId={activeSessionRuntimeId} supported={harnessSupported} onClose={onCloseHarness} />
       <NewSessionDialog open={newSessionOpen} onClose={onCloseNewSession} />
     </>
   );

@@ -149,8 +149,8 @@ function createStaticStore<TState extends object, TActions extends Record<string
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    setState: (nextState: TState) => {
-      currentState = nextState;
+    setState: (nextState: Partial<TState>) => {
+      currentState = { ...currentState, ...nextState };
       listeners.forEach((listener) => listener());
     },
     ...actions,
