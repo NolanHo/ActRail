@@ -65,10 +65,6 @@ type uiResolvedPayload struct {
 	RequestID string `json:"request_id"`
 }
 
-type sessionStateReader interface {
-	SessionState(context.Context, app.SessionStateRequest) (app.SessionStateResponse, error)
-}
-
 // AppBridge maps app-side live events and control requests onto websocket frames.
 type AppBridge struct {
 	controller app.SessionController
@@ -96,13 +92,10 @@ func (b *AppBridge) HandleSend(cmd SendCommand) error {
 	if b.controller == nil {
 		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
 	}
-	response, err := b.controller.Send(context.Background(), app.SendRequest{SessionID: cmd.SessionID, Text: cmd.Text})
+	_, err := b.controller.Send(context.Background(), app.SendRequest{SessionID: cmd.SessionID, Text: cmd.Text})
 	if err != nil {
 		return mapAppCommandError(err)
 	}
-	b.PublishMessageCommit(app.MessageCommitEvent{SessionID: cmd.SessionID, Message: response.Message})
-	b.PublishQueueState(app.QueueStateEvent{SessionID: cmd.SessionID, Queue: response.Queue})
-	b.PublishSessionState(b.currentStateEvent(cmd.SessionID, response.Busy, len(response.Queue.Items), response.Message.Seq))
 	return nil
 }
 
@@ -110,12 +103,10 @@ func (b *AppBridge) HandleEnqueue(cmd EnqueueCommand) error {
 	if b.controller == nil {
 		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
 	}
-	response, err := b.controller.Enqueue(context.Background(), app.EnqueueRequest{SessionID: cmd.SessionID, Text: cmd.Text})
+	_, err := b.controller.Enqueue(context.Background(), app.EnqueueRequest{SessionID: cmd.SessionID, Text: cmd.Text})
 	if err != nil {
 		return mapAppCommandError(err)
 	}
-	b.PublishQueueState(app.QueueStateEvent{SessionID: cmd.SessionID, Queue: response.Queue})
-	b.PublishSessionState(b.currentStateEvent(cmd.SessionID, response.Busy, len(response.Queue.Items), 0))
 	return nil
 }
 
@@ -123,12 +114,10 @@ func (b *AppBridge) HandleInterrupt(cmd InterruptCommand) error {
 	if b.controller == nil {
 		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
 	}
-	response, err := b.controller.Interrupt(context.Background(), app.InterruptRequest{SessionID: cmd.SessionID})
+	_, err := b.controller.Interrupt(context.Background(), app.InterruptRequest{SessionID: cmd.SessionID})
 	if err != nil {
 		return mapAppCommandError(err)
 	}
-	b.PublishQueueState(app.QueueStateEvent{SessionID: cmd.SessionID, Queue: response.Queue})
-	b.PublishSessionState(b.currentStateEvent(cmd.SessionID, response.Busy, len(response.Queue.Items), 0))
 	return nil
 }
 
@@ -140,7 +129,7 @@ func (b *AppBridge) HandleUIResponse(cmd UIResponseCommand) error {
 	if err != nil {
 		return WrapCommandError(ErrorCodeInvalidRequest, err.Error(), "value", err)
 	}
-	response, err := b.controller.RespondUI(context.Background(), app.UIResponseRequest{
+	_, err = b.controller.RespondUI(context.Background(), app.UIResponseRequest{
 		SessionID:  cmd.SessionID,
 		ResponseTo: cmd.ResponseTo,
 		Value:      value,
@@ -148,8 +137,6 @@ func (b *AppBridge) HandleUIResponse(cmd UIResponseCommand) error {
 	if err != nil {
 		return mapAppCommandError(err)
 	}
-	b.PublishUIResolved(app.UIResolvedEvent{SessionID: cmd.SessionID, RequestID: response.ResolvedRequestID})
-	b.PublishSessionState(b.currentStateEvent(cmd.SessionID, response.Busy, len(response.Queue.Items), 0))
 	return nil
 }
 
@@ -273,16 +260,6 @@ func mapAppCommandError(err error) error {
 		}
 	}
 	return err
-}
-
-func (b *AppBridge) currentStateEvent(sessionID session.SessionID, busy bool, queueLen int, tailSeq uint64) app.SessionStateEvent {
-	if reader, ok := b.controller.(sessionStateReader); ok {
-		state, err := reader.SessionState(context.Background(), app.SessionStateRequest{SessionID: sessionID})
-		if err == nil {
-			return app.SessionStateEvent{SessionID: sessionID, Busy: state.Busy, QueueLen: len(state.Queue.Items), TailSeq: state.TailSeq}
-		}
-	}
-	return app.SessionStateEvent{SessionID: sessionID, Busy: busy, QueueLen: queueLen, TailSeq: tailSeq}
 }
 
 func decodeUIResponseValue(raw json.RawMessage) (string, error) {
