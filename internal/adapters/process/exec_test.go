@@ -3,7 +3,6 @@ package process
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -190,32 +189,6 @@ func TestExecRunnerInterrupt(t *testing.T) {
 	}
 }
 
-func TestExecRunnerRejectsPTYMode(t *testing.T) {
-	runner := NewExecRunner()
-	tmp := t.TempDir()
-	cmd := helperCommand(t, "emit", "stdout", "stderr")
-	helperFlag, err := NewEnvVar("GO_WANT_HELPER_PROCESS", "1")
-	if err != nil {
-		t.Fatalf("NewEnvVar() error = %v", err)
-	}
-	env, err := InheritEnv(helperFlag)
-	if err != nil {
-		t.Fatalf("InheritEnv() error = %v", err)
-	}
-	ioSpec, err := PTYIO(PTYSize{Rows: 24, Cols: 80}, LogPaths{PTY: tmp + "/session.log"})
-	if err != nil {
-		t.Fatalf("PTYIO() error = %v", err)
-	}
-	spec, err := NewLaunchSpec(cmd, tmp, env, ioSpec)
-	if err != nil {
-		t.Fatalf("NewLaunchSpec() error = %v", err)
-	}
-	_, err = runner.Start(context.Background(), spec)
-	if !errors.Is(err, ErrPTYUnsupported) {
-		t.Fatalf("Start() error = %v, want %v", err, ErrPTYUnsupported)
-	}
-}
-
 func TestExecRunnerRejectsMissingWorkingDirectory(t *testing.T) {
 	runner := NewExecRunner()
 	tmp := t.TempDir()
@@ -292,6 +265,8 @@ func TestExecRunnerHelperProcess(t *testing.T) {
 			_, _ = io.WriteString(os.Stderr, "timeout")
 			os.Exit(99)
 		}
+	case "pty-echo":
+		os.Exit(runPTYHelper())
 	default:
 		_, _ = io.WriteString(os.Stderr, fmt.Sprintf("unknown mode %q", args[0]))
 		os.Exit(2)
