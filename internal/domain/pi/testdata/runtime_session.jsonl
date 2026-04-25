@@ -1,0 +1,3 @@
+{"type":"session","version":3,"id":"pi-session-001","timestamp":"2026-03-28T14:38:08.286Z","cwd":"/workspace/codoxear"}
+{"type":"message","id":"msg-user-001","timestamp":"2026-03-28T14:38:27.330Z","message":{"role":"user","content":[{"type":"text","text":"Summarize the current repository state."}],"timestamp":1774708707280}}
+{"type":"message","id":"msg-assistant-001","timestamp":"2026-03-28T14:38:36.099Z","message":{"role":"assistant","content":[{"type":"text","text":"Codoxear serves a browser UI for Codex-style sessions."}],"timestamp":1774708716099}}
