@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -28,6 +29,74 @@ func TestOpenSessionCatalogAppliesSchemaMigration(t *testing.T) {
 	}
 	if version != currentSchemaVersion {
 		t.Fatalf("schema version = %d, want %d", version, currentSchemaVersion)
+	}
+}
+
+func TestSessionCatalogPersistsQueueWorkspaceAndAppState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "actrail.db")
+	catalog, err := OpenSessionCatalog(path)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+
+	now := time.Unix(1760000000, 0).UTC()
+	if err := catalog.UpsertSessionSnapshot(context.Background(), SessionSnapshotRow{
+		Session: SessionRow{
+			SessionID:       "s_1",
+			Backend:         "pi",
+			CWD:             "/tmp/project",
+			Title:           "Task",
+			Alias:           "Task",
+			CreatedAt:       now,
+			UpdatedAt:       now,
+			ActivityAt:      now,
+			Focused:         true,
+			PriorityOffset:  0.5,
+			ReasoningEffort: "high",
+		},
+		Queue: []QueueItemRow{{Ordinal: 0, ItemID: "q_1", Text: "recover me", State: "queued"}},
+		Workspace: WorkspaceStateRow{
+			SelectedPath: "nested/file.txt",
+			OpenPaths:    []string{"nested/file.txt", "nested"},
+			HistoryItems: []WorkspaceHistoryItemRow{{Ordinal: 0, Path: "nested/file.txt", Label: "file.txt"}},
+		},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot() error = %v", err)
+	}
+	if err := catalog.ReplaceAppState(context.Background(), AppStateRow{
+		RecentCwds: []string{"/tmp/project", "/tmp/other"},
+		CwdGroups:  []CwdGroupRow{{CWD: "/tmp/project", Label: "Project", Collapsed: true}},
+	}); err != nil {
+		t.Fatalf("ReplaceAppState() error = %v", err)
+	}
+
+	snapshots, err := catalog.ListSessionSnapshots(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListSessionSnapshots() error = %v", err)
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("len(ListSessionSnapshots()) = %d, want 1", len(snapshots))
+	}
+	if len(snapshots[0].Queue) != 1 || snapshots[0].Queue[0].ItemID != "q_1" {
+		t.Fatalf("snapshot queue = %+v", snapshots[0].Queue)
+	}
+	if snapshots[0].Workspace.SelectedPath != "nested/file.txt" {
+		t.Fatalf("snapshot workspace = %+v", snapshots[0].Workspace)
+	}
+	if !reflect.DeepEqual(snapshots[0].Workspace.OpenPaths, []string{"nested/file.txt", "nested"}) {
+		t.Fatalf("snapshot workspace open_paths = %#v", snapshots[0].Workspace.OpenPaths)
+	}
+
+	appState, err := catalog.LoadAppState(context.Background())
+	if err != nil {
+		t.Fatalf("LoadAppState() error = %v", err)
+	}
+	if !reflect.DeepEqual(appState.RecentCwds, []string{"/tmp/project", "/tmp/other"}) {
+		t.Fatalf("appState.RecentCwds = %#v", appState.RecentCwds)
+	}
+	if len(appState.CwdGroups) != 1 || appState.CwdGroups[0].CWD != "/tmp/project" || !appState.CwdGroups[0].Collapsed {
+		t.Fatalf("appState.CwdGroups = %+v", appState.CwdGroups)
 	}
 }
 

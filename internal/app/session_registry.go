@@ -56,6 +56,7 @@ type sessionRecord struct {
 	activityAt          time.Time
 	archivedAt          *time.Time
 	state               session.State
+	workspace           workspaceBrowserState
 	transcript          message.Transcript
 	runtime             sessionRuntime
 	uiRequest           *SessionUIRequestSnapshot
@@ -558,6 +559,24 @@ func syncSessionRecordStateWithQueue(record *sessionRecord, busy bool, queue ses
 	return nil
 }
 
+func (r *sessionRegistry) UpdateWorkspace(sessionID session.SessionID, workspaceState workspaceBrowserState) (workspaceBrowserState, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return workspaceBrowserState{}, false, nil
+	}
+	now := r.now().UTC()
+	record.updatedAt = now
+	record.workspace = copyWorkspaceBrowserState(workspaceState)
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return workspaceBrowserState{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copyWorkspaceBrowserState(cp.workspace), true, nil
+}
+
 func copySessionRecord(record sessionRecord) sessionRecord {
 	return sessionRecord{
 		identity:            record.identity,
@@ -577,6 +596,7 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		activityAt:          record.activityAt,
 		archivedAt:          copyTimePtr(record.archivedAt),
 		state:               copySessionState(record.state),
+		workspace:           copyWorkspaceBrowserState(record.workspace),
 		transcript:          record.transcript.Clone(),
 		runtime:             record.runtime,
 		uiRequest:           copySessionUIRequest(record.uiRequest),

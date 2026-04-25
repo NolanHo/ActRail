@@ -13,8 +13,8 @@ import (
 )
 
 type sessionStore interface {
-	UpsertSession(context.Context, sqlitestore.SessionRow) error
-	ListSessions(context.Context, bool) ([]sqlitestore.SessionRow, error)
+	UpsertSessionSnapshot(context.Context, sqlitestore.SessionSnapshotRow) error
+	ListSessionSnapshots(context.Context, bool) ([]sqlitestore.SessionSnapshotRow, error)
 }
 
 func durableSessionRowFromRecord(record sessionRecord) sqlitestore.SessionRow {
@@ -39,37 +39,96 @@ func durableSessionRowFromRecord(record sessionRecord) sqlitestore.SessionRow {
 	}
 }
 
-func sessionRecordFromDurableRow(row sqlitestore.SessionRow) (sessionRecord, error) {
-	identity, err := session.NewDetachedIdentity(row.SessionID, row.Backend)
+func durableSessionSnapshotFromRecord(record sessionRecord) sqlitestore.SessionSnapshotRow {
+	queueItems := record.state.Queue().Items()
+	durableQueue := make([]sqlitestore.QueueItemRow, 0, len(queueItems))
+	for idx, item := range queueItems {
+		durableQueue = append(durableQueue, sqlitestore.QueueItemRow{
+			Ordinal: idx,
+			ItemID:  item.ID().String(),
+			Text:    item.Text(),
+			State:   item.State().String(),
+		})
+	}
+	history := make([]sqlitestore.WorkspaceHistoryItemRow, 0, len(record.workspace.HistoryItems))
+	for idx, item := range record.workspace.HistoryItems {
+		history = append(history, sqlitestore.WorkspaceHistoryItemRow{
+			Ordinal: idx,
+			Path:    item.Path,
+			Label:   item.Label,
+		})
+	}
+	return sqlitestore.SessionSnapshotRow{
+		Session: durableSessionRowFromRecord(record),
+		Queue:   durableQueue,
+		Workspace: sqlitestore.WorkspaceStateRow{
+			SelectedPath: strings.TrimSpace(record.workspace.SelectedPath),
+			OpenPaths:    append([]string(nil), record.workspace.OpenPaths...),
+			HistoryItems: history,
+		},
+	}
+}
+
+func sessionRecordFromDurableSnapshot(snapshot sqlitestore.SessionSnapshotRow) (sessionRecord, error) {
+	identity, err := session.NewDetachedIdentity(snapshot.Session.SessionID, snapshot.Session.Backend)
+	if err != nil {
+		return sessionRecord{}, err
+	}
+	queue, err := queueSnapshotFromDurableRows(snapshot.Queue)
 	if err != nil {
 		return sessionRecord{}, err
 	}
 	transcript := message.NewTranscript()
-	state, err := session.NewState(identity, false, session.EmptyQueueSnapshot(), transcript.Tail())
+	state, err := session.NewState(identity, false, queue, transcript.Tail())
 	if err != nil {
 		return sessionRecord{}, err
 	}
 	return sessionRecord{
 		identity:            identity,
-		title:               strings.TrimSpace(row.Title),
-		alias:               strings.TrimSpace(row.Alias),
-		cwd:                 strings.TrimSpace(row.CWD),
-		provider:            strings.TrimSpace(row.Provider),
-		model:               strings.TrimSpace(row.Model),
-		reasoningEffort:     strings.TrimSpace(row.ReasoningEffort),
-		focused:             row.Focused,
-		hidden:              row.Hidden,
-		priorityOffset:      row.PriorityOffset,
-		snoozeUntil:         copyTimePtr(row.SnoozeUntil),
-		dependencySessionID: parseDependencySessionID(row.DependencySessionID),
-		createdAt:           row.CreatedAt.UTC(),
-		updatedAt:           row.UpdatedAt.UTC(),
-		activityAt:          row.ActivityAt.UTC(),
-		archivedAt:          copyTimePtr(row.ArchivedAt),
+		title:               strings.TrimSpace(snapshot.Session.Title),
+		alias:               strings.TrimSpace(snapshot.Session.Alias),
+		cwd:                 strings.TrimSpace(snapshot.Session.CWD),
+		provider:            strings.TrimSpace(snapshot.Session.Provider),
+		model:               strings.TrimSpace(snapshot.Session.Model),
+		reasoningEffort:     strings.TrimSpace(snapshot.Session.ReasoningEffort),
+		focused:             snapshot.Session.Focused,
+		hidden:              snapshot.Session.Hidden,
+		priorityOffset:      snapshot.Session.PriorityOffset,
+		snoozeUntil:         copyTimePtr(snapshot.Session.SnoozeUntil),
+		dependencySessionID: parseDependencySessionID(snapshot.Session.DependencySessionID),
+		createdAt:           snapshot.Session.CreatedAt.UTC(),
+		updatedAt:           snapshot.Session.UpdatedAt.UTC(),
+		activityAt:          snapshot.Session.ActivityAt.UTC(),
+		archivedAt:          copyTimePtr(snapshot.Session.ArchivedAt),
 		state:               state,
+		workspace:           workspaceStateFromDurableRow(snapshot.Workspace),
 		transcript:          transcript,
 		inputMu:             &sync.Mutex{},
 	}, nil
+}
+
+func queueSnapshotFromDurableRows(rows []sqlitestore.QueueItemRow) (session.QueueSnapshot, error) {
+	items := make([]session.QueueItem, 0, len(rows))
+	for _, row := range rows {
+		item, err := session.NewQueueItem(row.ItemID, row.Text, session.QueueItemState(row.State))
+		if err != nil {
+			return session.QueueSnapshot{}, err
+		}
+		items = append(items, item)
+	}
+	return session.NewQueueSnapshot(items)
+}
+
+func workspaceStateFromDurableRow(row sqlitestore.WorkspaceStateRow) workspaceBrowserState {
+	historyItems := make([]WorkspaceHistoryItem, 0, len(row.HistoryItems))
+	for _, item := range row.HistoryItems {
+		historyItems = append(historyItems, WorkspaceHistoryItem{Path: strings.TrimSpace(item.Path), Label: strings.TrimSpace(item.Label)})
+	}
+	return workspaceBrowserState{
+		SelectedPath: strings.TrimSpace(row.SelectedPath),
+		OpenPaths:    append([]string(nil), row.OpenPaths...),
+		HistoryItems: historyItems,
+	}
 }
 
 func parseDependencySessionID(raw *string) *session.SessionID {
@@ -110,19 +169,32 @@ func seedSessionCounter(current uint64, sessionID session.SessionID) uint64 {
 	return n
 }
 
+func seedQueueCounter(current uint64, itemID session.QueueItemID) uint64 {
+	const prefix = "q_"
+	raw := itemID.String()
+	if !strings.HasPrefix(raw, prefix) {
+		return current
+	}
+	n, err := strconv.ParseUint(strings.TrimPrefix(raw, prefix), 10, 64)
+	if err != nil || n <= current {
+		return current
+	}
+	return n
+}
+
 func loadPersistedSessions(store sessionStore) ([]sessionRecord, error) {
 	if store == nil {
 		return nil, nil
 	}
-	rows, err := store.ListSessions(context.Background(), false)
+	snapshots, err := store.ListSessionSnapshots(context.Background(), false)
 	if err != nil {
 		return nil, fmt.Errorf("load persisted sessions: %w", err)
 	}
-	records := make([]sessionRecord, 0, len(rows))
-	for _, row := range rows {
-		record, err := sessionRecordFromDurableRow(row)
+	records := make([]sessionRecord, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		record, err := sessionRecordFromDurableSnapshot(snapshot)
 		if err != nil {
-			return nil, fmt.Errorf("rehydrate session %q: %w", row.SessionID, err)
+			return nil, fmt.Errorf("rehydrate session %q: %w", snapshot.Session.SessionID, err)
 		}
 		records = append(records, record)
 	}
@@ -133,7 +205,7 @@ func (r *sessionRegistry) persistLocked(record sessionRecord) error {
 	if r == nil || r.store == nil {
 		return nil
 	}
-	return r.store.UpsertSession(context.Background(), durableSessionRowFromRecord(record))
+	return r.store.UpsertSessionSnapshot(context.Background(), durableSessionSnapshotFromRecord(record))
 }
 
 func (r *sessionRegistry) Rehydrate(records []sessionRecord) error {
@@ -145,6 +217,7 @@ func (r *sessionRegistry) Rehydrate(records []sessionRecord) error {
 	r.sessions = make(map[session.SessionID]sessionRecord, len(records))
 	r.order = make([]session.SessionID, 0, len(records))
 	r.nextID.session = 0
+	r.nextID.queue = 0
 	for _, raw := range records {
 		record := copySessionRecord(raw)
 		sessionID := record.identity.SessionID()
@@ -154,6 +227,9 @@ func (r *sessionRegistry) Rehydrate(records []sessionRecord) error {
 		r.sessions[sessionID] = record
 		r.order = append(r.order, sessionID)
 		r.nextID.session = seedSessionCounter(r.nextID.session, sessionID)
+		for _, item := range record.state.Queue().Items() {
+			r.nextID.queue = seedQueueCounter(r.nextID.queue, item.ID())
+		}
 	}
 	return nil
 }
