@@ -28,7 +28,7 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			return nil
 		}
 		queued := items[0]
-		if err := record.runtime.WriteInput(context.Background(), queued.Text()); err != nil {
+		if err := record.runtime.SendPrompt(context.Background(), queued.Text()); err != nil {
 			return nil
 		}
 		item, state, ok, err := s.registry.ActivateQueued(sessionID, queued.ID())

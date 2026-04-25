@@ -83,13 +83,30 @@ func parseObject(raw map[string]any) Material {
 	ts := mergedTimestamp(entryTS, entryTSOK, messageTS, messageTSOK)
 
 	var events []Event
-	if messagePayload != nil {
-		events = append(events, parseMessagePayload(raw, messagePayload, rawType, ts)...)
+	switch rawType {
+	case "message_update":
+		events = append(events, parseMessageUpdate(raw, ts)...)
+	case "message_end":
+		if messagePayload != nil {
+			events = append(events, parseMessagePayload(raw, messagePayload, rawType, ts, messagePayloadOptions{
+				assistantClass:           MessageClassCommitted,
+				forceAssistantCommitLike: true,
+				suppressAssistantBoundary: true,
+			})...)
+		}
+	case "turn_start":
+		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnStarted, CommitLike: false, Reason: rawType}))
+	case "turn_end":
+		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnCompleted, CommitLike: false, Reason: rawType}))
+	default:
+		if messagePayload != nil {
+			events = append(events, parseMessagePayload(raw, messagePayload, rawType, ts, messagePayloadOptions{})...)
+		}
 	}
 
 	switch rawType {
 	case "message.delta":
-		if delta := cleanString(raw["delta"]); delta != "" {
+		if delta := stringValue(raw["delta"]); delta != "" {
 			events = append(events, Event{
 				Kind:      EventKindMessageDelta,
 				Timestamp: ts,
@@ -116,8 +133,6 @@ func parseObject(raw map[string]any) Material {
 		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnCompleted, CommitLike: true, Reason: rawType}))
 	case "turn.failed", "turn.aborted":
 		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnAborted, CommitLike: false, Reason: rawType}))
-	case "turn_end":
-		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnCompleted, CommitLike: false, Reason: rawType}))
 	}
 
 	return Material{Events: events}
@@ -140,7 +155,46 @@ func parseHeader(raw map[string]any) *Header {
 	}
 }
 
-func parseMessagePayload(raw, payload map[string]any, rawType string, ts float64) []Event {
+type messagePayloadOptions struct {
+	assistantClass            MessageClass
+	forceAssistantCommitLike  bool
+	suppressAssistantBoundary bool
+}
+
+func parseMessageUpdate(raw map[string]any, ts float64) []Event {
+	update := objectValue(raw["assistantMessageEvent"])
+	if update == nil || cleanString(update["type"]) != "text_delta" {
+		return nil
+	}
+	delta := stringValue(update["delta"])
+	if delta == "" {
+		return nil
+	}
+	role := MessageRoleAssistant
+	if payload := primaryMessagePayload(raw); payload != nil {
+		if parsed := parseRole(cleanString(payload["role"])); parsed != "" {
+			role = parsed
+		}
+	}
+	if role != MessageRoleAssistant {
+		return nil
+	}
+	return []Event{{
+		Kind:      EventKindMessageDelta,
+		Timestamp: ts,
+		RawType:   cleanString(raw["type"]),
+		RawID:     cleanString(raw["id"]),
+		ParentID:  cleanString(raw["parentId"]),
+		SessionID: extractSessionID(raw),
+		TurnID:    extractTurnID(raw),
+		Delta: &MessageDelta{
+			Role: role,
+			Text: delta,
+		},
+	}}
+}
+
+func parseMessagePayload(raw, payload map[string]any, rawType string, ts float64, opts messagePayloadOptions) []Event {
 	role := cleanString(payload["role"])
 	if role == "" {
 		return nil
@@ -180,10 +234,13 @@ func parseMessagePayload(raw, payload map[string]any, rawType string, ts float64
 		if text := extractText(payload); text != "" {
 			toolCount := assistantToolCallCount(payload)
 			thinkingCount := assistantThinkingCount(payload)
-			final := assistantIsFinal(payload)
+			final := assistantIsFinal(payload) || opts.forceAssistantCommitLike
 			class := MessageClassNarration
 			if final {
 				class = MessageClassFinal
+				if opts.assistantClass != "" {
+					class = opts.assistantClass
+				}
 			}
 			event := base(EventKindMessage)
 			event.Message = &Message{
@@ -197,7 +254,7 @@ func parseMessagePayload(raw, payload map[string]any, rawType string, ts float64
 				CommitLike:    final,
 			}
 			events = append(events, event)
-			if final {
+			if final && !opts.suppressAssistantBoundary {
 				events = append(events, newBoundaryFromBase(event, Boundary{Kind: BoundaryKindTurnCompleted, CommitLike: true, Inferred: true, Reason: "assistant_message_final"}))
 			}
 		}

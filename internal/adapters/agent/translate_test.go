@@ -38,7 +38,7 @@ func TestRequestLaunchSpecForPI(t *testing.T) {
 	if spec.Command().Path() != "/root/.local/bin/pi" {
 		t.Fatalf("command path = %q, want %q", spec.Command().Path(), "/root/.local/bin/pi")
 	}
-	wantArgs := []string{"--provider", "openrouter", "--model", "google/gemini-2.5-pro", "--thinking", "high"}
+	wantArgs := []string{"--mode", "rpc", "--provider", "openrouter", "--model", "google/gemini-2.5-pro", "--thinking", "high"}
 	if !reflect.DeepEqual(spec.Command().Args(), wantArgs) {
 		t.Fatalf("command args = %#v, want %#v", spec.Command().Args(), wantArgs)
 	}
