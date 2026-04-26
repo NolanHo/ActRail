@@ -295,6 +295,7 @@ func (s *Stub) lookupSession(sessionID session.SessionID) (sessionRecord, error)
 	if !ok {
 		return sessionRecord{}, NotFound(fmt.Sprintf("session %q not found", sessionID))
 	}
+	record.runtime = s.runtimeForSession(record.identity.SessionID(), record.runtime)
 	return record, nil
 }
 

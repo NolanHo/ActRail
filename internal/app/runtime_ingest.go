@@ -14,7 +14,7 @@ import (
 const maxRuntimeLineBytes = 1 << 20
 
 func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.Backend, runtime sessionRuntime) {
-	if s == nil || backend != session.BackendPI || runtime.handle == nil {
+	if s == nil || backend != session.BackendPI || runtime.handle == nil || runtime.helper != nil {
 		return
 	}
 	for _, src := range runtimeOutputSources(runtime) {

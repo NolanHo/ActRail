@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -36,18 +37,21 @@ type Service interface {
 }
 
 type Stub struct {
-	cfg        config.Config
-	registry   *sessionRegistry
-	launcher   runtimeLauncher
-	sink       RuntimeEventSink
-	appStore   appStateStore
-	appStateMu sync.RWMutex
-	recentCwds []string
-	cwdGroups  map[string]CwdGroupMeta
+	cfg            config.Config
+	registry       *sessionRegistry
+	launcher       runtimeLauncher
+	sink           RuntimeEventSink
+	appStore       appStateStore
+	helperDialer   helperDialer
+	helperBindings helperBindingStore
+	helpers        *helperRegistry
+	appStateMu     sync.RWMutex
+	recentCwds     []string
+	cwdGroups      map[string]CwdGroupMeta
 }
 
 func NewStub(cfg config.Config) (*Stub, error) {
-	return newPersistentStubWithRuntime(cfg, time.Now, RuntimeConfig{})
+	return newPersistentStubWithRuntime(cfg, time.Now, RuntimeConfig{UseIODHelper: true})
 }
 
 func NewStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
@@ -63,12 +67,18 @@ func newStub(cfg config.Config, now func() time.Time) *Stub {
 }
 
 func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
+	if strings.TrimSpace(runtimeCfg.IODRuntimeRoot) == "" {
+		runtimeCfg.IODRuntimeRoot = iodclient.RuntimeRoot(cfg.Storage.DataDir)
+	}
 	return &Stub{
-		cfg:        cfg,
-		registry:   newSessionRegistry(now),
-		launcher:   newRuntimeLauncher(runtimeCfg),
-		recentCwds: []string{},
-		cwdGroups:  map[string]CwdGroupMeta{},
+		cfg:            cfg,
+		registry:       newSessionRegistry(now),
+		launcher:       newRuntimeLauncher(runtimeCfg),
+		helperDialer:   runtimeCfg.IODDialer,
+		helperBindings: newHelperBindingStore(cfg.Storage.DataDir),
+		helpers:        newHelperRegistry(),
+		recentCwds:     []string{},
+		cwdGroups:      map[string]CwdGroupMeta{},
 	}
 }
 
@@ -297,7 +307,12 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	if err := s.recordRecentCWD(cwd); err != nil {
 		return CreateSessionResponse{}, err
 	}
+	identity, err := s.registry.ReserveIdentity(backend)
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
 	runtime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
+		SessionID:       identity.SessionID(),
 		Backend:         backend,
 		CWD:             cwd,
 		Provider:        optionalString(req.Provider),
@@ -305,9 +320,24 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		ReasoningEffort: optionalString(req.ReasoningEffort),
 	})
 	if err != nil {
+		_ = runtime.CleanupHelperArtifacts()
 		return CreateSessionResponse{}, err
 	}
+	bindingSaved := false
+	rollbackRuntime := func() {
+		_ = runtime.Kill(context.Background())
+		if bindingSaved {
+			_ = s.helperBindings.Delete(identity.SessionID())
+		}
+		_ = runtime.CleanupHelperArtifacts()
+	}
+	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), runtime); err != nil {
+		rollbackRuntime()
+		return CreateSessionResponse{}, err
+	}
+	bindingSaved = true
 	record, err := s.registry.Create(sessionCreateSpec{
+		Identity:        &identity,
 		Backend:         backend,
 		CWD:             cwd,
 		Provider:        optionalString(req.Provider),
@@ -317,7 +347,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		Runtime:         runtime,
 	})
 	if err != nil {
-		_ = runtime.Kill(ctx)
+		rollbackRuntime()
 		return CreateSessionResponse{}, err
 	}
 	s.startRuntimeIngest(record.identity.SessionID(), backend, runtime)
