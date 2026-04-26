@@ -15,10 +15,12 @@ func TestWalSchema(t *testing.T) {
 			WALRecordHelperStart.String(),
 			WALRecordAttachEstablished.String(),
 			WALRecordCommandAccepted.String(),
+			WALRecordCommandRejected.String(),
 			WALRecordOutputDelta.String(),
 			WALRecordTurnCommit.String(),
 			WALRecordUIRequestOpened.String(),
 			WALRecordUIResponseForwarded.String(),
+			WALRecordChildExit.String(),
 			WALRecordHelperExit.String(),
 			WALRecordGenerationBreak.String(),
 		}
@@ -26,10 +28,12 @@ func TestWalSchema(t *testing.T) {
 			"helper_start",
 			"pi_attach_established",
 			"command_accepted",
+			"command_rejected",
 			"output_delta",
 			"turn_commit",
 			"ui_request_opened",
 			"ui_response_forwarded",
+			"child_exit",
 			"helper_exit",
 			"generation_break",
 		}
@@ -39,16 +43,16 @@ func TestWalSchema(t *testing.T) {
 	})
 
 	t.Run("header shape and seq rules stay stable", func(t *testing.T) {
-		header, err := NewWALRecordHeader(sessionID, generationID, 1, WALRecordHelperStart, nil, 17)
+		helperStart, err := NewWALRecordHeader(sessionID, generationID, 1, WALRecordHelperStart, nil, 17)
 		if err != nil {
 			t.Fatalf("NewWALRecordHeader(helper_start) error = %v", err)
 		}
-		record, err := NewWALRecord(header, json.RawMessage(`{"pid":123}`))
+		record, err := NewWALRecord(helperStart, json.RawMessage(`{"pid":123}`))
 		if err != nil {
 			t.Fatalf("NewWALRecord() error = %v", err)
 		}
 		assertKeys(t, record, []string{"header", "payload"})
-		assertKeys(t, header, []string{"checksum", "class", "generation_id", "offset", "session_id"})
+		assertKeys(t, helperStart, []string{"checksum", "class", "generation_id", "offset", "session_id"})
 
 		seq := EventSeq(2)
 		browserEvent, err := NewWALRecordHeader(sessionID, generationID, 2, WALRecordOutputDelta, &seq, 23)
@@ -57,10 +61,19 @@ func TestWalSchema(t *testing.T) {
 		}
 		assertKeys(t, browserEvent, []string{"checksum", "class", "generation_id", "offset", "seq", "session_id"})
 
-		if _, err := NewWALRecordHeader(sessionID, generationID, 3, WALRecordOutputDelta, nil, 29); err == nil {
+		childExit, err := NewWALRecordHeader(sessionID, generationID, 3, WALRecordChildExit, nil, 29)
+		if err != nil {
+			t.Fatalf("NewWALRecordHeader(child_exit) error = %v", err)
+		}
+		assertKeys(t, childExit, []string{"checksum", "class", "generation_id", "offset", "session_id"})
+
+		if _, err := NewWALRecordHeader(sessionID, generationID, 4, WALRecordOutputDelta, nil, 31); err == nil {
 			t.Fatal("NewWALRecordHeader(output_delta without seq) error = nil, want error")
 		}
-		if _, err := NewWALRecordHeader(sessionID, generationID, 4, WALRecordHelperStart, &seq, 31); err == nil {
+		if _, err := NewWALRecordHeader(sessionID, generationID, 5, WALRecordChildExit, &seq, 37); err == nil {
+			t.Fatal("NewWALRecordHeader(child_exit with seq) error = nil, want error")
+		}
+		if _, err := NewWALRecordHeader(sessionID, generationID, 6, WALRecordHelperStart, &seq, 41); err == nil {
 			t.Fatal("NewWALRecordHeader(helper_start with seq) error = nil, want error")
 		}
 	})
@@ -70,10 +83,12 @@ func TestWalSchema(t *testing.T) {
 			WALRecordHelperStart:         WALRecordHelperStart.ProjectionBoundary(),
 			WALRecordAttachEstablished:   WALRecordAttachEstablished.ProjectionBoundary(),
 			WALRecordCommandAccepted:     WALRecordCommandAccepted.ProjectionBoundary(),
+			WALRecordCommandRejected:     WALRecordCommandRejected.ProjectionBoundary(),
 			WALRecordOutputDelta:         WALRecordOutputDelta.ProjectionBoundary(),
 			WALRecordTurnCommit:          WALRecordTurnCommit.ProjectionBoundary(),
 			WALRecordUIRequestOpened:     WALRecordUIRequestOpened.ProjectionBoundary(),
 			WALRecordUIResponseForwarded: WALRecordUIResponseForwarded.ProjectionBoundary(),
+			WALRecordChildExit:           WALRecordChildExit.ProjectionBoundary(),
 			WALRecordHelperExit:          WALRecordHelperExit.ProjectionBoundary(),
 			WALRecordGenerationBreak:     WALRecordGenerationBreak.ProjectionBoundary(),
 		}
@@ -81,10 +96,12 @@ func TestWalSchema(t *testing.T) {
 			WALRecordHelperStart:         ProjectionBoundaryStateOnly,
 			WALRecordAttachEstablished:   ProjectionBoundaryStateOnly,
 			WALRecordCommandAccepted:     ProjectionBoundaryStateOnly,
+			WALRecordCommandRejected:     ProjectionBoundaryStateOnly,
 			WALRecordOutputDelta:         ProjectionBoundaryBrowserEvent,
 			WALRecordTurnCommit:          ProjectionBoundaryBrowserEvent,
 			WALRecordUIRequestOpened:     ProjectionBoundaryBrowserEvent,
 			WALRecordUIResponseForwarded: ProjectionBoundaryBrowserEvent,
+			WALRecordChildExit:           ProjectionBoundaryStateOnly,
 			WALRecordHelperExit:          ProjectionBoundaryStateOnly,
 			WALRecordGenerationBreak:     ProjectionBoundaryGenerationTerminal,
 		}
@@ -148,6 +165,24 @@ func TestWalSchema(t *testing.T) {
 		}
 		if _, err := projection.Advance(lateRecord); err == nil {
 			t.Fatal("Projection Advance(after generation break) error = nil, want error")
+		}
+	})
+
+	t.Run("child exit helper exit and generation break stay distinct", func(t *testing.T) {
+		childExit, err := ParseWALRecordClass("child_exit")
+		if err != nil {
+			t.Fatalf("ParseWALRecordClass(child_exit) error = %v", err)
+		}
+		helperExit, err := ParseWALRecordClass("helper_exit")
+		if err != nil {
+			t.Fatalf("ParseWALRecordClass(helper_exit) error = %v", err)
+		}
+		generationBreak, err := ParseWALRecordClass("generation_break")
+		if err != nil {
+			t.Fatalf("ParseWALRecordClass(generation_break) error = %v", err)
+		}
+		if childExit == helperExit || childExit == generationBreak || helperExit == generationBreak {
+			t.Fatalf("distinct terminal facts collapsed: child=%q helper=%q break=%q", childExit, helperExit, generationBreak)
 		}
 	})
 }

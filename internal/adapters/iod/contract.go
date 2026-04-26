@@ -68,18 +68,19 @@ func (s EventSeq) Validate() error {
 type PacketKind string
 
 const (
-	PacketHello           PacketKind = "iod.hello"
-	PacketState           PacketKind = "iod.state"
-	PacketReplayRequest   PacketKind = "iod.replay.request"
-	PacketReplayItem      PacketKind = "iod.replay.item"
-	PacketReplayDone      PacketKind = "iod.replay.done"
-	PacketGenerationBreak PacketKind = "iod.generation.break"
-	PacketError           PacketKind = "iod.error"
-)
-
-const (
-	packetCommandPrefix = "iod.command."
-	packetEventPrefix   = "iod.event."
+	PacketHello                   PacketKind = "iod.hello"
+	PacketState                   PacketKind = "iod.state"
+	PacketCommandSend             PacketKind = "iod.command.send"
+	PacketCommandEnqueue          PacketKind = "iod.command.enqueue"
+	PacketCommandInterrupt        PacketKind = "iod.command.interrupt"
+	PacketCommandUIResponseSubmit PacketKind = "iod.command.ui_response.submit"
+	PacketCommandAccepted         PacketKind = "iod.command.accepted"
+	PacketCommandRejected         PacketKind = "iod.command.rejected"
+	PacketReplayRequest           PacketKind = "iod.replay.request"
+	PacketReplayItem              PacketKind = "iod.replay.item"
+	PacketReplayDone              PacketKind = "iod.replay.done"
+	PacketGenerationBreak         PacketKind = "iod.generation.break"
+	PacketError                   PacketKind = "iod.error"
 )
 
 func ParsePacketKind(raw string) (PacketKind, error) {
@@ -92,28 +93,32 @@ func ParsePacketKind(raw string) (PacketKind, error) {
 
 func (k PacketKind) Validate() error {
 	switch k {
-	case PacketHello, PacketState, PacketReplayRequest, PacketReplayItem, PacketReplayDone, PacketGenerationBreak, PacketError:
+	case PacketHello,
+		PacketState,
+		PacketCommandSend,
+		PacketCommandEnqueue,
+		PacketCommandInterrupt,
+		PacketCommandUIResponseSubmit,
+		PacketCommandAccepted,
+		PacketCommandRejected,
+		PacketReplayRequest,
+		PacketReplayItem,
+		PacketReplayDone,
+		PacketGenerationBreak,
+		PacketError:
 		return nil
-	}
-	if strings.HasPrefix(string(k), packetCommandPrefix) {
-		_, err := ParseCommandName(strings.TrimPrefix(string(k), packetCommandPrefix))
-		return err
-	}
-	if strings.HasPrefix(string(k), packetEventPrefix) {
-		_, err := ParseEventName(strings.TrimPrefix(string(k), packetEventPrefix))
-		return err
-	}
-	if strings.TrimSpace(string(k)) == "" {
+	case "":
 		return fmt.Errorf("packet kind is required")
+	default:
+		return fmt.Errorf("packet kind %q is not supported", k)
 	}
-	return fmt.Errorf("packet kind %q is not supported", k)
 }
 
 func (k PacketKind) String() string {
 	return string(k)
 }
 
-// CommandName freezes the packet suffixes currently reserved for helper commands.
+// CommandName freezes the helper command request suffixes.
 type CommandName string
 
 const (
@@ -128,12 +133,22 @@ func ParseCommandName(raw string) (CommandName, error) {
 	if err != nil {
 		return "", err
 	}
-	return CommandName(value), nil
+	name := CommandName(value)
+	if err := name.Validate(); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 func (n CommandName) Validate() error {
-	_, err := ParseCommandName(string(n))
-	return err
+	switch n {
+	case CommandSend, CommandEnqueue, CommandInterrupt, CommandUIResponseSubmit:
+		return nil
+	case "":
+		return fmt.Errorf("command name is required")
+	default:
+		return fmt.Errorf("command name %q is not supported", n)
+	}
 }
 
 func (n CommandName) String() string {
@@ -141,70 +156,98 @@ func (n CommandName) String() string {
 }
 
 func (n CommandName) Kind() PacketKind {
-	return PacketKind(packetCommandPrefix + string(n))
+	switch n {
+	case CommandSend:
+		return PacketCommandSend
+	case CommandEnqueue:
+		return PacketCommandEnqueue
+	case CommandInterrupt:
+		return PacketCommandInterrupt
+	case CommandUIResponseSubmit:
+		return PacketCommandUIResponseSubmit
+	default:
+		return PacketKind("")
+	}
 }
 
-// EventName freezes the replayable helper event suffixes.
-type EventName string
+// FactKind freezes the helper fact taxonomy shared by live iod.state packets,
+// replay items, and WAL-backed projection boundaries.
+type FactKind string
 
 const (
-	EventOutputDelta         EventName = "output.delta"
-	EventTurnCommit          EventName = "turn.commit"
-	EventUIRequestOpened     EventName = "ui_request.opened"
-	EventUIResponseForwarded EventName = "ui_response.forwarded"
+	FactHelperStart         FactKind = "helper_start"
+	FactAttachEstablished   FactKind = "pi_attach_established"
+	FactCommandAccepted     FactKind = "command_accepted"
+	FactCommandRejected     FactKind = "command_rejected"
+	FactOutputDelta         FactKind = "output_delta"
+	FactTurnCommit          FactKind = "turn_commit"
+	FactUIRequestOpened     FactKind = "ui_request_opened"
+	FactUIResponseForwarded FactKind = "ui_response_forwarded"
+	FactChildExit           FactKind = "child_exit"
+	FactHelperExit          FactKind = "helper_exit"
+	FactGenerationBreak     FactKind = "generation_break"
 )
 
-func ParseEventName(raw string) (EventName, error) {
-	value, err := normalizeHierToken(raw, "event name")
-	if err != nil {
+func ParseFactKind(raw string) (FactKind, error) {
+	kind := FactKind(strings.ToLower(strings.TrimSpace(raw)))
+	if err := kind.Validate(); err != nil {
 		return "", err
 	}
-	return EventName(value), nil
+	return kind, nil
 }
 
-func (n EventName) Validate() error {
-	_, err := ParseEventName(string(n))
-	return err
-}
-
-func (n EventName) String() string {
-	return string(n)
-}
-
-func (n EventName) Kind() PacketKind {
-	return PacketKind(packetEventPrefix + string(n))
-}
-
-// TransportState is the helper-reported current generation state.
-type TransportState string
-
-const (
-	TransportStateStarting TransportState = "starting"
-	TransportStateAttached TransportState = "attached"
-	TransportStateBroken   TransportState = "broken"
-)
-
-func ParseTransportState(raw string) (TransportState, error) {
-	state := TransportState(strings.ToLower(strings.TrimSpace(raw)))
-	if err := state.Validate(); err != nil {
-		return "", err
-	}
-	return state, nil
-}
-
-func (s TransportState) Validate() error {
-	switch s {
-	case TransportStateStarting, TransportStateAttached, TransportStateBroken:
+func (k FactKind) Validate() error {
+	switch k {
+	case FactHelperStart,
+		FactAttachEstablished,
+		FactCommandAccepted,
+		FactCommandRejected,
+		FactOutputDelta,
+		FactTurnCommit,
+		FactUIRequestOpened,
+		FactUIResponseForwarded,
+		FactChildExit,
+		FactHelperExit,
+		FactGenerationBreak:
 		return nil
 	case "":
-		return fmt.Errorf("transport state is required")
+		return fmt.Errorf("fact kind is required")
 	default:
-		return fmt.Errorf("transport state %q is not supported", s)
+		return fmt.Errorf("fact kind %q is not supported", k)
 	}
 }
 
-func (s TransportState) String() string {
-	return string(s)
+func (k FactKind) String() string {
+	return string(k)
+}
+
+func (k FactKind) ProjectionBoundary() ProjectionBoundary {
+	switch k {
+	case FactOutputDelta, FactTurnCommit, FactUIRequestOpened, FactUIResponseForwarded:
+		return ProjectionBoundaryBrowserEvent
+	case FactGenerationBreak:
+		return ProjectionBoundaryGenerationTerminal
+	default:
+		return ProjectionBoundaryStateOnly
+	}
+}
+
+func (k FactKind) RequiresSeq() bool {
+	switch k.ProjectionBoundary() {
+	case ProjectionBoundaryBrowserEvent, ProjectionBoundaryGenerationTerminal:
+		return true
+	default:
+		return false
+	}
+}
+
+func (k FactKind) AllowedInStatePacket() bool {
+	switch k {
+	case FactCommandAccepted, FactCommandRejected, FactGenerationBreak:
+		return false
+	default:
+		return true
+	}
 }
 
 // Envelope is the stable top-level contract shared by every actrail-iod packet.
@@ -235,18 +278,90 @@ func (e Envelope) Validate() error {
 	return err
 }
 
+// HelloProof is the helper-side reattach proof echoed by iod.hello.
+type HelloProof struct {
+	HelperPID         int     `json:"helper_pid"`
+	ChildPID          *int    `json:"child_pid,omitempty"`
+	WALPath           string  `json:"wal_path"`
+	ControlSocketPath string  `json:"control_socket_path"`
+	StartTS           float64 `json:"start_ts"`
+}
+
+func NewHelloProof(helperPID int, childPID *int, walPath, controlSocketPath string, startTS float64) (HelloProof, error) {
+	proof := HelloProof{
+		HelperPID:         helperPID,
+		ChildPID:          childPID,
+		WALPath:           strings.TrimSpace(walPath),
+		ControlSocketPath: strings.TrimSpace(controlSocketPath),
+		StartTS:           startTS,
+	}
+	if err := proof.Validate(); err != nil {
+		return HelloProof{}, err
+	}
+	return proof, nil
+}
+
+func (p HelloProof) Validate() error {
+	if p.HelperPID <= 0 {
+		return fmt.Errorf("helper pid must be greater than zero")
+	}
+	if p.ChildPID != nil && *p.ChildPID <= 0 {
+		return fmt.Errorf("child pid must be greater than zero")
+	}
+	if p.WALPath == "" {
+		return fmt.Errorf("wal path is required")
+	}
+	if p.ControlSocketPath == "" {
+		return fmt.Errorf("control socket path is required")
+	}
+	if p.StartTS <= 0 {
+		return fmt.Errorf("start ts must be greater than zero")
+	}
+	return nil
+}
+
+// GenerationManifest freezes the durable proof fields used for helper discovery
+// and same-generation reattach.
+type GenerationManifest struct {
+	SessionID    session.SessionID `json:"session_id"`
+	GenerationID GenerationID      `json:"generation_id"`
+	HelloProof
+}
+
+func NewGenerationManifest(sessionID session.SessionID, generationID GenerationID, proof HelloProof) (GenerationManifest, error) {
+	manifest := GenerationManifest{SessionID: sessionID, GenerationID: generationID, HelloProof: proof}
+	if err := manifest.Validate(); err != nil {
+		return GenerationManifest{}, err
+	}
+	return manifest, nil
+}
+
+func (m GenerationManifest) Validate() error {
+	if err := m.SessionID.Validate(); err != nil {
+		return err
+	}
+	if m.SessionID.IsHistorical() {
+		return fmt.Errorf("session id %q cannot use historical replay identity", m.SessionID)
+	}
+	if err := m.GenerationID.Validate(); err != nil {
+		return err
+	}
+	return m.HelloProof.Validate()
+}
+
 // HelloPacket is the initial helper handshake for one session generation.
 type HelloPacket struct {
 	Envelope
 	ProtocolVersion int `json:"protocol_version"`
+	HelloProof
 }
 
-func NewHelloPacket(sessionID session.SessionID, generationID GenerationID, protocolVersion int) (HelloPacket, error) {
+func NewHelloPacket(sessionID session.SessionID, generationID GenerationID, protocolVersion int, proof HelloProof) (HelloPacket, error) {
 	env, err := NewEnvelope(sessionID, generationID, PacketHello)
 	if err != nil {
 		return HelloPacket{}, err
 	}
-	packet := HelloPacket{Envelope: env, ProtocolVersion: protocolVersion}
+	packet := HelloPacket{Envelope: env, ProtocolVersion: protocolVersion, HelloProof: proof}
 	if err := packet.Validate(); err != nil {
 		return HelloPacket{}, err
 	}
@@ -263,24 +378,53 @@ func (p HelloPacket) Validate() error {
 	if p.ProtocolVersion <= 0 {
 		return fmt.Errorf("protocol version must be greater than zero")
 	}
+	return p.HelloProof.Validate()
+}
+
+// HelperFact is one helper-owned fact shared by live iod.state and replay items.
+type HelperFact struct {
+	FactKind FactKind        `json:"fact_kind"`
+	Seq      *EventSeq       `json:"seq,omitempty"`
+	Payload  json.RawMessage `json:"payload,omitempty"`
+}
+
+func NewHelperFact(kind FactKind, seq *EventSeq, payload json.RawMessage) (HelperFact, error) {
+	fact := HelperFact{FactKind: kind, Seq: seq, Payload: payload}
+	if err := fact.Validate(); err != nil {
+		return HelperFact{}, err
+	}
+	return fact, nil
+}
+
+func (f HelperFact) Validate() error {
+	if err := f.FactKind.Validate(); err != nil {
+		return err
+	}
+	if f.FactKind.RequiresSeq() {
+		if f.Seq == nil {
+			return fmt.Errorf("fact kind %q requires seq", f.FactKind)
+		}
+		if err := f.Seq.Validate(); err != nil {
+			return err
+		}
+	} else if f.Seq != nil {
+		return fmt.Errorf("fact kind %q must not carry seq", f.FactKind)
+	}
 	return nil
 }
 
-// StatePacket reports the current helper generation state and both replay cursors.
-// last_offset is the helper-server replay cursor. last_seq is the browser-visible cursor.
+// StatePacket reports one live helper fact for the current generation.
 type StatePacket struct {
 	Envelope
-	TransportState TransportState `json:"transport_state"`
-	LastOffset     WALOffset      `json:"last_offset"`
-	LastSeq        EventSeq       `json:"last_seq"`
+	Fact HelperFact `json:"fact"`
 }
 
-func NewStatePacket(sessionID session.SessionID, generationID GenerationID, state TransportState, lastOffset WALOffset, lastSeq EventSeq) (StatePacket, error) {
+func NewStatePacket(sessionID session.SessionID, generationID GenerationID, fact HelperFact) (StatePacket, error) {
 	env, err := NewEnvelope(sessionID, generationID, PacketState)
 	if err != nil {
 		return StatePacket{}, err
 	}
-	packet := StatePacket{Envelope: env, TransportState: state, LastOffset: lastOffset, LastSeq: lastSeq}
+	packet := StatePacket{Envelope: env, Fact: fact}
 	if err := packet.Validate(); err != nil {
 		return StatePacket{}, err
 	}
@@ -294,21 +438,16 @@ func (p StatePacket) Validate() error {
 	if p.Kind != PacketState {
 		return fmt.Errorf("state packet kind = %q, want %q", p.Kind, PacketState)
 	}
-	if err := p.TransportState.Validate(); err != nil {
+	if err := p.Fact.Validate(); err != nil {
 		return err
 	}
-	if err := p.LastOffset.ValidateState(); err != nil {
-		return err
-	}
-	if p.LastSeq > 0 {
-		if err := p.LastSeq.Validate(); err != nil {
-			return err
-		}
+	if !p.Fact.FactKind.AllowedInStatePacket() {
+		return fmt.Errorf("fact kind %q must not use %q", p.Fact.FactKind, PacketState)
 	}
 	return nil
 }
 
-// CommandPacket is the stable helper command envelope.
+// CommandPacket is the stable helper command request envelope.
 // Kind identifies the command family member. Payload is command-specific and stays opaque here.
 type CommandPacket struct {
 	Envelope
@@ -332,8 +471,10 @@ func (p CommandPacket) Validate() error {
 	if err := p.Envelope.Validate(); err != nil {
 		return err
 	}
-	if !strings.HasPrefix(p.Kind.String(), packetCommandPrefix) {
-		return fmt.Errorf("command packet kind %q must use %q prefix", p.Kind, packetCommandPrefix)
+	switch p.Kind {
+	case PacketCommandSend, PacketCommandEnqueue, PacketCommandInterrupt, PacketCommandUIResponseSubmit:
+	default:
+		return fmt.Errorf("command packet kind %q is not a command request", p.Kind)
 	}
 	if err := p.CommandID.Validate(); err != nil {
 		return err
@@ -341,37 +482,84 @@ func (p CommandPacket) Validate() error {
 	return nil
 }
 
-// EventPacket is the stable replayable event envelope.
-// Seq is monotonic only inside one GenerationID.
-type EventPacket struct {
-	Envelope
-	Seq     EventSeq        `json:"seq"`
-	Payload json.RawMessage `json:"payload,omitempty"`
+// CommandOutcome is the stable durable result for one command_id in one generation.
+// ack_cursor is the WAL offset of the durable outcome record for that command_id.
+type CommandOutcome struct {
+	CommandID CommandID       `json:"command_id"`
+	AckCursor WALOffset       `json:"ack_cursor"`
+	Deduped   bool            `json:"deduped"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
 }
 
-func NewEventPacket(sessionID session.SessionID, generationID GenerationID, name EventName, seq EventSeq, payload json.RawMessage) (EventPacket, error) {
-	env, err := NewEnvelope(sessionID, generationID, name.Kind())
-	if err != nil {
-		return EventPacket{}, err
+func NewCommandOutcome(commandID CommandID, ackCursor WALOffset, deduped bool, payload json.RawMessage) (CommandOutcome, error) {
+	outcome := CommandOutcome{CommandID: commandID, AckCursor: ackCursor, Deduped: deduped, Payload: payload}
+	if err := outcome.Validate(); err != nil {
+		return CommandOutcome{}, err
 	}
-	packet := EventPacket{Envelope: env, Seq: seq, Payload: payload}
+	return outcome, nil
+}
+
+func (o CommandOutcome) Validate() error {
+	if err := o.CommandID.Validate(); err != nil {
+		return err
+	}
+	return o.AckCursor.ValidateAppend()
+}
+
+// CommandAcceptedPacket reports a durable accepted command outcome.
+type CommandAcceptedPacket struct {
+	Envelope
+	CommandOutcome
+}
+
+func NewCommandAcceptedPacket(sessionID session.SessionID, generationID GenerationID, outcome CommandOutcome) (CommandAcceptedPacket, error) {
+	env, err := NewEnvelope(sessionID, generationID, PacketCommandAccepted)
+	if err != nil {
+		return CommandAcceptedPacket{}, err
+	}
+	packet := CommandAcceptedPacket{Envelope: env, CommandOutcome: outcome}
 	if err := packet.Validate(); err != nil {
-		return EventPacket{}, err
+		return CommandAcceptedPacket{}, err
 	}
 	return packet, nil
 }
 
-func (p EventPacket) Validate() error {
+func (p CommandAcceptedPacket) Validate() error {
 	if err := p.Envelope.Validate(); err != nil {
 		return err
 	}
-	if !strings.HasPrefix(p.Kind.String(), packetEventPrefix) {
-		return fmt.Errorf("event packet kind %q must use %q prefix", p.Kind, packetEventPrefix)
+	if p.Kind != PacketCommandAccepted {
+		return fmt.Errorf("command accepted packet kind = %q, want %q", p.Kind, PacketCommandAccepted)
 	}
-	if err := p.Seq.Validate(); err != nil {
+	return p.CommandOutcome.Validate()
+}
+
+// CommandRejectedPacket reports a durable rejected command outcome.
+type CommandRejectedPacket struct {
+	Envelope
+	CommandOutcome
+}
+
+func NewCommandRejectedPacket(sessionID session.SessionID, generationID GenerationID, outcome CommandOutcome) (CommandRejectedPacket, error) {
+	env, err := NewEnvelope(sessionID, generationID, PacketCommandRejected)
+	if err != nil {
+		return CommandRejectedPacket{}, err
+	}
+	packet := CommandRejectedPacket{Envelope: env, CommandOutcome: outcome}
+	if err := packet.Validate(); err != nil {
+		return CommandRejectedPacket{}, err
+	}
+	return packet, nil
+}
+
+func (p CommandRejectedPacket) Validate() error {
+	if err := p.Envelope.Validate(); err != nil {
 		return err
 	}
-	return nil
+	if p.Kind != PacketCommandRejected {
+		return fmt.Errorf("command rejected packet kind = %q, want %q", p.Kind, PacketCommandRejected)
+	}
+	return p.CommandOutcome.Validate()
 }
 
 // ReplayRequestPacket asks the helper to resume WAL replay after one durable cursor.
@@ -403,18 +591,39 @@ func (p ReplayRequestPacket) Validate() error {
 	return p.AfterOffset.ValidateState()
 }
 
-// ReplayItemPacket returns one WAL item in strict append order.
-type ReplayItemPacket struct {
-	Envelope
-	Record WALRecord `json:"record"`
+// ReplayItem is one WAL-backed fact replayed by helper WAL offset.
+type ReplayItem struct {
+	WALOffset WALOffset  `json:"wal_offset"`
+	Fact      HelperFact `json:"fact"`
 }
 
-func NewReplayItemPacket(sessionID session.SessionID, generationID GenerationID, record WALRecord) (ReplayItemPacket, error) {
+func NewReplayItem(walOffset WALOffset, fact HelperFact) (ReplayItem, error) {
+	item := ReplayItem{WALOffset: walOffset, Fact: fact}
+	if err := item.Validate(); err != nil {
+		return ReplayItem{}, err
+	}
+	return item, nil
+}
+
+func (i ReplayItem) Validate() error {
+	if err := i.WALOffset.ValidateAppend(); err != nil {
+		return err
+	}
+	return i.Fact.Validate()
+}
+
+// ReplayItemPacket returns one WAL-backed fact in strict append order.
+type ReplayItemPacket struct {
+	Envelope
+	Item ReplayItem `json:"item"`
+}
+
+func NewReplayItemPacket(sessionID session.SessionID, generationID GenerationID, item ReplayItem) (ReplayItemPacket, error) {
 	env, err := NewEnvelope(sessionID, generationID, PacketReplayItem)
 	if err != nil {
 		return ReplayItemPacket{}, err
 	}
-	packet := ReplayItemPacket{Envelope: env, Record: record}
+	packet := ReplayItemPacket{Envelope: env, Item: item}
 	if err := packet.Validate(); err != nil {
 		return ReplayItemPacket{}, err
 	}
@@ -428,16 +637,7 @@ func (p ReplayItemPacket) Validate() error {
 	if p.Kind != PacketReplayItem {
 		return fmt.Errorf("replay item kind = %q, want %q", p.Kind, PacketReplayItem)
 	}
-	if err := p.Record.Validate(); err != nil {
-		return err
-	}
-	if p.Record.Header.SessionID != p.SessionID {
-		return fmt.Errorf("replay item record session id = %q, want %q", p.Record.Header.SessionID, p.SessionID)
-	}
-	if p.Record.Header.GenerationID != p.GenerationID {
-		return fmt.Errorf("replay item record generation id = %q, want %q", p.Record.Header.GenerationID, p.GenerationID)
-	}
-	return nil
+	return p.Item.Validate()
 }
 
 // ReplayDonePacket closes one replay stream for the generation.
@@ -513,7 +713,7 @@ func (r GenerationBreakReason) String() string {
 	return string(r)
 }
 
-// GenerationBreakPacket is the terminal browser-visible fact for one generation.
+// GenerationBreakPacket is the live helper terminal transport fact for one generation.
 // Later helper output must move to a new GenerationID.
 type GenerationBreakPacket struct {
 	Envelope

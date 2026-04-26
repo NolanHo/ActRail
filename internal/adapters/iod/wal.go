@@ -34,10 +34,12 @@ const (
 	WALRecordHelperStart         WALRecordClass = "helper_start"
 	WALRecordAttachEstablished   WALRecordClass = "pi_attach_established"
 	WALRecordCommandAccepted     WALRecordClass = "command_accepted"
+	WALRecordCommandRejected     WALRecordClass = "command_rejected"
 	WALRecordOutputDelta         WALRecordClass = "output_delta"
 	WALRecordTurnCommit          WALRecordClass = "turn_commit"
 	WALRecordUIRequestOpened     WALRecordClass = "ui_request_opened"
 	WALRecordUIResponseForwarded WALRecordClass = "ui_response_forwarded"
+	WALRecordChildExit           WALRecordClass = "child_exit"
 	WALRecordHelperExit          WALRecordClass = "helper_exit"
 	WALRecordGenerationBreak     WALRecordClass = "generation_break"
 )
@@ -55,10 +57,12 @@ func (c WALRecordClass) Validate() error {
 	case WALRecordHelperStart,
 		WALRecordAttachEstablished,
 		WALRecordCommandAccepted,
+		WALRecordCommandRejected,
 		WALRecordOutputDelta,
 		WALRecordTurnCommit,
 		WALRecordUIRequestOpened,
 		WALRecordUIResponseForwarded,
+		WALRecordChildExit,
 		WALRecordHelperExit,
 		WALRecordGenerationBreak:
 		return nil
@@ -71,6 +75,10 @@ func (c WALRecordClass) Validate() error {
 
 func (c WALRecordClass) String() string {
 	return string(c)
+}
+
+func (c WALRecordClass) FactKind() FactKind {
+	return FactKind(c)
 }
 
 // ProjectionBoundary freezes how one WAL class crosses into server-visible projection.
@@ -101,23 +109,11 @@ func (b ProjectionBoundary) String() string {
 }
 
 func (c WALRecordClass) ProjectionBoundary() ProjectionBoundary {
-	switch c {
-	case WALRecordOutputDelta, WALRecordTurnCommit, WALRecordUIRequestOpened, WALRecordUIResponseForwarded:
-		return ProjectionBoundaryBrowserEvent
-	case WALRecordGenerationBreak:
-		return ProjectionBoundaryGenerationTerminal
-	default:
-		return ProjectionBoundaryStateOnly
-	}
+	return c.FactKind().ProjectionBoundary()
 }
 
 func (c WALRecordClass) RequiresSeq() bool {
-	switch c.ProjectionBoundary() {
-	case ProjectionBoundaryBrowserEvent, ProjectionBoundaryGenerationTerminal:
-		return true
-	default:
-		return false
-	}
+	return c.FactKind().RequiresSeq()
 }
 
 // WALRecordHeader is the stable durable header for helper replay and server projection.
