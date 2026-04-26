@@ -113,8 +113,18 @@ func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	if len(listed.Items) != 2 {
 		t.Fatalf("len(ListSessions().Items) = %d, want 2", len(listed.Items))
 	}
-	if listed.Items[0].Alias != "Renamed task" || !listed.Items[0].Focused || listed.Items[0].Model != model {
-		t.Fatalf("ListSessions().Items[0] = %+v", listed.Items[0])
+	var listedRecord *SessionSummary
+	for i := range listed.Items {
+		if listed.Items[i].SessionID == sessionID.String() {
+			listedRecord = &listed.Items[i]
+			break
+		}
+	}
+	if listedRecord == nil {
+		t.Fatalf("ListSessions() missing session %q in %+v", sessionID, listed.Items)
+	}
+	if listedRecord.Alias != "Renamed task" || !listedRecord.Focused || listedRecord.Model != model {
+		t.Fatalf("ListSessions() record = %+v", *listedRecord)
 	}
 
 	deleted, err := svc.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: sessionID})
@@ -176,6 +186,94 @@ func TestStubSessionResumeCandidatesAndRuntimeRouteLookup(t *testing.T) {
 	}
 }
 
+func TestStubSessionResumeCandidatesMatchSidebarOrderingForDemotedSessions(t *testing.T) {
+	cfg := config.Load()
+	now := time.Unix(1760000000, 0).UTC()
+	svc := newStub(cfg, func() time.Time { return now })
+	cwd := t.TempDir()
+	for i := 0; i < 3; i++ {
+		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd}); err != nil {
+			t.Fatalf("CreateSession(%d) error = %v", i, err)
+		}
+	}
+	blockedPriority := 1.0
+	blockedDependency := "s_1"
+	if _, err := svc.EditSession(context.Background(), EditSessionRequest{
+		SessionID:           mustSessionID(t, "s_2"),
+		PriorityOffset:      Float64Patch{Present: true, Value: &blockedPriority},
+		DependencySessionID: StringPatch{Present: true, Value: &blockedDependency},
+	}); err != nil {
+		t.Fatalf("EditSession(blocked) error = %v", err)
+	}
+	snoozedPriority := 1.0
+	snoozeUntil := now.Add(time.Hour).Unix()
+	if _, err := svc.EditSession(context.Background(), EditSessionRequest{
+		SessionID:      mustSessionID(t, "s_3"),
+		PriorityOffset: Float64Patch{Present: true, Value: &snoozedPriority},
+		SnoozeUntil:    Int64Patch{Present: true, Value: &snoozeUntil},
+	}); err != nil {
+		t.Fatalf("EditSession(snoozed) error = %v", err)
+	}
+
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	want := []string{"s_1", "s_2", "s_3"}
+	listedOrder := make([]string, 0, len(want))
+	for _, item := range listed.Items {
+		if item.CWD == cwd && item.AgentBackend == "pi" {
+			listedOrder = append(listedOrder, item.SessionID)
+		}
+	}
+	assertSessionIDOrder(t, "ListSessions() filtered", listedOrder, want)
+
+	resume, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{CWD: cwd, AgentBackend: "pi"})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	resumeOrder := make([]string, 0, len(resume.Sessions))
+	for _, item := range resume.Sessions {
+		resumeOrder = append(resumeOrder, item.SessionID)
+	}
+	assertSessionIDOrder(t, "SessionResumeCandidates()", resumeOrder, want)
+}
+
+func TestStubSessionResumeCandidatesMatchSidebarTieBreakers(t *testing.T) {
+	cfg := config.Load()
+	now := time.Unix(1760000000, 0).UTC()
+	svc := newStub(cfg, func() time.Time { return now })
+	cwd := t.TempDir()
+	for i := 0; i < 2; i++ {
+		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd}); err != nil {
+			t.Fatalf("CreateSession(%d) error = %v", i, err)
+		}
+	}
+
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	want := []string{"s_1", "s_2"}
+	listedOrder := make([]string, 0, len(want))
+	for _, item := range listed.Items {
+		if item.CWD == cwd && item.AgentBackend == "pi" {
+			listedOrder = append(listedOrder, item.SessionID)
+		}
+	}
+	assertSessionIDOrder(t, "ListSessions() filtered", listedOrder, want)
+
+	resume, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{CWD: cwd, AgentBackend: "pi"})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	resumeOrder := make([]string, 0, len(resume.Sessions))
+	for _, item := range resume.Sessions {
+		resumeOrder = append(resumeOrder, item.SessionID)
+	}
+	assertSessionIDOrder(t, "SessionResumeCandidates()", resumeOrder, want)
+}
+
 func TestStubSessionActionsReturnNotFoundOrUnsupported(t *testing.T) {
 	svc, _, sessionID, _ := newSessionActionFixture(t)
 	unknown, err := session.ParseSessionID("s_404")
@@ -221,5 +319,17 @@ func assertUnsupported(t *testing.T, err error) {
 	}
 	if appErr.Code != "unsupported" {
 		t.Fatalf("error code = %q, want %q", appErr.Code, "unsupported")
+	}
+}
+
+func assertSessionIDOrder(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s len = %d, want %d (%#v)", label, len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s order = %#v, want %#v", label, got, want)
+		}
 	}
 }

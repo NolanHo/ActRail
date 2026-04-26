@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -162,13 +161,8 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		}
 		candidates = append(candidates, record)
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].updatedAt.Equal(candidates[j].updatedAt) {
-			return candidates[i].identity.SessionID().String() > candidates[j].identity.SessionID().String()
-		}
-		return candidates[i].updatedAt.After(candidates[j].updatedAt)
-	})
-	start, end := paginate(len(candidates), req.Offset, req.Limit)
+	ordered := sortSessionsForDisplay(candidates, s.registry.now())
+	start, end := paginate(len(ordered), req.Offset, req.Limit)
 	payload := SessionResumeCandidatesResponse{
 		OK:         true,
 		Exists:     exists,
@@ -176,11 +170,11 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		GitRepo:    false,
 		Offset:     req.Offset,
 		Limit:      req.Limit,
-		Remaining:  len(candidates) - end,
+		Remaining:  len(ordered) - end,
 		Sessions:   make([]SessionResumeCandidate, 0, end-start),
 	}
-	for _, record := range candidates[start:end] {
-		payload.Sessions = append(payload.Sessions, sessionResumeCandidateFromRecord(record))
+	for _, item := range ordered[start:end] {
+		payload.Sessions = append(payload.Sessions, sessionResumeCandidateFromRecord(item.record, item.updatedAt))
 	}
 	return payload, nil
 }
@@ -361,7 +355,7 @@ func (s *Stub) HandoffSession(_ context.Context, req HandoffSessionRequest) (Han
 	return HandoffSessionResponse{}, Unsupported("session handoff not implemented")
 }
 
-func sessionResumeCandidateFromRecord(record sessionRecord) SessionResumeCandidate {
+func sessionResumeCandidateFromRecord(record sessionRecord, updatedAt time.Time) SessionResumeCandidate {
 	return SessionResumeCandidate{
 		SessionID:        record.identity.SessionID().String(),
 		Title:            record.title,
@@ -369,7 +363,7 @@ func sessionResumeCandidateFromRecord(record sessionRecord) SessionResumeCandida
 		DisplayName:      sessionDisplayName(record),
 		CWD:              record.cwd,
 		FirstUserMessage: firstUserMessageForRecord(record),
-		UpdatedTS:        timestampSeconds(record.updatedAt),
+		UpdatedTS:        timestampSeconds(updatedAt),
 	}
 }
 

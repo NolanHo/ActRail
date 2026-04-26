@@ -261,12 +261,12 @@ func (s *Stub) ListSessions(_ context.Context, req ListSessionsRequest) (ListSes
 		v := req.GroupKey
 		groupKey = &v
 	}
-	items := s.registry.List()
+	items := sortSessionsForDisplay(s.registry.List(), s.registry.now())
 	offset, limit := listWindow(req)
 	start, end := paginate(len(items), offset, limit)
 	summaries := make([]SessionSummary, 0, end-start)
-	for _, record := range items[start:end] {
-		summaries = append(summaries, sessionSummaryFromRecord(record))
+	for _, item := range items[start:end] {
+		summaries = append(summaries, sessionSummaryFromRecord(item.record, item.updatedAt))
 	}
 	return ListSessionsResponse{
 		Items:          summaries,
@@ -335,7 +335,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}, nil
 }
 
-func sessionSummaryFromRecord(record sessionRecord) SessionSummary {
+func sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
 	return SessionSummary{
@@ -351,8 +351,8 @@ func sessionSummaryFromRecord(record sessionRecord) SessionSummary {
 		Busy:                record.state.Busy(),
 		Focused:             record.focused,
 		QueueLen:            record.state.Queue().Len(),
-		LastUpdatedTS:       timestampSeconds(record.updatedAt),
-		UpdatedTS:           timestampSeconds(record.updatedAt),
+		LastUpdatedTS:       timestampSeconds(updatedAt),
+		UpdatedTS:           timestampSeconds(updatedAt),
 		Historical:          record.identity.Historical(),
 		Model:               record.model,
 		ProviderChoice:      record.provider,
