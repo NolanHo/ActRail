@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,36 +125,13 @@ func TestIodReplay(t *testing.T) {
 		t.Fatalf("output seq = %#v, want 1", output.Fact.Seq)
 	}
 
-	tc.handle.SetWaitResult(process.ExitStatus{Code: 0}, nil)
-	childExit := tc.mustStatePacket(t)
-	if childExit.Fact.FactKind != FactChildExit {
-		t.Fatalf("child exit fact kind = %q, want %q", childExit.Fact.FactKind, FactChildExit)
-	}
-
-	rejectedID := mustCommandID(t, "cmd_rejected")
-	rejected := tc.sendRejectedCommand(t, CommandSend, rejectedID, json.RawMessage(`{"text":"beta"}`))
-	if rejected.AckCursor != 6 {
-		t.Fatalf("rejected ack cursor = %d, want 6", rejected.AckCursor)
-	}
-	if rejected.Deduped {
-		t.Fatal("rejected.Deduped = true, want false")
-	}
-
-	dupRejected := tc.sendRejectedCommand(t, CommandSend, rejectedID, json.RawMessage(`{"text":"beta"}`))
-	if dupRejected.AckCursor != rejected.AckCursor {
-		t.Fatalf("duplicate rejected ack cursor = %d, want %d", dupRejected.AckCursor, rejected.AckCursor)
-	}
-	if !dupRejected.Deduped {
-		t.Fatal("duplicate rejected.Deduped = false, want true")
-	}
-
 	tc.sendReplayRequest(t, 2)
 	items := tc.mustReplayItems(t)
-	if len(items) != 4 {
-		t.Fatalf("len(replay items) = %d, want 4", len(items))
+	if len(items) != 2 {
+		t.Fatalf("len(replay items) = %d, want 2", len(items))
 	}
-	wantKinds := []FactKind{FactCommandAccepted, FactOutputDelta, FactChildExit, FactCommandRejected}
-	wantOffsets := []WALOffset{3, 4, 5, 6}
+	wantKinds := []FactKind{FactCommandAccepted, FactOutputDelta}
+	wantOffsets := []WALOffset{3, 4}
 	for i, item := range items {
 		if item.Item.WALOffset != wantOffsets[i] {
 			t.Fatalf("replay item %d offset = %d, want %d", i, item.Item.WALOffset, wantOffsets[i])
@@ -163,8 +141,173 @@ func TestIodReplay(t *testing.T) {
 		}
 	}
 	done := tc.mustReplayDone(t)
-	if done.AfterOffset != 2 || done.LastOffset != 6 || done.CorruptTail {
-		t.Fatalf("replay done = %#v, want after_offset=2 last_offset=6 corrupt_tail=false", done)
+	if done.AfterOffset != 2 || done.LastOffset != 4 || done.CorruptTail {
+		t.Fatalf("replay done = %#v, want after_offset=2 last_offset=4 corrupt_tail=false", done)
+	}
+}
+
+func TestCleanChildExit(t *testing.T) {
+	tc := newHelperTestCase(t)
+	defer tc.stop()
+
+	tc.handle.SetWaitResult(process.ExitStatus{Code: 0}, nil)
+
+	childExit := tc.mustStatePacket(t)
+	if childExit.Fact.FactKind != FactChildExit {
+		t.Fatalf("child exit fact kind = %q, want %q", childExit.Fact.FactKind, FactChildExit)
+	}
+	if childExit.Fact.Seq != nil {
+		t.Fatalf("child exit seq = %#v, want nil", childExit.Fact.Seq)
+	}
+
+	helperExit := tc.mustStatePacket(t)
+	if helperExit.Fact.FactKind != FactHelperExit {
+		t.Fatalf("helper exit fact kind = %q, want %q", helperExit.Fact.FactKind, FactHelperExit)
+	}
+	if helperExit.Fact.Seq != nil {
+		t.Fatalf("helper exit seq = %#v, want nil", helperExit.Fact.Seq)
+	}
+
+	tc.mustConnClosed(t)
+	tc.stop()
+
+	if _, err := os.Stat(tc.paths.ControlSocketPath); !os.IsNotExist(err) {
+		t.Fatalf("control socket stat error = %v, want not exist", err)
+	}
+	if conn, err := net.Dial("unix", tc.paths.ControlSocketPath); err == nil {
+		_ = conn.Close()
+		t.Fatal("helper remained reattachable after child exit")
+	}
+
+	replay, err := ReplayWAL(tc.paths.WALPath, tc.sessionID, tc.generationID, 2)
+	if err != nil {
+		t.Fatalf("ReplayWAL() error = %v", err)
+	}
+	wantKinds := []FactKind{FactChildExit, FactHelperExit}
+	if len(replay.Records) != len(wantKinds) {
+		t.Fatalf("len(replay.Records) = %d, want %d", len(replay.Records), len(wantKinds))
+	}
+	for i, record := range replay.Records {
+		if got := record.Header.Class.FactKind(); got != wantKinds[i] {
+			t.Fatalf("replay record %d fact kind = %q, want %q", i, got, wantKinds[i])
+		}
+		if got := record.Header.Class.FactKind(); got == FactGenerationBreak {
+			t.Fatalf("replay record %d fact kind = %q, want no generation break", i, got)
+		}
+	}
+}
+
+func TestConcurrentDuplicateCommandID(t *testing.T) {
+	sessionID := mustSessionID(t, "s_dup")
+	generationID := mustGenerationID(t, "g_dup")
+	paths, err := NewGenerationPaths(t.TempDir(), sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	command, err := process.NewCommand("/bin/test-child", "--session", "s_dup")
+	if err != nil {
+		t.Fatalf("process.NewCommand() error = %v", err)
+	}
+	env, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("process.InheritEnv() error = %v", err)
+	}
+	helper, err := NewHelper(HelperOptions{
+		SessionID:       sessionID,
+		GenerationID:    generationID,
+		Paths:           paths,
+		Command:         command,
+		CWD:             mustAbsDir(t, paths.RuntimeDir),
+		Environment:     env,
+		PTYSize:         process.PTYSize{Rows: 24, Cols: 80},
+		ProtocolVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewHelper() error = %v", err)
+	}
+	wal, err := OpenWAL(paths.WALPath, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("OpenWAL() error = %v", err)
+	}
+	defer wal.Close()
+	helper.wal = wal
+
+	duplicateID := mustCommandID(t, "cmd_dup")
+	var appendCalls atomic.Int32
+	firstReady := make(chan struct{}, 1)
+	release := make(chan struct{})
+	helper.beforeResolveAppend = func(commandID CommandID) {
+		if commandID != duplicateID {
+			return
+		}
+		if appendCalls.Add(1) != 1 {
+			return
+		}
+		firstReady <- struct{}{}
+		<-release
+	}
+
+	packet, err := NewCommandPacket(sessionID, generationID, CommandSend, duplicateID, json.RawMessage(`{"text":"alpha"}`))
+	if err != nil {
+		t.Fatalf("NewCommandPacket() error = %v", err)
+	}
+	type result struct {
+		kind    PacketKind
+		outcome CommandOutcome
+		queue   bool
+		err     error
+	}
+	results := make(chan result, 2)
+	runResolve := func() {
+		kind, outcome, queue, err := helper.resolveCommand(packet)
+		results <- result{kind: kind, outcome: outcome, queue: queue, err: err}
+	}
+
+	go runResolve()
+	<-firstReady
+	go runResolve()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	r1 := <-results
+	r2 := <-results
+	for i, r := range []result{r1, r2} {
+		if r.err != nil {
+			t.Fatalf("resolve result %d error = %v", i, r.err)
+		}
+		if r.kind != PacketCommandAccepted {
+			t.Fatalf("resolve result %d kind = %q, want %q", i, r.kind, PacketCommandAccepted)
+		}
+	}
+	if r1.outcome.AckCursor != r2.outcome.AckCursor {
+		t.Fatalf("duplicate ack cursors = %d and %d, want one durable outcome", r1.outcome.AckCursor, r2.outcome.AckCursor)
+	}
+	if r1.outcome.Deduped == r2.outcome.Deduped {
+		t.Fatalf("duplicate dedupe flags = %v and %v, want one original and one deduped", r1.outcome.Deduped, r2.outcome.Deduped)
+	}
+	if r1.queue == r2.queue {
+		t.Fatalf("duplicate queue flags = %v and %v, want one queued command", r1.queue, r2.queue)
+	}
+
+	replay, err := ReplayWAL(paths.WALPath, sessionID, generationID, 0)
+	if err != nil {
+		t.Fatalf("ReplayWAL() error = %v", err)
+	}
+	accepted := 0
+	for _, record := range replay.Records {
+		if record.Header.Class != WALRecordCommandAccepted {
+			continue
+		}
+		var payload commandFactPayload
+		if err := json.Unmarshal(record.Payload, &payload); err != nil {
+			t.Fatalf("json.Unmarshal(command accepted payload) error = %v", err)
+		}
+		if payload.CommandID == packet.CommandID {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("accepted wal records for %q = %d, want 1", packet.CommandID, accepted)
 	}
 }
 
@@ -364,6 +507,16 @@ func (tc *helperTestCase) mustGenerationBreak(t *testing.T) GenerationBreakPacke
 		t.Fatalf("decode generation break packet error = %v", err)
 	}
 	return packet
+}
+
+func (tc *helperTestCase) mustConnClosed(t *testing.T) {
+	t.Helper()
+	var packet json.RawMessage
+	if err := decodeWithin(t, tc.dec, &packet); err == nil {
+		t.Fatalf("decode after helper exit = %#v, want connection closed", packet)
+	} else if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("decode after helper exit error = %v, want EOF", err)
+	}
 }
 
 func (tc *helperTestCase) sendReplayRequest(t *testing.T, after WALOffset) {

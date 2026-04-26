@@ -54,8 +54,9 @@ type Helper struct {
 	childExited bool
 	closed      bool
 
-	commands chan queuedCommand
-	wg       sync.WaitGroup
+	commands            chan queuedCommand
+	beforeResolveAppend func(CommandID)
+	wg                  sync.WaitGroup
 }
 
 type helperConn struct {
@@ -273,10 +274,13 @@ func (h *Helper) Run(ctx context.Context) error {
 		}
 	}
 
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	h.wg.Add(3)
-	go h.acceptLoop(ctx)
-	go h.commandLoop(ctx)
-	go h.readPTY(ctx)
+	go h.acceptLoop(runCtx)
+	go h.commandLoop(runCtx)
+	go h.readPTY(runCtx)
 	childDone := make(chan struct{})
 	go func() {
 		defer close(childDone)
@@ -285,14 +289,12 @@ func (h *Helper) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		if err := h.shutdown(); err != nil {
-			return err
-		}
+		cancel()
 	case <-childDone:
-		<-ctx.Done()
-		if err := h.shutdown(); err != nil {
-			return err
-		}
+		cancel()
+	}
+	if err := h.shutdown(); err != nil {
+		return err
 	}
 
 	h.wg.Wait()
@@ -307,7 +309,7 @@ func (h *Helper) shutdown() error {
 	}
 	h.closed = true
 	h.mu.Unlock()
-	if !h.isBroken() {
+	if !h.isBroken() && !h.isChildExited() {
 		_ = h.emitGenerationBreak(GenerationBreakHelperExit)
 	}
 	if _, err := h.emitStateRecord(WALRecordHelperExit, helperExitPayload{Reason: GenerationBreakHelperExit.String()}); err != nil {
@@ -466,8 +468,9 @@ func (h *Helper) handleCommand(hc *helperConn, packet CommandPacket) error {
 
 func (h *Helper) resolveCommand(packet CommandPacket) (PacketKind, CommandOutcome, bool, error) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	if outcome, ok := h.outcomes[packet.CommandID]; ok {
-		h.mu.Unlock()
 		resolved, err := NewCommandOutcome(packet.CommandID, outcome.ack, true, outcome.payload)
 		if err != nil {
 			return "", CommandOutcome{}, false, err
@@ -477,13 +480,10 @@ func (h *Helper) resolveCommand(packet CommandPacket) (PacketKind, CommandOutcom
 		}
 		return PacketCommandRejected, resolved, false, nil
 	}
-	broken := h.broken
-	childExited := h.childExited
-	h.mu.Unlock()
 
 	payload := commandFactPayload{CommandID: packet.CommandID, CommandKind: packet.Kind}
-	if broken || childExited {
-		payload.Reason = rejectReason(broken, childExited)
+	if h.broken || h.childExited {
+		payload.Reason = rejectReason(h.broken, h.childExited)
 		record, err := h.wal.Append(WALRecordCommandRejected, payload)
 		if err != nil {
 			return "", CommandOutcome{}, false, err
@@ -492,12 +492,13 @@ func (h *Helper) resolveCommand(packet CommandPacket) (PacketKind, CommandOutcom
 		if err != nil {
 			return "", CommandOutcome{}, false, err
 		}
-		h.mu.Lock()
 		h.outcomes[packet.CommandID] = storedOutcome{accepted: false, ack: record.Header.Offset, payload: record.Payload}
-		h.mu.Unlock()
 		return PacketCommandRejected, outcome, false, nil
 	}
 
+	if h.beforeResolveAppend != nil {
+		h.beforeResolveAppend(packet.CommandID)
+	}
 	record, err := h.wal.Append(WALRecordCommandAccepted, payload)
 	if err != nil {
 		return "", CommandOutcome{}, false, err
@@ -506,9 +507,7 @@ func (h *Helper) resolveCommand(packet CommandPacket) (PacketKind, CommandOutcom
 	if err != nil {
 		return "", CommandOutcome{}, false, err
 	}
-	h.mu.Lock()
 	h.outcomes[packet.CommandID] = storedOutcome{accepted: true, ack: record.Header.Offset, payload: record.Payload}
-	h.mu.Unlock()
 	return PacketCommandAccepted, outcome, true, nil
 }
 
