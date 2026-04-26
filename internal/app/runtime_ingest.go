@@ -3,18 +3,37 @@ package app
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 
+	"actrail/internal/adapters/iod"
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
 
 const maxRuntimeLineBytes = 1 << 20
 
+type iodTerminalOutputPayload struct {
+	Stream string `json:"stream"`
+	Data   string `json:"data"`
+}
+
+type piRuntimeLineBuffer struct {
+	pending bytes.Buffer
+}
+
 func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.Backend, runtime sessionRuntime) {
-	if s == nil || backend != session.BackendPI || runtime.handle == nil || runtime.helper != nil {
+	if s == nil || backend != session.BackendPI {
+		return
+	}
+	if runtime.helper != nil {
+		go s.readPIHelperRuntime(sessionID, runtime.helper)
+		return
+	}
+	if runtime.handle == nil {
 		return
 	}
 	for _, src := range runtimeOutputSources(runtime) {
@@ -46,18 +65,88 @@ func (s *Stub) readPIRuntime(sessionID session.SessionID, src io.Reader) {
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
 	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-		material, err := pi.ParseObjectJSON(line)
-		if err != nil {
-			continue
-		}
-		for _, event := range material.Events {
-			s.applyPIEvent(sessionID, event)
-		}
+		s.applyPIRuntimeLine(sessionID, scanner.Bytes())
 	}
+}
+
+func (s *Stub) readPIHelperRuntime(sessionID session.SessionID, helper *runtimeIODHelper) {
+	if s == nil || helper == nil || helper.streamClient == nil {
+		return
+	}
+	var lines piRuntimeLineBuffer
+	for {
+		packet, err := helper.streamClient.ReadPacket(context.Background())
+		if err != nil {
+			return
+		}
+		s.applyPIHelperPacket(sessionID, &lines, packet)
+	}
+}
+
+func (s *Stub) applyPIHelperPacket(sessionID session.SessionID, lines *piRuntimeLineBuffer, packet any) {
+	switch v := packet.(type) {
+	case iod.StatePacket:
+		s.applyPIHelperFact(sessionID, lines, v.Fact)
+	case iod.ReplayItemPacket:
+		s.applyPIHelperFact(sessionID, lines, v.Item.Fact)
+	}
+}
+
+func (s *Stub) applyPIHelperFact(sessionID session.SessionID, lines *piRuntimeLineBuffer, fact iod.HelperFact) {
+	if fact.FactKind != iod.FactOutputDelta {
+		return
+	}
+	var payload iodTerminalOutputPayload
+	if err := json.Unmarshal(fact.Payload, &payload); err != nil {
+		return
+	}
+	if strings.TrimSpace(payload.Data) == "" {
+		return
+	}
+	lines.append(payload.Data)
+
+	for {
+		line, ok := lines.nextLine()
+		if !ok {
+			return
+		}
+		s.applyPIRuntimeLine(sessionID, line)
+	}
+}
+
+func (s *Stub) applyPIRuntimeLine(sessionID session.SessionID, raw []byte) {
+	line := bytes.TrimSpace(raw)
+	if len(line) == 0 || line[0] != '{' {
+		return
+	}
+	material, err := pi.ParseObjectJSON(line)
+	if err != nil {
+		return
+	}
+	for _, event := range material.Events {
+		s.applyPIEvent(sessionID, event)
+	}
+}
+
+func (b *piRuntimeLineBuffer) append(chunk string) {
+	if b == nil || chunk == "" {
+		return
+	}
+	_, _ = b.pending.WriteString(chunk)
+}
+
+func (b *piRuntimeLineBuffer) nextLine() ([]byte, bool) {
+	if b == nil {
+		return nil, false
+	}
+	data := b.pending.Bytes()
+	idx := bytes.IndexByte(data, '\n')
+	if idx < 0 {
+		return nil, false
+	}
+	line := append([]byte(nil), data[:idx]...)
+	b.pending.Next(idx + 1)
+	return line, true
 }
 
 func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) {

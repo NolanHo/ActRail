@@ -53,12 +53,12 @@ type RuntimeConfig struct {
 }
 
 type runtimeLaunchRequest struct {
-	SessionID        session.SessionID
-	Backend          session.Backend
-	CWD              string
-	Provider         string
-	Model            string
-	ReasoningEffort  string
+	SessionID       session.SessionID
+	Backend         session.Backend
+	CWD             string
+	Provider        string
+	Model           string
+	ReasoningEffort string
 }
 
 type processRuntimeLauncher struct {
@@ -87,17 +87,19 @@ const (
 )
 
 type sessionRuntime struct {
-	launchSpec            process.LaunchSpec
-	handle                process.Handle
-	protocol              runtimeProtocol
-	helper                *runtimeIODHelper
-	helperBinding         *RuntimeHelperBinding
-	currentHelperBinding  func(session.SessionID) (*RuntimeHelperBinding, error)
+	launchSpec           process.LaunchSpec
+	handle               process.Handle
+	protocol             runtimeProtocol
+	helper               *runtimeIODHelper
+	helperBinding        *RuntimeHelperBinding
+	currentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
 }
 
 type runtimeIODHelper struct {
 	handle       process.Handle
-	client       *iodclient.Client
+	streamClient *iodclient.Client
+	dialer       iodclient.Dialer
+	manifest     iod.GenerationManifest
 	sessionID    session.SessionID
 	generationID iod.GenerationID
 	helperPID    int
@@ -291,7 +293,9 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	}
 	helper := &runtimeIODHelper{
 		handle:       handle,
-		client:       client,
+		streamClient: client,
+		dialer:       l.dialer,
+		manifest:     manifest,
 		sessionID:    req.SessionID,
 		generationID: generationID,
 		helperPID:    hello.HelperPID,
@@ -564,12 +568,14 @@ func (r sessionRuntime) CleanupHelperArtifacts() error {
 }
 
 func (h *runtimeIODHelper) command(ctx context.Context, name iod.CommandName, payload json.RawMessage) error {
-	if h == nil || h.client == nil {
+	if h == nil || h.streamClient == nil {
 		return errRuntimeInputUnavailable
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	h.commandMu.Lock()
+	defer h.commandMu.Unlock()
 	commandID, err := h.nextCommandID()
 	if err != nil {
 		return err
@@ -578,9 +584,12 @@ func (h *runtimeIODHelper) command(ctx context.Context, name iod.CommandName, pa
 	if err != nil {
 		return err
 	}
-	h.commandMu.Lock()
-	defer h.commandMu.Unlock()
-	result, err := h.client.Command(ctx, packet)
+	client, err := h.attachCommandClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+	result, err := client.Command(ctx, packet)
 	if err != nil {
 		return err
 	}
@@ -591,6 +600,26 @@ func (h *runtimeIODHelper) command(ctx context.Context, name iod.CommandName, pa
 		return fmt.Errorf("helper command %q returned no durable outcome", name)
 	}
 	return nil
+}
+
+func (h *runtimeIODHelper) attachCommandClient(ctx context.Context) (*iodclient.Client, error) {
+	if h == nil {
+		return nil, errRuntimeInputUnavailable
+	}
+	client, err := iodclient.DialContext(ctx, h.manifest.ControlSocketPath, h.dialer)
+	if err != nil {
+		return nil, err
+	}
+	hello, err := client.Hello(ctx)
+	if err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	if err := iodclient.VerifyHelloProof(h.manifest, hello); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return client, nil
 }
 
 func (h *runtimeIODHelper) nextCommandID() (iod.CommandID, error) {
@@ -613,8 +642,8 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
-	if h.client != nil {
-		defer func() { _ = h.client.Close() }()
+	if h.streamClient != nil {
+		defer func() { _ = h.streamClient.Close() }()
 	}
 	if h.handle != nil {
 		shutdownCtx := ctx
@@ -686,7 +715,7 @@ func (s *Stub) runtimeForSession(sessionID session.SessionID, runtime sessionRun
 	}
 	binding := &RuntimeHelperBinding{GenerationID: attachment.Binding.GenerationID, LastReplayOffset: attachment.Binding.LastReplayOffset}
 	runtime.helperBinding = binding
-	runtime.helper = runtimeIODHelperFromAttachment(attachment)
+	runtime.helper = runtimeIODHelperFromAttachment(attachment, s.helperDialer)
 	runtime.currentHelperBinding = func(session.SessionID) (*RuntimeHelperBinding, error) {
 		resolved := *binding
 		return &resolved, nil
@@ -694,9 +723,11 @@ func (s *Stub) runtimeForSession(sessionID session.SessionID, runtime sessionRun
 	return runtime
 }
 
-func runtimeIODHelperFromAttachment(attachment attachedHelper) *runtimeIODHelper {
+func runtimeIODHelperFromAttachment(attachment attachedHelper, dialer iodclient.Dialer) *runtimeIODHelper {
 	return &runtimeIODHelper{
-		client:       attachment.Client,
+		streamClient: attachment.Client,
+		dialer:       dialer,
+		manifest:     attachment.Manifest,
 		sessionID:    attachment.Binding.SessionID,
 		generationID: attachment.Binding.GenerationID,
 		helperPID:    attachment.Hello.HelperPID,

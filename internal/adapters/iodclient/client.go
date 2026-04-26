@@ -206,7 +206,7 @@ func (c *Client) writePacket(ctx context.Context, packet any) error {
 	return nil
 }
 
-func (c *Client) readPacket(ctx context.Context) (any, error) {
+func (c *Client) ReadPacket(ctx context.Context) (any, error) {
 	if err := setConnDeadline(ctx, c.conn); err != nil {
 		return nil, err
 	}
@@ -220,6 +220,10 @@ func (c *Client) readPacket(ctx context.Context) (any, error) {
 		return nil, err
 	}
 	return packet, nil
+}
+
+func (c *Client) readPacket(ctx context.Context) (any, error) {
+	return c.ReadPacket(ctx)
 }
 
 func decodePacket(raw json.RawMessage) (any, error) {
