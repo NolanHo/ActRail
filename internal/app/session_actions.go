@@ -152,7 +152,11 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 	}
 	exists, willCreate := pathExists(cwd)
 	items := s.registry.List()
-	candidates := make([]sessionRecord, 0, len(items))
+	type resumeCandidateRecord struct {
+		record    sessionRecord
+		updatedAt time.Time
+	}
+	candidates := make([]resumeCandidateRecord, 0, len(items))
 	for _, record := range items {
 		if normalizeSessionCWD(record.cwd) != cwd {
 			continue
@@ -160,11 +164,11 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		if backend != "" && record.identity.Backend().String() != backend {
 			continue
 		}
-		candidates = append(candidates, record)
+		candidates = append(candidates, resumeCandidateRecord{record: record, updatedAt: sessionDisplayUpdatedAt(record)})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].updatedAt.Equal(candidates[j].updatedAt) {
-			return candidates[i].identity.SessionID().String() > candidates[j].identity.SessionID().String()
+			return candidates[i].record.identity.SessionID().String() > candidates[j].record.identity.SessionID().String()
 		}
 		return candidates[i].updatedAt.After(candidates[j].updatedAt)
 	})
@@ -179,8 +183,8 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		Remaining:  len(candidates) - end,
 		Sessions:   make([]SessionResumeCandidate, 0, end-start),
 	}
-	for _, record := range candidates[start:end] {
-		payload.Sessions = append(payload.Sessions, sessionResumeCandidateFromRecord(record))
+	for _, item := range candidates[start:end] {
+		payload.Sessions = append(payload.Sessions, sessionResumeCandidateFromRecord(item.record, item.updatedAt))
 	}
 	return payload, nil
 }
@@ -361,7 +365,7 @@ func (s *Stub) HandoffSession(_ context.Context, req HandoffSessionRequest) (Han
 	return HandoffSessionResponse{}, Unsupported("session handoff not implemented")
 }
 
-func sessionResumeCandidateFromRecord(record sessionRecord) SessionResumeCandidate {
+func sessionResumeCandidateFromRecord(record sessionRecord, updatedAt time.Time) SessionResumeCandidate {
 	return SessionResumeCandidate{
 		SessionID:        record.identity.SessionID().String(),
 		Title:            record.title,
@@ -369,7 +373,7 @@ func sessionResumeCandidateFromRecord(record sessionRecord) SessionResumeCandida
 		DisplayName:      sessionDisplayName(record),
 		CWD:              record.cwd,
 		FirstUserMessage: firstUserMessageForRecord(record),
-		UpdatedTS:        timestampSeconds(record.updatedAt),
+		UpdatedTS:        timestampSeconds(updatedAt),
 	}
 }
 

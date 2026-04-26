@@ -237,7 +237,7 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 		PriorityOffset:      record.priorityOffset,
 		SnoozeUntil:         unixSecondsPtr(record.snoozeUntil),
 		DependencySessionID: sessionIDString(record.dependencySessionID),
-		LastUpdatedTS:       timestampSeconds(record.updatedAt),
+		LastUpdatedTS:       timestampSeconds(sessionDisplayUpdatedAt(record)),
 		LastActivityTS:      timestampSeconds(record.activityAt),
 		Historical:          record.identity.Historical(),
 		Capabilities:        s.capabilitiesSnapshot(),
