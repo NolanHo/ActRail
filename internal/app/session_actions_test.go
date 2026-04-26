@@ -113,8 +113,18 @@ func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	if len(listed.Items) != 2 {
 		t.Fatalf("len(ListSessions().Items) = %d, want 2", len(listed.Items))
 	}
-	if listed.Items[0].Alias != "Renamed task" || !listed.Items[0].Focused || listed.Items[0].Model != model {
-		t.Fatalf("ListSessions().Items[0] = %+v", listed.Items[0])
+	var listedRecord *SessionSummary
+	for i := range listed.Items {
+		if listed.Items[i].SessionID == sessionID.String() {
+			listedRecord = &listed.Items[i]
+			break
+		}
+	}
+	if listedRecord == nil {
+		t.Fatalf("ListSessions() missing session %q in %+v", sessionID, listed.Items)
+	}
+	if listedRecord.Alias != "Renamed task" || !listedRecord.Focused || listedRecord.Model != model {
+		t.Fatalf("ListSessions() record = %+v", *listedRecord)
 	}
 
 	deleted, err := svc.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: sessionID})
