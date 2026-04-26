@@ -346,7 +346,7 @@ func sessionSummaryFromRecord(record sessionRecord) SessionSummary {
 		Title:               record.title,
 		Alias:               displayAlias(record),
 		DisplayName:         sessionDisplayName(record),
-		FirstUserMessage:    firstUserMessage(record.transcript),
+		FirstUserMessage:    firstUserMessageForRecord(record),
 		CWD:                 record.cwd,
 		Busy:                record.state.Busy(),
 		Focused:             record.focused,

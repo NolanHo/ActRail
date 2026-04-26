@@ -368,7 +368,7 @@ func sessionResumeCandidateFromRecord(record sessionRecord) SessionResumeCandida
 		Alias:            displayAlias(record),
 		DisplayName:      sessionDisplayName(record),
 		CWD:              record.cwd,
-		FirstUserMessage: firstUserMessage(record.transcript),
+		FirstUserMessage: firstUserMessageForRecord(record),
 		UpdatedTS:        timestampSeconds(record.updatedAt),
 	}
 }

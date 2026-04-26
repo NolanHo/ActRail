@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -21,6 +22,12 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		_ = catalog.Close()
 		return nil, err
 	}
+	sourceRefs, err := catalog.ListSessionSourceRefs(context.Background())
+	if err != nil {
+		_ = catalog.Close()
+		return nil, err
+	}
+	records = applyImportedSourceRefs(records, sourceRefs)
 	recentCwds, cwdGroups, err := loadPersistedAppState(catalog)
 	if err != nil {
 		_ = catalog.Close()
