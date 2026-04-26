@@ -222,8 +222,8 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	}
 	mergeTargetCounts(&importedCounts, actual)
 	validation.Mismatches = append(validation.Mismatches,
-		mismatch("session_catalog_rows", sourceCounts.SessionKeyUnion, importedCounts.SessionCatalogRows, "union of sessions, session_ui_state, session_files, session_queue_items"),
-		mismatch("session_source_ref_rows", sourceCounts.SessionKeyUnion, importedCounts.SessionSourceRefRows, "source refs preserve source_path and first_user_message when available"),
+		mismatch("session_catalog_rows", sourceCounts.Sessions, importedCounts.SessionCatalogRows, "only sessions rows become visible/importable sessions; orphan auxiliary rows remain in migration warnings"),
+		mismatch("session_source_ref_rows", sourceCounts.Sessions, importedCounts.SessionSourceRefRows, "source refs preserve source_path and first_user_message for sessions rows"),
 		mismatch("hidden_session_key_rows", sourceCounts.HiddenSessionKeys, importedCounts.HiddenSessionKeyRows, "hidden session compatibility keys"),
 		mismatch("session_queue_item_rows", sourceCounts.SessionQueueItems, importedCounts.SessionQueueItemRows, "queue items imported with generated durable queue ids"),
 		mismatch("session_file_mapped_rows", sourceCounts.SessionFiles, importedCounts.SessionFileMappedRows+importedCounts.SessionFileSkippedRows, "session_files mapped into workspace history or explicit warnings"),
@@ -340,64 +340,40 @@ func buildImportBundle(source legacySnapshot, opts Options, sideAudit []SideJSON
 	uiByKey := make(map[sessionKey]legacyUIStateRow, len(source.SessionUIState))
 	filesByKey := make(map[sessionKey][]legacySessionFileRow)
 	queueByKey := make(map[sessionKey][]legacyQueueItemRow)
-	keySet := make(map[sessionKey]struct{})
 	for _, row := range source.Sessions {
-		key := sessionKey{Backend: strings.TrimSpace(row.Backend), SessionID: strings.TrimSpace(row.SessionID)}
-		sessionByKey[key] = normalizeLegacySessionRow(row)
-		keySet[key] = struct{}{}
+		normalized := normalizeLegacySessionRow(row)
+		key := sessionKey{Backend: normalized.Backend, SessionID: normalized.SessionID}
+		sessionByKey[key] = normalized
 	}
 	for _, row := range source.SessionUIState {
-		key := sessionKey{Backend: strings.TrimSpace(row.Backend), SessionID: strings.TrimSpace(row.SessionID)}
-		uiByKey[key] = normalizeLegacyUIStateRow(row)
-		keySet[key] = struct{}{}
+		normalized := normalizeLegacyUIStateRow(row)
+		key := sessionKey{Backend: normalized.Backend, SessionID: normalized.SessionID}
+		uiByKey[key] = normalized
 	}
 	for _, row := range source.SessionFiles {
 		normalized := normalizeLegacySessionFileRow(row)
-		key := sessionKey{Backend: strings.TrimSpace(normalized.Backend), SessionID: strings.TrimSpace(normalized.SessionID)}
+		key := sessionKey{Backend: normalized.Backend, SessionID: normalized.SessionID}
 		filesByKey[key] = append(filesByKey[key], normalized)
-		keySet[key] = struct{}{}
 	}
 	for _, row := range source.SessionQueueItems {
 		normalized := normalizeLegacyQueueItemRow(row)
-		key := sessionKey{Backend: strings.TrimSpace(normalized.Backend), SessionID: strings.TrimSpace(normalized.SessionID)}
+		key := sessionKey{Backend: normalized.Backend, SessionID: normalized.SessionID}
 		queueByKey[key] = append(queueByKey[key], normalized)
-		keySet[key] = struct{}{}
 	}
-	keys := make([]sessionKey, 0, len(keySet))
-	for key := range keySet {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Backend != keys[j].Backend {
-			return keys[i].Backend < keys[j].Backend
-		}
-		return keys[i].SessionID < keys[j].SessionID
-	})
-	for _, key := range keys {
-		sessionRow, hasSession := sessionByKey[key]
+	hiddenKeySet := hiddenSessionKeySet(source.HiddenSessionKeys)
+	for _, key := range sortedSessionKeys(sessionByKey) {
+		sessionRow := sessionByKey[key]
 		uiRow, hasUI := uiByKey[key]
-		if !hasSession && hasUI {
-			state.OrphanSessionUIState++
-			appendWarning(&bundle.Warnings, &state, "session_ui_state", key.String(), "orphan_session_ui_state", "session_ui_state row has no sessions row; imported as placeholder session", uiRow)
-		}
-		if !hasSession && len(filesByKey[key]) > 0 {
-			state.OrphanSessionFiles++
-			appendWarning(&bundle.Warnings, &state, "session_files", key.String(), "orphan_session_files", "session_files rows have no sessions row; imported as placeholder session", filesByKey[key])
-		}
-		if !hasSession && len(queueByKey[key]) > 0 {
-			state.OrphanSessionQueueItems++
-			appendWarning(&bundle.Warnings, &state, "session_queue_items", key.String(), "orphan_session_queue_items", "session_queue_items rows have no sessions row; imported as placeholder session", queueByKey[key])
-		}
-		if hasSession && sessionRow.PendingStartup {
+		if sessionRow.PendingStartup {
 			appendWarning(&bundle.Warnings, &state, "sessions", key.String(), "ignored_pending_startup", "pending_startup is runtime-only and not imported", sessionRow)
 		}
 		if hasUI && uiRow.DependencyBackend != "" && uiRow.DependencyBackend != key.Backend {
 			appendWarning(&bundle.Warnings, &state, "session_ui_state", key.String(), "dependency_backend_mismatch", "dependency_backend does not match row backend; dependency_session_id preserved without backend remap", uiRow)
 		}
 		snapshot := sqlitestore.SessionSnapshotRow{
-			Session:   buildSessionCatalogRow(key, sessionRow, hasSession, uiRow, hasUI, opts.SnapshotAt),
+			Session:   buildSessionCatalogRow(key, sessionRow, true, uiRow, hasUI, sessionHiddenByKeys(key, hiddenKeySet), opts.SnapshotAt),
 			Queue:     buildQueueRows(key, queueByKey[key]),
-			Workspace: buildWorkspaceRows(key, sessionRow, hasSession, filesByKey[key], &bundle.Warnings, &state),
+			Workspace: buildWorkspaceRows(key, sessionRow, true, filesByKey[key], &bundle.Warnings, &state),
 		}
 		bundle.Sessions = append(bundle.Sessions, snapshot)
 		bundle.SessionSourceRefs = append(bundle.SessionSourceRefs, sqlitestore.SessionSourceRefRow{
@@ -406,6 +382,18 @@ func buildImportBundle(source legacySnapshot, opts Options, sideAudit []SideJSON
 			SourcePath:       strings.TrimSpace(sessionRow.SourcePath),
 			FirstUserMessage: strings.TrimSpace(sessionRow.FirstUserMessage),
 		})
+	}
+	for _, key := range sortedOrphanKeys(uiByKey, sessionByKey) {
+		state.OrphanSessionUIState++
+		appendWarning(&bundle.Warnings, &state, "session_ui_state", key.String(), "orphan_session_ui_state", "session_ui_state row has no sessions row; preserved in migration warnings", uiByKey[key])
+	}
+	for _, key := range sortedOrphanKeys(filesByKey, sessionByKey) {
+		state.OrphanSessionFiles++
+		appendWarning(&bundle.Warnings, &state, "session_files", key.String(), "orphan_session_files", "session_files rows have no sessions row; preserved in migration warnings", filesByKey[key])
+	}
+	for _, key := range sortedOrphanKeys(queueByKey, sessionByKey) {
+		state.OrphanSessionQueueItems++
+		appendWarning(&bundle.Warnings, &state, "session_queue_items", key.String(), "orphan_session_queue_items", "session_queue_items rows have no sessions row; preserved in migration warnings", queueByKey[key])
 	}
 	bundle.AppState = buildAppState(source)
 	for _, key := range source.HiddenSessionKeys {
@@ -508,7 +496,62 @@ func normalizeLegacyQueueItemRow(row legacyQueueItemRow) legacyQueueItemRow {
 	return row
 }
 
-func buildSessionCatalogRow(key sessionKey, sessionRow legacySessionRow, hasSession bool, uiRow legacyUIStateRow, hasUI bool, snapshotAt time.Time) sqlitestore.SessionRow {
+func sortedSessionKeys(items map[sessionKey]legacySessionRow) []sessionKey {
+	keys := make([]sessionKey, 0, len(items))
+	for key := range items {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Backend != keys[j].Backend {
+			return keys[i].Backend < keys[j].Backend
+		}
+		return keys[i].SessionID < keys[j].SessionID
+	})
+	return keys
+}
+
+func sortedOrphanKeys[T any](items map[sessionKey]T, sessions map[sessionKey]legacySessionRow) []sessionKey {
+	keys := make([]sessionKey, 0, len(items))
+	for key := range items {
+		if _, ok := sessions[key]; ok {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Backend != keys[j].Backend {
+			return keys[i].Backend < keys[j].Backend
+		}
+		return keys[i].SessionID < keys[j].SessionID
+	})
+	return keys
+}
+
+func hiddenSessionKeySet(keys []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		set[trimmed] = struct{}{}
+	}
+	return set
+}
+
+func sessionHiddenByKeys(key sessionKey, hiddenKeys map[string]struct{}) bool {
+	for _, candidate := range []string{
+		key.SessionID,
+		fmt.Sprintf("history:%s:%s", key.Backend, key.SessionID),
+	} {
+		if _, ok := hiddenKeys[candidate]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func buildSessionCatalogRow(key sessionKey, sessionRow legacySessionRow, hasSession bool, uiRow legacyUIStateRow, hasUI bool, hidden bool, snapshotAt time.Time) sqlitestore.SessionRow {
 	createdAt, updatedAt, activityAt := resolveSessionTimes(sessionRow, hasSession, snapshotAt)
 	row := sqlitestore.SessionRow{
 		SessionID:      key.SessionID,
@@ -519,13 +562,12 @@ func buildSessionCatalogRow(key sessionKey, sessionRow legacySessionRow, hasSess
 		UpdatedAt:      updatedAt,
 		ActivityAt:     activityAt,
 		Focused:        false,
-		Hidden:         false,
+		Hidden:         hidden,
 		PriorityOffset: 0,
 	}
 	if hasUI {
 		row.Alias = uiRow.Alias
 		row.Focused = uiRow.Focused
-		row.Hidden = uiRow.Hidden
 		row.PriorityOffset = uiRow.PriorityOffset
 		row.SnoozeUntil = cloneTimePtr(uiRow.SnoozeUntil)
 		if uiRow.DependencySessionID != "" {

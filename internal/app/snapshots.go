@@ -226,7 +226,7 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 		Title:               record.title,
 		Alias:               displayAlias(record),
 		DisplayName:         sessionDisplayName(record),
-		FirstUserMessage:    firstUserMessage(record.transcript),
+		FirstUserMessage:    firstUserMessageForRecord(record),
 		CWD:                 record.cwd,
 		AgentBackend:        record.identity.Backend().String(),
 		Provider:            record.provider,
@@ -244,10 +244,13 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 	}, nil
 }
 
-func (s *Stub) SessionMessages(_ context.Context, req SessionMessagesRequest) (SessionMessagesResponse, error) {
+func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) (SessionMessagesResponse, error) {
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
 		return SessionMessagesResponse{}, err
+	}
+	if response, ok, err := loadDetachedImportedPIHistory(ctx, record, req); ok {
+		return response, err
 	}
 	page := record.transcript.History(messageBeforeSeq(req.BeforeSeq), req.Limit)
 	items := page.Items()

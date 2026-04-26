@@ -294,6 +294,102 @@ func TestPersistentStubDeleteArchivesSessionRow(t *testing.T) {
 	}
 }
 
+func TestPersistentStubSessionMessagesLoadsImportedPIHistoryFromSourcePath(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+
+	sourcePath := filepath.Join("..", "domain", "pi", "testdata", "runtime_session.jsonl")
+	if err := catalog.ReplaceImportBundle(context.Background(), sqlitestore.ImportBundle{
+		Sessions: []sqlitestore.SessionSnapshotRow{{
+			Session: sqlitestore.SessionRow{
+				SessionID:   "imported-pi-1",
+				Backend:     "pi",
+				CWD:         "/workspace/codoxear",
+				Title:       "Imported Pi",
+				CreatedAt:   now,
+				UpdatedAt:   now,
+				ActivityAt:  now,
+				Focused:     false,
+				Hidden:      false,
+				ArchivedAt:  nil,
+				SnoozeUntil: nil,
+			},
+			Queue: []sqlitestore.QueueItemRow{},
+			Workspace: sqlitestore.WorkspaceStateRow{
+				OpenPaths:    []string{},
+				HistoryItems: []sqlitestore.WorkspaceHistoryItemRow{},
+			},
+		}},
+		SessionSourceRefs: []sqlitestore.SessionSourceRefRow{{
+			SessionID:        "imported-pi-1",
+			Backend:          "pi",
+			SourcePath:       sourcePath,
+			FirstUserMessage: "Summarize the current repository state.",
+		}},
+		AppState:          sqlitestore.AppStateRow{RecentCwds: []string{}, CwdGroups: []sqlitestore.CwdGroupRow{}},
+		HiddenSessionKeys: []sqlitestore.HiddenSessionKeyRow{},
+		AppKV:             []sqlitestore.AppKVRow{},
+		Warnings:          []sqlitestore.MigrationWarningRow{},
+		Provenance: sqlitestore.ImportProvenanceRow{
+			Source:      "fixture",
+			SnapshotAt:  now,
+			DetailsJSON: `{"fixture":"runtime_session.jsonl"}`,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceImportBundle() error = %v", err)
+	}
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	sessionID := mustSessionID(t, "imported-pi-1")
+
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
+	}
+	if listed.Items[0].FirstUserMessage != "Summarize the current repository state." {
+		t.Fatalf("ListSessions().Items[0].FirstUserMessage = %q", listed.Items[0].FirstUserMessage)
+	}
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 2 {
+		t.Fatalf("len(SessionMessages().Items) = %d, want 2", len(messages.Items))
+	}
+	if messages.Items[0].Seq != 1 || messages.Items[0].Role != "user" || messages.Items[0].Text != "Summarize the current repository state." {
+		t.Fatalf("SessionMessages().Items[0] = %+v", messages.Items[0])
+	}
+	if messages.Items[1].Seq != 2 || messages.Items[1].Role != "assistant" || messages.Items[1].Text == "" {
+		t.Fatalf("SessionMessages().Items[1] = %+v", messages.Items[1])
+	}
+	if messages.TailSeq != 2 || messages.HasMore {
+		t.Fatalf("SessionMessages() = %+v", messages)
+	}
+
+	latest, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 1})
+	if err != nil {
+		t.Fatalf("SessionMessages(limit=1) error = %v", err)
+	}
+	if len(latest.Items) != 1 || latest.Items[0].Seq != 2 || latest.Items[0].Role != "assistant" {
+		t.Fatalf("SessionMessages(limit=1) = %+v", latest)
+	}
+	if !latest.HasMore || latest.NextBeforeSeq == nil || *latest.NextBeforeSeq != 2 {
+		t.Fatalf("SessionMessages(limit=1) paging = %+v", latest)
+	}
+}
+
 func mustSessionID(t *testing.T, raw string) session.SessionID {
 	t.Helper()
 	sessionID, err := session.ParseSessionID(raw)

@@ -39,29 +39,31 @@ type sessionCreateSpec struct {
 }
 
 type sessionRecord struct {
-	identity            session.Identity
-	title               string
-	alias               string
-	cwd                 string
-	provider            string
-	model               string
-	reasoningEffort     string
-	focused             bool
-	hidden              bool
-	priorityOffset      float64
-	snoozeUntil         *time.Time
-	dependencySessionID *session.SessionID
-	createdAt           time.Time
-	updatedAt           time.Time
-	activityAt          time.Time
-	archivedAt          *time.Time
-	state               session.State
-	workspace           workspaceBrowserState
-	transcript          message.Transcript
-	runtime             sessionRuntime
-	uiRequest           *SessionUIRequestSnapshot
-	resumeCursors       SessionResumeCursors
-	inputMu             *sync.Mutex
+	identity                 session.Identity
+	title                    string
+	alias                    string
+	cwd                      string
+	provider                 string
+	model                    string
+	reasoningEffort          string
+	focused                  bool
+	hidden                   bool
+	priorityOffset           float64
+	snoozeUntil              *time.Time
+	dependencySessionID      *session.SessionID
+	createdAt                time.Time
+	updatedAt                time.Time
+	activityAt               time.Time
+	archivedAt               *time.Time
+	state                    session.State
+	workspace                workspaceBrowserState
+	transcript               message.Transcript
+	importedSourcePath       string
+	importedFirstUserMessage string
+	runtime                  sessionRuntime
+	uiRequest                *SessionUIRequestSnapshot
+	resumeCursors            SessionResumeCursors
+	inputMu                  *sync.Mutex
 }
 
 func newSessionRegistry(now func() time.Time, stores ...sessionStore) *sessionRegistry {
@@ -163,7 +165,7 @@ func (r *sessionRegistry) List() []sessionRecord {
 	items := make([]sessionRecord, 0, len(r.order))
 	for _, sessionID := range r.order {
 		record, ok := r.sessions[sessionID]
-		if !ok {
+		if !ok || record.hidden {
 			continue
 		}
 		items = append(items, copySessionRecord(record))
@@ -579,29 +581,31 @@ func (r *sessionRegistry) UpdateWorkspace(sessionID session.SessionID, workspace
 
 func copySessionRecord(record sessionRecord) sessionRecord {
 	return sessionRecord{
-		identity:            record.identity,
-		title:               record.title,
-		alias:               record.alias,
-		cwd:                 record.cwd,
-		provider:            record.provider,
-		model:               record.model,
-		reasoningEffort:     record.reasoningEffort,
-		focused:             record.focused,
-		hidden:              record.hidden,
-		priorityOffset:      record.priorityOffset,
-		snoozeUntil:         copyTimePtr(record.snoozeUntil),
-		dependencySessionID: copySessionIDPtr(record.dependencySessionID),
-		createdAt:           record.createdAt,
-		updatedAt:           record.updatedAt,
-		activityAt:          record.activityAt,
-		archivedAt:          copyTimePtr(record.archivedAt),
-		state:               copySessionState(record.state),
-		workspace:           copyWorkspaceBrowserState(record.workspace),
-		transcript:          record.transcript.Clone(),
-		runtime:             record.runtime,
-		uiRequest:           copySessionUIRequest(record.uiRequest),
-		resumeCursors:       record.resumeCursors,
-		inputMu:             record.inputMu,
+		identity:                 record.identity,
+		title:                    record.title,
+		alias:                    record.alias,
+		cwd:                      record.cwd,
+		provider:                 record.provider,
+		model:                    record.model,
+		reasoningEffort:          record.reasoningEffort,
+		focused:                  record.focused,
+		hidden:                   record.hidden,
+		priorityOffset:           record.priorityOffset,
+		snoozeUntil:              copyTimePtr(record.snoozeUntil),
+		dependencySessionID:      copySessionIDPtr(record.dependencySessionID),
+		createdAt:                record.createdAt,
+		updatedAt:                record.updatedAt,
+		activityAt:               record.activityAt,
+		archivedAt:               copyTimePtr(record.archivedAt),
+		state:                    copySessionState(record.state),
+		workspace:                copyWorkspaceBrowserState(record.workspace),
+		transcript:               record.transcript.Clone(),
+		importedSourcePath:       record.importedSourcePath,
+		importedFirstUserMessage: record.importedFirstUserMessage,
+		runtime:                  record.runtime,
+		uiRequest:                copySessionUIRequest(record.uiRequest),
+		resumeCursors:            record.resumeCursors,
+		inputMu:                  record.inputMu,
 	}
 }
 

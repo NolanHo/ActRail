@@ -139,22 +139,35 @@ func TestRunImportsLegacySQLiteAndPreservesSessionFallback(t *testing.T) {
 	}
 }
 
-func TestRunReportsWarningsAndSideJSONFreshness(t *testing.T) {
+func TestRunUsesSessionsRowsForVisibleTabsAndPreservesOrphansAsWarnings(t *testing.T) {
 	snapshotAt := time.Unix(1760100000, 0).UTC()
 	sourcePath := createLegacySourceDB(t, []string{
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'visible-a', '/tmp/project-a', '/tmp/pi/visible-a.jsonl', 'Visible A', 'prompt a', 1760099000, 1760099100, 0)`,
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'hidden-a', '/tmp/project-hidden', '/tmp/pi/hidden-a.jsonl', 'Hidden A', 'prompt hidden', 1760099200, 1760099300, 0)`,
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'visible-b', '/tmp/project-b', '/tmp/pi/visible-b.jsonl', 'Visible B', 'prompt b', 1760099400, 1760099500, 0)`,
+		`INSERT INTO session_ui_state(backend, session_id, alias, focused, hidden, priority_offset, snooze_until, dependency_backend, dependency_session_id)
+		 VALUES('pi', 'visible-a', 'Alias A', 1, 0, 0.5, NULL, NULL, NULL)`,
 		`INSERT INTO session_ui_state(backend, session_id, alias, focused, hidden, priority_offset, snooze_until, dependency_backend, dependency_session_id)
 		 VALUES('pi', 'orphan-ui', 'Orphan Alias', 1, 1, 0.5, NULL, NULL, NULL)`,
+		`INSERT INTO hidden_session_keys(key) VALUES('history:pi:hidden-a')`,
 		`INSERT INTO session_files(backend, session_id, path, ordinal, last_used_ts)
-		 VALUES('codex', 'orphan-file', '/tmp/outside/file-a.py', 0, 1760099900)`,
-		`INSERT INTO hidden_session_keys(key) VALUES('hidden-a')`,
-		`INSERT INTO hidden_session_keys(key) VALUES('hidden-b')`,
+		 VALUES('pi', 'visible-a', '/tmp/project-a/nested/file-a.txt', 0, 1760099600)`,
+		`INSERT INTO session_files(backend, session_id, path, ordinal, last_used_ts)
+		 VALUES('codex', 'orphan-file', '/tmp/outside/file-a.py', 0, 1760099700)`,
+		`INSERT INTO session_queue_items(backend, session_id, ordinal, text)
+		 VALUES('pi', 'visible-b', 0, 'recover visible-b')`,
+		`INSERT INTO session_queue_items(backend, session_id, ordinal, text)
+		 VALUES('pi', 'orphan-queue', 0, 'recover orphan')`,
 		`INSERT INTO app_kv(namespace, key, value_json) VALUES('voice_settings', 'tts_enabled_for_final_response', 'false')`,
 		`INSERT INTO legacy_import_unmapped(id, source_name, legacy_key, payload_json, imported_at)
 		 VALUES(1, 'session_sidebar.json', 'legacy-sidebar-key', '{"alias":"old"}', 1760099800)`,
 	})
 	sideDir := t.TempDir()
-	writeJSONFile(t, filepath.Join(sideDir, "session_aliases.json"), `{"legacy-session-1":"name"}`, snapshotAt.Add(-2*time.Hour))
-	writeJSONFile(t, filepath.Join(sideDir, "session_sidebar.json"), `{"legacy-session-2":{"alias":"old"}}`, snapshotAt.Add(-96*time.Hour))
+	writeJSONFile(t, filepath.Join(sideDir, "session_aliases.json"), `{"visible-a":"Alias A"}`, snapshotAt.Add(-2*time.Hour))
+	writeJSONFile(t, filepath.Join(sideDir, "session_sidebar.json"), `{"visible-b":{"alias":"old"}}`, snapshotAt.Add(-96*time.Hour))
 	targetDir := t.TempDir()
 	targetPath := filepath.Join(targetDir, "actrail.db")
 
@@ -167,8 +180,17 @@ func TestRunReportsWarningsAndSideJSONFreshness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if report.SourceCounts.SessionKeyUnion != 2 {
-		t.Fatalf("report.SourceCounts.SessionKeyUnion = %d, want 2", report.SourceCounts.SessionKeyUnion)
+	if report.SourceCounts.Sessions != 3 {
+		t.Fatalf("report.SourceCounts.Sessions = %d, want 3", report.SourceCounts.Sessions)
+	}
+	if report.SourceCounts.SessionKeyUnion != 6 {
+		t.Fatalf("report.SourceCounts.SessionKeyUnion = %d, want 6", report.SourceCounts.SessionKeyUnion)
+	}
+	if report.ImportedCounts.SessionCatalogRows != 3 {
+		t.Fatalf("report.ImportedCounts.SessionCatalogRows = %d, want 3", report.ImportedCounts.SessionCatalogRows)
+	}
+	if report.ImportedCounts.SessionSourceRefRows != 3 {
+		t.Fatalf("report.ImportedCounts.SessionSourceRefRows = %d, want 3", report.ImportedCounts.SessionSourceRefRows)
 	}
 	if report.Validation.OrphanSessionUIState != 1 {
 		t.Fatalf("report.Validation.OrphanSessionUIState = %d, want 1", report.Validation.OrphanSessionUIState)
@@ -176,13 +198,16 @@ func TestRunReportsWarningsAndSideJSONFreshness(t *testing.T) {
 	if report.Validation.OrphanSessionFiles != 1 {
 		t.Fatalf("report.Validation.OrphanSessionFiles = %d, want 1", report.Validation.OrphanSessionFiles)
 	}
+	if report.Validation.OrphanSessionQueueItems != 1 {
+		t.Fatalf("report.Validation.OrphanSessionQueueItems = %d, want 1", report.Validation.OrphanSessionQueueItems)
+	}
 	if report.Validation.WarningCount != 4 {
 		t.Fatalf("report.Validation.WarningCount = %d, want 4", report.Validation.WarningCount)
 	}
-	if report.Validation.UnmappedCount != 2 {
-		t.Fatalf("report.Validation.UnmappedCount = %d, want 2", report.Validation.UnmappedCount)
+	if report.Validation.UnmappedCount != 1 {
+		t.Fatalf("report.Validation.UnmappedCount = %d, want 1", report.Validation.UnmappedCount)
 	}
-	if report.ImportedCounts.SessionFileMappedRows != 0 || report.ImportedCounts.SessionFileSkippedRows != 1 {
+	if report.ImportedCounts.SessionFileMappedRows != 1 || report.ImportedCounts.SessionFileSkippedRows != 0 {
 		t.Fatalf("session file import counts = %+v", report.ImportedCounts)
 	}
 	if len(report.SideJSON) != 2 {
@@ -207,30 +232,27 @@ func TestRunReportsWarningsAndSideJSONFreshness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSessionSnapshots() error = %v", err)
 	}
-	if len(snapshots) != 2 {
-		t.Fatalf("len(ListSessionSnapshots()) = %d, want 2", len(snapshots))
+	if len(snapshots) != 3 {
+		t.Fatalf("len(ListSessionSnapshots()) = %d, want 3", len(snapshots))
 	}
-	foundOrphanUI := false
-	foundOrphanFile := false
 	for _, snapshot := range snapshots {
+		if snapshot.Session.SessionID == "orphan-ui" || snapshot.Session.SessionID == "orphan-file" || snapshot.Session.SessionID == "orphan-queue" {
+			t.Fatalf("orphan placeholder leaked into session catalog: %+v", snapshot.Session)
+		}
 		switch snapshot.Session.SessionID {
-		case "orphan-ui":
-			foundOrphanUI = true
-			if snapshot.Session.Alias != "Orphan Alias" || !snapshot.Session.Hidden || !snapshot.Session.Focused {
-				t.Fatalf("orphan-ui session = %+v", snapshot.Session)
+		case "hidden-a":
+			if !snapshot.Session.Hidden {
+				t.Fatalf("hidden-a session = %+v, want hidden=true from hidden_session_keys", snapshot.Session)
 			}
-			if !snapshot.Session.CreatedAt.Equal(snapshotAt) || !snapshot.Session.UpdatedAt.Equal(snapshotAt) {
-				t.Fatalf("orphan-ui timestamps = (%v, %v), want snapshotAt %v", snapshot.Session.CreatedAt, snapshot.Session.UpdatedAt, snapshotAt)
+		case "visible-a":
+			if snapshot.Session.Alias != "Alias A" || snapshot.Workspace.SelectedPath != "nested/file-a.txt" {
+				t.Fatalf("visible-a snapshot = %+v workspace=%+v", snapshot.Session, snapshot.Workspace)
 			}
-		case "orphan-file":
-			foundOrphanFile = true
-			if len(snapshot.Workspace.HistoryItems) != 0 {
-				t.Fatalf("orphan-file history items = %+v, want empty because path is unmappable", snapshot.Workspace.HistoryItems)
+		case "visible-b":
+			if len(snapshot.Queue) != 1 || snapshot.Queue[0].Text != "recover visible-b" {
+				t.Fatalf("visible-b queue = %+v", snapshot.Queue)
 			}
 		}
-	}
-	if !foundOrphanUI || !foundOrphanFile {
-		t.Fatalf("imported sessions missing orphan placeholders: %+v", snapshots)
 	}
 
 	warnings, err := catalog.ListMigrationWarnings(context.Background())
@@ -244,7 +266,7 @@ func TestRunReportsWarningsAndSideJSONFreshness(t *testing.T) {
 	for _, row := range warnings {
 		codes = append(codes, row.WarningCode)
 	}
-	for _, want := range []string{"orphan_session_ui_state", "orphan_session_files", "unmapped_session_file_path", "legacy_import_unmapped"} {
+	for _, want := range []string{"orphan_session_ui_state", "orphan_session_files", "orphan_session_queue_items", "legacy_import_unmapped"} {
 		if !contains(codes, want) {
 			t.Fatalf("warning codes = %#v, missing %q", codes, want)
 		}
@@ -254,8 +276,8 @@ func TestRunReportsWarningsAndSideJSONFreshness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListHiddenSessionKeys() error = %v", err)
 	}
-	if len(hiddenKeys) != 2 {
-		t.Fatalf("len(ListHiddenSessionKeys()) = %d, want 2", len(hiddenKeys))
+	if len(hiddenKeys) != 1 || hiddenKeys[0].Key != "history:pi:hidden-a" {
+		t.Fatalf("hidden keys = %+v", hiddenKeys)
 	}
 	appKV, err := catalog.ListAppKV(context.Background())
 	if err != nil {
@@ -273,6 +295,24 @@ func TestRunReportsWarningsAndSideJSONFreshness(t *testing.T) {
 	}
 	if !strings.Contains(provenance[0].DetailsJSON, "session_aliases.json") {
 		t.Fatalf("import provenance details missing side-json audit: %s", provenance[0].DetailsJSON)
+	}
+
+	cfg := config.Load()
+	cfg.Storage.DataDir = targetDir
+	svc, err := app.NewPersistentStubForTest(cfg, func() time.Time { return snapshotAt.Add(time.Hour) }, app.RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	listed, err := svc.ListSessions(context.Background(), app.ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 2 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 2 visible sessions", len(listed.Items))
+	}
+	gotIDs := []string{listed.Items[0].SessionID, listed.Items[1].SessionID}
+	if strings.Join(gotIDs, ",") != "visible-a,visible-b" {
+		t.Fatalf("visible session ids = %#v, want [visible-a visible-b]", gotIDs)
 	}
 }
 
