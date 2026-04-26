@@ -73,16 +73,13 @@ func sessionDisplayUpdatedAt(record sessionRecord) time.Time {
 }
 
 func importedPISourceActivityAt(record sessionRecord) time.Time {
-	if !strings.EqualFold(record.identity.Backend().String(), "pi") {
+	if !importedPIDetachedUsesSourceActivity(record) {
 		return time.Time{}
 	}
 	if !record.importedHasLegacySessionUIState {
 		return time.Time{}
 	}
 	sourcePath := strings.TrimSpace(record.importedSourcePath)
-	if sourcePath == "" {
-		return time.Time{}
-	}
 	info, err := os.Stat(sourcePath)
 	if err != nil {
 		return time.Time{}
@@ -92,6 +89,27 @@ func importedPISourceActivityAt(record sessionRecord) time.Time {
 		return time.Time{}
 	}
 	return ts
+}
+
+func importedPIDetachedUsesSourceActivity(record sessionRecord) bool {
+	if !strings.EqualFold(record.identity.Backend().String(), "pi") {
+		return false
+	}
+	if record.identity.Live() || record.identity.Historical() {
+		return false
+	}
+	if strings.TrimSpace(record.importedSourcePath) == "" {
+		return false
+	}
+	return importedPIDetachedHasSidebarMetadata(record)
+}
+
+func importedPIDetachedHasSidebarMetadata(record sessionRecord) bool {
+	return strings.TrimSpace(record.alias) != "" ||
+		record.focused ||
+		record.priorityOffset != 0 ||
+		record.snoozeUntil != nil ||
+		record.dependencySessionID != nil
 }
 
 func sessionPriorityElapsedSeconds(now, updatedAt time.Time) float64 {

@@ -111,6 +111,59 @@ func TestPersistentStubListSessionsPrefersImportedPISourceActivityWhenLegacyUISt
 	}
 }
 
+func TestPersistentStubListSessionsUsePersistedUpdatedAtWithoutImportedPISidebarMetadata(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sourceDir := t.TempDir()
+	olderActivity := now.Add(-2 * time.Hour)
+	newerActivity := now.Add(-30 * time.Minute)
+	olderSourcePath := writeImportedPISourceFile(t, sourceDir, "imported-pi-1.jsonl", olderActivity)
+	newerSourcePath := writeImportedPISourceFile(t, sourceDir, "imported-pi-2.jsonl", newerActivity)
+	firstUpdatedAt := now.Add(-10 * time.Minute)
+	secondUpdatedAt := now.Add(-3 * time.Hour)
+	seedImportedPIDetachedSessions(t, cfg, now,
+		importedPIDetachedFixture{
+			SessionID:               "imported-pi-1",
+			CWD:                     "/workspace/older",
+			Title:                   "Imported Pi 1",
+			UpdatedAt:               firstUpdatedAt,
+			ActivityAt:              firstUpdatedAt,
+			SourcePath:              olderSourcePath,
+			HasLegacySessionUIState: true,
+		},
+		importedPIDetachedFixture{
+			SessionID:               "imported-pi-2",
+			CWD:                     "/workspace/newer",
+			Title:                   "Imported Pi 2",
+			UpdatedAt:               secondUpdatedAt,
+			ActivityAt:              secondUpdatedAt,
+			SourcePath:              newerSourcePath,
+			HasLegacySessionUIState: true,
+		},
+	)
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 2 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 2", len(listed.Items))
+	}
+	if listed.Items[0].SessionID != "imported-pi-1" || listed.Items[1].SessionID != "imported-pi-2" {
+		t.Fatalf("ListSessions() order = [%q %q], want [imported-pi-1 imported-pi-2]", listed.Items[0].SessionID, listed.Items[1].SessionID)
+	}
+	if listed.Items[0].UpdatedTS != timestampSeconds(firstUpdatedAt) || listed.Items[0].LastUpdatedTS != timestampSeconds(firstUpdatedAt) {
+		t.Fatalf("ListSessions().Items[0] timestamps = (%v, %v), want %v", listed.Items[0].LastUpdatedTS, listed.Items[0].UpdatedTS, timestampSeconds(firstUpdatedAt))
+	}
+	if listed.Items[1].UpdatedTS != timestampSeconds(secondUpdatedAt) || listed.Items[1].LastUpdatedTS != timestampSeconds(secondUpdatedAt) {
+		t.Fatalf("ListSessions().Items[1] timestamps = (%v, %v), want %v", listed.Items[1].LastUpdatedTS, listed.Items[1].UpdatedTS, timestampSeconds(secondUpdatedAt))
+	}
+}
+
 func TestStubListSessionsDemotesBlockedAndSnoozedPriority(t *testing.T) {
 	cfg := config.Load()
 	now := time.Unix(1760000000, 0).UTC()

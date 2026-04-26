@@ -36,6 +36,8 @@ type importedPIDetachedFixture struct {
 	SessionID               string
 	CWD                     string
 	Title                   string
+	Alias                   string
+	Focused                 bool
 	UpdatedAt               time.Time
 	ActivityAt              time.Time
 	SourcePath              string
@@ -64,9 +66,11 @@ func seedImportedPIDetachedSessions(t *testing.T, cfg config.Config, now time.Ti
 				Backend:             "pi",
 				CWD:                 fixture.CWD,
 				Title:               fixture.Title,
+				Alias:               fixture.Alias,
 				CreatedAt:           createdAt,
 				UpdatedAt:           fixture.UpdatedAt,
 				ActivityAt:          fixture.ActivityAt,
+				Focused:             fixture.Focused,
 				PriorityOffset:      fixture.PriorityOffset,
 				SnoozeUntil:         fixture.SnoozeUntil,
 				DependencySessionID: fixture.DependencySessionID,
