@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"actrail/internal/adapters/agent"
+	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/domain/session"
 )
@@ -21,10 +23,24 @@ type runtimeLauncher interface {
 	Launch(context.Context, runtimeLaunchRequest) (sessionRuntime, error)
 }
 
+type RuntimeHelperBinding struct {
+	GenerationID     iod.GenerationID
+	LastReplayOffset iod.WALOffset
+}
+
+func (b RuntimeHelperBinding) Validate() error {
+	if err := b.GenerationID.Validate(); err != nil {
+		return err
+	}
+	return b.LastReplayOffset.ValidateState()
+}
+
 type RuntimeConfig struct {
-	Catalog        runtimeCatalog
-	Runner         process.Runner
-	ResolveBinPath func(session.Backend) (string, error)
+	Catalog              runtimeCatalog
+	Runner               process.Runner
+	ResolveBinPath       func(session.Backend) (string, error)
+	IODDialer            iodclient.Dialer
+	CurrentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
 }
 
 type runtimeLaunchRequest struct {
@@ -36,11 +52,12 @@ type runtimeLaunchRequest struct {
 }
 
 type processRuntimeLauncher struct {
-	catalog        runtimeCatalog
-	runner         process.Runner
-	resolveBinPath func(session.Backend) (string, error)
-	env            process.Environment
-	io             process.IO
+	catalog              runtimeCatalog
+	runner               process.Runner
+	resolveBinPath       func(session.Backend) (string, error)
+	currentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
+	env                  process.Environment
+	io                   process.IO
 }
 
 type runtimeProtocol string
@@ -51,9 +68,10 @@ const (
 )
 
 type sessionRuntime struct {
-	launchSpec process.LaunchSpec
-	handle     process.Handle
-	protocol   runtimeProtocol
+	launchSpec           process.LaunchSpec
+	handle               process.Handle
+	protocol             runtimeProtocol
+	currentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
 }
 
 type piRPCPromptCommand struct {
@@ -95,11 +113,12 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 		resolveBinPath = defaultRuntimeBinPath
 	}
 	return processRuntimeLauncher{
-		catalog:        catalog,
-		runner:         runner,
-		resolveBinPath: resolveBinPath,
-		env:            env,
-		io:             ioSpec,
+		catalog:              catalog,
+		runner:               runner,
+		resolveBinPath:       resolveBinPath,
+		currentHelperBinding: cfg.CurrentHelperBinding,
+		env:                  env,
+		io:                   ioSpec,
 	}
 }
 
@@ -154,7 +173,26 @@ func (l processRuntimeLauncher) Launch(ctx context.Context, req runtimeLaunchReq
 	if handle == nil {
 		return sessionRuntime{}, fmt.Errorf("start runtime %q: nil process handle", req.Backend)
 	}
-	return sessionRuntime{launchSpec: launchSpec, handle: handle, protocol: runtimeProtocolForBackend(req.Backend)}, nil
+	return sessionRuntime{
+		launchSpec:           launchSpec,
+		handle:               handle,
+		protocol:             runtimeProtocolForBackend(req.Backend),
+		currentHelperBinding: l.currentHelperBinding,
+	}, nil
+}
+
+func (r sessionRuntime) CurrentHelperBinding(sessionID session.SessionID) (*RuntimeHelperBinding, error) {
+	if r.currentHelperBinding == nil {
+		return nil, nil
+	}
+	binding, err := r.currentHelperBinding(sessionID)
+	if err != nil || binding == nil {
+		return binding, err
+	}
+	if err := binding.Validate(); err != nil {
+		return nil, err
+	}
+	return binding, nil
 }
 
 func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
