@@ -84,25 +84,29 @@ func (c *Client) Command(ctx context.Context, packet iod.CommandPacket) (Command
 	if err := c.writePacket(ctx, packet); err != nil {
 		return CommandResult{}, err
 	}
-	response, err := c.readPacket(ctx)
-	if err != nil {
-		return CommandResult{}, err
-	}
-	switch v := response.(type) {
-	case iod.CommandAcceptedPacket:
-		if v.SessionID != packet.SessionID || v.GenerationID != packet.GenerationID || v.CommandID != packet.CommandID {
-			return CommandResult{}, fmt.Errorf("command accepted packet does not match command %q", packet.CommandID)
+	for {
+		response, err := c.readPacket(ctx)
+		if err != nil {
+			return CommandResult{}, err
 		}
-		return CommandResult{Accepted: &v}, nil
-	case iod.CommandRejectedPacket:
-		if v.SessionID != packet.SessionID || v.GenerationID != packet.GenerationID || v.CommandID != packet.CommandID {
-			return CommandResult{}, fmt.Errorf("command rejected packet does not match command %q", packet.CommandID)
+		switch v := response.(type) {
+		case iod.StatePacket, iod.GenerationBreakPacket:
+			continue
+		case iod.CommandAcceptedPacket:
+			if v.SessionID != packet.SessionID || v.GenerationID != packet.GenerationID || v.CommandID != packet.CommandID {
+				return CommandResult{}, fmt.Errorf("command accepted packet does not match command %q", packet.CommandID)
+			}
+			return CommandResult{Accepted: &v}, nil
+		case iod.CommandRejectedPacket:
+			if v.SessionID != packet.SessionID || v.GenerationID != packet.GenerationID || v.CommandID != packet.CommandID {
+				return CommandResult{}, fmt.Errorf("command rejected packet does not match command %q", packet.CommandID)
+			}
+			return CommandResult{Rejected: &v}, nil
+		case iod.ErrorPacket:
+			return CommandResult{}, HelperError{Packet: v}
+		default:
+			return CommandResult{}, fmt.Errorf("unexpected command response %T", response)
 		}
-		return CommandResult{Rejected: &v}, nil
-	case iod.ErrorPacket:
-		return CommandResult{}, HelperError{Packet: v}
-	default:
-		return CommandResult{}, fmt.Errorf("unexpected command response %T", response)
 	}
 }
 
