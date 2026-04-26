@@ -36,14 +36,17 @@ type Service interface {
 }
 
 type Stub struct {
-	cfg        config.Config
-	registry   *sessionRegistry
-	launcher   runtimeLauncher
-	sink       RuntimeEventSink
-	appStore   appStateStore
-	appStateMu sync.RWMutex
-	recentCwds []string
-	cwdGroups  map[string]CwdGroupMeta
+	cfg            config.Config
+	registry       *sessionRegistry
+	launcher       runtimeLauncher
+	sink           RuntimeEventSink
+	appStore       appStateStore
+	helperDialer   helperDialer
+	helperBindings helperBindingStore
+	helpers        *helperRegistry
+	appStateMu     sync.RWMutex
+	recentCwds     []string
+	cwdGroups      map[string]CwdGroupMeta
 }
 
 func NewStub(cfg config.Config) (*Stub, error) {
@@ -64,11 +67,14 @@ func newStub(cfg config.Config, now func() time.Time) *Stub {
 
 func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
 	return &Stub{
-		cfg:        cfg,
-		registry:   newSessionRegistry(now),
-		launcher:   newRuntimeLauncher(runtimeCfg),
-		recentCwds: []string{},
-		cwdGroups:  map[string]CwdGroupMeta{},
+		cfg:            cfg,
+		registry:       newSessionRegistry(now),
+		launcher:       newRuntimeLauncher(runtimeCfg),
+		helperDialer:   runtimeCfg.IODDialer,
+		helperBindings: newHelperBindingStore(cfg.Storage.DataDir),
+		helpers:        newHelperRegistry(),
+		recentCwds:     []string{},
+		cwdGroups:      map[string]CwdGroupMeta{},
 	}
 }
 

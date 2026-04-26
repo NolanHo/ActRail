@@ -34,14 +34,21 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		return nil, err
 	}
 	stub := &Stub{
-		cfg:        cfg,
-		registry:   newSessionRegistry(now, catalog),
-		launcher:   newRuntimeLauncher(runtimeCfg),
-		appStore:   catalog,
-		recentCwds: recentCwds,
-		cwdGroups:  cwdGroups,
+		cfg:            cfg,
+		registry:       newSessionRegistry(now, catalog),
+		launcher:       newRuntimeLauncher(runtimeCfg),
+		appStore:       catalog,
+		helperDialer:   runtimeCfg.IODDialer,
+		helperBindings: newHelperBindingStore(cfg.Storage.DataDir),
+		helpers:        newHelperRegistry(),
+		recentCwds:     recentCwds,
+		cwdGroups:      cwdGroups,
 	}
 	if err := stub.registry.Rehydrate(records); err != nil {
+		_ = catalog.Close()
+		return nil, err
+	}
+	if err := stub.reattachSurvivingHelpers(context.Background()); err != nil {
 		_ = catalog.Close()
 		return nil, err
 	}

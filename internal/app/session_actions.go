@@ -338,6 +338,10 @@ func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (Del
 	if !ok {
 		return DeleteSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
+	s.helpers.Remove(req.SessionID)
+	if err := s.helperBindings.Delete(req.SessionID); err != nil {
+		return DeleteSessionResponse{}, err
+	}
 	return DeleteSessionResponse{OK: true, SessionID: removed.identity.SessionID().String(), Removed: true}, nil
 }
 

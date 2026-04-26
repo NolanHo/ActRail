@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"actrail/internal/adapters/agent"
+	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/domain/session"
 )
@@ -25,6 +26,7 @@ type RuntimeConfig struct {
 	Catalog        runtimeCatalog
 	Runner         process.Runner
 	ResolveBinPath func(session.Backend) (string, error)
+	IODDialer      iodclient.Dialer
 }
 
 type runtimeLaunchRequest struct {
