@@ -9,7 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 const tsLayout = time.RFC3339Nano
 
@@ -183,6 +183,16 @@ var migrations = []migration{
 			return err
 		},
 	},
+	{
+		version: 4,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			if err := ensureColumnExists(ctx, tx, "session_source_refs", "has_legacy_session_ui_state", `ALTER TABLE session_source_refs ADD COLUMN has_legacy_session_ui_state INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 4, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
 }
 
 func OpenSessionCatalog(path string) (*SessionCatalog, error) {
@@ -254,6 +264,37 @@ func schemaVersion(ctx context.Context, db *sql.DB) (int, error) {
 		return 0, nil
 	}
 	return int(version.Int64), nil
+}
+
+func ensureColumnExists(ctx context.Context, tx *sql.Tx, table, column, alterStmt string) error {
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return fmt.Errorf("query table info for %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &pk); err != nil {
+			return fmt.Errorf("scan table info for %s: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate table info for %s: %w", table, err)
+	}
+	if _, err := tx.ExecContext(ctx, alterStmt); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
 }
 
 func (c *SessionCatalog) Close() error {

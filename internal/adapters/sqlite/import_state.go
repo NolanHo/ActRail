@@ -9,10 +9,11 @@ import (
 )
 
 type SessionSourceRefRow struct {
-	SessionID        string
-	Backend          string
-	SourcePath       string
-	FirstUserMessage string
+	SessionID               string
+	Backend                 string
+	SourcePath              string
+	FirstUserMessage        string
+	HasLegacySessionUIState bool
 }
 
 type HiddenSessionKeyRow struct {
@@ -76,7 +77,7 @@ func (c *SessionCatalog) ReplaceImportBundle(ctx context.Context, bundle ImportB
 		}
 	}
 	for _, row := range bundle.SessionSourceRefs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, source_path, first_user_message) VALUES(?, ?, ?, ?)`, row.SessionID, row.Backend, row.SourcePath, row.FirstUserMessage); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, source_path, first_user_message, has_legacy_session_ui_state) VALUES(?, ?, ?, ?, ?)`, row.SessionID, row.Backend, row.SourcePath, row.FirstUserMessage, boolToInt(row.HasLegacySessionUIState)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("insert session source ref %q: %w", row.SessionID, err)
 		}
@@ -164,17 +165,21 @@ func (c *SessionCatalog) ListSessionSourceRefs(ctx context.Context) ([]SessionSo
 	if c == nil || c.db == nil {
 		return nil, fmt.Errorf("sqlite catalog is not initialized")
 	}
-	rows, err := c.db.QueryContext(ctx, `SELECT session_id, backend, source_path, first_user_message FROM session_source_refs ORDER BY session_id ASC`)
+	rows, err := c.db.QueryContext(ctx, `SELECT session_id, backend, source_path, first_user_message, has_legacy_session_ui_state FROM session_source_refs ORDER BY session_id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query session source refs: %w", err)
 	}
 	defer rows.Close()
 	items := make([]SessionSourceRefRow, 0)
 	for rows.Next() {
-		var row SessionSourceRefRow
-		if err := rows.Scan(&row.SessionID, &row.Backend, &row.SourcePath, &row.FirstUserMessage); err != nil {
+		var (
+			row                     SessionSourceRefRow
+			hasLegacySessionUIState int
+		)
+		if err := rows.Scan(&row.SessionID, &row.Backend, &row.SourcePath, &row.FirstUserMessage, &hasLegacySessionUIState); err != nil {
 			return nil, fmt.Errorf("scan session source ref row: %w", err)
 		}
+		row.HasLegacySessionUIState = hasLegacySessionUIState != 0
 		items = append(items, row)
 	}
 	if err := rows.Err(); err != nil {

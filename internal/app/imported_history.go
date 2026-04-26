@@ -25,6 +25,7 @@ func applyImportedSourceRefs(records []sessionRecord, refs []sqlitestore.Session
 		}
 		records[i].importedSourcePath = strings.TrimSpace(row.SourcePath)
 		records[i].importedFirstUserMessage = strings.TrimSpace(row.FirstUserMessage)
+		records[i].importedHasLegacySessionUIState = row.HasLegacySessionUIState
 	}
 	return records
 }

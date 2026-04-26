@@ -76,6 +76,9 @@ func importedPISourceActivityAt(record sessionRecord) time.Time {
 	if !strings.EqualFold(record.identity.Backend().String(), "pi") {
 		return time.Time{}
 	}
+	if !record.importedHasLegacySessionUIState {
+		return time.Time{}
+	}
 	sourcePath := strings.TrimSpace(record.importedSourcePath)
 	if sourcePath == "" {
 		return time.Time{}
