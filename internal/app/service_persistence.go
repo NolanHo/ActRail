@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"actrail/internal/adapters/iodclient"
 	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
 )
@@ -12,6 +14,9 @@ import (
 func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) (*Stub, error) {
 	if err := cfg.Storage.EnsureDir(); err != nil {
 		return nil, fmt.Errorf("ensure actrail data dir: %w", err)
+	}
+	if strings.TrimSpace(runtimeCfg.IODRuntimeRoot) == "" {
+		runtimeCfg.IODRuntimeRoot = iodclient.RuntimeRoot(cfg.Storage.DataDir)
 	}
 	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
 	if err != nil {

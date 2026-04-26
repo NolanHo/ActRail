@@ -29,6 +29,7 @@ type sessionIDGenerator struct {
 }
 
 type sessionCreateSpec struct {
+	Identity        *session.Identity
 	Backend         session.Backend
 	CWD             string
 	Provider        string
@@ -88,25 +89,9 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 	defer r.mu.Unlock()
 
 	now := r.now().UTC()
-	var identity session.Identity
-	for {
-		r.nextID.session++
-		r.nextID.runtime++
-		r.nextID.thread++
-		candidate, err := session.NewLiveIdentity(
-			fmt.Sprintf("s_%d", r.nextID.session),
-			fmt.Sprintf("r_%d", r.nextID.runtime),
-			fmt.Sprintf("t_%d", r.nextID.thread),
-			spec.Backend.String(),
-		)
-		if err != nil {
-			return sessionRecord{}, err
-		}
-		if _, exists := r.sessions[candidate.SessionID()]; exists {
-			continue
-		}
-		identity = candidate
-		break
+	identity, err := r.identityLocked(spec)
+	if err != nil {
+		return sessionRecord{}, err
 	}
 	transcript := message.NewTranscript()
 	state, err := session.NewState(identity, false, session.EmptyQueueSnapshot(), transcript.Tail())
@@ -138,6 +123,12 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 	r.sessions[id] = cp
 	r.order = append(r.order, id)
 	return copySessionRecord(cp), nil
+}
+
+func (r *sessionRegistry) ReserveIdentity(backend session.Backend) (session.Identity, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.allocateIdentityLocked(backend)
 }
 
 func (r *sessionRegistry) Lookup(sessionID session.SessionID) (sessionRecord, bool) {
@@ -222,6 +213,50 @@ func (r *sessionRegistry) Delete(routeID session.SessionID) (sessionRecord, bool
 		break
 	}
 	return copySessionRecord(cp), true, nil
+}
+
+func (r *sessionRegistry) identityLocked(spec sessionCreateSpec) (session.Identity, error) {
+	if spec.Identity == nil {
+		return r.allocateIdentityLocked(spec.Backend)
+	}
+	identity := *spec.Identity
+	if err := identity.Validate(); err != nil {
+		return session.Identity{}, err
+	}
+	if identity.Historical() {
+		return session.Identity{}, fmt.Errorf("session identity %q cannot be historical", identity.SessionID())
+	}
+	if identity.Backend() != spec.Backend {
+		return session.Identity{}, fmt.Errorf("session identity backend = %q, want %q", identity.Backend(), spec.Backend)
+	}
+	if _, exists := r.sessions[identity.SessionID()]; exists {
+		return session.Identity{}, fmt.Errorf("session %q already exists", identity.SessionID())
+	}
+	return identity, nil
+}
+
+func (r *sessionRegistry) allocateIdentityLocked(backend session.Backend) (session.Identity, error) {
+	if err := backend.Validate(); err != nil {
+		return session.Identity{}, err
+	}
+	for {
+		r.nextID.session++
+		r.nextID.runtime++
+		r.nextID.thread++
+		candidate, err := session.NewLiveIdentity(
+			fmt.Sprintf("s_%d", r.nextID.session),
+			fmt.Sprintf("r_%d", r.nextID.runtime),
+			fmt.Sprintf("t_%d", r.nextID.thread),
+			backend.String(),
+		)
+		if err != nil {
+			return session.Identity{}, err
+		}
+		if _, exists := r.sessions[candidate.SessionID()]; exists {
+			continue
+		}
+		return candidate, nil
+	}
 }
 
 func (r *sessionRegistry) resolveLocked(routeID session.SessionID) (session.SessionID, sessionRecord, bool) {

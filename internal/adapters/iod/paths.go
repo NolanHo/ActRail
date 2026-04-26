@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultManifestFilename = "manifest.json"
+	defaultManifestFilename = "generation-manifest.json"
 	defaultWALFilename      = "transport.wal"
 	defaultSocketFilename   = "control.sock"
 )
