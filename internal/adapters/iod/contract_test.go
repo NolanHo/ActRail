@@ -54,6 +54,42 @@ func TestIodContract(t *testing.T) {
 		}
 	})
 
+	t.Run("error codes stay stable", func(t *testing.T) {
+		got := []string{
+			ErrorGenerationNotCurrent.String(),
+			ErrorMalformedEnvelope.String(),
+			ErrorUnsupportedCommandKind.String(),
+			ErrorReplayCursorInvalid.String(),
+			ErrorReplayCorruptTail.String(),
+			ErrorHelperBroken.String(),
+		}
+		want := []string{
+			"generation_not_current",
+			"malformed_envelope",
+			"unsupported_command_kind",
+			"replay_cursor_invalid",
+			"replay_corrupt_tail",
+			"helper_broken",
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("error codes = %#v, want %#v", got, want)
+		}
+		for _, raw := range want {
+			code, err := ParseErrorCode(raw)
+			if err != nil {
+				t.Fatalf("ParseErrorCode(%q) error = %v", raw, err)
+			}
+			if code.String() != raw {
+				t.Fatalf("ParseErrorCode(%q) = %q, want %q", raw, code, raw)
+			}
+		}
+		for _, raw := range []string{"malformed", "unsupported_command", "helper-broken"} {
+			if _, err := ParseErrorCode(raw); err == nil {
+				t.Fatalf("ParseErrorCode(%q) error = nil, want error", raw)
+			}
+		}
+	})
+
 	t.Run("parsing rejects unfrozen suffixes", func(t *testing.T) {
 		badKinds := []string{
 			"iod.command.future",

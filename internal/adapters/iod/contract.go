@@ -750,10 +750,12 @@ func (p GenerationBreakPacket) Validate() error {
 type ErrorCode string
 
 const (
-	ErrorGenerationNotCurrent ErrorCode = "generation_not_current"
-	ErrorReplayCursorInvalid  ErrorCode = "replay_cursor_invalid"
-	ErrorReplayCorruptTail    ErrorCode = "replay_corrupt_tail"
-	ErrorHelperBroken         ErrorCode = "helper_broken"
+	ErrorGenerationNotCurrent   ErrorCode = "generation_not_current"
+	ErrorMalformedEnvelope      ErrorCode = "malformed_envelope"
+	ErrorUnsupportedCommandKind ErrorCode = "unsupported_command_kind"
+	ErrorReplayCursorInvalid    ErrorCode = "replay_cursor_invalid"
+	ErrorReplayCorruptTail      ErrorCode = "replay_corrupt_tail"
+	ErrorHelperBroken           ErrorCode = "helper_broken"
 )
 
 func ParseErrorCode(raw string) (ErrorCode, error) {
@@ -766,7 +768,7 @@ func ParseErrorCode(raw string) (ErrorCode, error) {
 
 func (c ErrorCode) Validate() error {
 	switch c {
-	case ErrorGenerationNotCurrent, ErrorReplayCursorInvalid, ErrorReplayCorruptTail, ErrorHelperBroken:
+	case ErrorGenerationNotCurrent, ErrorMalformedEnvelope, ErrorUnsupportedCommandKind, ErrorReplayCursorInvalid, ErrorReplayCorruptTail, ErrorHelperBroken:
 		return nil
 	case "":
 		return fmt.Errorf("error code is required")
