@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -152,11 +151,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 	}
 	exists, willCreate := pathExists(cwd)
 	items := s.registry.List()
-	type resumeCandidateRecord struct {
-		record    sessionRecord
-		updatedAt time.Time
-	}
-	candidates := make([]resumeCandidateRecord, 0, len(items))
+	candidates := make([]sessionRecord, 0, len(items))
 	for _, record := range items {
 		if normalizeSessionCWD(record.cwd) != cwd {
 			continue
@@ -164,15 +159,10 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		if backend != "" && record.identity.Backend().String() != backend {
 			continue
 		}
-		candidates = append(candidates, resumeCandidateRecord{record: record, updatedAt: sessionDisplayUpdatedAt(record)})
+		candidates = append(candidates, record)
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].updatedAt.Equal(candidates[j].updatedAt) {
-			return candidates[i].record.identity.SessionID().String() > candidates[j].record.identity.SessionID().String()
-		}
-		return candidates[i].updatedAt.After(candidates[j].updatedAt)
-	})
-	start, end := paginate(len(candidates), req.Offset, req.Limit)
+	ordered := sortSessionsForDisplay(candidates, s.registry.now())
+	start, end := paginate(len(ordered), req.Offset, req.Limit)
 	payload := SessionResumeCandidatesResponse{
 		OK:         true,
 		Exists:     exists,
@@ -180,10 +170,10 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		GitRepo:    false,
 		Offset:     req.Offset,
 		Limit:      req.Limit,
-		Remaining:  len(candidates) - end,
+		Remaining:  len(ordered) - end,
 		Sessions:   make([]SessionResumeCandidate, 0, end-start),
 	}
-	for _, item := range candidates[start:end] {
+	for _, item := range ordered[start:end] {
 		payload.Sessions = append(payload.Sessions, sessionResumeCandidateFromRecord(item.record, item.updatedAt))
 	}
 	return payload, nil
