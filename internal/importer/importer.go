@@ -540,15 +540,22 @@ func hiddenSessionKeySet(keys []string) map[string]struct{} {
 }
 
 func sessionHiddenByKeys(key sessionKey, hiddenKeys map[string]struct{}) bool {
-	for _, candidate := range []string{
-		key.SessionID,
-		fmt.Sprintf("history:%s:%s", key.Backend, key.SessionID),
-	} {
+	for _, candidate := range hiddenSessionKeyCandidates(key) {
 		if _, ok := hiddenKeys[candidate]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+func hiddenSessionKeyCandidates(key sessionKey) []string {
+	return []string{
+		key.SessionID,
+		fmt.Sprintf("session:%s", key.SessionID),
+		fmt.Sprintf("history:%s:%s", key.Backend, key.SessionID),
+		fmt.Sprintf("thread:%s:%s", key.Backend, key.SessionID),
+		fmt.Sprintf("resume:%s:%s", key.Backend, key.SessionID),
+	}
 }
 
 func buildSessionCatalogRow(key sessionKey, sessionRow legacySessionRow, hasSession bool, uiRow legacyUIStateRow, hasUI bool, hidden bool, snapshotAt time.Time) sqlitestore.SessionRow {

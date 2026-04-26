@@ -316,6 +316,112 @@ func TestRunUsesSessionsRowsForVisibleTabsAndPreservesOrphansAsWarnings(t *testi
 	}
 }
 
+func TestSessionHiddenByKeysRecognizesCodoxearKeyForms(t *testing.T) {
+	key := sessionKey{Backend: "pi", SessionID: "hidden-a"}
+	cases := []struct {
+		name string
+		keys []string
+		want bool
+	}{
+		{name: "raw session id", keys: []string{"hidden-a"}, want: true},
+		{name: "session prefix", keys: []string{"session:hidden-a"}, want: true},
+		{name: "history prefix", keys: []string{"history:pi:hidden-a"}, want: true},
+		{name: "thread prefix", keys: []string{"thread:pi:hidden-a"}, want: true},
+		{name: "resume prefix", keys: []string{"resume:pi:hidden-a"}, want: true},
+		{name: "wrong backend", keys: []string{"thread:codex:hidden-a"}, want: false},
+		{name: "wrong session id", keys: []string{"session:visible-a"}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sessionHiddenByKeys(key, hiddenSessionKeySet(tc.keys))
+			if got != tc.want {
+				t.Fatalf("sessionHiddenByKeys(%q) = %v, want %v", tc.keys, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunMarksSessionsHiddenForAllCodoxearKeyForms(t *testing.T) {
+	snapshotAt := time.Unix(1760200000, 0).UTC()
+	sourcePath := createLegacySourceDB(t, []string{
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'hidden-raw', '/tmp/hidden-raw', '/tmp/pi/hidden-raw.jsonl', 'Hidden Raw', 'prompt raw', 1760199000, 1760199100, 0)`,
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'hidden-session', '/tmp/hidden-session', '/tmp/pi/hidden-session.jsonl', 'Hidden Session', 'prompt session', 1760199200, 1760199300, 0)`,
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'hidden-history', '/tmp/hidden-history', '/tmp/pi/hidden-history.jsonl', 'Hidden History', 'prompt history', 1760199400, 1760199500, 0)`,
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'hidden-thread', '/tmp/hidden-thread', '/tmp/pi/hidden-thread.jsonl', 'Hidden Thread', 'prompt thread', 1760199600, 1760199700, 0)`,
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'hidden-resume', '/tmp/hidden-resume', '/tmp/pi/hidden-resume.jsonl', 'Hidden Resume', 'prompt resume', 1760199800, 1760199900, 0)`,
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'visible-a', '/tmp/visible-a', '/tmp/pi/visible-a.jsonl', 'Visible A', 'prompt visible', 1760200000, 1760200100, 0)`,
+		`INSERT INTO hidden_session_keys(key) VALUES('hidden-raw')`,
+		`INSERT INTO hidden_session_keys(key) VALUES('session:hidden-session')`,
+		`INSERT INTO hidden_session_keys(key) VALUES('history:pi:hidden-history')`,
+		`INSERT INTO hidden_session_keys(key) VALUES('thread:pi:hidden-thread')`,
+		`INSERT INTO hidden_session_keys(key) VALUES('resume:pi:hidden-resume')`,
+	})
+	targetDir := t.TempDir()
+	targetPath := filepath.Join(targetDir, "actrail.db")
+
+	if _, err := Run(context.Background(), Options{
+		SourceSQLitePath: sourcePath,
+		TargetSQLitePath: targetPath,
+		SnapshotAt:       snapshotAt,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	catalog, err := sqlitestore.OpenSessionCatalog(targetPath)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+
+	snapshots, err := catalog.ListSessionSnapshots(context.Background(), true)
+	if err != nil {
+		t.Fatalf("ListSessionSnapshots() error = %v", err)
+	}
+	if len(snapshots) != 6 {
+		t.Fatalf("len(ListSessionSnapshots()) = %d, want 6", len(snapshots))
+	}
+	wantHidden := map[string]bool{
+		"hidden-history": true,
+		"hidden-raw":     true,
+		"hidden-resume":  true,
+		"hidden-session": true,
+		"hidden-thread":  true,
+		"visible-a":      false,
+	}
+	for _, snapshot := range snapshots {
+		want, ok := wantHidden[snapshot.Session.SessionID]
+		if !ok {
+			t.Fatalf("unexpected session snapshot = %+v", snapshot.Session)
+		}
+		if snapshot.Session.Hidden != want {
+			t.Fatalf("session %q hidden = %v, want %v", snapshot.Session.SessionID, snapshot.Session.Hidden, want)
+		}
+	}
+
+	cfg := config.Load()
+	cfg.Storage.DataDir = targetDir
+	svc, err := app.NewPersistentStubForTest(cfg, func() time.Time { return snapshotAt.Add(time.Hour) }, app.RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	listed, err := svc.ListSessions(context.Background(), app.ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 1 visible session", len(listed.Items))
+	}
+	if listed.Items[0].SessionID != "visible-a" {
+		t.Fatalf("visible session id = %q, want visible-a", listed.Items[0].SessionID)
+	}
+}
+
 func createLegacySourceDB(t *testing.T, inserts []string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "codoxear.sqlite")
