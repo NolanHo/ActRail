@@ -90,23 +90,134 @@ func TestIodContract(t *testing.T) {
 		}
 	})
 
+	t.Run("fact taxonomy stays stable", func(t *testing.T) {
+		got := []string{
+			FactHelperStart.String(),
+			FactAttachEstablished.String(),
+			FactCommandAccepted.String(),
+			FactCommandRejected.String(),
+			FactOutputDelta.String(),
+			FactTurnCommit.String(),
+			FactUIRequestOpened.String(),
+			FactUIResponseForwarded.String(),
+			FactChildExit.String(),
+			FactHelperExit.String(),
+			FactGenerationBreak.String(),
+		}
+		want := []string{
+			"helper_start",
+			"pi_attach_established",
+			"command_accepted",
+			"command_rejected",
+			"output_delta",
+			"turn_commit",
+			"ui_request_opened",
+			"ui_response_forwarded",
+			"child_exit",
+			"helper_exit",
+			"generation_break",
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("fact kinds = %#v, want %#v", got, want)
+		}
+		for _, raw := range want {
+			kind, err := ParseFactKind(raw)
+			if err != nil {
+				t.Fatalf("ParseFactKind(%q) error = %v", raw, err)
+			}
+			if kind.String() != raw {
+				t.Fatalf("ParseFactKind(%q) = %q, want %q", raw, kind, raw)
+			}
+		}
+		for _, raw := range []string{"helper", "generation-break"} {
+			if _, err := ParseFactKind(raw); err == nil {
+				t.Fatalf("ParseFactKind(%q) error = nil, want error", raw)
+			}
+		}
+		wantStateRules := map[FactKind]struct {
+			requiresSeq bool
+			allowed     bool
+		}{
+			FactHelperStart:         {requiresSeq: false, allowed: true},
+			FactAttachEstablished:   {requiresSeq: false, allowed: true},
+			FactCommandAccepted:     {requiresSeq: false, allowed: false},
+			FactCommandRejected:     {requiresSeq: false, allowed: false},
+			FactOutputDelta:         {requiresSeq: true, allowed: true},
+			FactTurnCommit:          {requiresSeq: true, allowed: true},
+			FactUIRequestOpened:     {requiresSeq: true, allowed: true},
+			FactUIResponseForwarded: {requiresSeq: true, allowed: true},
+			FactChildExit:           {requiresSeq: false, allowed: true},
+			FactHelperExit:          {requiresSeq: false, allowed: true},
+			FactGenerationBreak:     {requiresSeq: true, allowed: false},
+		}
+		for kind, want := range wantStateRules {
+			if kind.RequiresSeq() != want.requiresSeq {
+				t.Fatalf("%q RequiresSeq() = %v, want %v", kind, kind.RequiresSeq(), want.requiresSeq)
+			}
+			if kind.AllowedInStatePacket() != want.allowed {
+				t.Fatalf("%q AllowedInStatePacket() = %v, want %v", kind, kind.AllowedInStatePacket(), want.allowed)
+			}
+		}
+	})
+
 	t.Run("parsing rejects unfrozen suffixes", func(t *testing.T) {
 		badKinds := []string{
 			"iod.command.future",
 			"iod.command.send.more",
 			"iod.event.output.delta",
 			"iod.event.future",
+			"IOD.HELLO",
+			"iod.Command.send",
 		}
 		for _, raw := range badKinds {
 			if _, err := ParsePacketKind(raw); err == nil {
 				t.Fatalf("ParsePacketKind(%q) error = nil, want error", raw)
 			}
 		}
-		if _, err := ParseCommandName("accepted"); err == nil {
-			t.Fatal("ParseCommandName(accepted) error = nil, want error")
+		for _, raw := range []string{"accepted", "future", "Send", "ui_response_submit"} {
+			if _, err := ParseCommandName(raw); err == nil {
+				t.Fatalf("ParseCommandName(%q) error = nil, want error", raw)
+			}
 		}
-		if _, err := ParseCommandName("future"); err == nil {
-			t.Fatal("ParseCommandName(future) error = nil, want error")
+	})
+
+	t.Run("command request parsing and construction stay aligned", func(t *testing.T) {
+		cases := []struct {
+			nameRaw  string
+			wantName CommandName
+			wantKind PacketKind
+			payload  string
+		}{
+			{nameRaw: "send", wantName: CommandSend, wantKind: PacketCommandSend, payload: `{"text":"stack trace"}`},
+			{nameRaw: "enqueue", wantName: CommandEnqueue, wantKind: PacketCommandEnqueue, payload: `{"text":"queue later"}`},
+			{nameRaw: "interrupt", wantName: CommandInterrupt, wantKind: PacketCommandInterrupt, payload: `{"reason":"user cancel"}`},
+			{nameRaw: "ui_response.submit", wantName: CommandUIResponseSubmit, wantKind: PacketCommandUIResponseSubmit, payload: `{"request_id":"req_9","response":{"text":"approve"}}`},
+		}
+		for _, tc := range cases {
+			name, err := ParseCommandName(tc.nameRaw)
+			if err != nil {
+				t.Fatalf("ParseCommandName(%q) error = %v", tc.nameRaw, err)
+			}
+			if name != tc.wantName {
+				t.Fatalf("ParseCommandName(%q) = %q, want %q", tc.nameRaw, name, tc.wantName)
+			}
+			kind, err := ParsePacketKind(tc.wantKind.String())
+			if err != nil {
+				t.Fatalf("ParsePacketKind(%q) error = %v", tc.wantKind, err)
+			}
+			if kind != tc.wantKind {
+				t.Fatalf("ParsePacketKind(%q) = %q, want %q", tc.wantKind, kind, tc.wantKind)
+			}
+			if name.Kind() != tc.wantKind {
+				t.Fatalf("CommandName(%q).Kind() = %q, want %q", name, name.Kind(), tc.wantKind)
+			}
+			packet, err := NewCommandPacket(sessionID, generationID, name, commandID, json.RawMessage(tc.payload))
+			if err != nil {
+				t.Fatalf("NewCommandPacket(%q) error = %v", name, err)
+			}
+			if packet.Kind != tc.wantKind {
+				t.Fatalf("NewCommandPacket(%q) kind = %q, want %q", name, packet.Kind, tc.wantKind)
+			}
 		}
 	})
 
@@ -122,6 +233,13 @@ func TestIodContract(t *testing.T) {
 			t.Fatalf("NewGenerationManifest() error = %v", err)
 		}
 		assertKeys(t, manifest, []string{"child_pid", "control_socket_path", "generation_id", "helper_pid", "session_id", "start_ts", "wal_path"})
+		helloMap := mustJSONMap(t, hello)
+		manifestMap := mustJSONMap(t, manifest)
+		for _, key := range []string{"session_id", "generation_id", "helper_pid", "child_pid", "wal_path", "control_socket_path", "start_ts"} {
+			if !reflect.DeepEqual(helloMap[key], manifestMap[key]) {
+				t.Fatalf("hello[%q] = %#v, manifest[%q] = %#v", key, helloMap[key], key, manifestMap[key])
+			}
+		}
 
 		seq := EventSeq(3)
 		stateFact, err := NewHelperFact(FactOutputDelta, &seq, json.RawMessage(`{"delta":"line 84 panics"}`))
