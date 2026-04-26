@@ -355,17 +355,6 @@ func (l processRuntimeLauncher) waitForHelperReady(ctx context.Context, handle p
 		readyCtx, cancel = context.WithTimeout(ctx, helperReadyTimeout)
 		defer cancel()
 	}
-	exitCh := make(chan error, 1)
-	if handle != nil {
-		go func() {
-			_, err := handle.Wait(context.Background())
-			if err != nil {
-				exitCh <- err
-				return
-			}
-			exitCh <- errors.New("iod helper exited before control socket became ready")
-		}()
-	}
 	ticker := time.NewTicker(helperReadyPollInterval)
 	defer ticker.Stop()
 	for {
@@ -379,8 +368,6 @@ func (l processRuntimeLauncher) waitForHelperReady(ctx context.Context, handle p
 		select {
 		case <-readyCtx.Done():
 			return iod.GenerationManifest{}, iod.HelloPacket{}, nil, readyCtx.Err()
-		case err := <-exitCh:
-			return iod.GenerationManifest{}, iod.HelloPacket{}, nil, err
 		case <-ticker.C:
 		}
 	}
@@ -644,6 +631,9 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 			}
 		}
 		if killErr := h.handle.Kill(); killErr != nil {
+			if strings.Contains(killErr.Error(), "is not available") {
+				return nil
+			}
 			return fmt.Errorf("kill iod helper: %w", killErr)
 		}
 		_, _ = h.handle.Wait(context.Background())
