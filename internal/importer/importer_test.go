@@ -99,7 +99,7 @@ func TestRunImportsLegacySQLiteAndPreservesSessionFallback(t *testing.T) {
 	if len(refs) != 1 {
 		t.Fatalf("len(ListSessionSourceRefs()) = %d, want 1", len(refs))
 	}
-	if refs[0].SourcePath != "/root/.pi/agent/sessions/legacy-session-1/session.jsonl" || refs[0].FirstUserMessage != "hello" {
+	if refs[0].SourcePath != "/root/.pi/agent/sessions/legacy-session-1/session.jsonl" || refs[0].FirstUserMessage != "hello" || !refs[0].HasLegacySessionUIState {
 		t.Fatalf("refs[0] = %+v", refs[0])
 	}
 
@@ -136,6 +136,62 @@ func TestRunImportsLegacySQLiteAndPreservesSessionFallback(t *testing.T) {
 	}
 	if item.Title != "" || item.Alias != "" {
 		t.Fatalf("ListSessions().Items[0] title/alias = (%q, %q), want empty fallback inputs", item.Title, item.Alias)
+	}
+}
+
+func TestRunPersistsSessionUIStateProvenanceForDefaultValuedRows(t *testing.T) {
+	snapshotAt := time.Unix(1760050000, 0).UTC()
+	sourcePath := createLegacySourceDB(t, []string{
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'with-default-ui', '/tmp/default-ui', '/tmp/pi/with-default-ui.jsonl', 'Default UI', 'prompt default', 1760049000, 1760049100, 0)`,
+		`INSERT INTO sessions(backend, session_id, cwd, source_path, title, first_user_message, created_at, updated_at, pending_startup)
+		 VALUES('pi', 'without-ui', '/tmp/without-ui', '/tmp/pi/without-ui.jsonl', 'Without UI', 'prompt none', 1760049200, 1760049300, 0)`,
+		`INSERT INTO session_ui_state(backend, session_id, alias, focused, hidden, priority_offset, snooze_until, dependency_backend, dependency_session_id)
+		 VALUES('pi', 'with-default-ui', '', 0, 0, 0, NULL, NULL, NULL)`,
+	})
+	targetDir := t.TempDir()
+	targetPath := filepath.Join(targetDir, "actrail.db")
+
+	if _, err := Run(context.Background(), Options{
+		SourceSQLitePath: sourcePath,
+		TargetSQLitePath: targetPath,
+		SnapshotAt:       snapshotAt,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	catalog, err := sqlitestore.OpenSessionCatalog(targetPath)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	refs, err := catalog.ListSessionSourceRefs(context.Background())
+	if err != nil {
+		t.Fatalf("ListSessionSourceRefs() error = %v", err)
+	}
+	if err := catalog.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	catalog, err = sqlitestore.OpenSessionCatalog(targetPath)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog(reload) error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+	refs, err = catalog.ListSessionSourceRefs(context.Background())
+	if err != nil {
+		t.Fatalf("ListSessionSourceRefs(reload) error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("len(ListSessionSourceRefs()) = %d, want 2", len(refs))
+	}
+	provenanceBySessionID := map[string]bool{}
+	for _, row := range refs {
+		provenanceBySessionID[row.SessionID] = row.HasLegacySessionUIState
+	}
+	if !provenanceBySessionID["with-default-ui"] {
+		t.Fatalf("with-default-ui provenance = %v, want true", provenanceBySessionID["with-default-ui"])
+	}
+	if provenanceBySessionID["without-ui"] {
+		t.Fatalf("without-ui provenance = %v, want false", provenanceBySessionID["without-ui"])
 	}
 }
 

@@ -32,6 +32,105 @@ func TestOpenSessionCatalogAppliesSchemaMigration(t *testing.T) {
 	}
 }
 
+func TestOpenSessionCatalogMigratesSessionSourceRefProvenanceColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "actrail.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
+		`INSERT INTO schema_migrations(version, applied_at) VALUES(3, '2026-01-01T00:00:00Z')`,
+		`CREATE TABLE session_catalog (session_id TEXT PRIMARY KEY)`,
+		`CREATE TABLE session_source_refs (
+			session_id TEXT PRIMARY KEY,
+			backend TEXT NOT NULL DEFAULT '',
+			source_path TEXT NOT NULL DEFAULT '',
+			first_user_message TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+		)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("db.Exec(%q) error = %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("db.Close() error = %v", err)
+	}
+
+	catalog, err := OpenSessionCatalog(path)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open(reload) error = %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('session_source_refs') WHERE name = 'has_legacy_session_ui_state'`).Scan(&count); err != nil {
+		t.Fatalf("query pragma_table_info() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("has_legacy_session_ui_state column count = %d, want 1", count)
+	}
+}
+
+func TestSessionCatalogPersistsSessionSourceRefProvenanceAcrossReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "actrail.db")
+	catalog, err := OpenSessionCatalog(path)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	now := time.Unix(1760000000, 0).UTC()
+	if err := catalog.ReplaceImportBundle(context.Background(), ImportBundle{
+		Sessions: []SessionSnapshotRow{
+			{
+				Session:   SessionRow{SessionID: "imported-a", Backend: "pi", CWD: "/tmp/a", Title: "A", CreatedAt: now, UpdatedAt: now, ActivityAt: now},
+				Queue:     []QueueItemRow{},
+				Workspace: WorkspaceStateRow{OpenPaths: []string{}, HistoryItems: []WorkspaceHistoryItemRow{}},
+			},
+			{
+				Session:   SessionRow{SessionID: "imported-b", Backend: "pi", CWD: "/tmp/b", Title: "B", CreatedAt: now, UpdatedAt: now, ActivityAt: now},
+				Queue:     []QueueItemRow{},
+				Workspace: WorkspaceStateRow{OpenPaths: []string{}, HistoryItems: []WorkspaceHistoryItemRow{}},
+			},
+		},
+		SessionSourceRefs: []SessionSourceRefRow{
+			{SessionID: "imported-a", Backend: "pi", SourcePath: "/tmp/a.jsonl", HasLegacySessionUIState: true},
+			{SessionID: "imported-b", Backend: "pi", SourcePath: "/tmp/b.jsonl", HasLegacySessionUIState: false},
+		},
+		AppState:          AppStateRow{RecentCwds: []string{}, CwdGroups: []CwdGroupRow{}},
+		HiddenSessionKeys: []HiddenSessionKeyRow{},
+		AppKV:             []AppKVRow{},
+		Warnings:          []MigrationWarningRow{},
+		Provenance:        ImportProvenanceRow{Source: "fixture", SnapshotAt: now, DetailsJSON: `{}`},
+	}); err != nil {
+		t.Fatalf("ReplaceImportBundle() error = %v", err)
+	}
+	if err := catalog.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reloaded, err := OpenSessionCatalog(path)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog(reload) error = %v", err)
+	}
+	defer func() { _ = reloaded.Close() }()
+	refs, err := reloaded.ListSessionSourceRefs(context.Background())
+	if err != nil {
+		t.Fatalf("ListSessionSourceRefs() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("len(ListSessionSourceRefs()) = %d, want 2", len(refs))
+	}
+	if !refs[0].HasLegacySessionUIState || refs[1].HasLegacySessionUIState {
+		t.Fatalf("session source ref provenance = %+v", refs)
+	}
+}
+
 func TestSessionCatalogPersistsQueueWorkspaceAndAppState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "actrail.db")
 	catalog, err := OpenSessionCatalog(path)

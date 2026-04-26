@@ -11,7 +11,7 @@ import (
 	"actrail/internal/config"
 )
 
-func TestPersistentStubListSessionsPrefersImportedPISourceActivity(t *testing.T) {
+func TestPersistentStubListSessionsPrefersImportedPISourceActivityWhenLegacyUIStateWasImported(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sourceDir := t.TempDir()
@@ -73,8 +73,8 @@ func TestPersistentStubListSessionsPrefersImportedPISourceActivity(t *testing.T)
 			},
 		},
 		SessionSourceRefs: []sqlitestore.SessionSourceRefRow{
-			{SessionID: "imported-pi-1", Backend: "pi", SourcePath: olderSourcePath},
-			{SessionID: "imported-pi-2", Backend: "pi", SourcePath: newerSourcePath},
+			{SessionID: "imported-pi-1", Backend: "pi", SourcePath: olderSourcePath, HasLegacySessionUIState: true},
+			{SessionID: "imported-pi-2", Backend: "pi", SourcePath: newerSourcePath, HasLegacySessionUIState: true},
 		},
 		AppState:          sqlitestore.AppStateRow{RecentCwds: []string{}, CwdGroups: []sqlitestore.CwdGroupRow{}},
 		HiddenSessionKeys: []sqlitestore.HiddenSessionKeyRow{},

@@ -28,16 +28,17 @@ func fakeRuntimeConfig() RuntimeConfig {
 }
 
 type importedPIDetachedFixture struct {
-	SessionID           string
-	CWD                 string
-	Title               string
-	UpdatedAt           time.Time
-	ActivityAt          time.Time
-	SourcePath          string
-	FirstUserMessage    string
-	PriorityOffset      float64
-	SnoozeUntil         *time.Time
-	DependencySessionID *string
+	SessionID               string
+	CWD                     string
+	Title                   string
+	UpdatedAt               time.Time
+	ActivityAt              time.Time
+	SourcePath              string
+	FirstUserMessage        string
+	HasLegacySessionUIState bool
+	PriorityOffset          float64
+	SnoozeUntil             *time.Time
+	DependencySessionID     *string
 }
 
 func seedImportedPIDetachedSessions(t *testing.T, cfg config.Config, now time.Time, fixtures ...importedPIDetachedFixture) {
@@ -72,10 +73,11 @@ func seedImportedPIDetachedSessions(t *testing.T, cfg config.Config, now time.Ti
 			},
 		})
 		refs = append(refs, sqlitestore.SessionSourceRefRow{
-			SessionID:        fixture.SessionID,
-			Backend:          "pi",
-			SourcePath:       fixture.SourcePath,
-			FirstUserMessage: fixture.FirstUserMessage,
+			SessionID:               fixture.SessionID,
+			Backend:                 "pi",
+			SourcePath:              fixture.SourcePath,
+			FirstUserMessage:        fixture.FirstUserMessage,
+			HasLegacySessionUIState: fixture.HasLegacySessionUIState,
 		})
 	}
 	if err := catalog.ReplaceImportBundle(context.Background(), sqlitestore.ImportBundle{
@@ -105,6 +107,28 @@ func writeImportedPISourceFile(t *testing.T, dir, name string, activity time.Tim
 		t.Fatalf("Chtimes(%q) error = %v", path, err)
 	}
 	return path
+}
+
+func findSessionSummaryByID(t *testing.T, items []SessionSummary, sessionID string) SessionSummary {
+	t.Helper()
+	for _, item := range items {
+		if item.SessionID == sessionID {
+			return item
+		}
+	}
+	t.Fatalf("session summary %q not found in %+v", sessionID, items)
+	return SessionSummary{}
+}
+
+func findResumeCandidateByID(t *testing.T, items []SessionResumeCandidate, sessionID string) SessionResumeCandidate {
+	t.Helper()
+	for _, item := range items {
+		if item.SessionID == sessionID {
+			return item
+		}
+	}
+	t.Fatalf("resume candidate %q not found in %+v", sessionID, items)
+	return SessionResumeCandidate{}
 }
 
 func TestPersistentStubColdStartRehydratesSessionCatalog(t *testing.T) {
@@ -296,20 +320,22 @@ func TestPersistentStubColdStartResumeCandidatesUseImportedPISourceActivity(t *t
 	cwd := "/workspace/shared"
 	seedImportedPIDetachedSessions(t, cfg, now,
 		importedPIDetachedFixture{
-			SessionID:  "imported-pi-1",
-			CWD:        cwd,
-			Title:      "Imported Pi 1",
-			UpdatedAt:  now.Add(-10 * time.Minute),
-			ActivityAt: now.Add(-10 * time.Minute),
-			SourcePath: olderSourcePath,
+			SessionID:               "imported-pi-1",
+			CWD:                     cwd,
+			Title:                   "Imported Pi 1",
+			UpdatedAt:               now.Add(-10 * time.Minute),
+			ActivityAt:              now.Add(-10 * time.Minute),
+			SourcePath:              olderSourcePath,
+			HasLegacySessionUIState: true,
 		},
 		importedPIDetachedFixture{
-			SessionID:  "imported-pi-2",
-			CWD:        cwd,
-			Title:      "Imported Pi 2",
-			UpdatedAt:  now.Add(-3 * time.Hour),
-			ActivityAt: now.Add(-3 * time.Hour),
-			SourcePath: newerSourcePath,
+			SessionID:               "imported-pi-2",
+			CWD:                     cwd,
+			Title:                   "Imported Pi 2",
+			UpdatedAt:               now.Add(-3 * time.Hour),
+			ActivityAt:              now.Add(-3 * time.Hour),
+			SourcePath:              newerSourcePath,
+			HasLegacySessionUIState: true,
 		},
 	)
 
@@ -354,33 +380,36 @@ func TestPersistentStubColdStartResumeCandidatesMatchSidebarOrderingForDemotedIm
 	snoozeUntil := now.Add(2 * time.Hour)
 	seedImportedPIDetachedSessions(t, cfg, now,
 		importedPIDetachedFixture{
-			SessionID:      "imported-pi-1",
-			CWD:            cwd,
-			Title:          "Active",
-			UpdatedAt:      now.Add(-90 * time.Minute),
-			ActivityAt:     now.Add(-90 * time.Minute),
-			SourcePath:     activeSourcePath,
-			PriorityOffset: 0,
+			SessionID:               "imported-pi-1",
+			CWD:                     cwd,
+			Title:                   "Active",
+			UpdatedAt:               now.Add(-90 * time.Minute),
+			ActivityAt:              now.Add(-90 * time.Minute),
+			SourcePath:              activeSourcePath,
+			HasLegacySessionUIState: true,
+			PriorityOffset:          0,
 		},
 		importedPIDetachedFixture{
-			SessionID:           "imported-pi-2",
-			CWD:                 cwd,
-			Title:               "Blocked",
-			UpdatedAt:           now.Add(-30 * time.Second),
-			ActivityAt:          now.Add(-30 * time.Second),
-			SourcePath:          blockedSourcePath,
-			PriorityOffset:      priority,
-			DependencySessionID: &blockedDependency,
+			SessionID:               "imported-pi-2",
+			CWD:                     cwd,
+			Title:                   "Blocked",
+			UpdatedAt:               now.Add(-30 * time.Second),
+			ActivityAt:              now.Add(-30 * time.Second),
+			SourcePath:              blockedSourcePath,
+			HasLegacySessionUIState: true,
+			PriorityOffset:          priority,
+			DependencySessionID:     &blockedDependency,
 		},
 		importedPIDetachedFixture{
-			SessionID:      "imported-pi-3",
-			CWD:            cwd,
-			Title:          "Snoozed",
-			UpdatedAt:      now.Add(-15 * time.Second),
-			ActivityAt:     now.Add(-15 * time.Second),
-			SourcePath:     snoozedSourcePath,
-			PriorityOffset: priority,
-			SnoozeUntil:    &snoozeUntil,
+			SessionID:               "imported-pi-3",
+			CWD:                     cwd,
+			Title:                   "Snoozed",
+			UpdatedAt:               now.Add(-15 * time.Second),
+			ActivityAt:              now.Add(-15 * time.Second),
+			SourcePath:              snoozedSourcePath,
+			HasLegacySessionUIState: true,
+			PriorityOffset:          priority,
+			SnoozeUntil:             &snoozeUntil,
 		},
 	)
 
@@ -419,12 +448,13 @@ func TestPersistentStubColdStartSessionDetailsUsesImportedPIDisplayTimestamp(t *
 	recordedUpdatedAt := now.Add(-5 * time.Minute)
 	recordedActivityAt := now.Add(-2 * time.Hour)
 	seedImportedPIDetachedSessions(t, cfg, now, importedPIDetachedFixture{
-		SessionID:  "imported-pi-1",
-		CWD:        "/workspace/details",
-		Title:      "Imported Pi",
-		UpdatedAt:  recordedUpdatedAt,
-		ActivityAt: recordedActivityAt,
-		SourcePath: sourcePath,
+		SessionID:               "imported-pi-1",
+		CWD:                     "/workspace/details",
+		Title:                   "Imported Pi",
+		UpdatedAt:               recordedUpdatedAt,
+		ActivityAt:              recordedActivityAt,
+		SourcePath:              sourcePath,
+		HasLegacySessionUIState: true,
 	})
 
 	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
@@ -452,6 +482,176 @@ func TestPersistentStubColdStartSessionDetailsUsesImportedPIDisplayTimestamp(t *
 	}
 	if details.LastActivityTS != timestampSeconds(recordedActivityAt) {
 		t.Fatalf("SessionDetails().LastActivityTS = %v, want %v", details.LastActivityTS, timestampSeconds(recordedActivityAt))
+	}
+}
+
+func TestPersistentStubColdStartImportedPIWithLegacyUIStateUsesSourceActivityAcrossViews(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sourceActivity := now.Add(-20 * time.Minute)
+	recordedUpdatedAt := now.Add(-3 * time.Hour)
+	cwd := "/workspace/provenance-true"
+	sourcePath := writeImportedPISourceFile(t, t.TempDir(), "imported-pi.jsonl", sourceActivity)
+	seedImportedPIDetachedSessions(t, cfg, now, importedPIDetachedFixture{
+		SessionID:               "imported-pi-1",
+		CWD:                     cwd,
+		Title:                   "Imported Pi",
+		UpdatedAt:               recordedUpdatedAt,
+		ActivityAt:              recordedUpdatedAt,
+		SourcePath:              sourcePath,
+		HasLegacySessionUIState: true,
+	})
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	listed, err := rehydrated.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	listedItem := findSessionSummaryByID(t, listed.Items, "imported-pi-1")
+	resume, err := rehydrated.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{CWD: cwd, AgentBackend: "pi"})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	resumeItem := findResumeCandidateByID(t, resume.Sessions, "imported-pi-1")
+	details, err := rehydrated.SessionDetails(context.Background(), SessionDetailsRequest{SessionID: mustSessionID(t, "imported-pi-1")})
+	if err != nil {
+		t.Fatalf("SessionDetails() error = %v", err)
+	}
+	want := timestampSeconds(sourceActivity)
+	if listedItem.LastUpdatedTS != want || listedItem.UpdatedTS != want {
+		t.Fatalf("ListSessions() timestamps = (%v, %v), want %v", listedItem.LastUpdatedTS, listedItem.UpdatedTS, want)
+	}
+	if resumeItem.UpdatedTS != want {
+		t.Fatalf("SessionResumeCandidates().UpdatedTS = %v, want %v", resumeItem.UpdatedTS, want)
+	}
+	if details.LastUpdatedTS != want {
+		t.Fatalf("SessionDetails().LastUpdatedTS = %v, want %v", details.LastUpdatedTS, want)
+	}
+}
+
+func TestPersistentStubColdStartImportedPIWithoutLegacyUIStateUsesPersistedUpdatedAtAcrossViews(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sourceActivity := now.Add(-10 * time.Minute)
+	recordedUpdatedAt := now.Add(-2 * time.Hour)
+	cwd := "/workspace/provenance-false"
+	sourcePath := writeImportedPISourceFile(t, t.TempDir(), "imported-pi.jsonl", sourceActivity)
+	seedImportedPIDetachedSessions(t, cfg, now, importedPIDetachedFixture{
+		SessionID:               "imported-pi-1",
+		CWD:                     cwd,
+		Title:                   "Imported Pi",
+		UpdatedAt:               recordedUpdatedAt,
+		ActivityAt:              recordedUpdatedAt,
+		SourcePath:              sourcePath,
+		HasLegacySessionUIState: false,
+	})
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	listed, err := rehydrated.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	listedItem := findSessionSummaryByID(t, listed.Items, "imported-pi-1")
+	resume, err := rehydrated.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{CWD: cwd, AgentBackend: "pi"})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	resumeItem := findResumeCandidateByID(t, resume.Sessions, "imported-pi-1")
+	details, err := rehydrated.SessionDetails(context.Background(), SessionDetailsRequest{SessionID: mustSessionID(t, "imported-pi-1")})
+	if err != nil {
+		t.Fatalf("SessionDetails() error = %v", err)
+	}
+	want := timestampSeconds(recordedUpdatedAt)
+	if listedItem.LastUpdatedTS != want || listedItem.UpdatedTS != want {
+		t.Fatalf("ListSessions() timestamps = (%v, %v), want %v", listedItem.LastUpdatedTS, listedItem.UpdatedTS, want)
+	}
+	if resumeItem.UpdatedTS != want {
+		t.Fatalf("SessionResumeCandidates().UpdatedTS = %v, want %v", resumeItem.UpdatedTS, want)
+	}
+	if details.LastUpdatedTS != want {
+		t.Fatalf("SessionDetails().LastUpdatedTS = %v, want %v", details.LastUpdatedTS, want)
+	}
+}
+
+func TestPersistentStubColdStartImportedPIMetadataEditsDoNotChangeProvenanceDecision(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sourceActivity := now.Add(2 * time.Hour)
+	cwd := "/workspace/edited-imported"
+	sourcePath := writeImportedPISourceFile(t, t.TempDir(), "imported-pi.jsonl", sourceActivity)
+	seedImportedPIDetachedSessions(t, cfg, now, importedPIDetachedFixture{
+		SessionID:               "imported-pi-1",
+		CWD:                     cwd,
+		Title:                   "Imported Pi",
+		UpdatedAt:               now.Add(-6 * time.Hour),
+		ActivityAt:              now.Add(-6 * time.Hour),
+		SourcePath:              sourcePath,
+		HasLegacySessionUIState: false,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfig())
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	dependency, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/workspace/dependency"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	importedID := mustSessionID(t, "imported-pi-1")
+	if _, err := svc.RenameSession(context.Background(), RenameSessionRequest{SessionID: importedID, Name: "Renamed Imported"}); err != nil {
+		t.Fatalf("RenameSession() error = %v", err)
+	}
+	if _, err := svc.FocusSession(context.Background(), FocusSessionRequest{SessionID: importedID, Focused: true}); err != nil {
+		t.Fatalf("FocusSession() error = %v", err)
+	}
+	priority := 1.5
+	snoozeUntil := now.Add(4 * time.Hour).Unix()
+	dependencyID := dependency.Session.SessionID
+	if _, err := svc.EditSession(context.Background(), EditSessionRequest{
+		SessionID:           importedID,
+		PriorityOffset:      Float64Patch{Present: true, Value: &priority},
+		SnoozeUntil:         Int64Patch{Present: true, Value: &snoozeUntil},
+		DependencySessionID: StringPatch{Present: true, Value: &dependencyID},
+	}); err != nil {
+		t.Fatalf("EditSession() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	listed, err := rehydrated.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	listedItem := findSessionSummaryByID(t, listed.Items, "imported-pi-1")
+	resume, err := rehydrated.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{CWD: cwd, AgentBackend: "pi"})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	resumeItem := findResumeCandidateByID(t, resume.Sessions, "imported-pi-1")
+	details, err := rehydrated.SessionDetails(context.Background(), SessionDetailsRequest{SessionID: importedID})
+	if err != nil {
+		t.Fatalf("SessionDetails() error = %v", err)
+	}
+	want := timestampSeconds(now)
+	if listedItem.LastUpdatedTS != want || listedItem.UpdatedTS != want {
+		t.Fatalf("ListSessions() timestamps after restart = (%v, %v), want %v", listedItem.LastUpdatedTS, listedItem.UpdatedTS, want)
+	}
+	if resumeItem.UpdatedTS != want {
+		t.Fatalf("SessionResumeCandidates().UpdatedTS after restart = %v, want %v", resumeItem.UpdatedTS, want)
+	}
+	if details.LastUpdatedTS != want {
+		t.Fatalf("SessionDetails().LastUpdatedTS after restart = %v, want %v", details.LastUpdatedTS, want)
+	}
+	if details.LastUpdatedTS == timestampSeconds(sourceActivity) {
+		t.Fatalf("SessionDetails().LastUpdatedTS = %v, want persisted updatedAt instead of source activity %v", details.LastUpdatedTS, timestampSeconds(sourceActivity))
 	}
 }
 

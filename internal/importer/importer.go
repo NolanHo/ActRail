@@ -377,10 +377,11 @@ func buildImportBundle(source legacySnapshot, opts Options, sideAudit []SideJSON
 		}
 		bundle.Sessions = append(bundle.Sessions, snapshot)
 		bundle.SessionSourceRefs = append(bundle.SessionSourceRefs, sqlitestore.SessionSourceRefRow{
-			SessionID:        key.SessionID,
-			Backend:          key.Backend,
-			SourcePath:       strings.TrimSpace(sessionRow.SourcePath),
-			FirstUserMessage: strings.TrimSpace(sessionRow.FirstUserMessage),
+			SessionID:               key.SessionID,
+			Backend:                 key.Backend,
+			SourcePath:              strings.TrimSpace(sessionRow.SourcePath),
+			FirstUserMessage:        strings.TrimSpace(sessionRow.FirstUserMessage),
+			HasLegacySessionUIState: hasUI,
 		})
 	}
 	for _, key := range sortedOrphanKeys(uiByKey, sessionByKey) {
