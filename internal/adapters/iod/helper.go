@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -21,16 +22,17 @@ import (
 const DefaultProtocolVersion = 1
 
 type HelperOptions struct {
-	SessionID       session.SessionID
-	GenerationID    GenerationID
-	Paths           GenerationPaths
-	Command         process.Command
-	CWD             string
-	Environment     process.Environment
-	PTYSize         process.PTYSize
-	ProtocolVersion int
-	Runner          process.Runner
-	Now             func() time.Time
+	SessionID        session.SessionID
+	GenerationID     GenerationID
+	Paths            GenerationPaths
+	Command          process.Command
+	CWD              string
+	Environment      process.Environment
+	PTYSize          process.PTYSize
+	ProtocolVersion  int
+	Runner           process.Runner
+	Now              func() time.Time
+	OnChildExitStart func()
 }
 
 type Helper struct {
@@ -53,12 +55,14 @@ type Helper struct {
 	outcomes          map[CommandID]storedOutcome
 	broken            bool
 	childExited       bool
+	childExitStarted  atomic.Bool
 	closed            bool
 	closeListenerOnce sync.Once
 	childResolved     chan struct{}
 
 	commands            chan queuedCommand
 	beforeResolveAppend func(CommandID)
+	onChildExitStart    func()
 	wg                  sync.WaitGroup
 }
 
@@ -185,17 +189,18 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 		now = time.Now
 	}
 	return &Helper{
-		sessionID:       opts.SessionID,
-		generationID:    opts.GenerationID,
-		paths:           opts.Paths,
-		launchSpec:      launchSpec,
-		protocolVersion: protocolVersion,
-		runner:          runner,
-		now:             now,
-		conns:           make(map[*helperConn]struct{}),
-		outcomes:        make(map[CommandID]storedOutcome),
-		childResolved:   make(chan struct{}),
-		commands:        make(chan queuedCommand, 128),
+		sessionID:        opts.SessionID,
+		generationID:     opts.GenerationID,
+		paths:            opts.Paths,
+		launchSpec:       launchSpec,
+		protocolVersion:  protocolVersion,
+		runner:           runner,
+		now:              now,
+		conns:            make(map[*helperConn]struct{}),
+		outcomes:         make(map[CommandID]storedOutcome),
+		childResolved:    make(chan struct{}),
+		commands:         make(chan queuedCommand, 128),
+		onChildExitStart: opts.OnChildExitStart,
 	}, nil
 }
 
@@ -313,7 +318,7 @@ func (h *Helper) shutdown() error {
 	}
 	h.closed = true
 	h.mu.Unlock()
-	if !h.isBroken() && !h.isChildExited() {
+	if !h.isBroken() && !h.isChildExitStarted() {
 		_ = h.emitGenerationBreak(GenerationBreakHelperExit)
 	}
 	if _, err := h.emitStateRecord(WALRecordHelperExit, helperExitPayload{Reason: GenerationBreakHelperExit.String()}); err != nil {
@@ -484,8 +489,8 @@ func (h *Helper) resolveCommand(packet CommandPacket) (PacketKind, CommandOutcom
 	}
 
 	payload := commandFactPayload{CommandID: packet.CommandID, CommandKind: packet.Kind}
-	if h.broken || h.childExited {
-		payload.Reason = rejectReason(h.broken, h.childExited)
+	if h.broken || h.childExited || h.childExitStarted.Load() {
+		payload.Reason = rejectReason(h.broken, h.childExited || h.childExitStarted.Load())
 		record, err := h.wal.Append(WALRecordCommandRejected, payload)
 		if err != nil {
 			return "", CommandOutcome{}, false, err
@@ -567,7 +572,7 @@ func (h *Helper) readPTY(ctx context.Context) {
 				return
 			}
 			if isPostExitPTYReadError(err) {
-				h.closeListener()
+				h.beginChildExit()
 				h.awaitChildResolution(ctx)
 				return
 			}
@@ -588,10 +593,10 @@ func (h *Helper) waitChild() {
 		}
 		return
 	}
+	h.beginChildExit()
 	h.mu.Lock()
 	h.childExited = true
 	h.mu.Unlock()
-	h.closeListener()
 	_, _ = h.emitStateRecord(WALRecordChildExit, childExitPayload{Code: status.Code, Signal: status.Signal})
 }
 
@@ -656,6 +661,9 @@ func rejectReason(broken, childExited bool) string {
 }
 
 func (h *Helper) sendHello(hc *helperConn) error {
+	if h.isChildExitStarted() {
+		return fmt.Errorf("child exit is underway")
+	}
 	packet, err := NewHelloPacket(h.sessionID, h.generationID, h.protocolVersion, h.proof)
 	if err != nil {
 		return err
@@ -713,6 +721,14 @@ func (h *Helper) closeConn(conn *helperConn) {
 	_ = conn.conn.Close()
 }
 
+func (h *Helper) beginChildExit() {
+	started := h.childExitStarted.CompareAndSwap(false, true)
+	h.closeListener()
+	if started && h.onChildExitStart != nil {
+		h.onChildExitStart()
+	}
+}
+
 func (h *Helper) closeListener() {
 	if h.listener == nil {
 		return
@@ -738,6 +754,10 @@ func (h *Helper) isBroken() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.broken
+}
+
+func (h *Helper) isChildExitStarted() bool {
+	return h.childExitStarted.Load()
 }
 
 func (h *Helper) isChildExited() bool {

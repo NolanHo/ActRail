@@ -20,10 +20,11 @@ import (
 )
 
 func TestCleanChildExitRealPTYRace(t *testing.T) {
-	tc := newRealPTYHelperTestCase(t, 500*time.Millisecond, "sleep-exit", "50")
+	tc := newRealPTYHelperTestCase(t, 2*time.Second, "sleep-exit", "50")
 	defer tc.stop()
 
-	waitForDialFailure(t, tc.paths.ControlSocketPath, 300*time.Millisecond)
+	tc.waitForChildExitStart(t, 4*time.Second)
+	waitForDialFailure(t, tc.paths.ControlSocketPath, 250*time.Millisecond)
 
 	childExit := tc.mustNextStatePacket(t, FactChildExit)
 	if childExit.Fact.Seq != nil {
@@ -64,6 +65,74 @@ func TestCleanChildExitRealPTYRace(t *testing.T) {
 	}
 }
 
+func TestLateCommandRejectedAfterRealPTYExit(t *testing.T) {
+	tc := newRealPTYHelperTestCase(t, 2*time.Second, "sleep-exit", "50")
+	defer tc.stop()
+
+	tc.waitForChildExitStart(t, 4*time.Second)
+	waitForDialFailure(t, tc.paths.ControlSocketPath, 250*time.Millisecond)
+
+	commandID := mustCommandID(t, "cmd_late_exit")
+	rejected := tc.sendRejectedCommand(t, CommandSend, commandID, json.RawMessage(`{"text":"late"}`))
+	if rejected.AckCursor != 3 {
+		t.Fatalf("rejected ack cursor = %d, want 3", rejected.AckCursor)
+	}
+	if rejected.Deduped {
+		t.Fatal("rejected.Deduped = true, want false")
+	}
+	var payload commandFactPayload
+	if err := json.Unmarshal(rejected.Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(rejected payload) error = %v", err)
+	}
+	if payload.CommandID != commandID {
+		t.Fatalf("rejected payload command id = %q, want %q", payload.CommandID, commandID)
+	}
+	if payload.Reason != "child_exited" {
+		t.Fatalf("rejected payload reason = %q, want %q", payload.Reason, "child_exited")
+	}
+
+	childExit := tc.mustNextStatePacket(t, FactChildExit)
+	if childExit.Fact.Seq != nil {
+		t.Fatalf("child exit seq = %#v, want nil", childExit.Fact.Seq)
+	}
+	helperExit := tc.mustNextStatePacket(t, FactHelperExit)
+	if helperExit.Fact.Seq != nil {
+		t.Fatalf("helper exit seq = %#v, want nil", helperExit.Fact.Seq)
+	}
+
+	tc.mustConnClosed(t)
+	tc.stop()
+
+	replay, err := ReplayWAL(tc.paths.WALPath, tc.sessionID, tc.generationID, 2)
+	if err != nil {
+		t.Fatalf("ReplayWAL() error = %v", err)
+	}
+	wantKinds := []FactKind{FactCommandRejected, FactChildExit, FactHelperExit}
+	if len(replay.Records) != len(wantKinds) {
+		t.Fatalf("len(replay.Records) = %d, want %d", len(replay.Records), len(wantKinds))
+	}
+	for i, record := range replay.Records {
+		if got := record.Header.Class.FactKind(); got != wantKinds[i] {
+			t.Fatalf("replay record %d fact kind = %q, want %q", i, got, wantKinds[i])
+		}
+		if got := record.Header.Class.FactKind(); got == FactGenerationBreak || got == FactCommandAccepted {
+			t.Fatalf("replay record %d fact kind = %q, want no accepted or generation-break record", i, got)
+		}
+	}
+	if replay.Records[0].Header.Offset != rejected.AckCursor {
+		t.Fatalf("replay reject offset = %d, want %d", replay.Records[0].Header.Offset, rejected.AckCursor)
+	}
+	if err := json.Unmarshal(replay.Records[0].Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(replay rejected payload) error = %v", err)
+	}
+	if payload.CommandID != commandID {
+		t.Fatalf("replay rejected payload command id = %q, want %q", payload.CommandID, commandID)
+	}
+	if payload.Reason != "child_exited" {
+		t.Fatalf("replay rejected payload reason = %q, want %q", payload.Reason, "child_exited")
+	}
+}
+
 func TestIodHelperRealPTYChildProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_IOD_REAL_PTY_HELPER") != "1" {
 		return
@@ -99,6 +168,9 @@ type realPTYHelperTestCase struct {
 	paths        GenerationPaths
 	conn         net.Conn
 	dec          *json.Decoder
+	enc          *json.Encoder
+	exitStartCh  chan struct{}
+	pendingRaw   []json.RawMessage
 	cancel       context.CancelFunc
 	errCh        chan error
 	stopOnce     sync.Once
@@ -124,6 +196,8 @@ func newRealPTYHelperTestCase(t *testing.T, waitDelay time.Duration, mode string
 	runner := &delayedWaitRunner{base: process.NewExecRunner(), delay: waitDelay}
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
+	exitStartCh := make(chan struct{})
+	var exitStartOnce sync.Once
 	go func() {
 		errCh <- RunHelper(ctx, HelperOptions{
 			SessionID:       sessionID,
@@ -136,6 +210,9 @@ func newRealPTYHelperTestCase(t *testing.T, waitDelay time.Duration, mode string
 			ProtocolVersion: 1,
 			Runner:          runner,
 			Now:             func() time.Time { return time.Unix(1760000000, 0).UTC() },
+			OnChildExitStart: func() {
+				exitStartOnce.Do(func() { close(exitStartCh) })
+			},
 		})
 	}()
 	waitForSocket(t, paths.ControlSocketPath)
@@ -145,6 +222,7 @@ func newRealPTYHelperTestCase(t *testing.T, waitDelay time.Duration, mode string
 		t.Fatalf("net.Dial(unix) error = %v", err)
 	}
 	dec := json.NewDecoder(conn)
+	enc := json.NewEncoder(conn)
 	var hello HelloPacket
 	if err := decodeWithin(t, dec, &hello); err != nil {
 		cancel()
@@ -162,7 +240,7 @@ func newRealPTYHelperTestCase(t *testing.T, waitDelay time.Duration, mode string
 		_ = conn.Close()
 		t.Fatalf("hello proof does not match manifest: hello=%#v manifest=%#v", hello, manifest)
 	}
-	return &realPTYHelperTestCase{t: t, sessionID: sessionID, generationID: generationID, paths: paths, conn: conn, dec: dec, cancel: cancel, errCh: errCh}
+	return &realPTYHelperTestCase{t: t, sessionID: sessionID, generationID: generationID, paths: paths, conn: conn, dec: dec, enc: enc, exitStartCh: exitStartCh, cancel: cancel, errCh: errCh}
 }
 
 func (tc *realPTYHelperTestCase) stop() {
@@ -180,11 +258,64 @@ func (tc *realPTYHelperTestCase) stop() {
 	})
 }
 
+func (tc *realPTYHelperTestCase) waitForChildExitStart(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	select {
+	case <-tc.exitStartCh:
+	case <-time.After(timeout):
+		t.Fatalf("child exit start was not observed within %v", timeout)
+	}
+}
+
+func (tc *realPTYHelperTestCase) sendRejectedCommand(t *testing.T, name CommandName, commandID CommandID, payload json.RawMessage) CommandOutcome {
+	t.Helper()
+	packet, err := NewCommandPacket(tc.sessionID, tc.generationID, name, commandID, payload)
+	if err != nil {
+		t.Fatalf("NewCommandPacket() error = %v", err)
+	}
+	if err := tc.enc.Encode(packet); err != nil {
+		t.Fatalf("encode rejected command packet error = %v", err)
+	}
+	for {
+		raw, err := decodeRawWithin(t, tc.dec)
+		if err != nil {
+			t.Fatalf("decode rejected packet raw error = %v", err)
+		}
+		var peek struct {
+			Kind PacketKind `json:"kind"`
+		}
+		if err := json.Unmarshal(raw, &peek); err != nil {
+			t.Fatalf("json.Unmarshal(rejected packet peek) error = %v", err)
+		}
+		switch peek.Kind {
+		case PacketCommandRejected:
+			var response CommandRejectedPacket
+			if err := json.Unmarshal(raw, &response); err != nil {
+				t.Fatalf("json.Unmarshal(rejected packet) error = %v", err)
+			}
+			return response.CommandOutcome
+		case PacketState:
+			tc.pendingRaw = append(tc.pendingRaw, append(json.RawMessage(nil), raw...))
+		default:
+			t.Fatalf("next packet kind = %q, want %q or %q", peek.Kind, PacketCommandRejected, PacketState)
+		}
+	}
+}
+
 func (tc *realPTYHelperTestCase) mustNextStatePacket(t *testing.T, want FactKind) StatePacket {
 	t.Helper()
-	raw, err := decodeRawWithin(t, tc.dec)
-	if err != nil {
-		t.Fatalf("decode raw packet error = %v", err)
+	var (
+		raw json.RawMessage
+		err error
+	)
+	if len(tc.pendingRaw) > 0 {
+		raw = append(json.RawMessage(nil), tc.pendingRaw[0]...)
+		tc.pendingRaw = tc.pendingRaw[1:]
+	} else {
+		raw, err = decodeRawWithin(t, tc.dec)
+		if err != nil {
+			t.Fatalf("decode raw packet error = %v", err)
+		}
 	}
 	var peek struct {
 		Kind PacketKind `json:"kind"`
