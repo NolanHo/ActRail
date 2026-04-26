@@ -72,14 +72,14 @@ func DiscoverManifests(root string) ([]DiscoveredManifest, error) {
 		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return nil
 		}
 		var manifest iod.GenerationManifest
 		if err := json.Unmarshal(raw, &manifest); err != nil {
-			return err
+			return nil
 		}
 		if err := manifest.Validate(); err != nil {
-			return err
+			return nil
 		}
 		items = append(items, DiscoveredManifest{Path: path, Manifest: manifest})
 		return nil

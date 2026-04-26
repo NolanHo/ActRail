@@ -13,6 +13,7 @@ import (
 
 	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/iodclient"
+	"actrail/internal/adapters/process"
 	"actrail/internal/domain/session"
 )
 
@@ -25,7 +26,8 @@ type helperReplayScript struct {
 func TestHelperDiscovery(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
-	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfig())
+	generationID := mustHelperGenerationID(t, "g_7")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
@@ -34,12 +36,8 @@ func TestHelperDiscovery(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
 	sessionID := mustSessionID(t, created.Session.SessionID)
-	generationID := mustHelperGenerationID(t, "g_7")
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000000)
-	if err := svc.bindCurrentGeneration(helperGenerationBinding{SessionID: sessionID, GenerationID: generationID}); err != nil {
-		t.Fatalf("bindCurrentGeneration() error = %v", err)
-	}
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
 		AfterOffset: 0,
 		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 0),
@@ -68,7 +66,8 @@ func TestHelperDiscovery(t *testing.T) {
 func TestServerReattach(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
-	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfig())
+	generationID := mustHelperGenerationID(t, "g_11")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID, LastReplayOffset: 5}))
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
@@ -77,12 +76,8 @@ func TestServerReattach(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
 	sessionID := mustSessionID(t, created.Session.SessionID)
-	generationID := mustHelperGenerationID(t, "g_11")
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000001)
-	if err := svc.bindCurrentGeneration(helperGenerationBinding{SessionID: sessionID, GenerationID: generationID, LastReplayOffset: 5}); err != nil {
-		t.Fatalf("bindCurrentGeneration() error = %v", err)
-	}
 	item := mustReplayItemPacket(t, sessionID, generationID, 6, 3)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
 		AfterOffset: 5,
@@ -117,7 +112,9 @@ func TestServerReattach(t *testing.T) {
 func TestStaleHelperFence(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
-	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfig())
+	currentGeneration := mustHelperGenerationID(t, "g_7")
+	staleGeneration := mustHelperGenerationID(t, "g_6")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: currentGeneration}))
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
@@ -126,11 +123,6 @@ func TestStaleHelperFence(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
 	sessionID := mustSessionID(t, created.Session.SessionID)
-	currentGeneration := mustHelperGenerationID(t, "g_7")
-	staleGeneration := mustHelperGenerationID(t, "g_6")
-	if err := svc.bindCurrentGeneration(helperGenerationBinding{SessionID: sessionID, GenerationID: currentGeneration}); err != nil {
-		t.Fatalf("bindCurrentGeneration() error = %v", err)
-	}
 
 	runtimeRoot := iodclient.RuntimeRoot(cfg.Storage.DataDir)
 	staleManifestPath := iodclient.GenerationManifestPath(runtimeRoot, sessionID, staleGeneration)
@@ -165,6 +157,122 @@ func TestStaleHelperFence(t *testing.T) {
 	}
 	if !hasFenceReason(fenced, currentGeneration, helperFenceDuplicateHelper) {
 		t.Fatalf("missing duplicate helper fence in %#v", fenced)
+	}
+}
+
+func TestCorruptManifestSkipped(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_9")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/corrupt-manifest-skipped"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000003)
+	corruptPath := filepath.Join(iodclient.RuntimeRoot(cfg.Storage.DataDir), "corrupt", iodclient.ManifestFilename)
+	if err := os.MkdirAll(filepath.Dir(corruptPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(corruptPath), err)
+	}
+	if err := os.WriteFile(corruptPath, []byte("not json\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", corruptPath, err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{
+		AfterOffset: 0,
+		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 0),
+	})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	if _, ok := rehydrated.helpers.Attachment(sessionID); !ok {
+		t.Fatalf("helper attachment for %q not found", sessionID)
+	}
+	if len(rehydrated.helpers.Fenced()) != 0 {
+		t.Fatalf("fenced helpers = %#v, want none", rehydrated.helpers.Fenced())
+	}
+}
+
+func TestReplayCursorNotAdvancedOnCorruptTail(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_13")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID, LastReplayOffset: 5}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/replay-corrupt-tail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000004)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{
+		AfterOffset: 5,
+		Items:       []iod.ReplayItemPacket{mustReplayItemPacket(t, sessionID, generationID, 6, 4)},
+		Done:        mustReplayDonePacketWithCorruptTail(t, sessionID, generationID, 5, 6),
+	})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	assertReplayCursorPreserved(t, rehydrated, sessionID, generationID, 5, helperFenceReplayCorruptTail)
+}
+
+func TestReplayCursorNotAdvancedOnReplayGap(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_15")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID, LastReplayOffset: 5}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/replay-gap"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000005)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{
+		AfterOffset: 5,
+		Items:       []iod.ReplayItemPacket{mustReplayItemPacket(t, sessionID, generationID, 7, 5)},
+		Done:        mustReplayDonePacket(t, sessionID, generationID, 5, 7),
+	})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	assertReplayCursorPreserved(t, rehydrated, sessionID, generationID, 5, helperFenceReplayGap)
+}
+
+func assertReplayCursorPreserved(t *testing.T, rehydrated *Stub, sessionID session.SessionID, generationID iod.GenerationID, wantOffset iod.WALOffset, wantReason helperFenceReason) {
+	t.Helper()
+	if _, ok := rehydrated.helpers.Attachment(sessionID); ok {
+		t.Fatalf("helper attachment for %q present despite replay failure", sessionID)
+	}
+	fenced := rehydrated.helpers.Fenced()
+	if !hasFenceReason(fenced, generationID, wantReason) {
+		t.Fatalf("missing replay fence %q in %#v", wantReason, fenced)
+	}
+	bindings, err := rehydrated.helperBindings.Load()
+	if err != nil {
+		t.Fatalf("helperBindings.Load() error = %v", err)
+	}
+	if bindings[sessionID].LastReplayOffset != wantOffset {
+		t.Fatalf("saved binding = %+v, want last replay offset %d", bindings[sessionID], wantOffset)
 	}
 }
 
@@ -262,6 +370,18 @@ func startReplayHelper(t *testing.T, manifest iod.GenerationManifest, script hel
 	}
 }
 
+func fakeRuntimeConfigWithHelperBinding(binding RuntimeHelperBinding) RuntimeConfig {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetPID(321)
+	return RuntimeConfig{
+		Runner: &process.FakeRunner{NextHandle: handle},
+		CurrentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			resolved := binding
+			return &resolved, nil
+		},
+	}
+}
+
 func mustHelperGenerationID(t *testing.T, raw string) iod.GenerationID {
 	t.Helper()
 	generationID, err := iod.NewGenerationID(raw)
@@ -292,6 +412,15 @@ func mustReplayItemPacket(t *testing.T, sessionID session.SessionID, generationI
 func mustReplayDonePacket(t *testing.T, sessionID session.SessionID, generationID iod.GenerationID, afterOffset, lastOffset iod.WALOffset) iod.ReplayDonePacket {
 	t.Helper()
 	packet, err := iod.NewReplayDonePacket(sessionID, generationID, afterOffset, lastOffset, false)
+	if err != nil {
+		t.Fatalf("NewReplayDonePacket() error = %v", err)
+	}
+	return packet
+}
+
+func mustReplayDonePacketWithCorruptTail(t *testing.T, sessionID session.SessionID, generationID iod.GenerationID, afterOffset, lastOffset iod.WALOffset) iod.ReplayDonePacket {
+	t.Helper()
+	packet, err := iod.NewReplayDonePacket(sessionID, generationID, afterOffset, lastOffset, true)
 	if err != nil {
 		t.Fatalf("NewReplayDonePacket() error = %v", err)
 	}

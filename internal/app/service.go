@@ -326,6 +326,10 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		_ = runtime.Kill(ctx)
 		return CreateSessionResponse{}, err
 	}
+	if err := s.bindRuntimeCurrentGeneration(record.identity.SessionID(), runtime); err != nil {
+		_ = runtime.Kill(ctx)
+		return CreateSessionResponse{}, err
+	}
 	s.startRuntimeIngest(record.identity.SessionID(), backend, runtime)
 	stream, err := session.MainStream(record.identity)
 	if err != nil {

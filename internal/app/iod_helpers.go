@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,11 @@ import (
 const helperBindingsDir = "iod-bindings"
 
 type helperDialer = iodclient.Dialer
+
+var (
+	errHelperReplayGap         = errors.New("helper replay gap")
+	errHelperReplayCorruptTail = errors.New("helper replay corrupt tail")
+)
 
 type helperGenerationBinding struct {
 	SessionID        session.SessionID `json:"session_id"`
@@ -133,6 +139,8 @@ const (
 	helperFenceAttachFailed             helperFenceReason = "attach_failed"
 	helperFenceHelloProofMismatch       helperFenceReason = "hello_proof_mismatch"
 	helperFenceReplayFailed             helperFenceReason = "replay_failed"
+	helperFenceReplayGap                helperFenceReason = "replay_gap"
+	helperFenceReplayCorruptTail        helperFenceReason = "replay_corrupt_tail"
 )
 
 type helperFence struct {
@@ -201,6 +209,18 @@ func (r *helperRegistry) Remove(sessionID session.SessionID) {
 
 func (s *Stub) bindCurrentGeneration(binding helperGenerationBinding) error {
 	return s.helperBindings.Save(binding)
+}
+
+func (s *Stub) bindRuntimeCurrentGeneration(sessionID session.SessionID, runtime sessionRuntime) error {
+	binding, err := runtime.CurrentHelperBinding(sessionID)
+	if err != nil || binding == nil {
+		return err
+	}
+	return s.bindCurrentGeneration(helperGenerationBinding{
+		SessionID:        sessionID,
+		GenerationID:     binding.GenerationID,
+		LastReplayOffset: binding.LastReplayOffset,
+	})
 }
 
 func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
@@ -294,13 +314,18 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 		_ = client.Close()
 		return attachedHelper{}, binding, helperFenceReplayFailed, err
 	}
-	done, err := client.Replay(ctx, replayReq, nil)
+	replayState := newHelperReplayState(binding.LastReplayOffset)
+	done, err := client.Replay(ctx, replayReq, replayState.accept)
 	if err != nil {
 		_ = client.Close()
-		return attachedHelper{}, binding, helperFenceReplayFailed, err
+		return attachedHelper{}, binding, replayFenceReason(err), err
+	}
+	if err := replayState.finish(done); err != nil {
+		_ = client.Close()
+		return attachedHelper{}, binding, replayFenceReason(err), err
 	}
 	updatedBinding := binding
-	updatedBinding.LastReplayOffset = done.LastOffset
+	updatedBinding.LastReplayOffset = replayState.lastOffset
 	return attachedHelper{
 		Binding:      updatedBinding,
 		ManifestPath: discovered.Path,
@@ -308,6 +333,50 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 		Hello:        hello,
 		Client:       client,
 	}, updatedBinding, "", nil
+}
+
+type helperReplayState struct {
+	lastOffset iod.WALOffset
+}
+
+func newHelperReplayState(afterOffset iod.WALOffset) helperReplayState {
+	return helperReplayState{lastOffset: afterOffset}
+}
+
+func (s *helperReplayState) accept(packet iod.ReplayItemPacket) error {
+	expected := s.lastOffset + 1
+	if packet.Item.WALOffset != expected {
+		return fmt.Errorf("%w: got wal offset %d after %d", errHelperReplayGap, packet.Item.WALOffset, s.lastOffset)
+	}
+	if err := packet.Item.Fact.Validate(); err != nil {
+		return fmt.Errorf("validate replay fact at wal offset %d: %w", packet.Item.WALOffset, err)
+	}
+	s.lastOffset = packet.Item.WALOffset
+	return nil
+}
+
+func (s helperReplayState) finish(done iod.ReplayDonePacket) error {
+	if done.CorruptTail {
+		return fmt.Errorf("%w after wal offset %d", errHelperReplayCorruptTail, done.AfterOffset)
+	}
+	if done.LastOffset != s.lastOffset {
+		return fmt.Errorf("%w: replay done last offset %d does not match accepted offset %d", errHelperReplayGap, done.LastOffset, s.lastOffset)
+	}
+	return nil
+}
+
+func replayFenceReason(err error) helperFenceReason {
+	var helperErr iodclient.HelperError
+	switch {
+	case errors.Is(err, errHelperReplayCorruptTail):
+		return helperFenceReplayCorruptTail
+	case errors.As(err, &helperErr) && helperErr.Packet.Code == iod.ErrorReplayCorruptTail:
+		return helperFenceReplayCorruptTail
+	case errors.Is(err, errHelperReplayGap):
+		return helperFenceReplayGap
+	default:
+		return helperFenceReplayFailed
+	}
 }
 
 func helperFenceFrom(discovered iodclient.DiscoveredManifest, reason helperFenceReason) helperFence {
