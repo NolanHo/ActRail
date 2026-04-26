@@ -311,7 +311,7 @@ func TestConcurrentDuplicateCommandID(t *testing.T) {
 	}
 }
 
-func TestGenerationBreak(t *testing.T) {
+func TestHelperGenerationBreak(t *testing.T) {
 	tc := newHelperTestCase(t)
 	defer tc.stop()
 
