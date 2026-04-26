@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"actrail/internal/adapters/process"
@@ -47,12 +48,14 @@ type Helper struct {
 	proof    HelloProof
 	manifest GenerationManifest
 
-	mu          sync.Mutex
-	conns       map[*helperConn]struct{}
-	outcomes    map[CommandID]storedOutcome
-	broken      bool
-	childExited bool
-	closed      bool
+	mu                sync.Mutex
+	conns             map[*helperConn]struct{}
+	outcomes          map[CommandID]storedOutcome
+	broken            bool
+	childExited       bool
+	closed            bool
+	closeListenerOnce sync.Once
+	childResolved     chan struct{}
 
 	commands            chan queuedCommand
 	beforeResolveAppend func(CommandID)
@@ -191,6 +194,7 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 		now:             now,
 		conns:           make(map[*helperConn]struct{}),
 		outcomes:        make(map[CommandID]storedOutcome),
+		childResolved:   make(chan struct{}),
 		commands:        make(chan queuedCommand, 128),
 	}, nil
 }
@@ -315,9 +319,7 @@ func (h *Helper) shutdown() error {
 	if _, err := h.emitStateRecord(WALRecordHelperExit, helperExitPayload{Reason: GenerationBreakHelperExit.String()}); err != nil {
 		return err
 	}
-	if h.listener != nil {
-		_ = h.listener.Close()
-	}
+	h.closeListener()
 	for _, conn := range h.connSnapshot() {
 		h.closeConn(conn)
 	}
@@ -564,6 +566,11 @@ func (h *Helper) readPTY(ctx context.Context) {
 			if err == io.EOF || errors.Is(err, os.ErrClosed) || ctx.Err() != nil {
 				return
 			}
+			if isPostExitPTYReadError(err) {
+				h.closeListener()
+				h.awaitChildResolution(ctx)
+				return
+			}
 			if !h.isChildExited() && !h.isBroken() {
 				_ = h.emitGenerationBreak(GenerationBreakAttachLost)
 			}
@@ -573,6 +580,7 @@ func (h *Helper) readPTY(ctx context.Context) {
 }
 
 func (h *Helper) waitChild() {
+	defer close(h.childResolved)
 	status, err := h.handle.Wait(context.Background())
 	if err != nil {
 		if !h.isBroken() {
@@ -583,6 +591,7 @@ func (h *Helper) waitChild() {
 	h.mu.Lock()
 	h.childExited = true
 	h.mu.Unlock()
+	h.closeListener()
 	_, _ = h.emitStateRecord(WALRecordChildExit, childExitPayload{Code: status.Code, Signal: status.Signal})
 }
 
@@ -702,6 +711,27 @@ func (h *Helper) closeConn(conn *helperConn) {
 	}
 	h.mu.Unlock()
 	_ = conn.conn.Close()
+}
+
+func (h *Helper) closeListener() {
+	if h.listener == nil {
+		return
+	}
+	h.closeListenerOnce.Do(func() {
+		_ = h.listener.Close()
+		_ = os.Remove(h.paths.ControlSocketPath)
+	})
+}
+
+func (h *Helper) awaitChildResolution(ctx context.Context) {
+	select {
+	case <-h.childResolved:
+	case <-ctx.Done():
+	}
+}
+
+func isPostExitPTYReadError(err error) bool {
+	return errors.Is(err, syscall.EIO)
 }
 
 func (h *Helper) isBroken() bool {
