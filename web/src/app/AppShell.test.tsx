@@ -53,6 +53,7 @@ vi.mock("../lib/api", () => ({
     upsertNotificationSubscription: vi.fn().mockResolvedValue({ ok: true, vapid_public_key: "", subscriptions: [] }),
     toggleNotificationSubscription: vi.fn().mockResolvedValue({ ok: true, vapid_public_key: "", subscriptions: [] }),
     triggerTestPushNotification: vi.fn().mockResolvedValue({ ok: true, sent_count: 1, failed_count: 0, target_count: 1, notification_text: "回复完成" }),
+    getWorkspace: vi.fn().mockResolvedValue({ root_path: "/tmp/project", selected_path: "", history_items: [] }),
     getFiles: vi.fn().mockResolvedValue({ ok: true, path: "", entries: [{ name: "src", path: "src", kind: "dir" }] }),
     getFileRead: vi.fn().mockResolvedValue({ ok: true, kind: "text", text: "console.log('viewer');" }),
     getGitFileVersions: vi.fn().mockResolvedValue({ ok: true, path: "src/main.tsx", base_text: "before", current_text: "after" }),

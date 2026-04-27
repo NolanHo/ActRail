@@ -33,7 +33,7 @@ func TestRunImportsLegacySQLiteAndPreservesSessionFallback(t *testing.T) {
 		`INSERT INTO app_kv(namespace, key, value_json) VALUES('voice_settings', 'tts_model', '"gpt-4o-mini-tts"')`,
 	})
 	targetDir := t.TempDir()
-	targetPath := filepath.Join(targetDir, "actrail.db")
+	targetPath := filepath.Join(targetDir, "sqlite", "actrail.db")
 
 	report, err := Run(context.Background(), Options{
 		SourceSQLitePath: sourcePath,
@@ -150,7 +150,7 @@ func TestRunPersistsSessionUIStateProvenanceForDefaultValuedRows(t *testing.T) {
 		 VALUES('pi', 'with-default-ui', '', 0, 0, 0, NULL, NULL, NULL)`,
 	})
 	targetDir := t.TempDir()
-	targetPath := filepath.Join(targetDir, "actrail.db")
+	targetPath := filepath.Join(targetDir, "sqlite", "actrail.db")
 
 	if _, err := Run(context.Background(), Options{
 		SourceSQLitePath: sourcePath,
@@ -225,7 +225,7 @@ func TestRunUsesSessionsRowsForVisibleTabsAndPreservesOrphansAsWarnings(t *testi
 	writeJSONFile(t, filepath.Join(sideDir, "session_aliases.json"), `{"visible-a":"Alias A"}`, snapshotAt.Add(-2*time.Hour))
 	writeJSONFile(t, filepath.Join(sideDir, "session_sidebar.json"), `{"visible-b":{"alias":"old"}}`, snapshotAt.Add(-96*time.Hour))
 	targetDir := t.TempDir()
-	targetPath := filepath.Join(targetDir, "actrail.db")
+	targetPath := filepath.Join(targetDir, "sqlite", "actrail.db")
 
 	report, err := Run(context.Background(), Options{
 		SourceSQLitePath: sourcePath,
@@ -419,7 +419,7 @@ func TestRunMarksSessionsHiddenForAllCodoxearKeyForms(t *testing.T) {
 		`INSERT INTO hidden_session_keys(key) VALUES('resume:pi:hidden-resume')`,
 	})
 	targetDir := t.TempDir()
-	targetPath := filepath.Join(targetDir, "actrail.db")
+	targetPath := filepath.Join(targetDir, "sqlite", "actrail.db")
 
 	if _, err := Run(context.Background(), Options{
 		SourceSQLitePath: sourcePath,
