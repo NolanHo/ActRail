@@ -99,19 +99,6 @@ func TestCreateSessionViaIod(t *testing.T) {
 	if !created.OK || created.Session == nil {
 		t.Fatalf("CreateSession() = %+v, want created session payload", created)
 	}
-	if created.Session.GenerationID != binding.GenerationID.String() {
-		t.Fatalf("CreateSession().Session.GenerationID = %q, want %q", created.Session.GenerationID, binding.GenerationID)
-	}
-	if created.Session.TransportState != SessionTransportStateAttached.String() {
-		t.Fatalf("CreateSession().Session.TransportState = %q, want %q", created.Session.TransportState, SessionTransportStateAttached)
-	}
-	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
-	if err != nil {
-		t.Fatalf("SessionState() error = %v", err)
-	}
-	if state.Transport.GenerationID != binding.GenerationID.String() || state.Transport.State != SessionTransportStateAttached {
-		t.Fatalf("SessionState().Transport = %+v, want attached generation %q", state.Transport, binding.GenerationID)
-	}
 	if record.runtime.helper == nil {
 		t.Fatal("record.runtime.helper = nil, want iod-backed runtime")
 	}
@@ -175,8 +162,8 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 	if record.runtime.helper == nil {
 		t.Fatal("record.runtime.helper = nil, want iod-backed runtime")
 	}
-	if record.runtime.protocol != runtimeProtocolTTY {
-		t.Fatalf("record.runtime.protocol = %q, want %q", record.runtime.protocol, runtimeProtocolTTY)
+	if record.runtime.protocol != runtimeProtocolCodexRPC {
+		t.Fatalf("record.runtime.protocol = %q, want %q", record.runtime.protocol, runtimeProtocolCodexRPC)
 	}
 	waitForChildLogLines(t, childLog, []string{
 		"cwd=" + cwd,
@@ -187,15 +174,39 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 		"env[" + fakePIChildMarkEnv + "]=codex-forwarded-via-helper",
 	})
 
-	sent, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "Reply exactly: HELPER_CODEX_SEND"})
+	_ = binding
+	_ = manifest
+}
+
+func TestCodexIODControl(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	t.Setenv(fakePIChildLogEnv, childLog)
+	t.Setenv(fakePIChildMarkEnv, "codex-jsonrpc-via-helper")
+	cwd := filepath.Join(t.TempDir(), "cwd-codex-control")
+	childPath := writeFakePIChildScript(t)
+	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--stdio", "--model", "gpt-4.1"}, func(session.Backend) (string, error) {
+		return childPath, nil
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, runtimeCfg)
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	_, sessionID, record, binding, manifest := createIODBackedSessionForBackend(t, svc, cfg, "codex", cwd)
+	defer deleteSessionIfPresent(t, svc, sessionID)
+
+	if err := record.runtime.EnsureCodexThread(context.Background()); err != nil {
+		t.Fatalf("EnsureCodexThread() error = %v", err)
+	}
+	svc.noteCodexThreadID(sessionID, "codex-thread-1")
+	sent, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "Implement P6 Codex transport"})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
-	if sent.Message.Role != "user" || sent.Message.Text != "Reply exactly: HELPER_CODEX_SEND" {
-		t.Fatalf("Send() = %+v, want appended user message", sent)
+	if !sent.Busy {
+		t.Fatalf("Send() = %+v, want busy true", sent)
 	}
-	waitForChildLogLines(t, childLog, []string{"Reply exactly: HELPER_CODEX_SEND"})
-
+	svc.noteCodexTurnID(sessionID, "codex-turn-1")
 	interrupted, err := svc.Interrupt(context.Background(), InterruptRequest{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("Interrupt() error = %v", err)
@@ -203,7 +214,31 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 	if interrupted.Busy {
 		t.Fatalf("Interrupt() = %+v, want busy false", interrupted)
 	}
-	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandSend, iod.PacketCommandInterrupt})
+	waitForChildLogLines(t, childLog, []string{
+		"cwd=" + cwd,
+		"argv[0]=app-server",
+		"argv[1]=--stdio",
+		"argv[2]=--model",
+		"argv[3]=gpt-4.1",
+		"env[" + fakePIChildMarkEnv + "]=codex-jsonrpc-via-helper",
+	})
+	waitForChildLogContains(t, childLog, []string{
+		`"method":"initialize"`,
+		`"id":"initialize-1"`,
+		`"clientInfo":{"name":"actrail","version":"0"}`,
+		`"method":"thread/start"`,
+		`"id":"thread-start-2"`,
+		`"experimentalRawEvents":false`,
+		`"persistExtendedHistory":false`,
+		`"method":"turn/start"`,
+		`"id":"turn-start-3"`,
+		`"threadId":"codex-thread-1"`,
+		`"text":"Implement P6 Codex transport"`,
+		`"method":"turn/interrupt"`,
+		`"id":"turn-interrupt-4"`,
+		`"turnId":"codex-turn-1"`,
+	})
+	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandSend})
 }
 
 func TestIODHelperForwardsChildArgvCWDAndEnvironment(t *testing.T) {
@@ -453,6 +488,23 @@ func waitForChildLogLines(t *testing.T, path string, want []string) {
 	})
 }
 
+func waitForChildLogContains(t *testing.T, path string, want []string) {
+	t.Helper()
+	waitForIODCondition(t, func() bool {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		text := string(data)
+		for _, item := range want {
+			if !strings.Contains(text, item) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 func waitForAcceptedCommands(t *testing.T, walPath string, sessionID session.SessionID, generationID iod.GenerationID, want []iod.PacketKind) {
 	t.Helper()
 	waitForIODCondition(t, func() bool {
@@ -511,6 +563,50 @@ func writeFakePIChildScript(t *testing.T) string {
 		"printf 'env[" + fakePIChildMarkEnv + "]=%s\\n' \"${" + fakePIChildMarkEnv + "-}\" >> \"$log\"\n" +
 		"while IFS= read -r line; do\n" +
 		"  printf '%s\\n' \"$line\" >> \"$log\"\n" +
+		"done\n"
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", path, err)
+	}
+	return path
+}
+
+func writeFakeCodexAppServerScript(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-codex-app-server.sh")
+	content := "#!/bin/sh\n" +
+		"set -eu\n" +
+		"trap '' INT\n" +
+		"log=\"${" + fakePIChildLogEnv + ":?missing log path}\"\n" +
+		": > \"$log\"\n" +
+		"printf 'cwd=%s\\n' \"$(pwd)\" >> \"$log\"\n" +
+		"i=0\n" +
+		"for arg in \"$@\"; do\n" +
+		"  printf 'argv[%s]=%s\\n' \"$i\" \"$arg\" >> \"$log\"\n" +
+		"  i=$((i+1))\n" +
+		"done\n" +
+		"printf 'env[" + fakePIChildMarkEnv + "]=%s\\n' \"${" + fakePIChildMarkEnv + "-}\" >> \"$log\"\n" +
+		"thread_id=codex-thread-1\n" +
+		"turn=0\n" +
+		"while IFS= read -r line; do\n" +
+		"  printf '%s\\n' \"$line\" >> \"$log\"\n" +
+		"  case \"$line\" in\n" +
+		"    *\"method\":\"initialize\"*)\n" +
+		"      printf '%s\\n' '{\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}'\n" +
+		"      ;;\n" +
+		"    *\"method\":\"thread/start\"*)\n" +
+		"      printf '%s\\n' '{\"id\":\"thread-start-2\",\"result\":{\"thread\":{\"id\":\"codex-thread-1\"}}}'\n" +
+		"      printf '%s\\n' '{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"codex-thread-1\"}}}'\n" +
+		"      ;;\n" +
+		"    *\"method\":\"turn/start\"*)\n" +
+		"      turn=$((turn+1))\n" +
+		"      turn_id=codex-turn-$turn\n" +
+		"      printf '{\"id\":\"turn-start-3\",\"result\":{\"turn\":{\"id\":\"%s\",\"status\":\"inProgress\",\"error\":null}}}\\n' \"$turn_id\"\n" +
+		"      printf '{\"method\":\"turn/started\",\"params\":{\"threadId\":\"%s\",\"turn\":{\"id\":\"%s\",\"status\":\"inProgress\",\"error\":null}}}\\n' \"$thread_id\" \"$turn_id\"\n" +
+		"      ;;\n" +
+		"    *\"method\":\"turn/interrupt\"*)\n" +
+		"      printf '%s\\n' '{\"id\":\"turn-interrupt-4\",\"result\":{}}'\n" +
+		"      ;;\n" +
+		"  esac\n" +
 		"done\n"
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", path, err)

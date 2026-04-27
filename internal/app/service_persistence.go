@@ -57,7 +57,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		return nil, err
 	}
 	for _, record := range stub.registry.List() {
-		stub.startRuntimeIngest(record.identity.SessionID(), record.identity.Backend(), stub.runtimeForSession(record.identity.SessionID(), record.runtime))
+		stub.startRuntimeIngest(record.identity.SessionID(), record.identity.Backend(), stub.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime))
 	}
 	return stub, nil
 }

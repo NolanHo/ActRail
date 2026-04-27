@@ -142,6 +142,96 @@ func TestServerReattach(t *testing.T) {
 	}
 }
 
+func TestServerReattachProjectsCodexReplayAndLiveOutput(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_reattach")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID, LastReplayOffset: 5}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-reattach"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	replayItem := mustReplayOutputPacket(t, sessionID, generationID, 6, 3,
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-reattach-1\"}}}\n"+
+			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turn\":{\"id\":\"turn-codex-reattach-1\",\"status\":\"inProgress\",\"error\":null}}}\n"+
+			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turnId\":\"turn-codex-reattach-1\",\"itemId\":\"item-codex-reattach-1\",\"delta\":\"Replay and live Codex \"}}\n")
+	livePacket := mustStateOutputPacket(t, sessionID, generationID, 4,
+		"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turnId\":\"turn-codex-reattach-1\",\"itemId\":\"item-codex-reattach-1\",\"delta\":\"projection works.\"}}\n"+
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turnId\":\"turn-codex-reattach-1\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-reattach-1\",\"text\":\"Replay and live Codex projection works.\"}}}\n"+
+			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turn\":{\"id\":\"turn-codex-reattach-1\",\"status\":\"completed\",\"error\":null}}}\n")
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{
+		AfterOffset: 5,
+		Items:       []iod.ReplayItemPacket{replayItem},
+		Done:        mustReplayDonePacket(t, sessionID, generationID, 5, 6),
+		LivePackets: []any{livePacket},
+	})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	attachment, ok := rehydrated.helpers.Attachment(sessionID)
+	if !ok {
+		t.Fatalf("helper attachment for %q not found", sessionID)
+	}
+	if attachment.Binding.GenerationID != generationID {
+		t.Fatalf("attachment generation id = %q, want %q", attachment.Binding.GenerationID, generationID)
+	}
+	if attachment.Binding.LastReplayOffset != 6 {
+		t.Fatalf("attachment last replay offset = %d, want 6", attachment.Binding.LastReplayOffset)
+	}
+	waitForAppCondition(t, func() bool {
+		messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		if err != nil || len(messages.Items) != 1 {
+			return false
+		}
+		state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		if err != nil {
+			return false
+		}
+		return !state.Busy && messages.Items[0].Text == "Replay and live Codex projection works."
+	})
+	messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "Replay and live Codex projection works." {
+		t.Fatalf("SessionMessages().Items = %#v, want committed replay/live codex message", messages.Items)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy {
+		t.Fatal("SessionState().Busy = true, want false after live codex projection")
+	}
+	if state.PartialAssistantTurn != nil {
+		t.Fatalf("SessionState().PartialAssistantTurn = %+v, want nil after codex turn end", state.PartialAssistantTurn)
+	}
+	record, err := rehydrated.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	_, threadID, turnID := record.runtime.codex.snapshot()
+	if threadID != "thread-codex-reattach-1" || turnID != "" {
+		t.Fatalf("codex runtime state = (thread=%q turn=%q), want (thread-codex-reattach-1, empty)", threadID, turnID)
+	}
+	bindings, err := rehydrated.helperBindings.Load()
+	if err != nil {
+		t.Fatalf("helperBindings.Load() error = %v", err)
+	}
+	if bindings[sessionID].GenerationID != generationID || bindings[sessionID].LastReplayOffset != 6 {
+		t.Fatalf("saved binding = %+v, want generation %q offset 6", bindings[sessionID], generationID)
+	}
+}
+
 func TestHelperReplayStateDoesNotAdvanceOffsetOnProjectionFailure(t *testing.T) {
 	sessionID := mustSessionID(t, "s_1")
 	generationID := mustHelperGenerationID(t, "g_projection_failure")
@@ -321,13 +411,6 @@ func assertReplayCursorPreserved(t *testing.T, rehydrated *Stub, sessionID sessi
 	}
 	if bindings[sessionID].LastReplayOffset != wantOffset {
 		t.Fatalf("saved binding = %+v, want last replay offset %d", bindings[sessionID], wantOffset)
-	}
-	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
-	if err != nil {
-		t.Fatalf("SessionState() error = %v", err)
-	}
-	if state.Transport.State != SessionTransportStateBroken || !state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() || state.Transport.Reason != string(wantReason) {
-		t.Fatalf("SessionState().Transport = %+v, want broken reset-required generation %q reason %q", state.Transport, generationID, wantReason)
 	}
 }
 

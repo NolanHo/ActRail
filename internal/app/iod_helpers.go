@@ -244,13 +244,11 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 	sort.Strings(sessionIDs)
 	attachments := make(map[session.SessionID]attachedHelper)
 	fenced := make([]helperFence, 0)
-	seen := make(map[session.SessionID]struct{}, len(grouped))
 	for _, rawSessionID := range sessionIDs {
 		sessionID, err := session.ParseSessionID(rawSessionID)
 		if err != nil {
 			return err
 		}
-		seen[sessionID] = struct{}{}
 		discovered := grouped[sessionID]
 		if _, ok := s.registry.Lookup(sessionID); !ok {
 			for _, item := range discovered {
@@ -281,7 +279,6 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 				continue
 			}
 			attachments[sessionID] = attachment
-			_ = s.setSessionTransportAttached(sessionID, attachment.Binding.GenerationID)
 			bound = true
 			if updatedBinding.LastReplayOffset != binding.LastReplayOffset {
 				if err := s.helperBindings.Save(updatedBinding); err != nil {
@@ -292,26 +289,7 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 			}
 		}
 	}
-	for sessionID, binding := range bindings {
-		if _, ok := seen[sessionID]; ok {
-			continue
-		}
-		if _, ok := s.registry.Lookup(sessionID); !ok {
-			continue
-		}
-		if _, ok := attachments[sessionID]; ok {
-			continue
-		}
-		_, _ = s.setSessionTransport(sessionID, transportSnapshotBroken(binding.GenerationID, iod.GenerationBreakAttachLost.String(), true))
-	}
 	s.helpers.replaceAll(attachments, fenced)
-	for _, fence := range fenced {
-		transport, ok := transportSnapshotFromFence(fence)
-		if !ok {
-			continue
-		}
-		_, _ = s.setSessionTransport(fence.SessionID, transport)
-	}
 	return nil
 }
 
@@ -339,10 +317,10 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 		if err != nil {
 			return err
 		}
-		if record.identity.Backend() != session.BackendPI {
+		if !runtimeProjectionSupported(record.identity.Backend()) {
 			return nil
 		}
-		return s.applyPIHelperPacket(binding.SessionID, packet)
+		return s.applyRuntimeHelperPacket(binding.SessionID, record.identity.Backend(), packet)
 	})
 	done, err := client.Replay(ctx, replayReq, replayState.accept)
 	if err != nil {

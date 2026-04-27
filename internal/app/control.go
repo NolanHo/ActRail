@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"actrail/internal/domain/session"
 )
@@ -76,9 +77,13 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 		if err := transportControlError(record.transport); err != nil {
 			return err
 		}
+		if err := s.prepareRuntimeSend(ctx, req.SessionID, record.runtime); err != nil {
+			return mapRuntimeControlError(err)
+		}
 		if err := record.runtime.SendPrompt(ctx, text); err != nil {
 			return mapRuntimeControlError(err)
 		}
+		s.awaitRuntimeTurnStart(ctx, record.runtime)
 		item, state, uiRequest, ok, err := s.registry.ActivateSend(req.SessionID, text)
 		if err != nil {
 			return err
@@ -226,6 +231,49 @@ func (s *Stub) ClearSessionUIRequest(sessionID session.SessionID, requestID stri
 		return NotFound(fmt.Sprintf("session %q not found", sessionID))
 	}
 	return nil
+}
+
+const (
+	codexRuntimeBootstrapTimeout = 2 * time.Second
+	codexRuntimePollInterval     = 10 * time.Millisecond
+)
+
+func (s *Stub) prepareRuntimeSend(ctx context.Context, sessionID session.SessionID, runtime sessionRuntime) error {
+	if runtime.protocol != runtimeProtocolCodexRPC {
+		return nil
+	}
+	if err := runtime.EnsureCodexThread(ctx); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(codexRuntimeBootstrapTimeout)
+	for {
+		if _, threadID, _ := runtime.codex.snapshot(); strings.TrimSpace(threadID) != "" {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return errRuntimeInputUnavailable
+		}
+		time.Sleep(codexRuntimePollInterval)
+	}
+}
+
+func (s *Stub) awaitRuntimeTurnStart(ctx context.Context, runtime sessionRuntime) {
+	if runtime.protocol != runtimeProtocolCodexRPC {
+		return
+	}
+	deadline := time.Now().Add(codexRuntimeBootstrapTimeout)
+	for {
+		if _, _, turnID := runtime.codex.snapshot(); strings.TrimSpace(turnID) != "" {
+			return
+		}
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(codexRuntimePollInterval)
+	}
 }
 
 func mapRuntimeControlError(err error) error {

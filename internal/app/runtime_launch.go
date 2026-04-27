@@ -81,8 +81,9 @@ type processRuntimeLauncher struct {
 type runtimeProtocol string
 
 const (
-	runtimeProtocolTTY   runtimeProtocol = "tty"
-	runtimeProtocolPIRPC runtimeProtocol = "pi_rpc"
+	runtimeProtocolTTY      runtimeProtocol = "tty"
+	runtimeProtocolPIRPC    runtimeProtocol = "pi_rpc"
+	runtimeProtocolCodexRPC runtimeProtocol = "codex_rpc"
 
 	helperReadyPollInterval = 25 * time.Millisecond
 	helperReadyTimeout      = 30 * time.Second
@@ -100,9 +101,20 @@ type sessionRuntime struct {
 	launchSpec           process.LaunchSpec
 	handle               process.Handle
 	protocol             runtimeProtocol
+	codex                *codexRuntimeState
 	helper               *runtimeIODHelper
 	helperBinding        *RuntimeHelperBinding
 	currentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
+}
+
+type codexRuntimeState struct {
+	mu              sync.Mutex
+	requestSeq      uint64
+	initialized     bool
+	initializeSent  bool
+	threadStartSent bool
+	threadID        string
+	activeTurnID    string
 }
 
 type runtimeIODHelper struct {
@@ -135,6 +147,115 @@ type piRPCAbortCommand struct {
 }
 
 var errRuntimeInputUnavailable = errors.New("session runtime input is unavailable")
+
+func newCodexRuntimeState(backend session.Backend) *codexRuntimeState {
+	if backend != session.BackendCodex {
+		return nil
+	}
+	return &codexRuntimeState{}
+}
+
+func (s *codexRuntimeState) nextRequestID(prefix string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requestSeq++
+	return fmt.Sprintf("%s-%d", strings.TrimSpace(prefix), s.requestSeq)
+}
+
+func (s *codexRuntimeState) bootstrapRequests() []any {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	requests := make([]any, 0, 2)
+	if !s.initialized && !s.initializeSent {
+		s.requestSeq++
+		s.initializeSent = true
+		requests = append(requests, map[string]any{
+			"method": "initialize",
+			"id":     fmt.Sprintf("initialize-%d", s.requestSeq),
+			"params": map[string]any{
+				"clientInfo":   map[string]any{"name": "actrail", "version": "0"},
+				"capabilities": nil,
+			},
+		})
+	}
+	if s.threadID == "" && !s.threadStartSent {
+		s.requestSeq++
+		s.threadStartSent = true
+		requests = append(requests, map[string]any{
+			"method": "thread/start",
+			"id":     fmt.Sprintf("thread-start-%d", s.requestSeq),
+			"params": map[string]any{
+				"experimentalRawEvents":  false,
+				"persistExtendedHistory": false,
+			},
+		})
+	}
+	return requests
+}
+
+func (s *codexRuntimeState) markInitialized() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.initialized = true
+	s.initializeSent = false
+}
+
+func (s *codexRuntimeState) setThreadID(threadID string) {
+	if s == nil {
+		return
+	}
+	resolved := strings.TrimSpace(threadID)
+	if resolved == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.threadID = resolved
+	s.threadStartSent = false
+}
+
+func (s *codexRuntimeState) setActiveTurnID(turnID string) {
+	if s == nil {
+		return
+	}
+	resolved := strings.TrimSpace(turnID)
+	if resolved == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeTurnID = resolved
+}
+
+func (s *codexRuntimeState) clearActiveTurnID(turnID string) {
+	if s == nil {
+		return
+	}
+	resolved := strings.TrimSpace(turnID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if resolved == "" || s.activeTurnID == resolved {
+		s.activeTurnID = ""
+	}
+}
+
+func (s *codexRuntimeState) snapshot() (initialized bool, threadID, activeTurnID string) {
+	if s == nil {
+		return false, "", ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.initialized, s.threadID, s.activeTurnID
+}
 
 func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 	env, err := process.InheritEnv()
@@ -242,10 +363,14 @@ func defaultRuntimeGenerationID(sessionID session.SessionID) (iod.GenerationID, 
 }
 
 func runtimeProtocolForBackend(backend session.Backend) runtimeProtocol {
-	if backend == session.BackendPI {
+	switch backend {
+	case session.BackendPI:
 		return runtimeProtocolPIRPC
+	case session.BackendCodex:
+		return runtimeProtocolCodexRPC
+	default:
+		return runtimeProtocolTTY
 	}
-	return runtimeProtocolTTY
 }
 
 func (l processRuntimeLauncher) Launch(ctx context.Context, req runtimeLaunchRequest) (sessionRuntime, error) {
@@ -277,6 +402,7 @@ func (l processRuntimeLauncher) launchDirect(ctx context.Context, req runtimeLau
 		launchSpec:           launchSpec,
 		handle:               handle,
 		protocol:             runtimeProtocolForBackend(req.Backend),
+		codex:                newCodexRuntimeState(req.Backend),
 		currentHelperBinding: l.currentHelperBinding,
 	}, nil
 }
@@ -339,6 +465,7 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 		launchSpec:    childLaunchSpec,
 		handle:        handle,
 		protocol:      runtimeProtocolForBackend(req.Backend),
+		codex:         newCodexRuntimeState(req.Backend),
 		helper:        helper,
 		helperBinding: binding,
 		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
@@ -481,6 +608,25 @@ func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
 	if payload == "" {
 		return fmt.Errorf("runtime prompt is required")
 	}
+	if r.protocol == runtimeProtocolCodexRPC {
+		_, threadID, _ := r.codex.snapshot()
+		if threadID == "" {
+			return errRuntimeInputUnavailable
+		}
+		request := map[string]any{
+			"method": "turn/start",
+			"id":     r.codex.nextRequestID("turn-start"),
+			"params": map[string]any{
+				"threadId": threadID,
+				"input": []any{map[string]any{
+					"type":          "text",
+					"text":          payload,
+					"text_elements": []any{},
+				}},
+			},
+		}
+		return r.writeCodexCommand(ctx, request)
+	}
 	if r.helper != nil {
 		if r.protocol == runtimeProtocolPIRPC {
 			encoded, err := json.Marshal(piRPCPromptCommand{Type: "prompt", Message: payload})
@@ -505,6 +651,9 @@ func (r sessionRuntime) RespondUI(ctx context.Context, requestID, value string) 
 	payload := strings.TrimSpace(value)
 	if payload == "" {
 		return fmt.Errorf("runtime ui response value is required")
+	}
+	if r.protocol == runtimeProtocolCodexRPC {
+		return errRuntimeInputUnavailable
 	}
 	if r.helper != nil {
 		if r.protocol == runtimeProtocolPIRPC {
@@ -548,6 +697,29 @@ func (r sessionRuntime) writeRPCCommand(ctx context.Context, command any) error 
 	return r.writeLine(ctx, string(payload))
 }
 
+func (r sessionRuntime) writeCodexCommand(ctx context.Context, command any) error {
+	payload, err := json.Marshal(command)
+	if err != nil {
+		return fmt.Errorf("marshal runtime command: %w", err)
+	}
+	if r.helper != nil {
+		return r.helper.command(ctx, iod.CommandSend, payload)
+	}
+	return r.writeLine(ctx, string(payload))
+}
+
+func (r sessionRuntime) EnsureCodexThread(ctx context.Context) error {
+	if r.protocol != runtimeProtocolCodexRPC {
+		return nil
+	}
+	for _, request := range r.codex.bootstrapRequests() {
+		if err := r.writeCodexCommand(ctx, request); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r sessionRuntime) inputWriter() (io.Writer, error) {
 	if r.helper != nil {
 		return nil, errRuntimeInputUnavailable
@@ -561,6 +733,22 @@ func (r sessionRuntime) inputWriter() (io.Writer, error) {
 func (r sessionRuntime) Interrupt(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if r.protocol == runtimeProtocolCodexRPC {
+		_, threadID, turnID := r.codex.snapshot()
+		if threadID == "" || turnID == "" {
+			return nil
+		}
+		request := map[string]any{
+			"method": "turn/interrupt",
+			"id":     r.codex.nextRequestID("turn-interrupt"),
+			"params": map[string]any{"threadId": threadID, "turnId": turnID},
+		}
+		if err := r.writeCodexCommand(ctx, request); err != nil {
+			return err
+		}
+		r.codex.clearActiveTurnID(turnID)
+		return nil
 	}
 	if r.helper != nil {
 		return r.helper.command(ctx, iod.CommandInterrupt, json.RawMessage(`{}`))
@@ -748,7 +936,13 @@ func removeRuntimeGenerationArtifacts(runtimeDir string) error {
 	return nil
 }
 
-func (s *Stub) runtimeForSession(sessionID session.SessionID, runtime sessionRuntime) sessionRuntime {
+func (s *Stub) runtimeForSession(sessionID session.SessionID, backend session.Backend, runtime sessionRuntime) sessionRuntime {
+	if runtime.protocol == "" {
+		runtime.protocol = runtimeProtocolForBackend(backend)
+	}
+	if backend == session.BackendCodex && runtime.codex == nil {
+		runtime.codex = newCodexRuntimeState(backend)
+	}
 	if runtime.helper != nil || s == nil || s.helpers == nil {
 		return runtime
 	}
