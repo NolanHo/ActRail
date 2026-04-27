@@ -23,9 +23,9 @@ type DiscoveredManifest struct {
 func RuntimeRoot(dataDir string) string {
 	trimmed := strings.TrimSpace(dataDir)
 	if trimmed == "" {
-		return filepath.Join(".", "iod")
+		return filepath.Join(".", "runtime", "iod")
 	}
-	return filepath.Join(trimmed, "iod")
+	return filepath.Join(trimmed, "runtime", "iod")
 }
 
 func GenerationDir(root string, sessionID session.SessionID, generationID iod.GenerationID) string {
