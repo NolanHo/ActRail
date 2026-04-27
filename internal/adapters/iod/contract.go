@@ -176,7 +176,7 @@ type FactKind string
 
 const (
 	FactHelperStart         FactKind = "helper_start"
-	FactAttachEstablished   FactKind = "pi_attach_established"
+	FactAttachEstablished   FactKind = "attach_established"
 	FactCommandAccepted     FactKind = "command_accepted"
 	FactCommandRejected     FactKind = "command_rejected"
 	FactOutputDelta         FactKind = "output_delta"
