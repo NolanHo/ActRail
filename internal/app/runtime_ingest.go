@@ -21,6 +21,10 @@ type iodTerminalOutputPayload struct {
 	Data   string `json:"data"`
 }
 
+type piRuntimeDecoder struct {
+	helperLines piRuntimeLineBuffer
+}
+
 type piRuntimeLineBuffer struct {
 	pending bytes.Buffer
 }
@@ -62,10 +66,11 @@ func runtimeOutputSources(runtime sessionRuntime) []io.Reader {
 }
 
 func (s *Stub) readPIRuntime(sessionID session.SessionID, src io.Reader) {
+	decoder := piRuntimeDecoder{}
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
 	for scanner.Scan() {
-		s.applyPIRuntimeLine(sessionID, scanner.Bytes())
+		s.applyPIEvents(sessionID, decoder.decodeRuntimeLine(scanner.Bytes()))
 	}
 }
 
@@ -73,57 +78,68 @@ func (s *Stub) readPIHelperRuntime(sessionID session.SessionID, helper *runtimeI
 	if s == nil || helper == nil || helper.streamClient == nil {
 		return
 	}
-	var lines piRuntimeLineBuffer
+	decoder := piRuntimeDecoder{}
 	for {
 		packet, err := helper.streamClient.ReadPacket(context.Background())
 		if err != nil {
 			return
 		}
-		s.applyPIHelperPacket(sessionID, &lines, packet)
+		s.applyPIEvents(sessionID, decoder.decodeHelperPacket(packet))
 	}
 }
 
-func (s *Stub) applyPIHelperPacket(sessionID session.SessionID, lines *piRuntimeLineBuffer, packet any) {
+func (d *piRuntimeDecoder) decodeHelperPacket(packet any) []pi.Event {
 	switch v := packet.(type) {
 	case iod.StatePacket:
-		s.applyPIHelperFact(sessionID, lines, v.Fact)
+		return d.decodeHelperFact(v.Fact)
 	case iod.ReplayItemPacket:
-		s.applyPIHelperFact(sessionID, lines, v.Item.Fact)
+		return d.decodeHelperFact(v.Item.Fact)
+	default:
+		return nil
 	}
 }
 
-func (s *Stub) applyPIHelperFact(sessionID session.SessionID, lines *piRuntimeLineBuffer, fact iod.HelperFact) {
+func (d *piRuntimeDecoder) decodeHelperFact(fact iod.HelperFact) []pi.Event {
 	if fact.FactKind != iod.FactOutputDelta {
-		return
+		return nil
 	}
 	var payload iodTerminalOutputPayload
 	if err := json.Unmarshal(fact.Payload, &payload); err != nil {
-		return
+		return nil
 	}
-	if strings.TrimSpace(payload.Data) == "" {
-		return
+	return d.decodeHelperOutput(payload)
+}
+
+func (d *piRuntimeDecoder) decodeHelperOutput(payload iodTerminalOutputPayload) []pi.Event {
+	if payload.Data == "" {
+		return nil
 	}
-	lines.append(payload.Data)
+	d.helperLines.append(payload.Data)
+	var events []pi.Event
 
 	for {
-		line, ok := lines.nextLine()
+		line, ok := d.helperLines.nextLine()
 		if !ok {
-			return
+			return events
 		}
-		s.applyPIRuntimeLine(sessionID, line)
+		events = append(events, d.decodeRuntimeLine(line)...)
 	}
 }
 
-func (s *Stub) applyPIRuntimeLine(sessionID session.SessionID, raw []byte) {
+func (d *piRuntimeDecoder) decodeRuntimeLine(raw []byte) []pi.Event {
 	line := bytes.TrimSpace(raw)
 	if len(line) == 0 || line[0] != '{' {
-		return
+		return nil
 	}
 	material, err := pi.ParseObjectJSON(line)
 	if err != nil {
-		return
+		return nil
 	}
-	for _, event := range material.Events {
+	return material.Events
+}
+
+func (s *Stub) applyPIEvents(sessionID session.SessionID, events []pi.Event) {
+	for _, event := range events {
 		s.applyPIEvent(sessionID, event)
 	}
 }
