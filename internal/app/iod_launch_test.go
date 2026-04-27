@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	fakePIChildEnv    = "ACTRAIL_P3A_FAKE_PI_CHILD"
-	fakePIChildLogEnv = "ACTRAIL_P3A_FAKE_PI_CHILD_LOG"
+	fakePIChildEnv     = "ACTRAIL_P3A_FAKE_PI_CHILD"
+	fakePIChildLogEnv  = "ACTRAIL_P3A_FAKE_PI_CHILD_LOG"
+	fakePIChildMarkEnv = "ACTRAIL_P2_FAKE_PI_CHILD_MARK"
 )
 
 var (
@@ -128,11 +129,45 @@ func TestCreateSessionViaIod(t *testing.T) {
 	if _, err := os.Stat(manifest.ControlSocketPath); err != nil {
 		t.Fatalf("Stat(%q) error = %v", manifest.ControlSocketPath, err)
 	}
+	bindingPath := svc.helperBindings.path(sessionID)
+	if got, want := filepath.Dir(bindingPath), cfg.Storage.IODBindingsDir(); got != want {
+		t.Fatalf("helper binding dir = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(bindingPath); err != nil {
+		t.Fatalf("Stat(%q) error = %v", bindingPath, err)
+	}
+}
+
+func TestIODHelperForwardsChildArgvCWDAndEnvironment(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	t.Setenv(fakePIChildLogEnv, childLog)
+	t.Setenv(fakePIChildMarkEnv, "forwarded-via-helper")
+	cwd := filepath.Join(t.TempDir(), "cwd-forwarding")
+	childPath := writeFakePIChildScript(t)
+	runtimeCfg := realIODHelperRuntimeConfig(t, []string{"--mode", "rpc", "--transport", "stdio"}, func(session.Backend) (string, error) {
+		return childPath, nil
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, runtimeCfg)
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	_, sessionID, _, _, _ := createIODBackedSession(t, svc, cfg, cwd)
+	defer deleteSessionIfPresent(t, svc, sessionID)
+
+	waitForChildLogLines(t, childLog, []string{
+		"cwd=" + cwd,
+		"argv[0]=--mode",
+		"argv[1]=rpc",
+		"argv[2]=--transport",
+		"argv[3]=stdio",
+		"env[" + fakePIChildMarkEnv + "]=forwarded-via-helper",
+	})
 }
 
 func TestCreateSessionRollback(t *testing.T) {
 	cfg := persistentTestConfig(t)
-	runtimeCfg := realIODHelperRuntimeConfig(t, func(session.Backend) (string, error) {
+	runtimeCfg := realIODHelperRuntimeConfig(t, nil, func(session.Backend) (string, error) {
 		return filepath.Join(t.TempDir(), "missing-pi-child"), nil
 	})
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, runtimeCfg)
@@ -243,7 +278,7 @@ func newPersistentIODHelperStub(t *testing.T, cfg config.Config, childLogPath st
 	t.Helper()
 	t.Setenv(fakePIChildLogEnv, childLogPath)
 	childPath := writeFakePIChildScript(t)
-	runtimeCfg := realIODHelperRuntimeConfig(t, func(session.Backend) (string, error) {
+	runtimeCfg := realIODHelperRuntimeConfig(t, nil, func(session.Backend) (string, error) {
 		return childPath, nil
 	})
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, runtimeCfg)
@@ -253,9 +288,9 @@ func newPersistentIODHelperStub(t *testing.T, cfg config.Config, childLogPath st
 	return svc
 }
 
-func realIODHelperRuntimeConfig(t *testing.T, resolveChild func(session.Backend) (string, error)) RuntimeConfig {
+func realIODHelperRuntimeConfig(t *testing.T, adapterArgs []string, resolveChild func(session.Backend) (string, error)) RuntimeConfig {
 	t.Helper()
-	catalog, err := agent.NewCatalog(iodLaunchPIAdapter{args: nil})
+	catalog, err := agent.NewCatalog(iodLaunchPIAdapter{args: adapterArgs})
 	if err != nil {
 		t.Fatalf("agent.NewCatalog() error = %v", err)
 	}
@@ -389,6 +424,13 @@ func writeFakePIChildScript(t *testing.T) string {
 		"trap '' INT\n" +
 		"log=\"${" + fakePIChildLogEnv + ":?missing log path}\"\n" +
 		": > \"$log\"\n" +
+		"printf 'cwd=%s\\n' \"$(pwd)\" >> \"$log\"\n" +
+		"i=0\n" +
+		"for arg in \"$@\"; do\n" +
+		"  printf 'argv[%s]=%s\\n' \"$i\" \"$arg\" >> \"$log\"\n" +
+		"  i=$((i+1))\n" +
+		"done\n" +
+		"printf 'env[" + fakePIChildMarkEnv + "]=%s\\n' \"${" + fakePIChildMarkEnv + "-}\" >> \"$log\"\n" +
 		"while IFS= read -r line; do\n" +
 		"  printf '%s\\n' \"$line\" >> \"$log\"\n" +
 		"done\n"

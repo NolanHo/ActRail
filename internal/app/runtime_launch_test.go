@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
 	"actrail/internal/adapters/agent"
+	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -111,5 +113,89 @@ func TestCreateSessionDoesNotStoreMetadataWhenLaunchFails(t *testing.T) {
 	}
 	if items := svc.registry.List(); len(items) != 0 {
 		t.Fatalf("len(registry.List()) = %d, want 0 after failed launch", len(items))
+	}
+}
+
+func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
+	envVarA, err := process.NewEnvVar("ACTRAIL_ALPHA", "one")
+	if err != nil {
+		t.Fatalf("NewEnvVar(ACTRAIL_ALPHA) error = %v", err)
+	}
+	envVarB, err := process.NewEnvVar("ACTRAIL_BRAVO", "two=2")
+	if err != nil {
+		t.Fatalf("NewEnvVar(ACTRAIL_BRAVO) error = %v", err)
+	}
+	childEnv, err := process.ReplaceEnv(envVarA, envVarB)
+	if err != nil {
+		t.Fatalf("ReplaceEnv() error = %v", err)
+	}
+	ioSpec, err := process.PipeIO(process.LogPaths{})
+	if err != nil {
+		t.Fatalf("PipeIO() error = %v", err)
+	}
+	launcherEnv, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("InheritEnv() error = %v", err)
+	}
+	launcher := processRuntimeLauncher{iodRuntimeRoot: "/tmp/actrail-data/runtime/iod", env: launcherEnv}
+	sessionID := mustSessionID(t, "s_helper_contract")
+	generationID, err := iod.NewGenerationID("g_helper_contract")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	piChild := mustLaunchSpecForHelperContractTest(t, "/tmp/pi", []string{"--mode", "rpc"}, "/tmp/project-pi", childEnv, ioSpec)
+	codexChild := mustLaunchSpecForHelperContractTest(t, "/tmp/codex", []string{"app-server", "--stdio"}, "/tmp/project-codex", childEnv, ioSpec)
+
+	piSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendPI, CWD: "/tmp/project-pi"}, "/tmp/actrail-iod", generationID, piChild)
+	if err != nil {
+		t.Fatalf("helperLaunchSpec(pi) error = %v", err)
+	}
+	codexSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: "/tmp/project-codex"}, "/tmp/actrail-iod", generationID, codexChild)
+	if err != nil {
+		t.Fatalf("helperLaunchSpec(codex) error = %v", err)
+	}
+
+	assertHelperLaunchContract(t, piSpec.Command().Args(), piChild)
+	assertHelperLaunchContract(t, codexSpec.Command().Args(), codexChild)
+	if !reflect.DeepEqual(piSpec.Environment().Vars(), launcherEnv.Vars()) {
+		t.Fatalf("helper environment vars = %#v, want launcher env vars %#v", piSpec.Environment().Vars(), launcherEnv.Vars())
+	}
+	if piSpec.Environment().Mode() != launcherEnv.Mode() {
+		t.Fatalf("helper environment mode = %q, want %q", piSpec.Environment().Mode(), launcherEnv.Mode())
+	}
+	if codexSpec.CWD().String() != "/tmp/project-codex" {
+		t.Fatalf("codex helper cwd = %q, want %q", codexSpec.CWD().String(), "/tmp/project-codex")
+	}
+}
+
+func mustLaunchSpecForHelperContractTest(t *testing.T, path string, args []string, cwd string, env process.Environment, ioSpec process.IO) process.LaunchSpec {
+	t.Helper()
+	command, err := process.NewCommand(path, args...)
+	if err != nil {
+		t.Fatalf("NewCommand(%q) error = %v", path, err)
+	}
+	spec, err := process.NewLaunchSpec(command, cwd, env, ioSpec)
+	if err != nil {
+		t.Fatalf("NewLaunchSpec(%q) error = %v", path, err)
+	}
+	return spec
+}
+
+func assertHelperLaunchContract(t *testing.T, got []string, childSpec process.LaunchSpec) {
+	t.Helper()
+	wantPrefix := []string{
+		helperFlagSessionID, "s_helper_contract",
+		helperFlagGenerationID, "g_helper_contract",
+		helperFlagRuntimeRoot, "/tmp/actrail-data/runtime/iod",
+		helperFlagChildCWD, childSpec.CWD().String(),
+		helperFlagChildEnvMode, string(childSpec.Environment().Mode()),
+		helperFlagChildEnv, "ACTRAIL_ALPHA=one",
+		helperFlagChildEnv, "ACTRAIL_BRAVO=two=2",
+		"--",
+		childSpec.Command().Path(),
+	}
+	want := append(wantPrefix, childSpec.Command().Args()...)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("helper launch args = %#v, want %#v", got, want)
 	}
 }
