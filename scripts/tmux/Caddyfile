@@ -1,0 +1,19 @@
+{
+	auto_https off
+	admin off
+}
+
+{$ACTRAIL_FRONTEND_SITE_ADDR} {
+	encode zstd gzip
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy {$ACTRAIL_BACKEND_UPSTREAM}
+	}
+
+	handle {
+		root * {$ACTRAIL_FRONTEND_DIST_DIR}
+		try_files {path} /index.html
+		file_server
+	}
+}

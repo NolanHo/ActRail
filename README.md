@@ -13,7 +13,7 @@ ActRail currently provides:
 - HTTP bootstrap, auth, health, session snapshots, and other one-shot actions
 - read-only workspace browsing and file reads for a session CWD
 - Git file-history lookup for files inside the session workspace
-- a separate frontend dev server in `web/` and a Go backend in `cmd/actrail-server`
+- a Preact frontend in `web/` and a Go backend in `cmd/actrail-server`
 
 The backend keeps session state in memory. It creates the configured data directory on startup, but durable session persistence is not wired through the runtime logic yet.
 
@@ -95,7 +95,8 @@ npm test
 
 ## tmux launcher
 
-The tmux scripts start both processes and wait for backend health, frontend root, and frontend API proxy readiness.
+The tmux scripts build the frontend with Vite, start the Go backend, then serve `web/dist` through Caddy with `/api` and WebSocket reverse proxying back to the backend.
+They also build `cmd/actrail-iod` into `data/bin/actrail-iod` and export `ACTRAIL_IOD_BIN` for the backend so session launch does not depend on a separately installed helper in `PATH`.
 
 Start:
 
@@ -127,6 +128,9 @@ Useful tmux launcher overrides live in `scripts/tmux/common.sh`, including:
 - `ACTRAIL_BACKEND_PORT`
 - `ACTRAIL_FRONTEND_HOST`
 - `ACTRAIL_FRONTEND_PORT`
+- `ACTRAIL_CADDY_BIN`
+- `ACTRAIL_CADDYFILE`
+- `ACTRAIL_FRONTEND_DIST_DIR`
 - `ACTRAIL_START_TIMEOUT_SECONDS`
 
 ## Environment variables
@@ -149,6 +153,7 @@ Other useful backend settings:
 | `ACTRAIL_AVAILABLE_MODELS` | unset | Optional model list exposed in launch defaults. |
 | `ACTRAIL_DEFAULT_BACKEND` | `pi` | Default backend in launch defaults. |
 | `ACTRAIL_WS_PATH` | `/api/ws` | WebSocket endpoint advertised by bootstrap. |
+| `ACTRAIL_IOD_BIN` | unset | Optional explicit path to the `actrail-iod` helper binary used for session launch. |
 
 ## Notes on persistence
 

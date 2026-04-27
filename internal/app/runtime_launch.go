@@ -162,6 +162,11 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 	if newGenerationID == nil {
 		newGenerationID = defaultRuntimeGenerationID
 	}
+	iodRuntimeRoot, err := resolveIODRuntimeRoot(cfg.IODRuntimeRoot)
+	if err != nil {
+		panic(err)
+	}
+
 	return processRuntimeLauncher{
 		catalog:                 catalog,
 		runner:                  runner,
@@ -169,12 +174,24 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 		resolveIODHelperBinPath: resolveIODHelperBinPath,
 		currentHelperBinding:    cfg.CurrentHelperBinding,
 		newGenerationID:         newGenerationID,
-		iodRuntimeRoot:          strings.TrimSpace(cfg.IODRuntimeRoot),
+		iodRuntimeRoot:          iodRuntimeRoot,
 		useIODHelper:            cfg.UseIODHelper,
 		dialer:                  cfg.IODDialer,
 		env:                     env,
 		io:                      ioSpec,
 	}
+}
+
+func resolveIODRuntimeRoot(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	resolved, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("resolve iod runtime root %q: %w", trimmed, err)
+	}
+	return resolved, nil
 }
 
 func defaultRuntimeIO() (process.IO, error) {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -165,6 +166,24 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 	}
 	if codexSpec.CWD().String() != "/tmp/project-codex" {
 		t.Fatalf("codex helper cwd = %q, want %q", codexSpec.CWD().String(), "/tmp/project-codex")
+	}
+}
+
+func TestNewRuntimeLauncherResolvesIODRuntimeRootToAbsolutePath(t *testing.T) {
+	launcher := newRuntimeLauncher(RuntimeConfig{IODRuntimeRoot: "./data/runtime/iod", UseIODHelper: true})
+	processLauncher, ok := launcher.(processRuntimeLauncher)
+	if !ok {
+		t.Fatalf("launcher type = %T, want processRuntimeLauncher", launcher)
+	}
+	if !filepath.IsAbs(processLauncher.iodRuntimeRoot) {
+		t.Fatalf("iod runtime root = %q, want absolute path", processLauncher.iodRuntimeRoot)
+	}
+	want, err := filepath.Abs("./data/runtime/iod")
+	if err != nil {
+		t.Fatalf("filepath.Abs() error = %v", err)
+	}
+	if processLauncher.iodRuntimeRoot != want {
+		t.Fatalf("iod runtime root = %q, want %q", processLauncher.iodRuntimeRoot, want)
 	}
 }
 

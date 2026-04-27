@@ -42,6 +42,15 @@ async function settle(count = 4) {
   }
 }
 
+async function waitForCalls(mock: { mock: { calls: unknown[][] } }, minimumCalls = 1, attempts = 24) {
+  for (let index = 0; index < attempts; index += 1) {
+    if (mock.mock.calls.length >= minimumCalls) {
+      return;
+    }
+    await settle(2);
+  }
+}
+
 describe("FileViewerDialog", () => {
   afterEach(() => {
     clearRememberedFileSelections();
@@ -78,6 +87,7 @@ describe("FileViewerDialog", () => {
 
     expect((api as any).getWorkspace).toHaveBeenCalledWith("sess-persisted", expect.any(AbortSignal));
     expect((api as any).getGitFileVersions).toHaveBeenCalledWith("sess-persisted", "src/main.tsx", expect.any(AbortSignal));
+    await waitForCalls((api as any).updateWorkspace);
     expect((api as any).updateWorkspace).toHaveBeenCalledWith("sess-persisted", {
       selected_path: "src/main.tsx",
       open_paths: ["src/main.tsx", "src"],

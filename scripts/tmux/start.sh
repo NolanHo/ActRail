@@ -9,6 +9,10 @@ require_bin tmux "${TMUX_BIN}"
 require_bin go "${GO_BIN}"
 require_bin npm "${NPM_BIN}"
 require_bin curl "${CURL_BIN}"
+require_bin caddy "${CADDY_BIN}"
+
+ensure_iod_helper_bin
+ensure_frontend_build
 
 if session_exists; then
   echo "tmux session already exists: ${SESSION_NAME}" >&2
