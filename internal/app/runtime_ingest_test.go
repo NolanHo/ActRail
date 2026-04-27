@@ -230,7 +230,7 @@ func TestCreateSessionConsumesPIRPCRuntimeOutputIntoStateTranscriptAndEvents(t *
 	}
 }
 
-func TestCreateSessionConsumesHelperBackedPIRuntimeOutputIntoStateAndTranscript(t *testing.T) {
+func TestCreateSessionConsumesHelperBackedPIReplayAndLiveOutputIntoStateTranscriptAndEvents(t *testing.T) {
 	generationID := mustHelperGenerationID(t, "g_helper_ingest")
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
 	sink := &captureRuntimeSink{}
@@ -285,15 +285,19 @@ func TestCreateSessionConsumesHelperBackedPIRuntimeOutputIntoStateAndTranscript(
 	if err != nil {
 		t.Fatalf("NewHelperFact(first) error = %v", err)
 	}
-	packet1, err := iod.NewStatePacket(sessionID, generationID, fact1)
+	item1, err := iod.NewReplayItem(7, fact1)
 	if err != nil {
-		t.Fatalf("NewStatePacket(first) error = %v", err)
+		t.Fatalf("NewReplayItem(first) error = %v", err)
+	}
+	packet1, err := iod.NewReplayItemPacket(sessionID, generationID, item1)
+	if err != nil {
+		t.Fatalf("NewReplayItemPacket(first) error = %v", err)
 	}
 	if err := enc.Encode(packet1); err != nil {
 		t.Fatalf("Encode(first) error = %v", err)
 	}
 	seq2 := iod.EventSeq(2)
-	fact2, err := iod.NewHelperFact(iod.FactOutputDelta, &seq2, json.RawMessage(`{"stream":"pty","data":"PI output reached the session transcript.\"}\n{\"type\":\"turn.completed\",\"turn_id\":\"turn-helper-1\",\"role\":\"assistant\",\"text\":\"Helper-backed PI output reached the session transcript.\"}\n"}`))
+	fact2, err := iod.NewHelperFact(iod.FactOutputDelta, &seq2, json.RawMessage(`{"stream":"pty","data":"PI output reached the session transcript.\"}\n{\"type\":\"message_end\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"ui-req-helper\",\"toolName\":\"ask_user\",\"details\":{\"answer\":\"Sidebar\",\"cancelled\":false}}}\n{\"type\":\"turn.completed\",\"turn_id\":\"turn-helper-1\",\"role\":\"assistant\",\"text\":\"Helper-backed PI output reached the session transcript.\"}\n"}`))
 	if err != nil {
 		t.Fatalf("NewHelperFact(second) error = %v", err)
 	}
@@ -311,10 +315,10 @@ func TestCreateSessionConsumesHelperBackedPIRuntimeOutputIntoStateAndTranscript(
 			return false
 		}
 		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
-		if err != nil || state.UIRequest == nil {
+		if err != nil {
 			return false
 		}
-		return messages.Items[0].Text == "Helper-backed PI output reached the session transcript."
+		return state.UIRequest == nil && messages.Items[0].Text == "Helper-backed PI output reached the session transcript."
 	})
 
 	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
@@ -338,8 +342,8 @@ func TestCreateSessionConsumesHelperBackedPIRuntimeOutputIntoStateAndTranscript(
 	if state.PartialAssistantTurn != nil {
 		t.Fatalf("SessionState().PartialAssistantTurn = %+v, want nil", state.PartialAssistantTurn)
 	}
-	if state.UIRequest == nil || state.UIRequest.RequestID != "ui-req-helper" {
-		t.Fatalf("SessionState().UIRequest = %+v, want helper ui request", state.UIRequest)
+	if state.UIRequest != nil {
+		t.Fatalf("SessionState().UIRequest = %+v, want nil after helper ui resolution", state.UIRequest)
 	}
 
 	snapshot := sink.snapshot()
@@ -351,6 +355,9 @@ func TestCreateSessionConsumesHelperBackedPIRuntimeOutputIntoStateAndTranscript(
 	}
 	if len(snapshot.uiRequests) != 1 || snapshot.uiRequests[0].Request.RequestID != "ui-req-helper" {
 		t.Fatalf("runtime ui request events = %#v", snapshot.uiRequests)
+	}
+	if len(snapshot.uiResolved) != 1 || snapshot.uiResolved[0].RequestID != "ui-req-helper" {
+		t.Fatalf("runtime ui resolved events = %#v", snapshot.uiResolved)
 	}
 }
 
