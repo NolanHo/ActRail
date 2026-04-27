@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -196,6 +198,9 @@ var migrations = []migration{
 }
 
 func OpenSessionCatalog(path string) (*SessionCatalog, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("prepare sqlite catalog dir %q: %w", filepath.Dir(path), err)
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite catalog %q: %w", path, err)

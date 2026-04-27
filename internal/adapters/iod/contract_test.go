@@ -103,7 +103,7 @@ func TestIodContract(t *testing.T) {
 		}
 		want := []string{
 			"helper_start",
-			"pi_attach_established",
+			"attach_established",
 			"command_accepted",
 			"command_rejected",
 			"output_delta",

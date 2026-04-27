@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -68,14 +67,14 @@ func newStub(cfg config.Config, now func() time.Time) *Stub {
 
 func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
 	if strings.TrimSpace(runtimeCfg.IODRuntimeRoot) == "" {
-		runtimeCfg.IODRuntimeRoot = iodclient.RuntimeRoot(cfg.Storage.DataDir)
+		runtimeCfg.IODRuntimeRoot = cfg.Storage.IODRuntimeRoot()
 	}
 	return &Stub{
 		cfg:            cfg,
 		registry:       newSessionRegistry(now),
 		launcher:       newRuntimeLauncher(runtimeCfg),
 		helperDialer:   runtimeCfg.IODDialer,
-		helperBindings: newHelperBindingStore(cfg.Storage.DataDir),
+		helperBindings: newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:        newHelperRegistry(),
 		recentCwds:     []string{},
 		cwdGroups:      map[string]CwdGroupMeta{},

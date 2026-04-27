@@ -84,6 +84,13 @@ const (
 	helperReadyPollInterval = 25 * time.Millisecond
 	helperReadyTimeout      = 5 * time.Second
 	helperStopTimeout       = 3 * time.Second
+
+	helperFlagSessionID    = "-session-id"
+	helperFlagGenerationID = "-generation-id"
+	helperFlagRuntimeRoot  = "-runtime-root"
+	helperFlagChildCWD     = "-child-cwd"
+	helperFlagChildEnvMode = "-child-env-mode"
+	helperFlagChildEnv     = "-child-env"
 )
 
 type sessionRuntime struct {
@@ -334,12 +341,16 @@ func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (proce
 
 func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helperBinPath string, generationID iod.GenerationID, childLaunchSpec process.LaunchSpec) (process.LaunchSpec, error) {
 	commandArgs := []string{
-		"-session-id", req.SessionID.String(),
-		"-generation-id", generationID.String(),
-		"-runtime-root", strings.TrimSpace(l.iodRuntimeRoot),
-		"-cwd", req.CWD,
-		childLaunchSpec.Command().Path(),
+		helperFlagSessionID, req.SessionID.String(),
+		helperFlagGenerationID, generationID.String(),
+		helperFlagRuntimeRoot, strings.TrimSpace(l.iodRuntimeRoot),
+		helperFlagChildCWD, childLaunchSpec.CWD().String(),
+		helperFlagChildEnvMode, string(childLaunchSpec.Environment().Mode()),
 	}
+	for _, item := range childLaunchSpec.Environment().Vars() {
+		commandArgs = append(commandArgs, helperFlagChildEnv, item.String())
+	}
+	commandArgs = append(commandArgs, "--", childLaunchSpec.Command().Path())
 	commandArgs = append(commandArgs, childLaunchSpec.Command().Args()...)
 	command, err := process.NewCommand(helperBinPath, commandArgs...)
 	if err != nil {

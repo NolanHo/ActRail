@@ -22,7 +22,11 @@ const (
 	defaultCookieName        = "actrail_auth"
 	defaultWSPath            = "/api/ws"
 	defaultDataDir           = "./data"
+	defaultSQLiteDir         = "sqlite"
 	defaultSQLiteFilename    = "actrail.db"
+	defaultRuntimeDir        = "runtime"
+	defaultIODRuntimeDir     = "iod"
+	defaultIODBindingsDir    = "iod-bindings"
 )
 
 type Config struct {
@@ -147,11 +151,32 @@ func (c Config) HeartbeatIntervalMillis() int {
 }
 
 func (s Storage) EnsureDir() error {
-	return os.MkdirAll(s.DataDir, 0o755)
+	for _, path := range []string{s.DataDir, s.SQLiteDir(), s.RuntimeDir()} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s Storage) SQLitePath() string {
-	return joinPath(s.DataDir, defaultSQLiteFilename)
+	return joinPath(s.SQLiteDir(), defaultSQLiteFilename)
+}
+
+func (s Storage) SQLiteDir() string {
+	return joinPath(s.DataDir, defaultSQLiteDir)
+}
+
+func (s Storage) RuntimeDir() string {
+	return joinPath(s.DataDir, defaultRuntimeDir)
+}
+
+func (s Storage) IODRuntimeRoot() string {
+	return joinPath(s.RuntimeDir(), defaultIODRuntimeDir)
+}
+
+func (s Storage) IODBindingsDir() string {
+	return joinPath(s.RuntimeDir(), defaultIODBindingsDir)
 }
 
 func (a Auth) Mode() AuthMode {

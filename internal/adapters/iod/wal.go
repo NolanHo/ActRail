@@ -32,7 +32,7 @@ type WALRecordClass string
 
 const (
 	WALRecordHelperStart       WALRecordClass = "helper_start"
-	WALRecordAttachEstablished WALRecordClass = "pi_attach_established"
+	WALRecordAttachEstablished WALRecordClass = "attach_established"
 	WALRecordCommandAccepted   WALRecordClass = "command_accepted"
 	WALRecordCommandRejected   WALRecordClass = "command_rejected"
 	WALRecordOutputDelta       WALRecordClass = "output_delta"

@@ -253,7 +253,7 @@ func TestCreateSessionConsumesHelperBackedPIRuntimeOutputIntoStateAndTranscript(
 	defer clientConn.Close()
 	defer serverConn.Close()
 	manifestPath := filepath.Join(t.TempDir(), iodclient.ManifestFilename)
-	proof, err := iod.NewHelloProof(os.Getpid(), nil, filepath.Join(t.TempDir(), "transport.wal"), filepath.Join(t.TempDir(), "control.sock"), float64(time.Now().UTC().Unix()))
+	proof, err := iod.NewHelloProof(os.Getpid(), nil, filepath.Join(t.TempDir(), "transport.wal"), filepath.Join(t.TempDir(), "io"), float64(time.Now().UTC().Unix()))
 	if err != nil {
 		t.Fatalf("NewHelloProof() error = %v", err)
 	}
