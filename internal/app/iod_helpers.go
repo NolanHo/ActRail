@@ -312,7 +312,16 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 		_ = client.Close()
 		return attachedHelper{}, binding, helperFenceReplayFailed, err
 	}
-	replayState := newHelperReplayState(binding.LastReplayOffset)
+	replayState := newHelperReplayState(binding.LastReplayOffset, func(packet iod.ReplayItemPacket) error {
+		record, err := s.lookupSession(binding.SessionID)
+		if err != nil {
+			return err
+		}
+		if record.identity.Backend() != session.BackendPI {
+			return nil
+		}
+		return s.applyPIHelperPacket(binding.SessionID, packet)
+	})
 	done, err := client.Replay(ctx, replayReq, replayState.accept)
 	if err != nil {
 		_ = client.Close()
@@ -335,10 +344,11 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 
 type helperReplayState struct {
 	lastOffset iod.WALOffset
+	project    func(iod.ReplayItemPacket) error
 }
 
-func newHelperReplayState(afterOffset iod.WALOffset) helperReplayState {
-	return helperReplayState{lastOffset: afterOffset}
+func newHelperReplayState(afterOffset iod.WALOffset, project func(iod.ReplayItemPacket) error) helperReplayState {
+	return helperReplayState{lastOffset: afterOffset, project: project}
 }
 
 func (s *helperReplayState) accept(packet iod.ReplayItemPacket) error {
@@ -348,6 +358,11 @@ func (s *helperReplayState) accept(packet iod.ReplayItemPacket) error {
 	}
 	if err := packet.Item.Fact.Validate(); err != nil {
 		return fmt.Errorf("validate replay fact at wal offset %d: %w", packet.Item.WALOffset, err)
+	}
+	if s.project != nil {
+		if err := s.project(packet); err != nil {
+			return fmt.Errorf("project replay fact at wal offset %d: %w", packet.Item.WALOffset, err)
+		}
 	}
 	s.lastOffset = packet.Item.WALOffset
 	return nil

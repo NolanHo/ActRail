@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"actrail/internal/adapters/iod"
 	"actrail/internal/domain/pi"
@@ -15,6 +16,8 @@ import (
 )
 
 const maxRuntimeLineBytes = 1 << 20
+
+var piHelperProjectors sync.Map
 
 type iodTerminalOutputPayload struct {
 	Stream string `json:"stream"`
@@ -27,6 +30,11 @@ type piRuntimeDecoder struct {
 
 type piRuntimeLineBuffer struct {
 	pending bytes.Buffer
+}
+
+type piHelperProjector struct {
+	mu      sync.Mutex
+	decoder piRuntimeDecoder
 }
 
 func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.Backend, runtime sessionRuntime) {
@@ -70,7 +78,7 @@ func (s *Stub) readPIRuntime(sessionID session.SessionID, src io.Reader) {
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
 	for scanner.Scan() {
-		s.applyPIEvents(sessionID, decoder.decodeRuntimeLine(scanner.Bytes()))
+		_ = s.applyPIEvents(sessionID, decoder.decodeRuntimeLine(scanner.Bytes()))
 	}
 }
 
@@ -78,36 +86,55 @@ func (s *Stub) readPIHelperRuntime(sessionID session.SessionID, helper *runtimeI
 	if s == nil || helper == nil || helper.streamClient == nil {
 		return
 	}
-	decoder := piRuntimeDecoder{}
 	for {
 		packet, err := helper.streamClient.ReadPacket(context.Background())
 		if err != nil {
 			return
 		}
-		s.applyPIEvents(sessionID, decoder.decodeHelperPacket(packet))
+		if err := s.applyPIHelperPacket(sessionID, packet); err != nil {
+			return
+		}
 	}
 }
 
-func (d *piRuntimeDecoder) decodeHelperPacket(packet any) []pi.Event {
+func (s *Stub) applyPIHelperPacket(sessionID session.SessionID, packet any) error {
+	if s == nil {
+		return nil
+	}
+	projectorAny, _ := piHelperProjectors.LoadOrStore(struct {
+		stub      *Stub
+		sessionID session.SessionID
+	}{stub: s, sessionID: sessionID}, &piHelperProjector{})
+	projector := projectorAny.(*piHelperProjector)
+	projector.mu.Lock()
+	defer projector.mu.Unlock()
+	events, err := projector.decoder.decodeHelperPacket(packet)
+	if err != nil {
+		return err
+	}
+	return s.applyPIEvents(sessionID, events)
+}
+
+func (d *piRuntimeDecoder) decodeHelperPacket(packet any) ([]pi.Event, error) {
 	switch v := packet.(type) {
 	case iod.StatePacket:
 		return d.decodeHelperFact(v.Fact)
 	case iod.ReplayItemPacket:
 		return d.decodeHelperFact(v.Item.Fact)
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
-func (d *piRuntimeDecoder) decodeHelperFact(fact iod.HelperFact) []pi.Event {
+func (d *piRuntimeDecoder) decodeHelperFact(fact iod.HelperFact) ([]pi.Event, error) {
 	if fact.FactKind != iod.FactOutputDelta {
-		return nil
+		return nil, nil
 	}
 	var payload iodTerminalOutputPayload
 	if err := json.Unmarshal(fact.Payload, &payload); err != nil {
-		return nil
+		return nil, fmt.Errorf("decode helper output payload: %w", err)
 	}
-	return d.decodeHelperOutput(payload)
+	return d.decodeHelperOutput(payload), nil
 }
 
 func (d *piRuntimeDecoder) decodeHelperOutput(payload iodTerminalOutputPayload) []pi.Event {
@@ -138,10 +165,13 @@ func (d *piRuntimeDecoder) decodeRuntimeLine(raw []byte) []pi.Event {
 	return material.Events
 }
 
-func (s *Stub) applyPIEvents(sessionID session.SessionID, events []pi.Event) {
+func (s *Stub) applyPIEvents(sessionID session.SessionID, events []pi.Event) error {
 	for _, event := range events {
-		s.applyPIEvent(sessionID, event)
+		if err := s.applyPIEvent(sessionID, event); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (b *piRuntimeLineBuffer) append(chunk string) {
@@ -165,67 +195,70 @@ func (b *piRuntimeLineBuffer) nextLine() ([]byte, bool) {
 	return line, true
 }
 
-func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) {
+func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 	switch event.Kind {
 	case pi.EventKindMessageDelta:
-		s.applyPIDelta(sessionID, event)
+		return s.applyPIDelta(sessionID, event)
 	case pi.EventKindMessage:
-		s.applyPIMessage(sessionID, event)
+		return s.applyPIMessage(sessionID, event)
 	case pi.EventKindUIRequest:
-		s.applyPIUIRequest(sessionID, event)
+		return s.applyPIUIRequest(sessionID, event)
 	case pi.EventKindUIResolved:
-		s.applyPIUIResolved(sessionID, event)
+		return s.applyPIUIResolved(sessionID, event)
 	case pi.EventKindBoundary:
-		s.applyPIBoundary(sessionID, event)
+		return s.applyPIBoundary(sessionID, event)
 	}
+	return nil
 }
 
-func (s *Stub) applyPIDelta(sessionID session.SessionID, event pi.Event) {
+func (s *Stub) applyPIDelta(sessionID session.SessionID, event pi.Event) error {
 	if event.Delta == nil {
-		return
+		return nil
 	}
 	turnID := runtimeTurnID(event)
 	if turnID == "" {
-		return
+		return nil
 	}
 	if _, err := s.AppendAssistantDelta(sessionID, turnID, event.Delta.Text); err != nil {
-		return
+		return err
 	}
 	s.emitMessageDelta(sessionID, turnID, string(event.Delta.Role), event.Delta.Text)
 	s.emitSessionState(sessionID)
+	return nil
 }
 
-func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) {
+func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error {
 	if event.Message == nil || strings.TrimSpace(event.Message.Text) == "" {
-		return
+		return nil
 	}
 	role := strings.TrimSpace(string(event.Message.Role))
 	if role == "" || event.Message.Role == pi.MessageRoleUser {
-		return
+		return nil
 	}
 	if !event.Message.CommitLike {
 		if event.Message.Role != pi.MessageRoleAssistant {
-			return
+			return nil
 		}
 		turnID := runtimeTurnID(event)
 		if turnID == "" {
-			return
+			return nil
 		}
 		if _, err := s.AppendAssistantDelta(sessionID, turnID, event.Message.Text); err != nil {
-			return
+			return err
 		}
 		s.emitMessageDelta(sessionID, turnID, role, event.Message.Text)
 		s.emitSessionState(sessionID)
-		return
+		return nil
 	}
 
 	turnID := runtimeTurnID(event)
 	committed, err := s.commitRuntimeMessage(sessionID, turnID, role, event.Message.Text)
 	if err != nil {
-		return
+		return err
 	}
 	s.emitMessageCommit(sessionID, turnID, committed)
 	s.emitSessionState(sessionID)
+	return nil
 }
 
 func (s *Stub) commitRuntimeMessage(sessionID session.SessionID, turnID, role, text string) (SessionMessage, error) {
@@ -245,9 +278,9 @@ func (s *Stub) commitRuntimeMessage(sessionID session.SessionID, turnID, role, t
 	return s.AppendSessionMessage(sessionID, role, "message", text)
 }
 
-func (s *Stub) applyPIUIRequest(sessionID session.SessionID, event pi.Event) {
+func (s *Stub) applyPIUIRequest(sessionID session.SessionID, event pi.Event) error {
 	if event.UIRequest == nil {
-		return
+		return nil
 	}
 	snapshot := SessionUIRequestSnapshot{
 		RequestID:     strings.TrimSpace(event.UIRequest.RequestID),
@@ -265,43 +298,53 @@ func (s *Stub) applyPIUIRequest(sessionID session.SessionID, event pi.Event) {
 		Metadata:      copyAnyMap(event.UIRequest.Metadata),
 	}
 	if err := s.SetSessionUIRequest(sessionID, snapshot); err != nil {
-		return
+		return err
 	}
 	s.emitUIRequest(UIRequestEvent{SessionID: sessionID, Request: snapshot})
 	s.emitSessionState(sessionID)
+	return nil
 }
 
-func (s *Stub) applyPIUIResolved(sessionID session.SessionID, event pi.Event) {
+func (s *Stub) applyPIUIResolved(sessionID session.SessionID, event pi.Event) error {
 	if event.UIResolved == nil {
-		return
+		return nil
 	}
 	requestID := strings.TrimSpace(event.UIResolved.RequestID)
 	if requestID == "" {
-		return
+		return nil
 	}
-	_ = s.ClearSessionUIRequest(sessionID, requestID)
+	if err := s.ClearSessionUIRequest(sessionID, requestID); err != nil {
+		return err
+	}
 	s.emitUIResolved(sessionID, requestID)
 	s.emitSessionState(sessionID)
 	s.scheduleQueuedDispatch(sessionID)
+	return nil
 }
 
-func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) {
+func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) error {
 	if event.Boundary == nil {
-		return
+		return nil
 	}
 	switch event.Boundary.Kind {
 	case pi.BoundaryKindTurnStarted:
-		if _, _, err := s.registry.SetBusy(sessionID, true); err == nil {
-			s.emitSessionState(sessionID)
+		if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
+			return err
 		}
+		s.emitSessionState(sessionID)
 	case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
-		if state, ok, err := s.registry.SetBusy(sessionID, false); err == nil && ok {
+		state, ok, err := s.registry.SetBusy(sessionID, false)
+		if err != nil {
+			return err
+		}
+		if ok {
 			s.emitSessionState(sessionID)
 			if !state.Busy() {
 				s.scheduleQueuedDispatch(sessionID)
 			}
 		}
 	}
+	return nil
 }
 
 func runtimeTurnID(event pi.Event) string {
