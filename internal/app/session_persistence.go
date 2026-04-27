@@ -186,7 +186,9 @@ func loadPersistedSessions(store sessionStore) ([]sessionRecord, error) {
 	if store == nil {
 		return nil, nil
 	}
-	snapshots, err := store.ListSessionSnapshots(context.Background(), false)
+	// Cold-start rehydrate must include imported historical rows; active list filtering
+	// still happens at the service layer.
+	snapshots, err := store.ListSessionSnapshots(context.Background(), true)
 	if err != nil {
 		return nil, fmt.Errorf("load persisted sessions: %w", err)
 	}

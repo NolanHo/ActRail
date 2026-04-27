@@ -201,6 +201,51 @@ func TestPersistentStubColdStartRehydratesSessionCatalog(t *testing.T) {
 	}
 }
 
+func TestPersistentStubColdStartRehydratesImportedSessions(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760300000, 0).UTC()
+	seedImportedPIDetachedSessions(t, cfg, now,
+		importedPIDetachedFixture{
+			SessionID:               "imported-pi-1",
+			CWD:                     "/workspace/imported-a",
+			Title:                   "",
+			FirstUserMessage:        "hello importer",
+			HasLegacySessionUIState: true,
+			UpdatedAt:               now.Add(-time.Hour),
+			ActivityAt:              now.Add(-time.Hour),
+		},
+		importedPIDetachedFixture{
+			SessionID:               "imported-pi-2",
+			CWD:                     "/workspace/imported-b",
+			Title:                   "Imported B",
+			HasLegacySessionUIState: false,
+			UpdatedAt:               now.Add(-30 * time.Minute),
+			ActivityAt:              now.Add(-30 * time.Minute),
+		},
+	)
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	listed, err := rehydrated.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 2 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 2", len(listed.Items))
+	}
+	if listed.Items[0].SessionID != "imported-pi-2" || listed.Items[1].SessionID != "imported-pi-1" {
+		t.Fatalf("ListSessions() order = [%q %q], want [imported-pi-2 imported-pi-1]", listed.Items[0].SessionID, listed.Items[1].SessionID)
+	}
+	if listed.Items[1].DisplayName != "/workspace/imported-a" {
+		t.Fatalf("ListSessions().Items[1].DisplayName = %q, want /workspace/imported-a", listed.Items[1].DisplayName)
+	}
+	if listed.Items[1].FirstUserMessage != "hello importer" {
+		t.Fatalf("ListSessions().Items[1].FirstUserMessage = %q, want hello importer", listed.Items[1].FirstUserMessage)
+	}
+}
+
 func TestPersistentStubColdStartRehydratesQueuedPromptExactlyOnce(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
