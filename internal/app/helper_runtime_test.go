@@ -21,6 +21,7 @@ type helperReplayScript struct {
 	AfterOffset iod.WALOffset
 	Items       []iod.ReplayItemPacket
 	Done        iod.ReplayDonePacket
+	LivePackets []any
 }
 
 func TestHelperDiscovery(t *testing.T) {
@@ -78,11 +79,18 @@ func TestServerReattach(t *testing.T) {
 	sessionID := mustSessionID(t, created.Session.SessionID)
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000001)
-	item := mustReplayItemPacket(t, sessionID, generationID, 6, 3)
+	replayItem := mustReplayOutputPacket(t, sessionID, generationID, 6, 3,
+		"{\"type\":\"extension_ui_request\",\"id\":\"ui-reattach\",\"method\":\"select\",\"question\":\"Where should this go?\",\"options\":[\"Details\",\"Sidebar\"]}\n"+
+			"{\"type\":\"message.delta\",\"turn_id\":\"turn-reattach\",\"role\":\"assistant\",\"delta\":\"Replay and live ")
+	livePacket := mustStateOutputPacket(t, sessionID, generationID, 4,
+		"projection works.\"}\n"+
+			"{\"type\":\"message_end\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"ui-reattach\",\"toolName\":\"ask_user\",\"details\":{\"answer\":\"Sidebar\",\"cancelled\":false}}}\n"+
+			"{\"type\":\"turn.completed\",\"turn_id\":\"turn-reattach\",\"role\":\"assistant\",\"text\":\"Replay and live projection works.\"}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
 		AfterOffset: 5,
-		Items:       []iod.ReplayItemPacket{item},
+		Items:       []iod.ReplayItemPacket{replayItem},
 		Done:        mustReplayDonePacket(t, sessionID, generationID, 5, 6),
+		LivePackets: []any{livePacket},
 	})
 	defer cleanup()
 
@@ -100,12 +108,52 @@ func TestServerReattach(t *testing.T) {
 	if attachment.Binding.LastReplayOffset != 6 {
 		t.Fatalf("attachment last replay offset = %d, want 6", attachment.Binding.LastReplayOffset)
 	}
+	waitForAppCondition(t, func() bool {
+		messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		if err != nil || len(messages.Items) != 1 {
+			return false
+		}
+		state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		if err != nil {
+			return false
+		}
+		return state.UIRequest == nil && messages.Items[0].Text == "Replay and live projection works."
+	})
+	messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "Replay and live projection works." {
+		t.Fatalf("SessionMessages().Items = %#v, want committed replay/live message", messages.Items)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.UIRequest != nil {
+		t.Fatalf("SessionState().UIRequest = %+v, want nil after replay/live resolution", state.UIRequest)
+	}
 	bindings, err := rehydrated.helperBindings.Load()
 	if err != nil {
 		t.Fatalf("helperBindings.Load() error = %v", err)
 	}
 	if bindings[sessionID].GenerationID != generationID || bindings[sessionID].LastReplayOffset != 6 {
 		t.Fatalf("saved binding = %+v, want generation %q offset 6", bindings[sessionID], generationID)
+	}
+}
+
+func TestHelperReplayStateDoesNotAdvanceOffsetOnProjectionFailure(t *testing.T) {
+	sessionID := mustSessionID(t, "s_1")
+	generationID := mustHelperGenerationID(t, "g_projection_failure")
+	state := newHelperReplayState(5, func(packet iod.ReplayItemPacket) error {
+		return fmt.Errorf("reject wal offset %d", packet.Item.WALOffset)
+	})
+	packet := mustReplayItemPacket(t, sessionID, generationID, 6, 9)
+	if err := state.accept(packet); err == nil {
+		t.Fatal("accept() error = nil, want projector failure")
+	}
+	if state.lastOffset != 5 {
+		t.Fatalf("last replay offset = %d, want 5 after projector failure", state.lastOffset)
 	}
 }
 
@@ -360,6 +408,12 @@ func startReplayHelper(t *testing.T, manifest iod.GenerationManifest, script hel
 			errCh <- err
 			return
 		}
+		for _, packet := range script.LivePackets {
+			if err := enc.Encode(packet); err != nil {
+				errCh <- err
+				return
+			}
+		}
 	}()
 	return func() {
 		_ = listener.Close()
@@ -405,6 +459,46 @@ func mustReplayItemPacket(t *testing.T, sessionID session.SessionID, generationI
 	packet, err := iod.NewReplayItemPacket(sessionID, generationID, item)
 	if err != nil {
 		t.Fatalf("NewReplayItemPacket() error = %v", err)
+	}
+	return packet
+}
+
+func mustReplayOutputPacket(t *testing.T, sessionID session.SessionID, generationID iod.GenerationID, offset iod.WALOffset, seqValue uint64, data string) iod.ReplayItemPacket {
+	t.Helper()
+	seq := iod.EventSeq(seqValue)
+	payload, err := json.Marshal(iodTerminalOutputPayload{Stream: "pty", Data: data})
+	if err != nil {
+		t.Fatalf("Marshal(helper output payload) error = %v", err)
+	}
+	fact, err := iod.NewHelperFact(iod.FactOutputDelta, &seq, payload)
+	if err != nil {
+		t.Fatalf("NewHelperFact() error = %v", err)
+	}
+	item, err := iod.NewReplayItem(offset, fact)
+	if err != nil {
+		t.Fatalf("NewReplayItem() error = %v", err)
+	}
+	packet, err := iod.NewReplayItemPacket(sessionID, generationID, item)
+	if err != nil {
+		t.Fatalf("NewReplayItemPacket() error = %v", err)
+	}
+	return packet
+}
+
+func mustStateOutputPacket(t *testing.T, sessionID session.SessionID, generationID iod.GenerationID, seqValue uint64, data string) iod.StatePacket {
+	t.Helper()
+	seq := iod.EventSeq(seqValue)
+	payload, err := json.Marshal(iodTerminalOutputPayload{Stream: "pty", Data: data})
+	if err != nil {
+		t.Fatalf("Marshal(helper output payload) error = %v", err)
+	}
+	fact, err := iod.NewHelperFact(iod.FactOutputDelta, &seq, payload)
+	if err != nil {
+		t.Fatalf("NewHelperFact() error = %v", err)
+	}
+	packet, err := iod.NewStatePacket(sessionID, generationID, fact)
+	if err != nil {
+		t.Fatalf("NewStatePacket() error = %v", err)
 	}
 	return packet
 }
