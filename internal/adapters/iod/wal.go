@@ -31,17 +31,14 @@ func (o WALOffset) ValidateState() error {
 type WALRecordClass string
 
 const (
-	WALRecordHelperStart         WALRecordClass = "helper_start"
-	WALRecordAttachEstablished   WALRecordClass = "pi_attach_established"
-	WALRecordCommandAccepted     WALRecordClass = "command_accepted"
-	WALRecordCommandRejected     WALRecordClass = "command_rejected"
-	WALRecordOutputDelta         WALRecordClass = "output_delta"
-	WALRecordTurnCommit          WALRecordClass = "turn_commit"
-	WALRecordUIRequestOpened     WALRecordClass = "ui_request_opened"
-	WALRecordUIResponseForwarded WALRecordClass = "ui_response_forwarded"
-	WALRecordChildExit           WALRecordClass = "child_exit"
-	WALRecordHelperExit          WALRecordClass = "helper_exit"
-	WALRecordGenerationBreak     WALRecordClass = "generation_break"
+	WALRecordHelperStart       WALRecordClass = "helper_start"
+	WALRecordAttachEstablished WALRecordClass = "pi_attach_established"
+	WALRecordCommandAccepted   WALRecordClass = "command_accepted"
+	WALRecordCommandRejected   WALRecordClass = "command_rejected"
+	WALRecordOutputDelta       WALRecordClass = "output_delta"
+	WALRecordChildExit         WALRecordClass = "child_exit"
+	WALRecordHelperExit        WALRecordClass = "helper_exit"
+	WALRecordGenerationBreak   WALRecordClass = "generation_break"
 )
 
 func ParseWALRecordClass(raw string) (WALRecordClass, error) {
@@ -59,9 +56,6 @@ func (c WALRecordClass) Validate() error {
 		WALRecordCommandAccepted,
 		WALRecordCommandRejected,
 		WALRecordOutputDelta,
-		WALRecordTurnCommit,
-		WALRecordUIRequestOpened,
-		WALRecordUIResponseForwarded,
 		WALRecordChildExit,
 		WALRecordHelperExit,
 		WALRecordGenerationBreak:
