@@ -311,6 +311,166 @@ func TestConcurrentDuplicateCommandID(t *testing.T) {
 	}
 }
 
+func TestTurnCommitFact(t *testing.T) {
+	tc := newHelperTestCase(t)
+	defer tc.stop()
+
+	tc.pty.FeedOutput(`{"type":"turn.completed","turn_id":"turn-001","role":"assistant","text":"Committed output."}` + "\n")
+
+	output := tc.mustStatePacket(t)
+	if output.Fact.FactKind != FactOutputDelta {
+		t.Fatalf("output fact kind = %q, want %q", output.Fact.FactKind, FactOutputDelta)
+	}
+	if output.Fact.Seq == nil || *output.Fact.Seq != 1 {
+		t.Fatalf("output seq = %#v, want 1", output.Fact.Seq)
+	}
+
+	commit := tc.mustStatePacket(t)
+	if commit.Fact.FactKind != FactTurnCommit {
+		t.Fatalf("turn commit fact kind = %q, want %q", commit.Fact.FactKind, FactTurnCommit)
+	}
+	if commit.Fact.Seq == nil || *commit.Fact.Seq != 2 {
+		t.Fatalf("turn commit seq = %#v, want 2", commit.Fact.Seq)
+	}
+	var payload turnCommitPayload
+	if err := json.Unmarshal(commit.Fact.Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(turn commit payload) error = %v", err)
+	}
+	if payload.TurnID != "turn-001" {
+		t.Fatalf("turn commit turn id = %q, want %q", payload.TurnID, "turn-001")
+	}
+	if payload.Role != "assistant" {
+		t.Fatalf("turn commit role = %q, want %q", payload.Role, "assistant")
+	}
+	if payload.Text != "Committed output." {
+		t.Fatalf("turn commit text = %q, want %q", payload.Text, "Committed output.")
+	}
+}
+
+func TestReplayTurnCommitFact(t *testing.T) {
+	tc := newHelperTestCase(t)
+	defer tc.stop()
+
+	tc.pty.FeedOutput(`{"type":"turn.completed","turn_id":"turn-001","role":"assistant","text":"Committed output."}` + "\n")
+	_ = tc.mustStatePacket(t)
+	_ = tc.mustStatePacket(t)
+
+	tc.sendReplayRequest(t, 2)
+	items := tc.mustReplayItems(t)
+	if len(items) != 2 {
+		t.Fatalf("len(replay items) = %d, want 2", len(items))
+	}
+	wantKinds := []FactKind{FactOutputDelta, FactTurnCommit}
+	wantOffsets := []WALOffset{3, 4}
+	wantSeqs := []EventSeq{1, 2}
+	for i, item := range items {
+		if item.Item.WALOffset != wantOffsets[i] {
+			t.Fatalf("replay item %d offset = %d, want %d", i, item.Item.WALOffset, wantOffsets[i])
+		}
+		if item.Item.Fact.FactKind != wantKinds[i] {
+			t.Fatalf("replay item %d fact kind = %q, want %q", i, item.Item.Fact.FactKind, wantKinds[i])
+		}
+		if item.Item.Fact.Seq == nil || *item.Item.Fact.Seq != wantSeqs[i] {
+			t.Fatalf("replay item %d seq = %#v, want %d", i, item.Item.Fact.Seq, wantSeqs[i])
+		}
+	}
+}
+
+func TestUIRequestFact(t *testing.T) {
+	tc := newHelperTestCase(t)
+	defer tc.stop()
+
+	tc.pty.FeedOutput(`{"type":"extension_ui_request","id":"ui-req-1","method":"select","question":"Where should this go?","options":["Details"`)
+	output1 := tc.mustStatePacket(t)
+	if output1.Fact.FactKind != FactOutputDelta {
+		t.Fatalf("first output fact kind = %q, want %q", output1.Fact.FactKind, FactOutputDelta)
+	}
+	if output1.Fact.Seq == nil || *output1.Fact.Seq != 1 {
+		t.Fatalf("first output seq = %#v, want 1", output1.Fact.Seq)
+	}
+
+	tc.pty.FeedOutput(`,"Sidebar"]}` + "\n")
+	output2 := tc.mustStatePacket(t)
+	if output2.Fact.FactKind != FactOutputDelta {
+		t.Fatalf("second output fact kind = %q, want %q", output2.Fact.FactKind, FactOutputDelta)
+	}
+	if output2.Fact.Seq == nil || *output2.Fact.Seq != 2 {
+		t.Fatalf("second output seq = %#v, want 2", output2.Fact.Seq)
+	}
+
+	opened := tc.mustStatePacket(t)
+	if opened.Fact.FactKind != FactUIRequestOpened {
+		t.Fatalf("ui request fact kind = %q, want %q", opened.Fact.FactKind, FactUIRequestOpened)
+	}
+	if opened.Fact.Seq == nil || *opened.Fact.Seq != 3 {
+		t.Fatalf("ui request seq = %#v, want 3", opened.Fact.Seq)
+	}
+	var payload uiRequestOpenedPayload
+	if err := json.Unmarshal(opened.Fact.Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(ui request payload) error = %v", err)
+	}
+	if payload.Request.RequestID != "ui-req-1" {
+		t.Fatalf("ui request id = %q, want %q", payload.Request.RequestID, "ui-req-1")
+	}
+	if payload.Request.Method != "select" {
+		t.Fatalf("ui request method = %q, want %q", payload.Request.Method, "select")
+	}
+	if len(payload.Request.Options) != 2 {
+		t.Fatalf("len(ui request options) = %d, want 2", len(payload.Request.Options))
+	}
+}
+
+func TestUIResponseForwardedFact(t *testing.T) {
+	tc := newHelperTestCase(t)
+	defer tc.stop()
+
+	commandID := mustCommandID(t, "cmd_ui_response")
+	accepted := tc.sendCommand(t, CommandUIResponseSubmit, commandID, json.RawMessage(`{"type":"extension_ui_response","id":"ui-req-1","value":"Details"}`))
+	if accepted.AckCursor != 3 {
+		t.Fatalf("accepted ack cursor = %d, want 3", accepted.AckCursor)
+	}
+	if tc.pty.Written() != `{"type":"extension_ui_response","id":"ui-req-1","value":"Details"}`+"\n" {
+		t.Fatalf("child stdin writes = %q", tc.pty.Written())
+	}
+
+	forwarded := tc.mustStatePacket(t)
+	if forwarded.Fact.FactKind != FactUIResponseForwarded {
+		t.Fatalf("ui response fact kind = %q, want %q", forwarded.Fact.FactKind, FactUIResponseForwarded)
+	}
+	if forwarded.Fact.Seq == nil || *forwarded.Fact.Seq != 1 {
+		t.Fatalf("ui response seq = %#v, want 1", forwarded.Fact.Seq)
+	}
+	var payload uiResponseForwardedPayload
+	if err := json.Unmarshal(forwarded.Fact.Payload, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(ui response payload) error = %v", err)
+	}
+	if payload.CommandID != commandID {
+		t.Fatalf("ui response command id = %q, want %q", payload.CommandID, commandID)
+	}
+	if payload.RequestID != "ui-req-1" {
+		t.Fatalf("ui response request id = %q, want %q", payload.RequestID, "ui-req-1")
+	}
+	if payload.Value != "Details" {
+		t.Fatalf("ui response value = %q, want %q", payload.Value, "Details")
+	}
+
+	tc.sendReplayRequest(t, 2)
+	items := tc.mustReplayItems(t)
+	if len(items) != 2 {
+		t.Fatalf("len(replay items) = %d, want 2", len(items))
+	}
+	wantKinds := []FactKind{FactCommandAccepted, FactUIResponseForwarded}
+	wantOffsets := []WALOffset{3, 4}
+	for i, item := range items {
+		if item.Item.WALOffset != wantOffsets[i] {
+			t.Fatalf("replay item %d offset = %d, want %d", i, item.Item.WALOffset, wantOffsets[i])
+		}
+		if item.Item.Fact.FactKind != wantKinds[i] {
+			t.Fatalf("replay item %d fact kind = %q, want %q", i, item.Item.Fact.FactKind, wantKinds[i])
+		}
+	}
+}
+
 func TestHelperGenerationBreak(t *testing.T) {
 	tc := newHelperTestCase(t)
 	defer tc.stop()

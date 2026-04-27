@@ -1,6 +1,7 @@
 package iod
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"actrail/internal/adapters/process"
+	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
 
@@ -104,6 +106,62 @@ type attachEstablishedPayload struct {
 type terminalOutputPayload struct {
 	Stream string `json:"stream"`
 	Data   string `json:"data"`
+}
+
+// turnCommitPayload is the helper-owned durable payload for one committed
+// assistant turn. App-side recovery should consume this fact directly instead
+// of reparsing raw PI JSON output.
+type turnCommitPayload struct {
+	TurnID        string          `json:"turn_id,omitempty"`
+	MessageID     string          `json:"message_id,omitempty"`
+	Role          pi.MessageRole  `json:"role"`
+	Text          string          `json:"text"`
+	Class         pi.MessageClass `json:"class,omitempty"`
+	StopReason    string          `json:"stop_reason,omitempty"`
+	ToolCallCount int             `json:"tool_call_count,omitempty"`
+	ThinkingCount int             `json:"thinking_count,omitempty"`
+	Timestamp     float64         `json:"timestamp,omitempty"`
+}
+
+// uiRequestOpenedPayload is the helper-owned durable payload for one opened PI
+// UI request. App-side recovery should consume this fact directly instead of
+// rebuilding pending-request state from raw output text.
+type uiRequestOpenedPayload struct {
+	TurnID    string       `json:"turn_id,omitempty"`
+	Timestamp float64      `json:"timestamp,omitempty"`
+	Request   pi.UIRequest `json:"request"`
+}
+
+type uiResponseSubmitCommandPayload struct {
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+
+// uiResponseForwardedPayload is the helper-owned durable payload for one UI
+// response that was written to the child boundary.
+type uiResponseForwardedPayload struct {
+	CommandID   CommandID `json:"command_id"`
+	RequestID   string    `json:"request_id"`
+	Value       string    `json:"value"`
+	ForwardedAt time.Time `json:"forwarded_at"`
+}
+
+type piRuntimeLineBuffer struct {
+	pending bytes.Buffer
+}
+
+type piSemanticState struct {
+	committedTurns   map[string]struct{}
+	openedUIRequests map[string]struct{}
+	lines            piRuntimeLineBuffer
+}
+
+func newPISemanticState() piSemanticState {
+	return piSemanticState{
+		committedTurns:   make(map[string]struct{}),
+		openedUIRequests: make(map[string]struct{}),
+	}
 }
 
 type commandFactPayload struct {
@@ -550,8 +608,15 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 	if len(data) == 0 || data[len(data)-1] != '\n' {
 		data = append(data, '\n')
 	}
-	_, err := writer.Write(data)
-	return err
+	if _, err := writer.Write(data); err != nil {
+		return err
+	}
+	if cmd.kind == PacketCommandUIResponseSubmit {
+		if err := h.emitUIResponseForwarded(cmd); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Helper) readPTY(ctx context.Context) {
@@ -561,11 +626,14 @@ func (h *Helper) readPTY(ctx context.Context) {
 		_ = h.emitGenerationBreak(GenerationBreakAttachLost)
 		return
 	}
+	semantic := newPISemanticState()
 	buf := make([]byte, 4096)
 	for {
 		n, err := pty.Read(buf)
 		if n > 0 {
-			_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: "pty", Data: string(buf[:n])})
+			chunk := string(buf[:n])
+			_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: "pty", Data: chunk})
+			h.emitPISemantics(&semantic, chunk)
 		}
 		if err != nil {
 			if err == io.EOF || errors.Is(err, os.ErrClosed) || ctx.Err() != nil {
@@ -582,6 +650,147 @@ func (h *Helper) readPTY(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func (h *Helper) emitPISemantics(state *piSemanticState, chunk string) {
+	if state == nil || chunk == "" {
+		return
+	}
+	state.lines.append(chunk)
+	for {
+		line, ok := state.lines.nextLine()
+		if !ok {
+			return
+		}
+		h.emitPISemanticsFromLine(state, line)
+	}
+}
+
+func (h *Helper) emitPISemanticsFromLine(state *piSemanticState, line []byte) {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return
+	}
+	material, err := pi.ParseObjectJSON(trimmed)
+	if err != nil {
+		return
+	}
+	for _, event := range material.Events {
+		h.emitPISemanticEvent(state, event)
+	}
+}
+
+func (h *Helper) emitPISemanticEvent(state *piSemanticState, event pi.Event) {
+	if state == nil {
+		return
+	}
+	if event.Message != nil && event.Kind == pi.EventKindMessage && event.Message.Role == pi.MessageRoleAssistant && event.Message.CommitLike {
+		turnID := helperTurnID(event)
+		if turnID != "" {
+			if _, ok := state.committedTurns[turnID]; !ok {
+				state.committedTurns[turnID] = struct{}{}
+				_, _ = h.emitStateRecord(WALRecordTurnCommit, turnCommitPayload{
+					TurnID:        turnID,
+					MessageID:     strings.TrimSpace(event.Message.ID),
+					Role:          event.Message.Role,
+					Text:          event.Message.Text,
+					Class:         event.Message.Class,
+					StopReason:    event.Message.StopReason,
+					ToolCallCount: event.Message.ToolCallCount,
+					ThinkingCount: event.Message.ThinkingCount,
+					Timestamp:     event.Timestamp,
+				})
+			}
+		}
+	}
+	if event.UIRequest != nil && event.Kind == pi.EventKindUIRequest {
+		requestID := helperUIRequestID(event)
+		if requestID == "" {
+			return
+		}
+		if _, ok := state.openedUIRequests[requestID]; ok {
+			return
+		}
+		state.openedUIRequests[requestID] = struct{}{}
+		request := *event.UIRequest
+		_, _ = h.emitStateRecord(WALRecordUIRequestOpened, uiRequestOpenedPayload{
+			TurnID:    helperTurnID(event),
+			Timestamp: event.Timestamp,
+			Request:   request,
+		})
+	}
+}
+
+func (h *Helper) emitUIResponseForwarded(cmd queuedCommand) error {
+	var payload uiResponseSubmitCommandPayload
+	if err := json.Unmarshal(cmd.payload, &payload); err != nil {
+		return nil
+	}
+	_, err := h.emitStateRecord(WALRecordUIResponseForwarded, uiResponseForwardedPayload{
+		CommandID:   cmd.commandID,
+		RequestID:   strings.TrimSpace(payload.ID),
+		Value:       strings.TrimSpace(payload.Value),
+		ForwardedAt: h.now().UTC(),
+	})
+	return err
+}
+
+func helperTurnID(event pi.Event) string {
+	for _, candidate := range []string{
+		strings.TrimSpace(event.TurnID),
+		strings.TrimSpace(event.RawID),
+		strings.TrimSpace(event.ParentID),
+	} {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	if event.Message != nil {
+		if messageID := strings.TrimSpace(event.Message.ID); messageID != "" {
+			return messageID
+		}
+	}
+	if event.Timestamp > 0 {
+		return fmt.Sprintf("turn_%d", int64(event.Timestamp*1000))
+	}
+	return ""
+}
+
+func helperUIRequestID(event pi.Event) string {
+	if event.UIRequest == nil {
+		return ""
+	}
+	for _, candidate := range []string{
+		strings.TrimSpace(event.UIRequest.RequestID),
+		strings.TrimSpace(event.RawID),
+		strings.TrimSpace(event.ParentID),
+	} {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return helperTurnID(event)
+}
+
+func (b *piRuntimeLineBuffer) append(chunk string) {
+	if b == nil || chunk == "" {
+		return
+	}
+	_, _ = b.pending.WriteString(chunk)
+}
+
+func (b *piRuntimeLineBuffer) nextLine() ([]byte, bool) {
+	if b == nil {
+		return nil, false
+	}
+	data := b.pending.Bytes()
+	idx := bytes.IndexByte(data, '\n')
+	if idx < 0 {
+		return nil, false
+	}
+	line := append([]byte(nil), data[:idx]...)
+	b.pending.Next(idx + 1)
+	return line, true
 }
 
 func (h *Helper) waitChild() {
