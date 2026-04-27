@@ -230,7 +230,7 @@ func (l processRuntimeLauncher) Launch(ctx context.Context, req runtimeLaunchReq
 	if err := req.Backend.Validate(); err != nil {
 		return sessionRuntime{}, err
 	}
-	if l.useIODHelper && req.Backend == session.BackendPI {
+	if l.useIODHelper {
 		return l.launchViaIODHelper(ctx, req)
 	}
 	return l.launchDirect(ctx, req)

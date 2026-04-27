@@ -34,23 +34,24 @@ var (
 	buildIODHelperErr  error
 )
 
-type iodLaunchPIAdapter struct {
-	args []string
+type iodLaunchAdapter struct {
+	backend session.Backend
+	args    []string
 }
 
-func (a iodLaunchPIAdapter) Backend() session.Backend {
-	return session.BackendPI
+func (a iodLaunchAdapter) Backend() session.Backend {
+	return a.backend
 }
 
-func (a iodLaunchPIAdapter) Capabilities() agent.Capabilities {
+func (a iodLaunchAdapter) Capabilities() agent.Capabilities {
 	return agent.Capabilities{}
 }
 
-func (a iodLaunchPIAdapter) ValidateOptions(agent.Options) error {
+func (a iodLaunchAdapter) ValidateOptions(agent.Options) error {
 	return nil
 }
 
-func (a iodLaunchPIAdapter) CommandArgs(agent.Options) ([]string, error) {
+func (a iodLaunchAdapter) CommandArgs(agent.Options) ([]string, error) {
 	return append([]string(nil), a.args...), nil
 }
 
@@ -136,6 +137,51 @@ func TestCreateSessionViaIod(t *testing.T) {
 	if _, err := os.Stat(bindingPath); err != nil {
 		t.Fatalf("Stat(%q) error = %v", bindingPath, err)
 	}
+}
+
+func TestCreateCodexSessionViaIod(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	t.Setenv(fakePIChildLogEnv, childLog)
+	t.Setenv(fakePIChildMarkEnv, "codex-forwarded-via-helper")
+	cwd := filepath.Join(t.TempDir(), "cwd-codex-helper")
+	childPath := writeFakePIChildScript(t)
+	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--stdio", "--model", "gpt-4.1"}, func(backend session.Backend) (string, error) {
+		return childPath, nil
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, runtimeCfg)
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	created, sessionID, record, binding, manifest := createIODBackedSessionForBackend(t, svc, cfg, "codex", cwd)
+	defer deleteSessionIfPresent(t, svc, sessionID)
+
+	if !created.OK || created.Session == nil {
+		t.Fatalf("CreateSession() = %+v, want created session payload", created)
+	}
+	if record.runtime.helper == nil {
+		t.Fatal("record.runtime.helper = nil, want iod-backed runtime")
+	}
+	if record.runtime.protocol != runtimeProtocolTTY {
+		t.Fatalf("record.runtime.protocol = %q, want %q", record.runtime.protocol, runtimeProtocolTTY)
+	}
+	waitForChildLogLines(t, childLog, []string{
+		"cwd=" + cwd,
+		"argv[0]=app-server",
+		"argv[1]=--stdio",
+		"argv[2]=--model",
+		"argv[3]=gpt-4.1",
+		"env[" + fakePIChildMarkEnv + "]=codex-forwarded-via-helper",
+	})
+
+	interrupted, err := svc.Interrupt(context.Background(), InterruptRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("Interrupt() error = %v", err)
+	}
+	if interrupted.Busy {
+		t.Fatalf("Interrupt() = %+v, want busy false", interrupted)
+	}
+	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandInterrupt})
 }
 
 func TestIODHelperForwardsChildArgvCWDAndEnvironment(t *testing.T) {
@@ -290,18 +336,23 @@ func newPersistentIODHelperStub(t *testing.T, cfg config.Config, childLogPath st
 
 func realIODHelperRuntimeConfig(t *testing.T, adapterArgs []string, resolveChild func(session.Backend) (string, error)) RuntimeConfig {
 	t.Helper()
-	catalog, err := agent.NewCatalog(iodLaunchPIAdapter{args: adapterArgs})
+	return realIODHelperRuntimeConfigForBackend(t, session.BackendPI, adapterArgs, resolveChild)
+}
+
+func realIODHelperRuntimeConfigForBackend(t *testing.T, backend session.Backend, adapterArgs []string, resolveChild func(session.Backend) (string, error)) RuntimeConfig {
+	t.Helper()
+	catalog, err := agent.NewCatalog(iodLaunchAdapter{backend: backend, args: adapterArgs})
 	if err != nil {
 		t.Fatalf("agent.NewCatalog() error = %v", err)
 	}
 	return RuntimeConfig{
 		Catalog:      catalog,
 		UseIODHelper: true,
-		ResolveBinPath: func(backend session.Backend) (string, error) {
-			if backend != session.BackendPI {
-				return "", fmt.Errorf("backend = %q, want %q", backend, session.BackendPI)
+		ResolveBinPath: func(resolvedBackend session.Backend) (string, error) {
+			if resolvedBackend != backend {
+				return "", fmt.Errorf("backend = %q, want %q", resolvedBackend, backend)
 			}
-			return resolveChild(backend)
+			return resolveChild(resolvedBackend)
 		},
 		ResolveIODHelperBinPath: func() (string, error) {
 			return builtIODHelperBinary(t), nil
@@ -311,10 +362,15 @@ func realIODHelperRuntimeConfig(t *testing.T, adapterArgs []string, resolveChild
 
 func createIODBackedSession(t *testing.T, svc *Stub, cfg config.Config, cwd string) (CreateSessionResponse, session.SessionID, sessionRecord, *RuntimeHelperBinding, iod.GenerationManifest) {
 	t.Helper()
+	return createIODBackedSessionForBackend(t, svc, cfg, "pi", cwd)
+}
+
+func createIODBackedSessionForBackend(t *testing.T, svc *Stub, cfg config.Config, backend string, cwd string) (CreateSessionResponse, session.SessionID, sessionRecord, *RuntimeHelperBinding, iod.GenerationManifest) {
+	t.Helper()
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q) error = %v", cwd, err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: backend, CWD: cwd})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
