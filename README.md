@@ -115,10 +115,10 @@ Stop:
 scripts/tmux/stop.sh
 ```
 
-Default tmux launcher ports:
+Default tmux launcher bind targets:
 
 - backend: `127.0.0.1:8743`
-- frontend: `127.0.0.1:18743`
+- frontend: `0.0.0.0:18743`
 
 Useful tmux launcher overrides live in `scripts/tmux/common.sh`, including:
 
