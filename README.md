@@ -95,7 +95,8 @@ npm test
 
 ## tmux launcher
 
-The tmux scripts build the frontend with Vite, start the Go backend, then serve `web/dist` through Caddy with `/api` and WebSocket reverse proxying back to the backend.
+The tmux scripts build the frontend with Vite, start the Go backend on a fixed backend port, then serve `web/dist` on a fixed frontend port through a local static file server.
+This local deployment no longer proxies `/api`; put an edge proxy such as Caddy in front of it when you need one public entrypoint.
 They also build `cmd/actrail-iod` into `data/bin/actrail-iod` and export `ACTRAIL_IOD_BIN` for the backend so session launch does not depend on a separately installed helper in `PATH`.
 
 Start:
@@ -118,7 +119,7 @@ scripts/tmux/stop.sh
 
 Default tmux launcher bind targets:
 
-- backend: `127.0.0.1:8743`
+- backend: `0.0.0.0:8743`
 - frontend: `0.0.0.0:18743`
 
 Useful tmux launcher overrides live in `scripts/tmux/common.sh`, including:
@@ -128,9 +129,8 @@ Useful tmux launcher overrides live in `scripts/tmux/common.sh`, including:
 - `ACTRAIL_BACKEND_PORT`
 - `ACTRAIL_FRONTEND_HOST`
 - `ACTRAIL_FRONTEND_PORT`
-- `ACTRAIL_CADDY_BIN`
-- `ACTRAIL_CADDYFILE`
 - `ACTRAIL_FRONTEND_DIST_DIR`
+- `ACTRAIL_PYTHON_BIN`
 - `ACTRAIL_START_TIMEOUT_SECONDS`
 
 ## Environment variables

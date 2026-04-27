@@ -9,7 +9,7 @@ require_bin tmux "${TMUX_BIN}"
 require_bin go "${GO_BIN}"
 require_bin npm "${NPM_BIN}"
 require_bin curl "${CURL_BIN}"
-require_bin caddy "${CADDY_BIN}"
+require_bin python3 "${PYTHON_BIN}"
 
 ensure_iod_helper_bin
 ensure_frontend_build
@@ -30,7 +30,6 @@ frontend_shell=$(tmux_window_command "$(frontend_command)")
 
 backend_url=$(backend_health_url)
 frontend_root=$(frontend_url)
-frontend_api_url=$(frontend_api_me_url)
 
 if ! wait_for_http "${backend_url}"; then
   echo "backend did not become ready: ${backend_url}" >&2
@@ -46,16 +45,8 @@ if ! wait_for_http "${frontend_root}"; then
   exit 1
 fi
 
-if ! wait_for_http "${frontend_api_url}"; then
-  echo "frontend proxy did not become ready: ${frontend_api_url}" >&2
-  echo "frontend pane tail:" >&2
-  show_pane_tail "${SESSION_NAME}:frontend" >&2
-  exit 1
-fi
-
 echo "session=${SESSION_NAME}"
 echo "backend_window=${SESSION_NAME}:backend"
 echo "frontend_window=${SESSION_NAME}:frontend"
 echo "backend_url=${backend_url}"
 echo "frontend_url=${frontend_root}"
-echo "frontend_api_url=${frontend_api_url}"

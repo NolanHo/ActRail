@@ -16,15 +16,10 @@ fi
 echo "session=${SESSION_NAME}"
 "${TMUX_BIN}" list-windows -t "${SESSION_NAME}" -F 'window=#{window_name} pane=#{pane_id} active=#{window_active}'
 echo "frontend_url=$(frontend_url)"
-echo "frontend_api_url=$(frontend_api_me_url)"
 echo "backend_url=$(backend_health_url)"
 
 echo "frontend_check:"
 "${CURL_BIN}" -fsSI "$(frontend_url)" || true
-
-echo "frontend_api_check:"
-"${CURL_BIN}" -fsS "$(frontend_api_me_url)" || true
-printf '\n'
 
 echo "backend_check:"
 "${CURL_BIN}" -fsSI "$(backend_health_url)" || true
