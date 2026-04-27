@@ -34,7 +34,16 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Storage.DataDir != "./data" {
 		t.Fatalf("expected default data dir ./data, got %q", cfg.Storage.DataDir)
 	}
-	if cfg.SQLitePath() != "."+string(os.PathSeparator)+filepath.Join("data", "actrail.db") {
+	if cfg.Storage.SQLiteDir() != "."+string(os.PathSeparator)+filepath.Join("data", "sqlite") {
+		t.Fatalf("expected default sqlite dir under data dir, got %q", cfg.Storage.SQLiteDir())
+	}
+	if cfg.Storage.IODRuntimeRoot() != "."+string(os.PathSeparator)+filepath.Join("data", "runtime", "iod") {
+		t.Fatalf("expected default iod runtime root under data dir, got %q", cfg.Storage.IODRuntimeRoot())
+	}
+	if cfg.Storage.IODBindingsDir() != "."+string(os.PathSeparator)+filepath.Join("data", "runtime", "iod-bindings") {
+		t.Fatalf("expected default iod bindings dir under runtime dir, got %q", cfg.Storage.IODBindingsDir())
+	}
+	if cfg.SQLitePath() != "."+string(os.PathSeparator)+filepath.Join("data", "sqlite", "actrail.db") {
 		t.Fatalf("expected default sqlite path under data dir, got %q", cfg.SQLitePath())
 	}
 	if cfg.Auth.Password != "" {
@@ -81,7 +90,19 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.Storage.DataDir != "/tmp/actrail-data" {
 		t.Fatalf("expected data dir override, got %q", cfg.Storage.DataDir)
 	}
-	if cfg.SQLitePath() != filepath.Join("/tmp/actrail-data", "actrail.db") {
+	if cfg.Storage.SQLiteDir() != filepath.Join("/tmp/actrail-data", "sqlite") {
+		t.Fatalf("expected sqlite dir override, got %q", cfg.Storage.SQLiteDir())
+	}
+	if cfg.Storage.RuntimeDir() != filepath.Join("/tmp/actrail-data", "runtime") {
+		t.Fatalf("expected runtime dir override, got %q", cfg.Storage.RuntimeDir())
+	}
+	if cfg.Storage.IODRuntimeRoot() != filepath.Join("/tmp/actrail-data", "runtime", "iod") {
+		t.Fatalf("expected iod runtime root override, got %q", cfg.Storage.IODRuntimeRoot())
+	}
+	if cfg.Storage.IODBindingsDir() != filepath.Join("/tmp/actrail-data", "runtime", "iod-bindings") {
+		t.Fatalf("expected iod bindings dir override, got %q", cfg.Storage.IODBindingsDir())
+	}
+	if cfg.SQLitePath() != filepath.Join("/tmp/actrail-data", "sqlite", "actrail.db") {
 		t.Fatalf("expected sqlite path override, got %q", cfg.SQLitePath())
 	}
 	if cfg.Auth.Password != "secret" {
@@ -102,10 +123,12 @@ func TestStorageEnsureDirCreatesNestedDataDir(t *testing.T) {
 	if err := storage.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
-	if info, err := os.Stat(storage.DataDir); err != nil {
-		t.Fatalf("Stat(%q) error = %v", storage.DataDir, err)
-	} else if !info.IsDir() {
-		t.Fatalf("expected %q to be a directory", storage.DataDir)
+	for _, path := range []string{storage.DataDir, storage.SQLiteDir(), storage.RuntimeDir()} {
+		if info, err := os.Stat(path); err != nil {
+			t.Fatalf("Stat(%q) error = %v", path, err)
+		} else if !info.IsDir() {
+			t.Fatalf("expected %q to be a directory", path)
+		}
 	}
 }
 

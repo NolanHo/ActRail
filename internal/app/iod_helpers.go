@@ -16,8 +16,6 @@ import (
 	"actrail/internal/domain/session"
 )
 
-const helperBindingsDir = "iod-bindings"
-
 type helperDialer = iodclient.Dialer
 
 var (
@@ -49,7 +47,7 @@ type helperBindingStore struct {
 }
 
 func newHelperBindingStore(dataDir string) helperBindingStore {
-	return helperBindingStore{root: filepath.Join(strings.TrimSpace(dataDir), helperBindingsDir)}
+	return helperBindingStore{root: strings.TrimSpace(dataDir)}
 }
 
 func (s helperBindingStore) Load() (map[session.SessionID]helperGenerationBinding, error) {

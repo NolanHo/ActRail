@@ -13,7 +13,7 @@ import (
 const (
 	defaultManifestFilename = "generation-manifest.json"
 	defaultWALFilename      = "transport.wal"
-	defaultSocketFilename   = "control.sock"
+	defaultSocketFilename   = "io"
 )
 
 // GenerationPaths groups the per-generation runtime artifacts owned by one helper.

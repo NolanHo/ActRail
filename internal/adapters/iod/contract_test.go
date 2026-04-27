@@ -97,22 +97,16 @@ func TestIodContract(t *testing.T) {
 			FactCommandAccepted.String(),
 			FactCommandRejected.String(),
 			FactOutputDelta.String(),
-			FactTurnCommit.String(),
-			FactUIRequestOpened.String(),
-			FactUIResponseForwarded.String(),
 			FactChildExit.String(),
 			FactHelperExit.String(),
 			FactGenerationBreak.String(),
 		}
 		want := []string{
 			"helper_start",
-			"pi_attach_established",
+			"attach_established",
 			"command_accepted",
 			"command_rejected",
 			"output_delta",
-			"turn_commit",
-			"ui_request_opened",
-			"ui_response_forwarded",
 			"child_exit",
 			"helper_exit",
 			"generation_break",
@@ -138,17 +132,14 @@ func TestIodContract(t *testing.T) {
 			requiresSeq bool
 			allowed     bool
 		}{
-			FactHelperStart:         {requiresSeq: false, allowed: true},
-			FactAttachEstablished:   {requiresSeq: false, allowed: true},
-			FactCommandAccepted:     {requiresSeq: false, allowed: false},
-			FactCommandRejected:     {requiresSeq: false, allowed: false},
-			FactOutputDelta:         {requiresSeq: true, allowed: true},
-			FactTurnCommit:          {requiresSeq: true, allowed: true},
-			FactUIRequestOpened:     {requiresSeq: true, allowed: true},
-			FactUIResponseForwarded: {requiresSeq: true, allowed: true},
-			FactChildExit:           {requiresSeq: false, allowed: true},
-			FactHelperExit:          {requiresSeq: false, allowed: true},
-			FactGenerationBreak:     {requiresSeq: true, allowed: false},
+			FactHelperStart:       {requiresSeq: false, allowed: true},
+			FactAttachEstablished: {requiresSeq: false, allowed: true},
+			FactCommandAccepted:   {requiresSeq: false, allowed: false},
+			FactCommandRejected:   {requiresSeq: false, allowed: false},
+			FactOutputDelta:       {requiresSeq: true, allowed: true},
+			FactChildExit:         {requiresSeq: false, allowed: true},
+			FactHelperExit:        {requiresSeq: false, allowed: true},
+			FactGenerationBreak:   {requiresSeq: true, allowed: false},
 		}
 		for kind, want := range wantStateRules {
 			if kind.RequiresSeq() != want.requiresSeq {

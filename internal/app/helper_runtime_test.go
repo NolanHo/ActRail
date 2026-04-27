@@ -288,7 +288,7 @@ func hasFenceReason(fences []helperFence, generationID iod.GenerationID, reason 
 func writeHelperManifest(t *testing.T, manifestPath string, sessionID session.SessionID, generationID iod.GenerationID, startUnix int64) iod.GenerationManifest {
 	t.Helper()
 	childPID := os.Getpid()
-	proof, err := iod.NewHelloProof(os.Getpid(), &childPID, filepath.Join(filepath.Dir(manifestPath), "transport.wal"), filepath.Join(filepath.Dir(manifestPath), "control.sock"), float64(startUnix))
+	proof, err := iod.NewHelloProof(os.Getpid(), &childPID, filepath.Join(filepath.Dir(manifestPath), "transport.wal"), filepath.Join(filepath.Dir(manifestPath), "io"), float64(startUnix))
 	if err != nil {
 		t.Fatalf("NewHelloProof() error = %v", err)
 	}

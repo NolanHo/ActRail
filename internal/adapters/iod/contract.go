@@ -175,17 +175,14 @@ func (n CommandName) Kind() PacketKind {
 type FactKind string
 
 const (
-	FactHelperStart         FactKind = "helper_start"
-	FactAttachEstablished   FactKind = "pi_attach_established"
-	FactCommandAccepted     FactKind = "command_accepted"
-	FactCommandRejected     FactKind = "command_rejected"
-	FactOutputDelta         FactKind = "output_delta"
-	FactTurnCommit          FactKind = "turn_commit"
-	FactUIRequestOpened     FactKind = "ui_request_opened"
-	FactUIResponseForwarded FactKind = "ui_response_forwarded"
-	FactChildExit           FactKind = "child_exit"
-	FactHelperExit          FactKind = "helper_exit"
-	FactGenerationBreak     FactKind = "generation_break"
+	FactHelperStart       FactKind = "helper_start"
+	FactAttachEstablished FactKind = "attach_established"
+	FactCommandAccepted   FactKind = "command_accepted"
+	FactCommandRejected   FactKind = "command_rejected"
+	FactOutputDelta       FactKind = "output_delta"
+	FactChildExit         FactKind = "child_exit"
+	FactHelperExit        FactKind = "helper_exit"
+	FactGenerationBreak   FactKind = "generation_break"
 )
 
 func ParseFactKind(raw string) (FactKind, error) {
@@ -203,9 +200,6 @@ func (k FactKind) Validate() error {
 		FactCommandAccepted,
 		FactCommandRejected,
 		FactOutputDelta,
-		FactTurnCommit,
-		FactUIRequestOpened,
-		FactUIResponseForwarded,
 		FactChildExit,
 		FactHelperExit,
 		FactGenerationBreak:
@@ -223,7 +217,7 @@ func (k FactKind) String() string {
 
 func (k FactKind) ProjectionBoundary() ProjectionBoundary {
 	switch k {
-	case FactOutputDelta, FactTurnCommit, FactUIRequestOpened, FactUIResponseForwarded:
+	case FactOutputDelta:
 		return ProjectionBoundaryBrowserEvent
 	case FactGenerationBreak:
 		return ProjectionBoundaryGenerationTerminal
