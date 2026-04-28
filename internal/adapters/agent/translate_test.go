@@ -79,7 +79,7 @@ func TestCatalogLaunchSpecForCodex(t *testing.T) {
 	if spec.Command().Path() != "/usr/local/bin/codex" {
 		t.Fatalf("command path = %q, want %q", spec.Command().Path(), "/usr/local/bin/codex")
 	}
-	wantArgs := []string{"-c", `model_provider="openrouter"`, "--model", "gpt-5"}
+	wantArgs := []string{"app-server", "-c", `model_provider="openrouter"`, "--model", "gpt-5"}
 	if !reflect.DeepEqual(spec.Command().Args(), wantArgs) {
 		t.Fatalf("command args = %#v, want %#v", spec.Command().Args(), wantArgs)
 	}

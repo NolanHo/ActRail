@@ -157,7 +157,7 @@ func (codexAdapter) CommandArgs(opts Options) ([]string, error) {
 	if err := (codexAdapter{}).ValidateOptions(opts); err != nil {
 		return nil, err
 	}
-	args := make([]string, 0, 4)
+	args := []string{"app-server"}
 	if provider := opts.Provider(); provider != "" {
 		args = append(args, "-c", tomlStringConfig("model_provider", provider))
 	}

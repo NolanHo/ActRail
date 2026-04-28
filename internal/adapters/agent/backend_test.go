@@ -104,7 +104,7 @@ func TestCodexCommandArgsUseConfigOverrideForProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"-c", `model_provider="openrouter"`, "--model", "gpt-5"}
+	want := []string{"app-server", "-c", `model_provider="openrouter"`, "--model", "gpt-5"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}

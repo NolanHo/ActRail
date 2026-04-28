@@ -19,13 +19,15 @@ import (
 )
 
 type captureRuntimeSink struct {
-	mu          sync.Mutex
-	states      []SessionStateEvent
-	deltas      []MessageDeltaEvent
-	commits     []MessageCommitEvent
-	queueStates []QueueStateEvent
-	uiRequests  []UIRequestEvent
-	uiResolved  []UIResolvedEvent
+	mu                     sync.Mutex
+	states                 []SessionStateEvent
+	deltas                 []MessageDeltaEvent
+	commits                []MessageCommitEvent
+	queueStates            []QueueStateEvent
+	uiRequests             []UIRequestEvent
+	uiResolved             []UIResolvedEvent
+	generationBroken       []GenerationBrokenEvent
+	transportResetRequired []TransportResetRequiredEvent
 }
 
 func (s *captureRuntimeSink) PublishSessionState(event SessionStateEvent) {
@@ -64,16 +66,30 @@ func (s *captureRuntimeSink) PublishUIResolved(event UIResolvedEvent) {
 	s.uiResolved = append(s.uiResolved, event)
 }
 
+func (s *captureRuntimeSink) PublishGenerationBroken(event GenerationBrokenEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.generationBroken = append(s.generationBroken, event)
+}
+
+func (s *captureRuntimeSink) PublishTransportResetRequired(event TransportResetRequiredEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transportResetRequired = append(s.transportResetRequired, event)
+}
+
 func (s *captureRuntimeSink) snapshot() captureRuntimeSink {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return captureRuntimeSink{
-		states:      append([]SessionStateEvent(nil), s.states...),
-		deltas:      append([]MessageDeltaEvent(nil), s.deltas...),
-		commits:     append([]MessageCommitEvent(nil), s.commits...),
-		queueStates: append([]QueueStateEvent(nil), s.queueStates...),
-		uiRequests:  append([]UIRequestEvent(nil), s.uiRequests...),
-		uiResolved:  append([]UIResolvedEvent(nil), s.uiResolved...),
+		states:                 append([]SessionStateEvent(nil), s.states...),
+		deltas:                 append([]MessageDeltaEvent(nil), s.deltas...),
+		commits:                append([]MessageCommitEvent(nil), s.commits...),
+		queueStates:            append([]QueueStateEvent(nil), s.queueStates...),
+		uiRequests:             append([]UIRequestEvent(nil), s.uiRequests...),
+		uiResolved:             append([]UIResolvedEvent(nil), s.uiResolved...),
+		generationBroken:       append([]GenerationBrokenEvent(nil), s.generationBroken...),
+		transportResetRequired: append([]TransportResetRequiredEvent(nil), s.transportResetRequired...),
 	}
 }
 

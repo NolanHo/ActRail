@@ -146,7 +146,7 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 	t.Setenv(fakePIChildMarkEnv, "codex-forwarded-via-helper")
 	cwd := filepath.Join(t.TempDir(), "cwd-codex-helper")
 	childPath := writeFakePIChildScript(t)
-	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--stdio", "--model", "gpt-4.1"}, func(backend session.Backend) (string, error) {
+	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--model", "gpt-4.1"}, func(backend session.Backend) (string, error) {
 		return childPath, nil
 	})
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, runtimeCfg)
@@ -168,9 +168,8 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 	waitForChildLogLines(t, childLog, []string{
 		"cwd=" + cwd,
 		"argv[0]=app-server",
-		"argv[1]=--stdio",
-		"argv[2]=--model",
-		"argv[3]=gpt-4.1",
+		"argv[1]=--model",
+		"argv[2]=gpt-4.1",
 		"env[" + fakePIChildMarkEnv + "]=codex-forwarded-via-helper",
 	})
 
@@ -185,7 +184,7 @@ func TestCodexIODControl(t *testing.T) {
 	t.Setenv(fakePIChildMarkEnv, "codex-jsonrpc-via-helper")
 	cwd := filepath.Join(t.TempDir(), "cwd-codex-control")
 	childPath := writeFakePIChildScript(t)
-	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--stdio", "--model", "gpt-4.1"}, func(session.Backend) (string, error) {
+	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--model", "gpt-4.1"}, func(session.Backend) (string, error) {
 		return childPath, nil
 	})
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, runtimeCfg)
@@ -217,9 +216,8 @@ func TestCodexIODControl(t *testing.T) {
 	waitForChildLogLines(t, childLog, []string{
 		"cwd=" + cwd,
 		"argv[0]=app-server",
-		"argv[1]=--stdio",
-		"argv[2]=--model",
-		"argv[3]=gpt-4.1",
+		"argv[1]=--model",
+		"argv[2]=gpt-4.1",
 		"env[" + fakePIChildMarkEnv + "]=codex-jsonrpc-via-helper",
 	})
 	waitForChildLogContains(t, childLog, []string{
