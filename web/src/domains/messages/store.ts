@@ -129,18 +129,20 @@ function mergeLiveEvents(priorEvents: MessageEvent[], incomingEvents: MessageEve
   const next = [...priorEvents];
 
   for (const incomingEvent of incomingEvents) {
+    const withoutReplacedStreaming = next.filter((event) => !isStreamingAssistantEvent(event) || !streamedAssistantMatchesDurable(event, incomingEvent));
     const incomingKey = stableMessageKey(incomingEvent);
     if (incomingKey) {
-      const existingIndex = next.findIndex((event) => stableMessageKey(event) === incomingKey);
+      const existingIndex = withoutReplacedStreaming.findIndex((event) => stableMessageKey(event) === incomingKey);
       if (existingIndex >= 0) {
-        next[existingIndex] = { ...next[existingIndex], ...incomingEvent };
+        withoutReplacedStreaming[existingIndex] = { ...withoutReplacedStreaming[existingIndex], ...incomingEvent };
       } else {
-        next.push(incomingEvent);
+        withoutReplacedStreaming.push(incomingEvent);
       }
+      next.splice(0, next.length, ...withoutReplacedStreaming);
       continue;
     }
 
-    const filtered = next.filter((event) => !isStreamingAssistantEvent(event) || !streamedAssistantMatchesDurable(event, incomingEvent));
+    const filtered = withoutReplacedStreaming;
     filtered.push(incomingEvent);
     next.splice(0, next.length, ...filtered);
   }

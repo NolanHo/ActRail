@@ -247,6 +247,26 @@ describe("createMessagesStore", () => {
     ]);
   });
 
+  it("replaces a streaming assistant row when the durable commit arrives with its own event_id", () => {
+    const store = createMessagesStore();
+
+    store.applyLive(
+      "s1",
+      [{ role: "assistant", text: "State the", streaming: true, stream_id: "turn-001", turn_id: "turn-001" } as any],
+      { replace: true, offset: 1 },
+    );
+
+    store.applyLive(
+      "s1",
+      [{ event_id: "evt-commit-1", role: "assistant", text: "State the task.", turn_id: "turn-001" } as any],
+      { replace: false, offset: 2 },
+    );
+
+    expect(store.getState().bySessionId.s1).toEqual([
+      { event_id: "evt-commit-1", role: "assistant", text: "State the task.", turn_id: "turn-001" },
+    ]);
+  });
+
   it("prepends older replay pages and tracks the next history cursor", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({
