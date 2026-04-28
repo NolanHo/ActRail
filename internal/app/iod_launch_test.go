@@ -99,6 +99,19 @@ func TestCreateSessionViaIod(t *testing.T) {
 	if !created.OK || created.Session == nil {
 		t.Fatalf("CreateSession() = %+v, want created session payload", created)
 	}
+	if created.Session.GenerationID != binding.GenerationID.String() {
+		t.Fatalf("CreateSession().Session.GenerationID = %q, want %q", created.Session.GenerationID, binding.GenerationID)
+	}
+	if created.Session.TransportState != SessionTransportStateAttached.String() {
+		t.Fatalf("CreateSession().Session.TransportState = %q, want %q", created.Session.TransportState, SessionTransportStateAttached)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.GenerationID != binding.GenerationID.String() || state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState().Transport = %+v, want attached generation %q", state.Transport, binding.GenerationID)
+	}
 	if record.runtime.helper == nil {
 		t.Fatal("record.runtime.helper = nil, want iod-backed runtime")
 	}

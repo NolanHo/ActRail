@@ -75,6 +75,7 @@ type SessionStateRequest struct {
 type SessionStateResponse struct {
 	Busy                 bool                          `json:"busy"`
 	Queue                SessionQueueSnapshot          `json:"queue"`
+	Transport            SessionTransportSnapshot      `json:"transport"`
 	UIRequest            *SessionUIRequestSnapshot     `json:"ui_request,omitempty"`
 	PartialAssistantTurn *PartialAssistantTurnSnapshot `json:"partial_assistant_turn,omitempty"`
 	TailSeq              uint64                        `json:"tail_seq"`
@@ -283,6 +284,7 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 	return SessionStateResponse{
 		Busy:                 record.state.Busy(),
 		Queue:                queueSnapshotFromState(record.state),
+		Transport:            sessionTransportSnapshot(record),
 		UIRequest:            copySessionUIRequest(record.uiRequest),
 		PartialAssistantTurn: partialAssistantTurn(record.transcript),
 		TailSeq:              record.transcript.TailSeq().Uint64(),

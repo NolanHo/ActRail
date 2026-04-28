@@ -72,6 +72,12 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	if listed.Items[0].Historical {
 		t.Fatal("ListSessions().Items[0].Historical = true, want false")
 	}
+	if listed.Items[0].TransportState != SessionTransportStateAttached.String() {
+		t.Fatalf("ListSessions().Items[0].TransportState = %q, want %q", listed.Items[0].TransportState, SessionTransportStateAttached)
+	}
+	if listed.Items[0].GenerationID != "" {
+		t.Fatalf("ListSessions().Items[0].GenerationID = %q, want empty without iod helper", listed.Items[0].GenerationID)
+	}
 	if listed.Items[0].LastUpdatedTS != timestampSeconds(now) {
 		t.Fatalf("ListSessions().Items[0].LastUpdatedTS = %v, want %v", listed.Items[0].LastUpdatedTS, timestampSeconds(now))
 	}
@@ -112,6 +118,12 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	}
 	if state.TailSeq != 0 {
 		t.Fatalf("SessionState().TailSeq = %d, want 0", state.TailSeq)
+	}
+	if state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState().Transport = %+v, want attached direct-runtime transport", state.Transport)
+	}
+	if state.Transport.GenerationID != "" {
+		t.Fatalf("SessionState().Transport.GenerationID = %q, want empty without iod helper", state.Transport.GenerationID)
 	}
 	if state.UIRequest != nil {
 		t.Fatalf("SessionState().UIRequest = %+v, want nil", state.UIRequest)

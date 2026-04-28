@@ -127,6 +127,7 @@ type SessionSummary struct {
 	SessionID           string  `json:"session_id"`
 	RuntimeID           string  `json:"runtime_id,omitempty"`
 	ThreadID            string  `json:"thread_id,omitempty"`
+	GenerationID        string  `json:"generation_id,omitempty"`
 	AgentBackend        string  `json:"agent_backend"`
 	Title               string  `json:"title"`
 	Alias               string  `json:"alias,omitempty"`
@@ -136,6 +137,9 @@ type SessionSummary struct {
 	Busy                bool    `json:"busy"`
 	Focused             bool    `json:"focused,omitempty"`
 	QueueLen            int     `json:"queue_len,omitempty"`
+	TransportState      string  `json:"transport_state,omitempty"`
+	ResetRequired       bool    `json:"reset_required,omitempty"`
+	TransportReason     string  `json:"transport_reason,omitempty"`
 	LastUpdatedTS       float64 `json:"last_updated_ts"`
 	UpdatedTS           float64 `json:"updated_ts,omitempty"`
 	Historical          bool    `json:"historical"`
@@ -191,14 +195,18 @@ type EditCwdGroupResponse struct {
 }
 
 type CreatedSession struct {
-	SessionID    string `json:"session_id"`
-	RuntimeID    string `json:"runtime_id,omitempty"`
-	ThreadID     string `json:"thread_id,omitempty"`
-	AgentBackend string `json:"agent_backend"`
-	Alias        string `json:"alias,omitempty"`
-	CWD          string `json:"cwd"`
-	Busy         bool   `json:"busy"`
-	Focused      bool   `json:"focused,omitempty"`
+	SessionID       string `json:"session_id"`
+	RuntimeID       string `json:"runtime_id,omitempty"`
+	ThreadID        string `json:"thread_id,omitempty"`
+	GenerationID    string `json:"generation_id,omitempty"`
+	AgentBackend    string `json:"agent_backend"`
+	Alias           string `json:"alias,omitempty"`
+	CWD             string `json:"cwd"`
+	Busy            bool   `json:"busy"`
+	Focused         bool   `json:"focused,omitempty"`
+	TransportState  string `json:"transport_state,omitempty"`
+	ResetRequired   bool   `json:"reset_required,omitempty"`
+	TransportReason string `json:"transport_reason,omitempty"`
 }
 
 type SessionAttachRequest struct {
@@ -367,10 +375,12 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 func sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
+	transport := sessionTransportSnapshot(record)
 	return SessionSummary{
 		SessionID:           record.identity.SessionID().String(),
 		RuntimeID:           runtimeID.String(),
 		ThreadID:            threadID.String(),
+		GenerationID:        transport.GenerationID,
 		AgentBackend:        record.identity.Backend().String(),
 		Title:               record.title,
 		Alias:               displayAlias(record),
@@ -380,6 +390,9 @@ func sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) Session
 		Busy:                record.state.Busy(),
 		Focused:             record.focused,
 		QueueLen:            record.state.Queue().Len(),
+		TransportState:      transport.State.String(),
+		ResetRequired:       transport.ResetRequired,
+		TransportReason:     transport.Reason,
 		LastUpdatedTS:       timestampSeconds(updatedAt),
 		UpdatedTS:           timestampSeconds(updatedAt),
 		Historical:          record.identity.Historical(),
@@ -395,15 +408,20 @@ func sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) Session
 func createdSessionFromRecord(record sessionRecord) *CreatedSession {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
+	transport := sessionTransportSnapshot(record)
 	return &CreatedSession{
-		SessionID:    record.identity.SessionID().String(),
-		RuntimeID:    runtimeID.String(),
-		ThreadID:     threadID.String(),
-		AgentBackend: record.identity.Backend().String(),
-		Alias:        displayAlias(record),
-		CWD:          record.cwd,
-		Busy:         record.state.Busy(),
-		Focused:      record.focused,
+		SessionID:       record.identity.SessionID().String(),
+		RuntimeID:       runtimeID.String(),
+		ThreadID:        threadID.String(),
+		GenerationID:    transport.GenerationID,
+		AgentBackend:    record.identity.Backend().String(),
+		Alias:           displayAlias(record),
+		CWD:             record.cwd,
+		Busy:            record.state.Busy(),
+		Focused:         record.focused,
+		TransportState:  transport.State.String(),
+		ResetRequired:   transport.ResetRequired,
+		TransportReason: transport.Reason,
 	}
 }
 

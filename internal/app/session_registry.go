@@ -64,6 +64,7 @@ type sessionRecord struct {
 	importedHasLegacySessionUIState bool
 	runtime                         sessionRuntime
 	uiRequest                       *SessionUIRequestSnapshot
+	transport                       SessionTransportSnapshot
 	resumeCursors                   SessionResumeCursors
 	inputMu                         *sync.Mutex
 }
@@ -641,6 +642,7 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		importedHasLegacySessionUIState: record.importedHasLegacySessionUIState,
 		runtime:                         record.runtime,
 		uiRequest:                       copySessionUIRequest(record.uiRequest),
+		transport:                       record.transport,
 		resumeCursors:                   record.resumeCursors,
 		inputMu:                         record.inputMu,
 	}
