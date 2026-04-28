@@ -546,7 +546,10 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 	if writer == nil {
 		return fmt.Errorf("helper child input is unavailable")
 	}
-	data := append([]byte(nil), cmd.payload...)
+	data, err := normalizeCommandInputPayload(cmd.payload)
+	if err != nil {
+		return err
+	}
 	if len(data) == 0 || data[len(data)-1] != '\n' {
 		data = append(data, '\n')
 	}
@@ -554,6 +557,20 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 		return err
 	}
 	return nil
+}
+
+func normalizeCommandInputPayload(payload json.RawMessage) ([]byte, error) {
+	if len(payload) == 0 {
+		return nil, nil
+	}
+	if payload[0] != '"' {
+		return append([]byte(nil), payload...), nil
+	}
+	var text string
+	if err := json.Unmarshal(payload, &text); err != nil {
+		return nil, fmt.Errorf("decode command input payload: %w", err)
+	}
+	return []byte(text), nil
 }
 
 func (h *Helper) readPTY(ctx context.Context) {

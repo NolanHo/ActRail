@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ type RuntimeConfig struct {
 	Runner                  process.Runner
 	ResolveBinPath          func(session.Backend) (string, error)
 	ResolveIODHelperBinPath func() (string, error)
+	ResolveLaunchEnv        func(session.Backend, process.Environment) (process.Environment, error)
 	IODDialer               iodclient.Dialer
 	IODRuntimeRoot          string
 	UseIODHelper            bool
@@ -71,6 +73,7 @@ type processRuntimeLauncher struct {
 	iodRuntimeRoot          string
 	useIODHelper            bool
 	dialer                  iodclient.Dialer
+	resolveLaunchEnv        func(session.Backend, process.Environment) (process.Environment, error)
 	env                     process.Environment
 	io                      process.IO
 }
@@ -158,6 +161,10 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 	if resolveIODHelperBinPath == nil {
 		resolveIODHelperBinPath = defaultIODHelperBinPath
 	}
+	resolveLaunchEnv := cfg.ResolveLaunchEnv
+	if resolveLaunchEnv == nil {
+		resolveLaunchEnv = defaultResolveLaunchEnv
+	}
 	newGenerationID := cfg.NewGenerationID
 	if newGenerationID == nil {
 		newGenerationID = defaultRuntimeGenerationID
@@ -177,6 +184,7 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 		iodRuntimeRoot:          iodRuntimeRoot,
 		useIODHelper:            cfg.UseIODHelper,
 		dialer:                  cfg.IODDialer,
+		resolveLaunchEnv:        resolveLaunchEnv,
 		env:                     env,
 		io:                      ioSpec,
 	}
@@ -349,7 +357,14 @@ func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (proce
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
-	launchReq, err := agent.NewRequest(req.Backend, binPath, req.CWD, l.env, l.io, options)
+	launchEnv := l.env
+	if l.resolveLaunchEnv != nil {
+		launchEnv, err = l.resolveLaunchEnv(req.Backend, l.env)
+		if err != nil {
+			return process.LaunchSpec{}, err
+		}
+	}
+	launchReq, err := agent.NewRequest(req.Backend, binPath, req.CWD, launchEnv, l.io, options)
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
@@ -467,14 +482,14 @@ func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
 		return fmt.Errorf("runtime prompt is required")
 	}
 	if r.helper != nil {
-		if r.protocol != runtimeProtocolPIRPC {
-			return errRuntimeInputUnavailable
+		if r.protocol == runtimeProtocolPIRPC {
+			encoded, err := json.Marshal(piRPCPromptCommand{Type: "prompt", Message: payload})
+			if err != nil {
+				return fmt.Errorf("marshal runtime command: %w", err)
+			}
+			return r.helper.command(ctx, iod.CommandSend, encoded)
 		}
-		encoded, err := json.Marshal(piRPCPromptCommand{Type: "prompt", Message: payload})
-		if err != nil {
-			return fmt.Errorf("marshal runtime command: %w", err)
-		}
-		return r.helper.command(ctx, iod.CommandSend, encoded)
+		return r.helper.command(ctx, iod.CommandSend, json.RawMessage(strconv.Quote(payload)))
 	}
 	if r.protocol == runtimeProtocolPIRPC {
 		return r.writeRPCCommand(ctx, piRPCPromptCommand{Type: "prompt", Message: payload})
@@ -492,14 +507,14 @@ func (r sessionRuntime) RespondUI(ctx context.Context, requestID, value string) 
 		return fmt.Errorf("runtime ui response value is required")
 	}
 	if r.helper != nil {
-		if r.protocol != runtimeProtocolPIRPC {
-			return errRuntimeInputUnavailable
+		if r.protocol == runtimeProtocolPIRPC {
+			encoded, err := json.Marshal(piRPCExtensionUIResponseCommand{Type: "extension_ui_response", ID: resolvedID, Value: payload})
+			if err != nil {
+				return fmt.Errorf("marshal runtime command: %w", err)
+			}
+			return r.helper.command(ctx, iod.CommandUIResponseSubmit, encoded)
 		}
-		encoded, err := json.Marshal(piRPCExtensionUIResponseCommand{Type: "extension_ui_response", ID: resolvedID, Value: payload})
-		if err != nil {
-			return fmt.Errorf("marshal runtime command: %w", err)
-		}
-		return r.helper.command(ctx, iod.CommandUIResponseSubmit, encoded)
+		return r.helper.command(ctx, iod.CommandSend, json.RawMessage(strconv.Quote(payload)))
 	}
 	if r.protocol == runtimeProtocolPIRPC {
 		return r.writeRPCCommand(ctx, piRPCExtensionUIResponseCommand{Type: "extension_ui_response", ID: resolvedID, Value: payload})

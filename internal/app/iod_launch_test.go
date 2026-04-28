@@ -187,6 +187,15 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 		"env[" + fakePIChildMarkEnv + "]=codex-forwarded-via-helper",
 	})
 
+	sent, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "Reply exactly: HELPER_CODEX_SEND"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if sent.Message.Role != "user" || sent.Message.Text != "Reply exactly: HELPER_CODEX_SEND" {
+		t.Fatalf("Send() = %+v, want appended user message", sent)
+	}
+	waitForChildLogLines(t, childLog, []string{"Reply exactly: HELPER_CODEX_SEND"})
+
 	interrupted, err := svc.Interrupt(context.Background(), InterruptRequest{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("Interrupt() error = %v", err)
@@ -194,7 +203,7 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 	if interrupted.Busy {
 		t.Fatalf("Interrupt() = %+v, want busy false", interrupted)
 	}
-	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandInterrupt})
+	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandSend, iod.PacketCommandInterrupt})
 }
 
 func TestIODHelperForwardsChildArgvCWDAndEnvironment(t *testing.T) {

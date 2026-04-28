@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -184,6 +185,32 @@ func TestNewRuntimeLauncherResolvesIODRuntimeRootToAbsolutePath(t *testing.T) {
 	}
 	if processLauncher.iodRuntimeRoot != want {
 		t.Fatalf("iod runtime root = %q, want %q", processLauncher.iodRuntimeRoot, want)
+	}
+}
+
+func TestResolveCodexLaunchEnvCopiesAuthKeyIntoCRSAlias(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.codex) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, codexAuthPath), []byte(`{"OPENAI_API_KEY":"cr_test_key"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile(auth.json) error = %v", err)
+	}
+	base, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("InheritEnv() error = %v", err)
+	}
+	resolved, err := resolveCodexLaunchEnv(base, func(string) (string, bool) { return "", false }, func() (string, error) { return home, nil })
+	if err != nil {
+		t.Fatalf("resolveCodexLaunchEnv() error = %v", err)
+	}
+	openAIKey, ok := resolvedEnvValue(resolved, nil, "OPENAI_API_KEY")
+	if !ok || openAIKey != "cr_test_key" {
+		t.Fatalf("resolved OPENAI_API_KEY = %q, %v, want cr_test_key", openAIKey, ok)
+	}
+	crsKey, ok := resolvedEnvValue(resolved, nil, "CRS_OAI_KEY")
+	if !ok || crsKey != "cr_test_key" {
+		t.Fatalf("resolved CRS_OAI_KEY = %q, %v, want cr_test_key", crsKey, ok)
 	}
 }
 
