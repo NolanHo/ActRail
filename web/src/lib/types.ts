@@ -39,10 +39,18 @@ export interface AppBootstrapUi {
   deferred_features?: string[];
 }
 
+export interface SessionTransportSnapshot {
+  generation_id?: string;
+  state?: string;
+  reset_required?: boolean;
+  reason?: string | null;
+}
+
 export interface SessionSummary {
   session_id: string;
   runtime_id?: string | null;
   thread_id?: string | null;
+  generation_id?: string | null;
   resume_session_id?: string | null;
   display_name?: string;
   title?: string;
@@ -57,6 +65,9 @@ export interface SessionSummary {
   pending_startup?: boolean;
   focused?: boolean;
   queue_len?: number;
+  transport_state?: string | null;
+  reset_required?: boolean;
+  transport_reason?: string | null;
   updated_ts?: number;
   git_branch?: string | null;
   model?: string | null;
@@ -431,6 +442,10 @@ export interface LiveSessionResponse {
   ok?: boolean;
   session_id?: string;
   runtime_id?: string | null;
+  generation_id?: string | null;
+  transport?: SessionTransportSnapshot | null;
+  transport_reason?: string | null;
+  reset_required?: boolean;
   offset?: number;
   live_offset?: number;
   bridge_offset?: number;

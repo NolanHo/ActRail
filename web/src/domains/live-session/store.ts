@@ -5,6 +5,7 @@ import type {
   LiveSessionResponse,
   MessageEvent,
   RealtimeEnvelope,
+  SessionTransportSnapshot,
   SessionUiRequest,
   TurnTimingPayload,
 } from "../../lib/types";
@@ -141,6 +142,66 @@ function normalizeSnapshotEvents(messagePayload: Awaited<ReturnType<typeof api.l
   return [...normalizeMessageSnapshot(messagePayload).events, ...partialAssistantTurnEvent(statePayload)];
 }
 
+function transportSnapshotFromValue(value: unknown): SessionTransportSnapshot | null {
+  const record = toObjectRecord(value);
+  if (!record) {
+    return null;
+  }
+  return {
+    generation_id: typeof record.generation_id === "string" ? record.generation_id : undefined,
+    state: typeof record.state === "string" ? record.state : undefined,
+    reset_required: record.reset_required === true,
+    reason: typeof record.reason === "string" ? record.reason : null,
+  };
+}
+
+function transportSnapshotFromPayload(payload: LiveSessionResponse | Record<string, unknown> | null): SessionTransportSnapshot | null {
+  const direct = transportSnapshotFromValue(payload && "transport" in payload ? payload.transport : null);
+  if (direct) {
+    return direct;
+  }
+  const state = payload && typeof payload.transport_state === "string" ? payload.transport_state : undefined;
+  const generationId = payload && typeof payload.generation_id === "string" ? payload.generation_id : undefined;
+  const reason = payload && typeof payload.transport_reason === "string"
+    ? payload.transport_reason
+    : payload && typeof payload.transport_error === "string"
+      ? payload.transport_error
+      : null;
+  const resetRequired = payload?.reset_required === true;
+  if (!state && !generationId && !reason && !resetRequired) {
+    return null;
+  }
+  return {
+    generation_id: generationId,
+    state,
+    reset_required: resetRequired,
+    reason,
+  };
+}
+
+function transportErrorMessage(payload: LiveSessionResponse | Record<string, unknown> | null) {
+  const transport = transportSnapshotFromPayload(payload);
+  if (!transport) {
+    return "";
+  }
+  const reason = typeof transport.reason === "string" && transport.reason.trim() ? transport.reason.trim() : "";
+  if (transport.reset_required) {
+    return reason || "transport reset required";
+  }
+  if (transport.state === "broken") {
+    return reason || "session generation broken";
+  }
+  return "";
+}
+
+function transportBusyValue(payload: LiveSessionResponse | Record<string, unknown> | null, busy: boolean) {
+  const transport = transportSnapshotFromPayload(payload);
+  if (transport?.state === "broken" || transport?.state === "ended") {
+    return false;
+  }
+  return busy;
+}
+
 function normalizeSnapshotRequests(payload: LiveSessionResponse) {
   if (Array.isArray(payload.requests)) {
     return payload.requests.map((request) => normalizeRequest(request)).filter((request): request is SessionUiRequest => request !== null);
@@ -231,7 +292,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       requestVersionsBySessionId: nextRequestVersionsBySessionId,
       busyBySessionId: {
         ...state.busyBySessionId,
-        [sessionId]: statePayload.busy === true,
+        [sessionId]: transportBusyValue(statePayload, statePayload.busy === true),
       },
       loadingBySessionId: {
         ...state.loadingBySessionId,
@@ -239,7 +300,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       },
       errorBySessionId: {
         ...state.errorBySessionId,
-        [sessionId]: "",
+        [sessionId]: transportErrorMessage(statePayload),
       },
       tokenBySessionId: {
         ...state.tokenBySessionId,
@@ -350,11 +411,11 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
           busyBySessionId: {
             ...state.busyBySessionId,
-            [sessionId]: payload?.busy === true,
+            [sessionId]: transportBusyValue(payload, payload?.busy === true),
           },
           errorBySessionId: {
             ...state.errorBySessionId,
-            [sessionId]: "",
+            [sessionId]: transportErrorMessage(payload),
           },
         };
         emit();
@@ -471,12 +532,40 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         return;
       }
 
+      if (type === "session.generation.broken") {
+        state = {
+          ...state,
+          streamCursorsBySessionId: {
+            ...state.streamCursorsBySessionId,
+            [sessionId]: nextCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq),
+          },
+          busyBySessionId: {
+            ...state.busyBySessionId,
+            [sessionId]: false,
+          },
+          errorBySessionId: {
+            ...state.errorBySessionId,
+            [sessionId]: typeof payload?.reason === "string" && payload.reason.trim()
+              ? payload.reason
+              : "session generation broken",
+          },
+        };
+        emit();
+        return;
+      }
+
       if (type === "transport.reset_required") {
         state = {
           ...state,
           errorBySessionId: {
             ...state.errorBySessionId,
-            [sessionId]: typeof payload?.reason === "string" ? payload.reason : "transport reset required",
+            [sessionId]: typeof payload?.reason === "string" && payload.reason.trim()
+              ? payload.reason
+              : "transport reset required",
+          },
+          busyBySessionId: {
+            ...state.busyBySessionId,
+            [sessionId]: false,
           },
           streamCursorsBySessionId: {
             ...state.streamCursorsBySessionId,

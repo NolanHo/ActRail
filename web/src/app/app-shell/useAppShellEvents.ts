@@ -175,6 +175,7 @@ export function useAppShellEvents({
 
       if (
         type === "session.state"
+        || type === "session.generation.broken"
         || type === "message.delta"
         || type === "message.commit"
         || type === "ui.request"
@@ -198,6 +199,7 @@ export function useAppShellEvents({
         if (!sessionId) {
           return;
         }
+        liveSessionStoreApi.applyFrame(frame);
         liveSessionStoreApi.resetSession(sessionId);
         const session = latestRef.current.items.find((item) => item.session_id === sessionId) ?? null;
         void refreshLiveSessionSnapshot(sessionId, session?.runtime_id ?? null);

@@ -198,4 +198,60 @@ describe("createLiveSessionStore", () => {
     await liveStore.loadInitial("s1");
     expect(liveStore.getState().errorBySessionId.s1).toBe("");
   });
+
+  it("loads broken transport snapshots into live session error state", async () => {
+    vi.mocked(api.listMessages).mockResolvedValue({ items: [], tail_seq: 0 } as never);
+    vi.mocked(api.getSessionState).mockResolvedValue({
+      busy: true,
+      tail_seq: 0,
+      resume_cursors: { session: "7", ui: "3" },
+      transport: {
+        generation_id: "g-1",
+        state: "broken",
+        reason: "write_failed",
+      },
+    } as never);
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    await liveStore.loadInitial("s1");
+
+    expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+    expect(liveStore.getState().errorBySessionId.s1).toBe("write_failed");
+  });
+
+  it("applies generation broken and transport reset frames", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "session.generation.broken",
+      stream: "session:s1",
+      payload: {
+        session_id: "s1",
+        stream_seq: 12,
+        generation_id: "g-1",
+        reason: "write_failed",
+      },
+    });
+
+    expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+    expect(liveStore.getState().errorBySessionId.s1).toBe("write_failed");
+    expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(12);
+
+    liveStore.applyFrame({
+      type: "transport.reset_required",
+      stream: "session:s1",
+      payload: {
+        session_id: "s1",
+        stream_seq: 20,
+        reason: "attach_lost",
+      },
+    });
+
+    expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+    expect(liveStore.getState().errorBySessionId.s1).toBe("attach_lost");
+    expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(0);
+    expect(liveStore.getState().uiStreamCursorsBySessionId.s1).toBe(0);
+  });
 });

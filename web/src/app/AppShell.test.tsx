@@ -363,6 +363,8 @@ describe("AppShell", () => {
     });
     await flush();
 
+    expect(liveSessionStore.applyFrame).toHaveBeenCalledWith(expect.objectContaining({ type: "transport.reset_required" }));
+    expect(liveSessionStore.resetSession).toHaveBeenCalledWith("sess-2");
     expect(liveSessionStore.poll).toHaveBeenCalledWith("sess-2");
   });
 
