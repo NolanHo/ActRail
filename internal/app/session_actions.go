@@ -125,7 +125,13 @@ type RestartSessionRequest struct {
 }
 
 type RestartSessionResponse struct {
-	OK bool `json:"ok"`
+	OK                bool                  `json:"ok"`
+	Session           *CreatedSession       `json:"session,omitempty"`
+	SessionID         string                `json:"session_id,omitempty"`
+	RuntimeID         string                `json:"runtime_id,omitempty"`
+	PreviousRuntimeID string                `json:"previous_runtime_id,omitempty"`
+	Restarted         bool                  `json:"restarted,omitempty"`
+	WSAttach          *SessionAttachRequest `json:"ws_attach,omitempty"`
 }
 
 type HandoffSessionRequest struct {
@@ -345,11 +351,95 @@ func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (Del
 	return DeleteSessionResponse{OK: true, SessionID: removed.identity.SessionID().String(), Removed: true}, nil
 }
 
-func (s *Stub) RestartSession(_ context.Context, req RestartSessionRequest) (RestartSessionResponse, error) {
-	if _, err := s.lookupSession(req.SessionID); err != nil {
+func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (RestartSessionResponse, error) {
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
 		return RestartSessionResponse{}, err
 	}
-	return RestartSessionResponse{}, Unsupported("session restart not implemented")
+	if record.identity.Historical() {
+		return RestartSessionResponse{}, Unsupported("historical sessions cannot be restarted")
+	}
+	identity, _, ok, err := s.registry.ReserveRestartIdentity(req.SessionID)
+	if err != nil {
+		return RestartSessionResponse{}, err
+	}
+	if !ok {
+		return RestartSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+	}
+	newRuntime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
+		SessionID:       identity.SessionID(),
+		Backend:         record.identity.Backend(),
+		CWD:             record.cwd,
+		Provider:        record.provider,
+		Model:           record.model,
+		ReasoningEffort: record.reasoningEffort,
+	})
+	if err != nil {
+		_ = newRuntime.CleanupHelperArtifacts()
+		return RestartSessionResponse{}, err
+	}
+	previousBinding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID())
+	if err != nil {
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return RestartSessionResponse{}, err
+	}
+	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), newRuntime); err != nil {
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return RestartSessionResponse{}, err
+	}
+	restoreBinding := func() {
+		if previousBinding != nil {
+			_ = s.bindCurrentGeneration(helperGenerationBinding{
+				SessionID:        record.identity.SessionID(),
+				GenerationID:     previousBinding.GenerationID,
+				LastReplayOffset: previousBinding.LastReplayOffset,
+			})
+			return
+		}
+		_ = s.helperBindings.Delete(record.identity.SessionID())
+	}
+	updated, ok, err := s.registry.SwapRuntime(req.SessionID, identity, newRuntime)
+	if err != nil {
+		restoreBinding()
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return RestartSessionResponse{}, err
+	}
+	if !ok {
+		restoreBinding()
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return RestartSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+	}
+	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
+	_ = record.runtime.Kill(context.Background())
+	_ = record.runtime.CleanupHelperArtifacts()
+	queue := queueSnapshotFromState(updated.state)
+	s.emitQueueState(updated.identity.SessionID(), queue)
+	s.emitSessionState(updated.identity.SessionID())
+	if updated.state.Queue().Len() > 0 {
+		s.scheduleQueuedDispatch(updated.identity.SessionID())
+	}
+	previousRuntimeID, _ := record.identity.RuntimeID()
+	currentRuntimeID, _ := updated.identity.RuntimeID()
+	var wsAttach *SessionAttachRequest
+	if stream, err := session.MainStream(updated.identity); err == nil {
+		wsAttach = &SessionAttachRequest{
+			SessionID:            updated.identity.SessionID().String(),
+			SuggestSubscriptions: []string{stream.String()},
+		}
+	}
+	return RestartSessionResponse{
+		OK:                true,
+		Session:           createdSessionFromRecord(updated),
+		SessionID:         updated.identity.SessionID().String(),
+		RuntimeID:         currentRuntimeID.String(),
+		PreviousRuntimeID: previousRuntimeID.String(),
+		Restarted:         true,
+		WSAttach:          wsAttach,
+	}, nil
 }
 
 func (s *Stub) HandoffSession(_ context.Context, req HandoffSessionRequest) (HandoffSessionResponse, error) {

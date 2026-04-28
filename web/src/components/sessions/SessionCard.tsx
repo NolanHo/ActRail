@@ -15,6 +15,7 @@ interface SessionCardProps {
   onEdit?: () => void;
   onDuplicate?: () => void;
   onRestart?: () => void;
+  restartLabel?: string;
   onHandoff?: () => void;
   onDelete?: () => void;
 }
@@ -92,7 +93,7 @@ export function useDesktopSessionActions() {
   return Boolean(window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 881px)").matches);
 }
 
-export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onRestart, onHandoff, onDelete }: SessionCardProps) {
+export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onRestart, restartLabel, onHandoff, onDelete }: SessionCardProps) {
   const title = getSessionDisplayName(session);
   const isHistorical = session.historical === true;
   const desktopActions = useDesktopSessionActions();
@@ -258,7 +259,7 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
                                 onClick={() => runMenuAction(onRestart)}
                               >
                                 <ActionIcon kind="restart" />
-                                <span>Restart Pi...</span>
+                                <span>{restartLabel || "Restart..."}</span>
                               </button>
                             ) : null}
                             {onHandoff ? (

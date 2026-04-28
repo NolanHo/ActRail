@@ -12,15 +12,22 @@ import (
 
 func newSessionActionFixture(t *testing.T) (*Stub, *process.FakeHandle, session.SessionID, session.SessionID) {
 	t.Helper()
-	var handle *process.FakeHandle
+	svc, handles, sessionID, runtimeID := newSessionActionFixtureForBackend(t, "pi")
+	return svc, (*handles)[0], sessionID, runtimeID
+}
+
+func newSessionActionFixtureForBackend(t *testing.T, backend string) (*Stub, *[]*process.FakeHandle, session.SessionID, session.SessionID) {
+	t.Helper()
+	handles := &[]*process.FakeHandle{}
 	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
-		handle = process.NewFakeHandle(spec)
-		handle.SetPID(321)
+		handle := process.NewFakeHandle(spec)
+		handle.SetPID(321 + len(*handles))
+		*handles = append(*handles, handle)
 		return handle
 	}}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
 	cwd := t.TempDir()
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: backend, CWD: cwd})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -32,7 +39,7 @@ func newSessionActionFixture(t *testing.T) (*Stub, *process.FakeHandle, session.
 	if err != nil {
 		t.Fatalf("ParseSessionID(runtime) error = %v", err)
 	}
-	return svc, handle, sessionID, runtimeID
+	return svc, handles, sessionID, runtimeID
 }
 
 func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
@@ -304,11 +311,129 @@ func TestStubSessionActionsReturnNotFoundOrUnsupported(t *testing.T) {
 	_, err = svc.HandoffSession(context.Background(), HandoffSessionRequest{SessionID: unknown})
 	assertNotFound(t, err)
 
-	_, err = svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
-	assertUnsupported(t, err)
-
 	_, err = svc.HandoffSession(context.Background(), HandoffSessionRequest{SessionID: sessionID})
 	assertUnsupported(t, err)
+}
+
+func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T) {
+	svc, handles, sessionID, runtimeID := newSessionActionFixtureForBackend(t, "pi")
+	if len(*handles) != 1 {
+		t.Fatalf("len(handles) = %d, want 1", len(*handles))
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
+	if _, err := svc.AppendSessionMessage(sessionID, "user", "message", "hello"); err != nil {
+		t.Fatalf("AppendSessionMessage() error = %v", err)
+	}
+	if _, err := svc.AppendAssistantDelta(sessionID, "turn_restart", "partial reply"); err != nil {
+		t.Fatalf("AppendAssistantDelta() error = %v", err)
+	}
+	if err := svc.SetSessionUIRequest(sessionID, SessionUIRequestSnapshot{RequestID: "ask_1", Kind: "ask_user", Prompt: "Choose one"}); err != nil {
+		t.Fatalf("SetSessionUIRequest() error = %v", err)
+	}
+
+	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: runtimeID})
+	if err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+	if !restarted.OK || !restarted.Restarted {
+		t.Fatalf("RestartSession() = %+v, want ok restarted response", restarted)
+	}
+	if restarted.SessionID != sessionID.String() {
+		t.Fatalf("RestartSession().SessionID = %q, want %q", restarted.SessionID, sessionID)
+	}
+	if restarted.PreviousRuntimeID != runtimeID.String() {
+		t.Fatalf("RestartSession().PreviousRuntimeID = %q, want %q", restarted.PreviousRuntimeID, runtimeID)
+	}
+	if restarted.RuntimeID == runtimeID.String() || restarted.RuntimeID == "" {
+		t.Fatalf("RestartSession().RuntimeID = %q, want new runtime id", restarted.RuntimeID)
+	}
+	if restarted.Session == nil || restarted.Session.RuntimeID != restarted.RuntimeID {
+		t.Fatalf("RestartSession().Session = %+v, want runtime %q", restarted.Session, restarted.RuntimeID)
+	}
+	if restarted.WSAttach == nil || restarted.WSAttach.SessionID != sessionID.String() {
+		t.Fatalf("RestartSession().WSAttach = %+v, want session %q", restarted.WSAttach, sessionID)
+	}
+	if len(*handles) != 2 {
+		t.Fatalf("len(handles) after restart = %d, want 2", len(*handles))
+	}
+	if (*handles)[0].KillCalls() != 1 {
+		t.Fatalf("old handle KillCalls() = %d, want 1", (*handles)[0].KillCalls())
+	}
+	if (*handles)[1].KillCalls() != 0 {
+		t.Fatalf("new handle KillCalls() = %d, want 0", (*handles)[1].KillCalls())
+	}
+
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() after restart error = %v", err)
+	}
+	updatedRuntimeID, ok := record.identity.RuntimeID()
+	if !ok {
+		t.Fatal("record.identity.RuntimeID() ok = false, want true")
+	}
+	if updatedRuntimeID.String() != restarted.RuntimeID {
+		t.Fatalf("record runtime id = %q, want %q", updatedRuntimeID, restarted.RuntimeID)
+	}
+	if record.runtime.PID() != 322 {
+		t.Fatalf("record.runtime.PID() = %d, want 322", record.runtime.PID())
+	}
+	if record.state.Busy() {
+		t.Fatal("record.state.Busy() = true, want false after restart")
+	}
+	if record.uiRequest != nil {
+		t.Fatalf("record.uiRequest = %+v, want nil after restart", record.uiRequest)
+	}
+	if record.resumeCursors != (SessionResumeCursors{}) {
+		t.Fatalf("record.resumeCursors = %+v, want empty", record.resumeCursors)
+	}
+	if partial, ok := record.transcript.PartialAssistantTurn(); ok {
+		t.Fatalf("record.transcript.PartialAssistantTurn() = %+v, want cleared partial", partial)
+	}
+	items := record.transcript.Items()
+	if len(items) != 1 || items[0].Text() != "hello" {
+		t.Fatalf("record transcript items = %+v, want preserved user message", items)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() after restart error = %v", err)
+	}
+	if state.Busy {
+		t.Fatal("SessionState().Busy = true, want false after restart")
+	}
+	if state.UIRequest != nil {
+		t.Fatalf("SessionState().UIRequest = %+v, want nil after restart", state.UIRequest)
+	}
+	if state.PartialAssistantTurn != nil {
+		t.Fatalf("SessionState().PartialAssistantTurn = %+v, want nil after restart", state.PartialAssistantTurn)
+	}
+}
+
+func TestStubRestartSessionSupportsCodexSessions(t *testing.T) {
+	svc, _, sessionID, runtimeID := newSessionActionFixtureForBackend(t, "codex")
+
+	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("RestartSession(codex) error = %v", err)
+	}
+	if restarted.SessionID != sessionID.String() {
+		t.Fatalf("RestartSession(codex).SessionID = %q, want %q", restarted.SessionID, sessionID)
+	}
+	if restarted.PreviousRuntimeID != runtimeID.String() {
+		t.Fatalf("RestartSession(codex).PreviousRuntimeID = %q, want %q", restarted.PreviousRuntimeID, runtimeID)
+	}
+	if restarted.RuntimeID == runtimeID.String() || restarted.RuntimeID == "" {
+		t.Fatalf("RestartSession(codex).RuntimeID = %q, want new runtime id", restarted.RuntimeID)
+	}
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession(codex) error = %v", err)
+	}
+	if record.identity.Backend() != session.BackendCodex {
+		t.Fatalf("record.identity.Backend() = %q, want %q", record.identity.Backend(), session.BackendCodex)
+	}
 }
 
 func assertUnsupported(t *testing.T, err error) {

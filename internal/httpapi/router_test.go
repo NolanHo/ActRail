@@ -472,7 +472,13 @@ func (s *fixtureService) DeleteSession(_ context.Context, req app.DeleteSessionR
 
 func (s *fixtureService) RestartSession(_ context.Context, req app.RestartSessionRequest) (app.RestartSessionResponse, error) {
 	s.restartReq = req
-	return app.RestartSessionResponse{}, app.Unsupported("session restart not implemented")
+	return app.RestartSessionResponse{
+		OK:                true,
+		SessionID:         req.SessionID.String(),
+		RuntimeID:         "r_456",
+		PreviousRuntimeID: "r_123",
+		Restarted:         true,
+	}, nil
 }
 
 func (s *fixtureService) HandoffSession(_ context.Context, req app.HandoffSessionRequest) (app.HandoffSessionResponse, error) {
@@ -1062,13 +1068,20 @@ func TestSessionActionRoutesUseAppSeams(t *testing.T) {
 		}
 	})
 
-	t.Run("restart unsupported", func(t *testing.T) {
+	t.Run("restart", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/restart", bytes.NewBufferString(`{}`))
 		res := httptest.NewRecorder()
 
 		h.ServeHTTP(res, req)
 
-		assertErrorEnvelope(t, res, http.StatusNotImplemented, "unsupported", "")
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		var body app.RestartSessionResponse
+		decodeJSON(t, res, &body)
+		if !body.OK || !body.Restarted || body.SessionID != "s_123" || body.RuntimeID != "r_456" || body.PreviousRuntimeID != "r_123" {
+			t.Fatalf("unexpected restart payload: %+v", body)
+		}
 		if svc.restartReq.SessionID.String() != "s_123" {
 			t.Fatalf("restart request = %+v", svc.restartReq)
 		}

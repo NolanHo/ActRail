@@ -220,6 +220,14 @@ func (t Transcript) PartialAssistantTurn() (PartialAssistantTurn, bool) {
 	return *t.partial, true
 }
 
+func (t *Transcript) DiscardPartialAssistantTurn() bool {
+	if t.partial == nil {
+		return false
+	}
+	t.partial = nil
+	return true
+}
+
 func (t Transcript) History(before *Seq, limit int) HistoryPage {
 	upper := len(t.items)
 	if before != nil {

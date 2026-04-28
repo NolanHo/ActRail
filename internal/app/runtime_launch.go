@@ -82,7 +82,7 @@ const (
 	runtimeProtocolPIRPC runtimeProtocol = "pi_rpc"
 
 	helperReadyPollInterval = 25 * time.Millisecond
-	helperReadyTimeout      = 5 * time.Second
+	helperReadyTimeout      = 30 * time.Second
 	helperStopTimeout       = 3 * time.Second
 
 	helperFlagSessionID    = "-session-id"

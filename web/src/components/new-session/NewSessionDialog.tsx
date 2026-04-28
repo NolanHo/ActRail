@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 
 import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
+import { backendSupportsReasoningEffort } from "../../lib/launch";
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { CreateSessionResponse, LaunchBackendDefaults, SessionResumeCandidate, SessionResumeCandidatesResponse, SessionSummary } from "../../lib/types";
 
@@ -557,7 +558,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   resume_session_id: resumeSessionId || undefined,
                   provider: providerChoice.trim() || backendDefaults.provider_choice?.trim() || undefined,
                   model: model.trim() || undefined,
-                  reasoning_effort: reasoningEffort.trim() || undefined,
+                  reasoning_effort: backendSupportsReasoningEffort(backend) ? reasoningEffort.trim() || undefined : undefined,
                 });
                 const optimisticSession = buildOptimisticCreatedSession(response, {
                   backend,

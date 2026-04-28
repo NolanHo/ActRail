@@ -2,6 +2,10 @@ export function normalizeLaunchBackend(backend: string | null | undefined) {
   return String(backend || "codex").trim().toLowerCase() === "pi" ? "pi" : "codex";
 }
 
+export function backendSupportsReasoningEffort(backend: string | null | undefined) {
+  return normalizeLaunchBackend(backend) === "pi";
+}
+
 export function providerChoiceToSettings(choice: string, backend: string) {
   const value = String(choice || "").trim();
   const normalizedBackend = normalizeLaunchBackend(backend);

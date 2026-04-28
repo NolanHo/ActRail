@@ -250,7 +250,19 @@ export const api = {
   },
   restartSession(sessionId: string, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
-    return postJson<RestartSessionResponse>(`/api/sessions/${routeId}/restart`, {});
+    return postJson<RestartSessionResponse>(`/api/sessions/${routeId}/restart`, {}).then((response) => {
+      if (response.session && typeof response.session === "object") {
+        return {
+          ...response,
+          session_id: response.session_id ?? response.session.session_id,
+          runtime_id: response.runtime_id ?? response.session.runtime_id,
+          backend: response.backend ?? response.session.agent_backend,
+          focused: response.focused ?? response.session.focused,
+          alias: response.alias ?? response.session.alias,
+        };
+      }
+      return response;
+    });
   },
   async createSession(payload: Record<string, unknown>) {
     const response = await postJson<CreateSessionResponse>(`/api/sessions`, normalizeCreateSessionPayload(payload));

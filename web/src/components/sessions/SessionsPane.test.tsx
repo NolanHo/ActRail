@@ -368,6 +368,39 @@ describe("SessionsPane", () => {
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-1");
   });
 
+  it("restarts a codex session from the dialog", async () => {
+    const sessionsStore = renderSessionsPane({
+      items: [{ session_id: "sess-9", alias: "Codex session", cwd: "/tmp/codex", agent_backend: "codex", runtime_id: "rt-9" }],
+      activeSessionId: "sess-9",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: ["/tmp/codex"],
+      cwdGroups: {},
+      tmuxAvailable: true,
+    });
+
+    sessionsStore.refresh = vi.fn(async () => {
+      sessionsStore.setState({
+        ...sessionsStore.getState(),
+        items: [{ session_id: "sess-9", alias: "Codex session", cwd: "/tmp/codex", agent_backend: "codex", runtime_id: "rt-10" }],
+      });
+    });
+
+    await openSessionMenu();
+    const restartAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Restart Codex"));
+    expect(restartAction).toBeDefined();
+    await click(restartAction!);
+    await flush();
+
+    const confirmButton = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Restart Codex session"));
+    expect(confirmButton).toBeDefined();
+    await click(confirmButton!);
+    await flush();
+
+    expect(api.restartSession).toHaveBeenCalledWith("sess-9", "rt-9");
+    expect(sessionsStore.select).toHaveBeenCalledWith("sess-9");
+  });
+
   it("hands off a pi session and preserves the draft under the new session id", async () => {
     const composerStore = {
       getState: () => ({ draftBySessionId: { "sess-1": "keep draft" }, sending: false, pendingBySessionId: {} }),
@@ -474,6 +507,7 @@ describe("SessionsPane", () => {
       agent_backend: "codex",
       provider: "openai-api",
       model: "gpt-5.4",
+      reasoning_effort: "high",
       title: "Inbox cleanup",
     } as any);
 

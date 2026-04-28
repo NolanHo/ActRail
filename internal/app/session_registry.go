@@ -216,6 +216,70 @@ func (r *sessionRegistry) Delete(routeID session.SessionID) (sessionRecord, bool
 	return copySessionRecord(cp), true, nil
 }
 
+func (r *sessionRegistry) ReserveRestartIdentity(routeID session.SessionID) (session.Identity, sessionRecord, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actualID, record, ok := r.resolveLocked(routeID)
+	if !ok {
+		return session.Identity{}, sessionRecord{}, false, nil
+	}
+	if record.identity.Historical() {
+		return session.Identity{}, sessionRecord{}, true, fmt.Errorf("historical session %q cannot be restarted", actualID)
+	}
+	for {
+		r.nextID.runtime++
+		r.nextID.thread++
+		identity, err := session.NewLiveIdentity(
+			actualID.String(),
+			fmt.Sprintf("r_%d", r.nextID.runtime),
+			fmt.Sprintf("t_%d", r.nextID.thread),
+			record.identity.Backend().String(),
+		)
+		if err != nil {
+			return session.Identity{}, sessionRecord{}, true, err
+		}
+		return identity, copySessionRecord(record), true, nil
+	}
+}
+
+func (r *sessionRegistry) SwapRuntime(routeID session.SessionID, identity session.Identity, runtime sessionRuntime) (sessionRecord, bool, error) {
+	if err := identity.Validate(); err != nil {
+		return sessionRecord{}, true, err
+	}
+	if !identity.Live() {
+		return sessionRecord{}, true, fmt.Errorf("replacement identity %q must be live", identity.SessionID())
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actualID, record, ok := r.resolveLocked(routeID)
+	if !ok {
+		return sessionRecord{}, false, nil
+	}
+	if actualID != identity.SessionID() {
+		return sessionRecord{}, true, fmt.Errorf("replacement session id = %q, want %q", identity.SessionID(), actualID)
+	}
+	if record.identity.Backend() != identity.Backend() {
+		return sessionRecord{}, true, fmt.Errorf("replacement backend = %q, want %q", identity.Backend(), record.identity.Backend())
+	}
+	now := r.now().UTC()
+	record.identity = identity
+	record.runtime = runtime
+	record.updatedAt = now
+	record.activityAt = now
+	record.uiRequest = nil
+	record.resumeCursors = SessionResumeCursors{}
+	record.transcript.DiscardPartialAssistantTurn()
+	if err := syncSessionRecordStateWithQueue(&record, false, record.state.Queue()); err != nil {
+		return sessionRecord{}, true, err
+	}
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return sessionRecord{}, true, err
+	}
+	r.sessions[actualID] = cp
+	return copySessionRecord(cp), true, nil
+}
+
 func (r *sessionRegistry) identityLocked(spec sessionCreateSpec) (session.Identity, error) {
 	if spec.Identity == nil {
 		return r.allocateIdentityLocked(spec.Backend)

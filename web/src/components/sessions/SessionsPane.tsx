@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { useComposerStoreApi, useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
-import { normalizeLaunchBackend } from "../../lib/launch";
+import { backendSupportsReasoningEffort, normalizeLaunchBackend } from "../../lib/launch";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary } from "../../lib/types";
@@ -18,7 +18,7 @@ interface SessionsPaneProps {
 }
 
 type SessionsSurfaceTab = "sessions" | "focus";
-type PendingSessionDialog = { kind: "handoff" | "restart" | "delete"; session: SessionSummary } | null;
+type PendingSessionDialog = { kind: "restart" | "handoff" | "delete"; session: SessionSummary } | null;
 
 function shortSessionId(sessionId: string) {
   const match = sessionId.match(/^([0-9a-f]{8})[0-9a-f-]{20,}$/i);
@@ -42,11 +42,19 @@ function handoffSessionConfirmText(session: SessionSummary) {
   return `Start a fresh Pi runtime for session${target}? ActRail will archive the current Pi history, launch a new durable session, and switch only after the new runtime is live.`;
 }
 
+function restartSessionActionLabel(session: SessionSummary) {
+  return normalizeLaunchBackend(session.agent_backend) === "pi" ? "Restart Pi" : "Restart Codex";
+}
+
 function restartSessionConfirmText(session: SessionSummary) {
   const name = getSessionDisplayName({ ...session, session_id: "" }, "");
   const sid = shortSessionId(session.session_id);
   const target = name ? ` \"${name}\" (${sid})` : ` ${sid}`;
-  return `Restart the backend Pi process for session${target}? ActRail will stop the current Pi runtime, start a new one against the same session file, and keep this tab bound to the same durable session. Any in-flight turn will be interrupted.`;
+  return `${restartSessionActionLabel(session)} for session${target}? ActRail will keep the durable session history and launch a fresh runtime.`;
+}
+
+function restartSessionProgressLabel(session: SessionSummary) {
+  return normalizeLaunchBackend(session.agent_backend) === "pi" ? "Restarting Pi..." : "Restarting Codex...";
 }
 
 export function SessionsPane({ onNewSession }: SessionsPaneProps) {
@@ -190,7 +198,9 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
         agent_backend: backend,
         model: String(source.model || session.model || "").trim() || undefined,
         provider: String(source.provider || session.provider_choice || "").trim() || undefined,
-        reasoning_effort: String(session.reasoning_effort || "").trim() || undefined,
+        reasoning_effort: backendSupportsReasoningEffort(backend)
+          ? String((source as { reasoning_effort?: string | null }).reasoning_effort || session.reasoning_effort || "").trim() || undefined
+          : undefined,
         title: String(source.title || source.alias || session.title || session.alias || "").trim() || undefined,
       });
       await selectCreatedSession(response);
@@ -220,13 +230,10 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
     try {
       const runtimeId = getSessionRuntimeId(session);
       const response = await api.restartSession(session.session_id, runtimeId);
-      await sessionsStoreApi.refresh();
-      sessionsStoreApi.select(session.session_id);
-      if (response.pending_startup !== true) {
-        await sessionsStoreApi.refresh();
-      }
+      await selectCreatedSession(response);
+      await sessionsStoreApi.refreshBootstrap();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Failed to restart Pi session");
+      setActionError(error instanceof Error ? error.message : "Failed to restart session");
       throw error;
     }
   };
@@ -305,14 +312,13 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
                 }}
                 onToggleFocus={() => { void toggleSessionFocus(session); }}
                 onDuplicate={session.historical ? undefined : () => { void duplicateSession(session); }}
-                onRestart={(!session.historical
-                  && session.pending_startup !== true
-                  && normalizeLaunchBackend(session.agent_backend) === "pi")
+                onRestart={(!session.historical && session.pending_startup !== true)
                   ? () => {
                     setActionError("");
                     setPendingDialog({ kind: "restart", session });
                   }
                   : undefined}
+                restartLabel={`${restartSessionActionLabel(session)}...`}
                 onHandoff={(!session.historical
                   && session.pending_startup !== true
                   && normalizeLaunchBackend(session.agent_backend) === "pi")
@@ -377,7 +383,7 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
               {pendingDialog?.kind === "delete"
                 ? "Delete session"
                 : pendingDialog?.kind === "restart"
-                  ? "Restart Pi"
+                  ? `${restartSessionActionLabel(pendingDialog.session)} session`
                   : "Handoff session"}
             </DialogTitle>
           </DialogHeader>
@@ -387,9 +393,9 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
                 ? deleteSessionConfirmText(pendingDialog.session)
                 : pendingDialog?.kind === "restart"
                   ? restartSessionConfirmText(pendingDialog.session)
-                  : pendingDialog
-                    ? handoffSessionConfirmText(pendingDialog.session)
-                    : ""}
+                : pendingDialog
+                  ? handoffSessionConfirmText(pendingDialog.session)
+                  : ""}
             </p>
             <div className="flex items-center justify-end gap-2">
               <Button
@@ -412,12 +418,12 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
                   ? pendingDialog?.kind === "delete"
                     ? "Deleting..."
                     : pendingDialog?.kind === "restart"
-                      ? "Restarting..."
+                      ? restartSessionProgressLabel(pendingDialog.session)
                       : "Handing off..."
                   : pendingDialog?.kind === "delete"
                     ? "Delete session"
                     : pendingDialog?.kind === "restart"
-                      ? "Restart Pi"
+                      ? `${restartSessionActionLabel(pendingDialog.session)} session`
                       : "Handoff session"}
               </Button>
             </div>

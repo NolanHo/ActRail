@@ -254,7 +254,7 @@ describe("NewSessionDialog", () => {
       agent_backend: "codex",
       provider: "openai-api",
       model: "gpt-5.4",
-      reasoning_effort: "high",
+      reasoning_effort: undefined,
       resume_session_id: undefined,
     });
     expect(api.renameSession).not.toHaveBeenCalled();
@@ -477,7 +477,7 @@ describe("NewSessionDialog", () => {
       agent_backend: "codex",
       provider: "chatgpt",
       model: undefined,
-      reasoning_effort: "high",
+      reasoning_effort: undefined,
       resume_session_id: undefined,
     });
     expect(api.renameSession).not.toHaveBeenCalled();
@@ -674,7 +674,7 @@ describe("NewSessionDialog", () => {
       agent_backend: "codex",
       provider: "chatgpt",
       model: undefined,
-      reasoning_effort: "high",
+      reasoning_effort: undefined,
       resume_session_id: undefined,
     });
     expect(api.renameSession).not.toHaveBeenCalled();
