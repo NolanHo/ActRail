@@ -322,6 +322,13 @@ func assertReplayCursorPreserved(t *testing.T, rehydrated *Stub, sessionID sessi
 	if bindings[sessionID].LastReplayOffset != wantOffset {
 		t.Fatalf("saved binding = %+v, want last replay offset %d", bindings[sessionID], wantOffset)
 	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateBroken || !state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() || state.Transport.Reason != string(wantReason) {
+		t.Fatalf("SessionState().Transport = %+v, want broken reset-required generation %q reason %q", state.Transport, generationID, wantReason)
+	}
 }
 
 func hasFenceReason(fences []helperFence, generationID iod.GenerationID, reason helperFenceReason) bool {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -89,6 +90,11 @@ func (s *Stub) readPIHelperRuntime(sessionID session.SessionID, helper *runtimeI
 	for {
 		packet, err := helper.streamClient.ReadPacket(context.Background())
 		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				s.handlePIHelperReadError(sessionID, err)
+				return
+			}
+			s.handlePIHelperReadError(sessionID, err)
 			return
 		}
 		if err := s.applyPIHelperPacket(sessionID, packet); err != nil {
@@ -100,6 +106,9 @@ func (s *Stub) readPIHelperRuntime(sessionID session.SessionID, helper *runtimeI
 func (s *Stub) applyPIHelperPacket(sessionID session.SessionID, packet any) error {
 	if s == nil {
 		return nil
+	}
+	if err := s.applyPITransportPacket(sessionID, packet); err != nil {
+		return err
 	}
 	projectorAny, _ := piHelperProjectors.LoadOrStore(struct {
 		stub      *Stub

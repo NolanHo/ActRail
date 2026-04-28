@@ -14,6 +14,8 @@ type RuntimeEventSink interface {
 	PublishQueueState(QueueStateEvent)
 	PublishUIRequest(UIRequestEvent)
 	PublishUIResolved(UIResolvedEvent)
+	PublishGenerationBroken(GenerationBrokenEvent)
+	PublishTransportResetRequired(TransportResetRequiredEvent)
 }
 
 // SessionResumeCursorWriter stores the latest published stream cursor for reconnect snapshots.
@@ -26,6 +28,7 @@ type SessionStateEvent struct {
 	Busy      bool
 	QueueLen  int
 	TailSeq   uint64
+	Transport SessionTransportSnapshot
 }
 
 type MessageDeltaEvent struct {
@@ -56,6 +59,18 @@ type UIResolvedEvent struct {
 	RequestID string
 }
 
+type GenerationBrokenEvent struct {
+	SessionID    session.SessionID
+	GenerationID string
+	Reason       string
+}
+
+type TransportResetRequiredEvent struct {
+	SessionID    session.SessionID
+	GenerationID string
+	Reason       string
+}
+
 func (s *Stub) SetRuntimeEventSink(sink RuntimeEventSink) {
 	s.sink = sink
 }
@@ -77,6 +92,7 @@ func (s *Stub) emitSessionState(sessionID session.SessionID) {
 		Busy:      record.state.Busy(),
 		QueueLen:  record.state.Queue().Len(),
 		TailSeq:   record.transcript.TailSeq().Uint64(),
+		Transport: sessionTransportSnapshot(record),
 	})
 }
 
@@ -113,4 +129,18 @@ func (s *Stub) emitUIResolved(sessionID session.SessionID, requestID string) {
 		return
 	}
 	s.sink.PublishUIResolved(UIResolvedEvent{SessionID: sessionID, RequestID: requestID})
+}
+
+func (s *Stub) emitGenerationBroken(sessionID session.SessionID, generationID, reason string) {
+	if s == nil || s.sink == nil {
+		return
+	}
+	s.sink.PublishGenerationBroken(GenerationBrokenEvent{SessionID: sessionID, GenerationID: generationID, Reason: reason})
+}
+
+func (s *Stub) emitTransportResetRequired(sessionID session.SessionID, generationID, reason string) {
+	if s == nil || s.sink == nil {
+		return
+	}
+	s.sink.PublishTransportResetRequired(TransportResetRequiredEvent{SessionID: sessionID, GenerationID: generationID, Reason: reason})
 }

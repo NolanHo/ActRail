@@ -19,13 +19,15 @@ import (
 )
 
 type captureRuntimeSink struct {
-	mu          sync.Mutex
-	states      []SessionStateEvent
-	deltas      []MessageDeltaEvent
-	commits     []MessageCommitEvent
-	queueStates []QueueStateEvent
-	uiRequests  []UIRequestEvent
-	uiResolved  []UIResolvedEvent
+	mu                     sync.Mutex
+	states                 []SessionStateEvent
+	deltas                 []MessageDeltaEvent
+	commits                []MessageCommitEvent
+	queueStates            []QueueStateEvent
+	uiRequests             []UIRequestEvent
+	uiResolved             []UIResolvedEvent
+	generationBroken       []GenerationBrokenEvent
+	transportResetRequired []TransportResetRequiredEvent
 }
 
 func (s *captureRuntimeSink) PublishSessionState(event SessionStateEvent) {
@@ -64,16 +66,30 @@ func (s *captureRuntimeSink) PublishUIResolved(event UIResolvedEvent) {
 	s.uiResolved = append(s.uiResolved, event)
 }
 
+func (s *captureRuntimeSink) PublishGenerationBroken(event GenerationBrokenEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.generationBroken = append(s.generationBroken, event)
+}
+
+func (s *captureRuntimeSink) PublishTransportResetRequired(event TransportResetRequiredEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transportResetRequired = append(s.transportResetRequired, event)
+}
+
 func (s *captureRuntimeSink) snapshot() captureRuntimeSink {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return captureRuntimeSink{
-		states:      append([]SessionStateEvent(nil), s.states...),
-		deltas:      append([]MessageDeltaEvent(nil), s.deltas...),
-		commits:     append([]MessageCommitEvent(nil), s.commits...),
-		queueStates: append([]QueueStateEvent(nil), s.queueStates...),
-		uiRequests:  append([]UIRequestEvent(nil), s.uiRequests...),
-		uiResolved:  append([]UIResolvedEvent(nil), s.uiResolved...),
+		states:                 append([]SessionStateEvent(nil), s.states...),
+		deltas:                 append([]MessageDeltaEvent(nil), s.deltas...),
+		commits:                append([]MessageCommitEvent(nil), s.commits...),
+		queueStates:            append([]QueueStateEvent(nil), s.queueStates...),
+		uiRequests:             append([]UIRequestEvent(nil), s.uiRequests...),
+		uiResolved:             append([]UIResolvedEvent(nil), s.uiResolved...),
+		generationBroken:       append([]GenerationBrokenEvent(nil), s.generationBroken...),
+		transportResetRequired: append([]TransportResetRequiredEvent(nil), s.transportResetRequired...),
 	}
 }
 
@@ -358,6 +374,103 @@ func TestCreateSessionConsumesHelperBackedPIReplayAndLiveOutputIntoStateTranscri
 	}
 	if len(snapshot.uiResolved) != 1 || snapshot.uiResolved[0].RequestID != "ui-req-helper" {
 		t.Fatalf("runtime ui resolved events = %#v", snapshot.uiResolved)
+	}
+}
+
+func TestHelperChildExitProjectsEndedTransportState(t *testing.T) {
+	generationID := mustHelperGenerationID(t, "g_helper_child_exit")
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	fact, err := iod.NewHelperFact(iod.FactChildExit, nil, json.RawMessage(`{"exit_code":0}`))
+	if err != nil {
+		t.Fatalf("NewHelperFact(child_exit) error = %v", err)
+	}
+	packet, err := iod.NewStatePacket(sessionID, generationID, fact)
+	if err != nil {
+		t.Fatalf("NewStatePacket(child_exit) error = %v", err)
+	}
+	if err := svc.applyPIHelperPacket(sessionID, packet); err != nil {
+		t.Fatalf("applyPIHelperPacket(child_exit) error = %v", err)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.GenerationID != generationID.String() || state.Transport.Reason != iod.FactChildExit.String() || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want ended child_exit without reset", state.Transport)
+	}
+	snapshot := sink.snapshot()
+	if len(snapshot.generationBroken) != 0 {
+		t.Fatalf("generation broken events = %#v, want none", snapshot.generationBroken)
+	}
+	if len(snapshot.transportResetRequired) != 0 {
+		t.Fatalf("transport reset events = %#v, want none", snapshot.transportResetRequired)
+	}
+	if len(snapshot.states) == 0 || snapshot.states[len(snapshot.states)-1].Transport.State != SessionTransportStateEnded {
+		t.Fatalf("session state events = %#v, want ended transport state", snapshot.states)
+	}
+}
+
+func TestHelperGenerationBreakProjectsBrokenTransportState(t *testing.T) {
+	generationID := mustHelperGenerationID(t, "g_helper_generation_break")
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	packet, err := iod.NewGenerationBreakPacket(sessionID, generationID, 4, iod.GenerationBreakWriteFailed)
+	if err != nil {
+		t.Fatalf("NewGenerationBreakPacket() error = %v", err)
+	}
+	if err := svc.applyPIHelperPacket(sessionID, packet); err != nil {
+		t.Fatalf("applyPIHelperPacket(generation_break) error = %v", err)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateBroken || state.Transport.GenerationID != generationID.String() || state.Transport.Reason != iod.GenerationBreakWriteFailed.String() || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want broken write_failed without reset", state.Transport)
+	}
+	snapshot := sink.snapshot()
+	if len(snapshot.generationBroken) != 1 || snapshot.generationBroken[0].GenerationID != generationID.String() || snapshot.generationBroken[0].Reason != iod.GenerationBreakWriteFailed.String() {
+		t.Fatalf("generation broken events = %#v", snapshot.generationBroken)
+	}
+	if len(snapshot.transportResetRequired) != 0 {
+		t.Fatalf("transport reset events = %#v, want none", snapshot.transportResetRequired)
+	}
+}
+
+func TestHelperReadErrorProjectsTransportResetRequired(t *testing.T) {
+	generationID := mustHelperGenerationID(t, "g_helper_attach_lost")
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	svc.handlePIHelperReadError(sessionID, io.EOF)
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateBroken || state.Transport.GenerationID != generationID.String() || state.Transport.Reason != iod.GenerationBreakAttachLost.String() || !state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want broken attach_lost with reset", state.Transport)
+	}
+	snapshot := sink.snapshot()
+	if len(snapshot.transportResetRequired) != 1 || snapshot.transportResetRequired[0].GenerationID != generationID.String() || snapshot.transportResetRequired[0].Reason != iod.GenerationBreakAttachLost.String() {
+		t.Fatalf("transport reset events = %#v", snapshot.transportResetRequired)
 	}
 }
 

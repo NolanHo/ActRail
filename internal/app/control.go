@@ -73,6 +73,9 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 	}
 	var response SendResponse
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
+		if err := transportControlError(record.transport); err != nil {
+			return err
+		}
 		if err := record.runtime.SendPrompt(ctx, text); err != nil {
 			return mapRuntimeControlError(err)
 		}
@@ -125,6 +128,9 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 	if err != nil {
 		return InterruptResponse{}, err
 	}
+	if err := transportControlError(record.transport); err != nil {
+		return InterruptResponse{}, err
+	}
 	if err := record.runtime.Interrupt(ctx); err != nil {
 		return InterruptResponse{}, mapRuntimeControlError(err)
 	}
@@ -155,6 +161,9 @@ func (s *Stub) RespondUI(ctx context.Context, req UIResponseRequest) (UIResponse
 	}
 	var response UIResponseResponse
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
+		if err := transportControlError(record.transport); err != nil {
+			return err
+		}
 		if record.uiRequest == nil {
 			return NotFound(fmt.Sprintf("session %q ui request not found", req.SessionID))
 		}
@@ -224,4 +233,29 @@ func mapRuntimeControlError(err error) error {
 		return Conflict("session runtime input is unavailable")
 	}
 	return err
+}
+
+func transportControlError(transport SessionTransportSnapshot) error {
+	if transport.ResetRequired {
+		message := "session transport reset is required"
+		if transport.Reason != "" {
+			message = fmt.Sprintf("session transport reset is required: %s", transport.Reason)
+		}
+		return &Error{Code: "transport_reset_required", Message: message}
+	}
+	if transport.State == SessionTransportStateBroken {
+		message := "session generation is broken"
+		if transport.Reason != "" {
+			message = fmt.Sprintf("session generation is broken: %s", transport.Reason)
+		}
+		return Conflict(message)
+	}
+	if transport.State == SessionTransportStateEnded {
+		message := "session generation has ended"
+		if transport.Reason != "" {
+			message = fmt.Sprintf("session generation has ended: %s", transport.Reason)
+		}
+		return Conflict(message)
+	}
+	return nil
 }

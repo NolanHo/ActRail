@@ -13,11 +13,12 @@ import (
 )
 
 type sessionStatePayload struct {
-	SessionID string `json:"session_id"`
-	StreamSeq int64  `json:"stream_seq"`
-	Busy      bool   `json:"busy"`
-	QueueLen  int    `json:"queue_len"`
-	TailSeq   uint64 `json:"tail_seq"`
+	SessionID string                       `json:"session_id"`
+	StreamSeq int64                        `json:"stream_seq"`
+	Busy      bool                         `json:"busy"`
+	QueueLen  int                          `json:"queue_len"`
+	TailSeq   uint64                       `json:"tail_seq"`
+	Transport app.SessionTransportSnapshot `json:"transport"`
 }
 
 type messageDeltaPayload struct {
@@ -63,6 +64,20 @@ type uiResolvedPayload struct {
 	SessionID string `json:"session_id"`
 	StreamSeq int64  `json:"stream_seq"`
 	RequestID string `json:"request_id"`
+}
+
+type generationBrokenPayload struct {
+	SessionID    string `json:"session_id"`
+	StreamSeq    int64  `json:"stream_seq"`
+	GenerationID string `json:"generation_id"`
+	Reason       string `json:"reason"`
+}
+
+type transportResetRequiredPayload struct {
+	SessionID    string `json:"session_id"`
+	StreamSeq    int64  `json:"stream_seq"`
+	GenerationID string `json:"generation_id"`
+	Reason       string `json:"reason"`
 }
 
 // AppBridge maps app-side live events and control requests onto websocket frames.
@@ -148,6 +163,7 @@ func (b *AppBridge) PublishSessionState(event app.SessionStateEvent) {
 			Busy:      event.Busy,
 			QueueLen:  event.QueueLen,
 			TailSeq:   event.TailSeq,
+			Transport: event.Transport,
 		}
 	})
 }
@@ -202,6 +218,28 @@ func (b *AppBridge) PublishUIRequest(event app.UIRequestEvent) {
 func (b *AppBridge) PublishUIResolved(event app.UIResolvedEvent) {
 	b.publish(event.SessionID, session.StreamKindUI, FrameTypeUIResolved, func(cursor int64) any {
 		return uiResolvedPayload{SessionID: event.SessionID.String(), StreamSeq: cursor, RequestID: event.RequestID}
+	})
+}
+
+func (b *AppBridge) PublishGenerationBroken(event app.GenerationBrokenEvent) {
+	b.publish(event.SessionID, session.StreamKindMain, FrameTypeSessionGenerationBroken, func(cursor int64) any {
+		return generationBrokenPayload{
+			SessionID:    event.SessionID.String(),
+			StreamSeq:    cursor,
+			GenerationID: event.GenerationID,
+			Reason:       event.Reason,
+		}
+	})
+}
+
+func (b *AppBridge) PublishTransportResetRequired(event app.TransportResetRequiredEvent) {
+	b.publish(event.SessionID, session.StreamKindMain, FrameTypeTransportResetRequired, func(cursor int64) any {
+		return transportResetRequiredPayload{
+			SessionID:    event.SessionID.String(),
+			StreamSeq:    cursor,
+			GenerationID: event.GenerationID,
+			Reason:       event.Reason,
+		}
 	})
 }
 

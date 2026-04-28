@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -216,6 +217,53 @@ func TestSendAndUIResponseReturnConflictWithoutRuntimeInput(t *testing.T) {
 	}
 	_, err = svc.RespondUI(context.Background(), UIResponseRequest{SessionID: sessionID, ResponseTo: "ask_1", Value: "A"})
 	assertConflict(t, err)
+}
+
+func TestControlMethodsReturnTransportResetRequired(t *testing.T) {
+	svc, sessionID, _, _ := newControlFixture(t)
+	_, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID:  "g_reset",
+		State:         SessionTransportStateBroken,
+		ResetRequired: true,
+		Reason:        iod.GenerationBreakAttachLost.String(),
+	})
+	if err != nil {
+		t.Fatalf("SetTransport() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("SetTransport(%q) ok = false", sessionID)
+	}
+	if err := svc.SetSessionUIRequest(sessionID, SessionUIRequestSnapshot{RequestID: "ask_1", Kind: "ask_user", Prompt: "Choose"}); err != nil {
+		t.Fatalf("SetSessionUIRequest() error = %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		run  func() error
+	}{
+		{name: "send", run: func() error {
+			_, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "prompt"})
+			return err
+		}},
+		{name: "interrupt", run: func() error {
+			_, err := svc.Interrupt(context.Background(), InterruptRequest{SessionID: sessionID})
+			return err
+		}},
+		{name: "respond_ui", run: func() error {
+			_, err := svc.RespondUI(context.Background(), UIResponseRequest{SessionID: sessionID, ResponseTo: "ask_1", Value: "A"})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var appErr *Error
+			err := tc.run()
+			if !errors.As(err, &appErr) {
+				t.Fatalf("error = %v, want *Error", err)
+			}
+			if appErr.Code != "transport_reset_required" {
+				t.Fatalf("error code = %q, want transport_reset_required", appErr.Code)
+			}
+		})
+	}
 }
 
 func assertConflict(t *testing.T, err error) {

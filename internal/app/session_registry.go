@@ -557,6 +557,26 @@ func (r *sessionRegistry) SetResumeCursor(sessionID session.SessionID, kind sess
 	return nil
 }
 
+func (r *sessionRegistry) SetTransport(sessionID session.SessionID, transport SessionTransportSnapshot) (SessionTransportSnapshot, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return SessionTransportSnapshot{}, false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return SessionTransportSnapshot{}, false, nil
+	}
+	record.transport = transport
+	record.updatedAt = r.now().UTC()
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return SessionTransportSnapshot{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return cp.transport, true, nil
+}
+
 func normalizeSessionUIRequest(raw SessionUIRequestSnapshot) (SessionUIRequestSnapshot, error) {
 	request := SessionUIRequestSnapshot{
 		RequestID:     strings.TrimSpace(raw.RequestID),
