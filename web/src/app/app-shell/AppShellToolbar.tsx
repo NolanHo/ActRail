@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { FileIcon, HarnessIcon, MenuIcon, SessionsIcon, StopIcon, TodoListIcon, WorkspaceIcon } from "./icons";
+import { FileIcon, HarnessIcon, InsightIcon, MenuIcon, SessionsIcon, StopIcon, TodoListIcon, WorkspaceIcon } from "./icons";
 
 export interface ConversationStatusItem {
   label: string;
@@ -21,7 +21,7 @@ interface AppShellToolbarProps {
   onOpenFiles(): void;
   onOpenHarness(): void;
   onOpenSessions(): void;
-  onOpenTodo(): void;
+  onOpenInsight(): void;
   onOpenWaits(): void;
   onOpenWorkspace(): void;
 }
@@ -38,7 +38,7 @@ export function AppShellToolbar({
   onOpenFiles,
   onOpenHarness,
   onOpenSessions,
-  onOpenTodo,
+  onOpenInsight,
   onOpenWaits,
   onOpenWorkspace,
 }: AppShellToolbarProps) {
@@ -99,16 +99,16 @@ export function AppShellToolbar({
         variant={mobileMenu ? "ghost" : "outline"}
         size={mobileMenu ? "sm" : "icon"}
         className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Todo list"
-        title="Todo list"
+        aria-label="Insight"
+        title="Insight"
         disabled={!activeSessionId}
         onClick={() => {
           closeMobileToolsMenu();
-          onOpenTodo();
+          onOpenInsight();
         }}
       >
-        <TodoListIcon />
-        {mobileMenu ? <span>Todo list</span> : null}
+        <InsightIcon />
+        {mobileMenu ? <span>Insight</span> : null}
       </Button>
       <Button
         type="button"

@@ -21,8 +21,6 @@ interface AppShellWorkspaceOverlaysProps {
   newSessionOpen: boolean;
   sessionsRail: ComponentChildren;
   sidebarOpen: boolean;
-  todoViewer: ComponentChildren;
-  todoViewerOpen: boolean;
   voiceSettingsDialog: ComponentChildren;
   workspaceDetails: ComponentChildren;
   workspaceOpen: boolean;
@@ -31,7 +29,6 @@ interface AppShellWorkspaceOverlaysProps {
   onCloseHarness(): void;
   onCloseNewSession(): void;
   onCloseSidebar(): void;
-  onCloseTodoViewer(): void;
   onCloseWorkspace(): void;
 }
 
@@ -49,8 +46,6 @@ export function AppShellWorkspaceOverlays({
   newSessionOpen,
   sessionsRail,
   sidebarOpen,
-  todoViewer,
-  todoViewerOpen,
   voiceSettingsDialog,
   workspaceDetails,
   workspaceOpen,
@@ -59,7 +54,6 @@ export function AppShellWorkspaceOverlays({
   onCloseHarness,
   onCloseNewSession,
   onCloseSidebar,
-  onCloseTodoViewer,
   onCloseWorkspace,
 }: AppShellWorkspaceOverlaysProps) {
   return (
@@ -111,26 +105,6 @@ export function AppShellWorkspaceOverlays({
             <div className="min-h-0 flex-1 overflow-y-auto p-5">
               {workspaceDetails}
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={todoViewerOpen} onOpenChange={(open) => {
-        if (!open) {
-          onCloseTodoViewer();
-        }
-      }}>
-        <DialogContent className="todoViewerDialog mobileDetailDialog max-w-2xl" titleId="todo-viewer-dialog-title">
-          <div className="todoViewerDialogFrame">
-            <DialogHeader className="todoViewerDialogHeader">
-              <div className="flex items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <DialogTitle id="todo-viewer-dialog-title">Todo list</DialogTitle>
-                  <p className="text-sm text-muted-foreground">Current todo snapshot for the active session.</p>
-                </div>
-                <Button type="button" variant="ghost" size="sm" onClick={onCloseTodoViewer}>Close</Button>
-              </div>
-            </DialogHeader>
-            <div className="todoViewerDialogContent">{todoViewer}</div>
           </div>
         </DialogContent>
       </Dialog>

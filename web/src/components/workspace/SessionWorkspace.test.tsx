@@ -5,6 +5,7 @@ import { SessionWorkspace } from "./SessionWorkspace";
 
 vi.mock("../../lib/api", () => ({
   api: {
+    listMessages: vi.fn().mockResolvedValue({ items: [], tail_seq: 0 }),
     submitUiResponse: vi.fn().mockResolvedValue({ ok: true }),
   },
 }));
@@ -384,7 +385,65 @@ describe("SessionWorkspace", () => {
     expect(root.textContent).toContain("src/main.tsx");
   });
 
-  it("renders Pi details with session-file rows and a formatted todo snapshot", () => {
+  it("calculates context usage only after manual action", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.listMessages).mockResolvedValueOnce({
+      items: [
+        { role: "system", text: "Follow instructions." },
+        { role: "user", text: "Read file" },
+        { type: "tool", name: "read", text: "file content" },
+        { role: "assistant", text: "File read." },
+      ],
+      tail_seq: 4,
+    } as never);
+    const sessionUiStore = createStaticStore(
+      {
+        sessionId: "sess-usage",
+        runtimeId: "runtime-usage",
+        diagnostics: null,
+        queue: null,
+        files: [],
+        loading: false,
+        requests: [],
+      },
+      { refresh: vi.fn() },
+    );
+    const sessionsStore = createStaticStore(
+      {
+        items: [{ session_id: "sess-usage", runtime_id: "runtime-usage", model: "unknown-model", agent_backend: "pi" }],
+        activeSessionId: "sess-usage",
+        loading: false,
+      },
+      { refresh: vi.fn(), refreshBootstrap: vi.fn(), loadMoreGroup: vi.fn(), loadMoreGroups: vi.fn(), select: vi.fn() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionUiStore={sessionUiStore as any} sessionsStore={sessionsStore as any}>
+        <SessionWorkspace mode="details" initialTab="insight" />
+      </AppProviders>,
+      root,
+    );
+
+    expect(api.listMessages).not.toHaveBeenCalled();
+    expect(root.textContent).toContain("Manual calculation is required.");
+
+    const button = Array.from(root.querySelectorAll("button")).find((item) => item.textContent === "Calculate") as HTMLButtonElement;
+    button.click();
+    await flush();
+    await flush();
+    await flush();
+
+    expect(api.listMessages).toHaveBeenCalledWith("sess-usage", true, undefined, undefined, undefined, undefined, "runtime-usage");
+    await vi.waitFor(() => expect(root?.textContent).toContain("system prompt:"));
+    expect(root.textContent).toContain("tool:");
+    expect(root.textContent).toContain("user:");
+    expect(root.textContent).toContain("assist:");
+    expect(root.textContent).toContain("fallback: chars/4");
+  });
+
+  it("renders Pi details with session-file rows without the todo snapshot view", () => {
     const sessionUiStore = createStaticStore(
       {
         sessionId: "pi-details",
@@ -432,10 +491,11 @@ describe("SessionWorkspace", () => {
     expect(root.textContent).toContain("/tmp/pi-session.jsonl");
     expect(root.textContent).toContain("Log");
     expect(root.textContent).toContain("/tmp/pi-broker.log");
-    expect(root.textContent).toContain("Todo list");
-    expect(root.textContent).toContain("1/2 completed");
-    expect(root.textContent).toContain("Explore project context");
-    expect(root.textContent).toContain("Restore history controls");
+    expect(root.textContent).toContain("Insight");
+    expect(root.textContent).not.toContain("Todo list");
+    expect(root.textContent).not.toContain("1/2 completed");
+    expect(root.textContent).not.toContain("Explore project context");
+    expect(root.textContent).not.toContain("Restore history controls");
     expect(root.textContent).not.toContain("session_file_path");
     expect(root.textContent).not.toContain("todo_snapshot");
   });

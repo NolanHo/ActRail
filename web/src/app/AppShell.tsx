@@ -5,7 +5,6 @@ import { ConversationStateTray } from "../components/conversation/ConversationSt
 import { Composer } from "../components/composer/Composer";
 import { SessionWorkspace } from "../components/workspace/SessionWorkspace";
 import type { FileViewMode } from "../components/workspace/FileViewerDialog";
-import { TodoPopover } from "../components/workspace/TodoPopover";
 import { AppShellSidebar } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
@@ -103,7 +102,7 @@ export function AppShell() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
   const [harnessOpen, setHarnessOpen] = useState(false);
-  const [todoViewerOpen, setTodoViewerOpen] = useState(false);
+  const [workspaceInitialTab, setWorkspaceInitialTab] = useState<"insight" | "overview">("insight");
   const [fileViewerPath, setFileViewerPath] = useState("");
   const [fileViewerLine, setFileViewerLine] = useState<number | null>(null);
   const [fileViewerMode, setFileViewerMode] = useState<FileViewMode | null>(null);
@@ -173,9 +172,6 @@ export function AppShell() {
     || (activeSessionId && busyBySessionId[activeSessionId] === true)
     || activeSession?.busy === true,
   );
-  const activeTodoSnapshot = sessionUiSessionId === activeSessionId && diagnostics && typeof diagnostics === "object"
-    ? (diagnostics as { todo_snapshot?: unknown }).todo_snapshot ?? null
-    : null;
   const activeTitle = activeSession
     ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
     : "No session selected";
@@ -385,16 +381,17 @@ export function AppShell() {
   useEffect(() => {
     setFileViewerOpen(false);
     setHarnessOpen(false);
-    setTodoViewerOpen(false);
+    setWorkspaceInitialTab("insight");
   }, [activeSessionId]);
 
   const shellClassName = useMemo(() => ["appShell", "editorialShell"].join(" "), []);
 
   const renderWorkspaceDetails = () => (
-    sessionUiMatchesActiveSession || activeWait ? <SessionWorkspace mode="details" /> : <EmptyDetailsWorkspace />
+    sessionUiMatchesActiveSession || activeWait ? <SessionWorkspace mode="details" initialTab={workspaceInitialTab} /> : <EmptyDetailsWorkspace />
   );
 
-  const openWorkspace = () => {
+  const openWorkspace = (initialTab: "insight" | "overview" = "overview") => {
+    setWorkspaceInitialTab(initialTab);
     setWorkspaceOpen(true);
   };
 
@@ -519,7 +516,7 @@ export function AppShell() {
             onOpenFiles={() => openFileViewer()}
             onOpenHarness={() => setHarnessOpen(true)}
             onOpenSettings={() => openVoiceSettings()}
-            onOpenTodo={() => setTodoViewerOpen(true)}
+            onOpenInsight={() => openWorkspace("insight")}
             onToggleAnnouncements={() => {
               void toggleAnnouncements();
               if (!announcementEnabled) {
@@ -548,9 +545,9 @@ export function AppShell() {
                 onOpenFiles={() => openFileViewer()}
                 onOpenHarness={() => setHarnessOpen(true)}
                 onOpenSessions={() => setSidebarOpen(true)}
-                onOpenTodo={() => setTodoViewerOpen(true)}
+                onOpenInsight={() => openWorkspace("insight")}
                 onOpenWaits={openWaitDetails}
-                onOpenWorkspace={openWorkspace}
+                onOpenWorkspace={() => openWorkspace("overview")}
               />
               <ConversationPane
                 key={activeSessionId || "no-session"}
@@ -617,12 +614,6 @@ export function AppShell() {
             }}
           />
         )}
-        todoViewer={(
-          <div data-testid="todo-viewer-dialog" className="todoViewerDialogBody">
-            <TodoPopover snapshot={activeTodoSnapshot} />
-          </div>
-        )}
-        todoViewerOpen={todoViewerOpen}
         workspaceDetails={renderWorkspaceDetails()}
         workspaceOpen={workspaceOpen}
         onCloseDetails={() => setDetailsOpen(false)}
@@ -630,7 +621,6 @@ export function AppShell() {
         onCloseHarness={() => setHarnessOpen(false)}
         onCloseNewSession={() => setNewSessionOpen(false)}
         onCloseSidebar={() => setSidebarOpen(false)}
-        onCloseTodoViewer={() => setTodoViewerOpen(false)}
         onCloseWorkspace={() => setWorkspaceOpen(false)}
       />
     </>

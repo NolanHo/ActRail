@@ -412,6 +412,7 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("No session selected");
     expect(getRoot().querySelector(".mobileSheetTrigger")).toBeNull();
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
+    expect(findButtonByAriaLabel("Insight")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")).not.toBeNull();
     expect(findButtonByAriaLabel("Details")).not.toBeNull();
     expect(findButtonByAriaLabel("Harness mode")).not.toBeNull();
@@ -465,6 +466,7 @@ describe("AppShell", () => {
     await flush();
 
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
+    expect(findButtonByAriaLabel("Insight")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Details")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Harness mode")?.querySelector("svg")).not.toBeNull();
@@ -672,23 +674,11 @@ describe("AppShell", () => {
     }
   });
 
-  it("opens the todo viewer from the toolbar", async () => {
-    renderAppShell({
-      diagnostics: {
-        todo_snapshot: {
-          available: true,
-          error: false,
-          progress_text: "1/2 completed",
-          items: [
-            { title: "Inspect session shortlist", status: "in-progress", description: "Check the active queue" },
-            { title: "Draft focus metadata", status: "not-started" },
-          ],
-        },
-      },
-    });
+  it("opens the insight workspace from the toolbar", async () => {
+    renderAppShell({ diagnostics: { status: "ok" } });
     await flush();
 
-    const button = findButtonByAriaLabel("Todo list");
+    const button = findButtonByAriaLabel("Insight");
     expect(button).not.toBeNull();
 
     act(() => {
@@ -696,9 +686,8 @@ describe("AppShell", () => {
     });
     await flush();
 
-    expect(getRoot().textContent).toContain("Todo list");
-    expect(getRoot().textContent).toContain("1/2 completed");
-    expect(getRoot().textContent).toContain("Inspect session shortlist");
+    expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Insight");
+    expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Context Usage");
   });
 
   it("opens the file viewer from the toolbar and requests the root directory listing", async () => {
@@ -1811,9 +1800,21 @@ describe("AppShell", () => {
     expect(getRoot().textContent).not.toContain("Old request");
     expect(getRoot().textContent).not.toContain("No diagnostics available.");
     expect(getRoot().textContent).not.toContain("No pending requests");
-    expect(getRoot().textContent).toContain("Todo list");
+    expect(getRoot().textContent).not.toContain("Todo list");
+
+    act(() => {
+      requireButtonByText("Diagnostics").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
     expect(getRoot().textContent).toContain("Session Status");
     expect(getRoot().textContent).toContain("Queued follow-up");
+
+    act(() => {
+      requireButtonByText("Files").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
     expect(getRoot().textContent).toContain("fresh-notes.md");
 
     act(() => {

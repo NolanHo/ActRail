@@ -5,7 +5,7 @@ import { Composer } from "@/components/composer/Composer";
 import { ConversationPane } from "@/components/conversation/ConversationPane";
 import { SessionWorkspace } from "@/components/workspace/SessionWorkspace";
 import { useComposerStoreApi } from "../providers";
-import { FileIcon, HarnessIcon, StopIcon, TodoListIcon, WorkspaceIcon } from "./icons";
+import { FileIcon, HarnessIcon, InsightIcon, StopIcon, WorkspaceIcon } from "./icons";
 
 export type MobileRoute =
   | { screen: "sessions" }
@@ -29,7 +29,7 @@ interface MobileShellProps {
   onOpenFiles(): void;
   onOpenHarness(): void;
   onOpenSettings(): void;
-  onOpenTodo(): void;
+  onOpenInsight(): void;
   onToggleAnnouncements(): void;
   onToggleNotifications(): void;
 }
@@ -118,7 +118,7 @@ function MobileSettingsSection({
   onOpenFiles,
   onOpenHarness,
   onOpenSettings,
-  onOpenTodo,
+  onOpenInsight,
   onToggleAnnouncements,
   onToggleNotifications,
 }: Omit<MobileShellProps, "activeSessionId" | "activeTitle" | "canInterrupt" | "onInterrupt" | "onOpenFilePath">) {
@@ -139,11 +139,11 @@ function MobileSettingsSection({
             <span>Open direct file lookup.</span>
           </span>
         </Button>
-        <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenTodo}>
-          <TodoListIcon />
+        <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenInsight}>
+          <InsightIcon />
           <span className="mobileToolCardText">
-            <strong>Todo list</strong>
-            <span>Review the current task snapshot.</span>
+            <strong>Insight</strong>
+            <span>Open context and usage diagnostics.</span>
           </span>
         </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenHarness}>
@@ -203,7 +203,7 @@ export function MobileShell({
   onOpenFiles,
   onOpenHarness,
   onOpenSettings,
-  onOpenTodo,
+  onOpenInsight,
   onToggleAnnouncements,
   onToggleNotifications,
 }: MobileShellProps) {
@@ -347,7 +347,7 @@ export function MobileShell({
               onOpenFiles={onOpenFiles}
               onOpenHarness={onOpenHarness}
               onOpenSettings={onOpenSettings}
-              onOpenTodo={onOpenTodo}
+              onOpenInsight={onOpenInsight}
               onToggleAnnouncements={onToggleAnnouncements}
               onToggleNotifications={onToggleNotifications}
             />

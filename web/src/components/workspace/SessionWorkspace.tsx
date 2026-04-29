@@ -11,8 +11,9 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { useLiveSessionStore, useLiveSessionStoreApi, useSessionUiStore, useSessionUiStoreApi, useSessionsStore, useWaitsStore } from "../../app/providers";
 import { api } from "../../lib/api";
+import { calculateContextTokenUsage, type ContextTokenUsageResult } from "../../lib/context-token-usage";
 import { getSessionDisplayName } from "../../lib/session-display";
-import type { SessionSummary, SessionUiRequest, TodoSnapshot, TodoSnapshotItem } from "../../lib/types";
+import type { MessageEvent, SessionSummary, SessionUiRequest } from "../../lib/types";
 import type { AskUserBridgeAnswers } from "../../domains/ask-user/contract";
 import { encodeAskUserBridgeResponse, parseAskUserBridgeRequest } from "../../domains/ask-user/codec";
 import { getInitialDraftValue, normalizeOption, normalizeRequestValue } from "../../domains/ask-user/normalize";
@@ -50,34 +51,6 @@ function queueItemsFromValue(queue: Record<string, unknown> | null) {
   }).filter((item) => item.text.trim().length > 0);
 }
 
-function normalizeTodoItem(value: unknown): TodoSnapshotItem | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const item = value as Record<string, unknown>;
-  return {
-    id: typeof item.id === "number" || typeof item.id === "string" ? item.id : undefined,
-    title: typeof item.title === "string" ? item.title : undefined,
-    status: typeof item.status === "string" ? item.status : undefined,
-    description: typeof item.description === "string" ? item.description : undefined,
-  };
-}
-
-function normalizeTodoSnapshot(snapshot: unknown): TodoSnapshot {
-  if (!snapshot || typeof snapshot !== "object") {
-    return { available: false, error: false, items: [] };
-  }
-  const raw = snapshot as Record<string, unknown>;
-  return {
-    available: raw.available === true,
-    error: raw.error === true,
-    progress_text: typeof raw.progress_text === "string" ? raw.progress_text : undefined,
-    items: Array.isArray(raw.items)
-      ? raw.items.map(normalizeTodoItem).filter((item): item is TodoSnapshotItem => Boolean(item))
-      : [],
-  };
-}
-
 function formatDiagnosticLabel(key: string): string {
   switch (key) {
     case "log_path":
@@ -106,35 +79,6 @@ function formatDiagnosticValue(key: string, value: unknown): string {
     return String(value);
   }
   return JSON.stringify(value);
-}
-
-function renderTodoSnapshotSection(snapshot: TodoSnapshot) {
-  return (
-    <div className="space-y-3 rounded-2xl border border-border/60 bg-card/60 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-sm font-semibold text-foreground">Todo list</p>
-          {snapshot.progress_text ? <p className="text-sm text-muted-foreground">{snapshot.progress_text}</p> : null}
-        </div>
-        <Badge variant="outline">{snapshot.available ? `${snapshot.items.length}` : "0"}</Badge>
-      </div>
-      {!snapshot.available ? (
-        <p className="text-sm text-muted-foreground">{snapshot.error ? "Todo list unavailable" : "No todo list yet"}</p>
-      ) : (
-        <div className="space-y-2">
-          {snapshot.items.map((item, index) => (
-            <article key={`${item.title || "todo"}-${index}`} className="rounded-xl border border-border/60 bg-background/70 px-3 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <strong className="text-sm text-foreground">{item.title || "Untitled todo"}</strong>
-                <Badge variant="secondary">{item.status || "unknown"}</Badge>
-              </div>
-              {item.description ? <p className="mt-2 text-sm text-muted-foreground">{item.description}</p> : null}
-            </article>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function metadataEntriesFromSession(session: SessionSummary | null, sessionId: string | null, runtimeId: string | null) {
@@ -233,9 +177,79 @@ function WorkspaceSection({
   );
 }
 
+function formatTokenCount(value: number) {
+  return String(Math.max(0, Math.round(value)));
+}
+
+function contextUsageAnchor(usage: ContextTokenUsageResult) {
+  return `system prompt: ${formatTokenCount(usage.buckets.systemPrompt.tokens)} tool: ${formatTokenCount(usage.buckets.tool.tokens)}, user: ${formatTokenCount(usage.buckets.user.tokens)}, assist: ${formatTokenCount(usage.buckets.assist.tokens)}`;
+}
+
+function contextUsagePieStyle(usage: ContextTokenUsageResult) {
+  const system = usage.buckets.systemPrompt.percent;
+  const tool = system + usage.buckets.tool.percent;
+  const user = tool + usage.buckets.user.percent;
+  return {
+    background: `conic-gradient(var(--context-system) 0 ${system}%, var(--context-tool) ${system}% ${tool}%, var(--context-user) ${tool}% ${user}%, var(--context-assist) ${user}% 100%)`,
+  } as JSX.CSSProperties;
+}
+
+function ContextUsagePanel({
+  calculating,
+  error,
+  usage,
+  onCalculate,
+}: {
+  calculating: boolean;
+  error: string;
+  usage: ContextTokenUsageResult | null;
+  onCalculate(): void;
+}) {
+  const buckets: Array<[keyof ContextTokenUsageResult["buckets"], string]> = [
+    ["systemPrompt", "system prompt"],
+    ["tool", "tool"],
+    ["user", "user"],
+    ["assist", "assist"],
+  ];
+  return (
+    <WorkspaceSection title="Context Usage" badge={usage ? `${formatTokenCount(usage.totalTokens)} tokens` : undefined}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={calculating} onClick={onCalculate}>
+            {calculating ? "calculating" : "Calculate"}
+          </Button>
+          {usage?.fallback ? <Badge variant="outline">fallback: chars/4</Badge> : null}
+        </div>
+        {usage ? (
+          <div className="space-y-4">
+            <p className="contextUsageAnchor font-mono text-sm text-foreground">{contextUsageAnchor(usage)}</p>
+            <div className="contextUsageChartWrap">
+              <div className="contextUsagePie" style={contextUsagePieStyle(usage)} aria-hidden="true" />
+              <dl className="contextUsageLegend">
+                {buckets.map(([key, label]) => (
+                  <div key={key} className="contextUsageLegendItem">
+                    <dt><span className={`contextUsageSwatch is-${key}`} />{label}</dt>
+                    <dd>{formatTokenCount(usage.buckets[key].tokens)} tokens, {usage.buckets[key].percent}%</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {usage.fallback ? usage.fallbackReason : `tokenizer: ${usage.model}`}
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Manual calculation is required.</p>
+        )}
+        {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
+      </div>
+    </WorkspaceSection>
+  );
+}
+
 interface SessionWorkspaceProps {
   mode?: "default" | "details";
-  initialTab?: "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files";
+  initialTab?: "insight" | "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files";
 }
 
 export function SessionWorkspace({ mode = "default", initialTab }: SessionWorkspaceProps) {
@@ -264,20 +278,22 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
   const [requestSubmittingById, setRequestSubmittingById] = useState<Record<string, boolean>>({});
   const [requestErrorById, setRequestErrorById] = useState<Record<string, string>>({});
   const [queueCancelling, setQueueCancelling] = useState(false);
+  const [contextUsageResult, setContextUsageResult] = useState<ContextTokenUsageResult | null>(null);
+  const [contextUsageCalculating, setContextUsageCalculating] = useState(false);
+  const [contextUsageError, setContextUsageError] = useState("");
   const requestSubmittingIdsRef = useRef(new Set<string>());
   const diagnosticsEntries = entriesFromRecord(diagnostics);
   const activeSession = workspaceSessionId ? items.find((item) => item.session_id === workspaceSessionId) ?? null : null;
   const activeWait = workspaceSessionId ? waitsState.activeBySessionId[workspaceSessionId] ?? activeSession?.active_wait ?? null : null;
   const metadataEntries = metadataEntriesFromSession(activeSession, workspaceSessionId, runtimeId);
-  const todoSnapshot = normalizeTodoSnapshot(diagnostics && typeof diagnostics === "object" ? (diagnostics as { todo_snapshot?: unknown }).todo_snapshot : null);
   const detailEntries = diagnosticsEntries.filter(([key]) => key !== "todo_snapshot");
   const prioritizedDetailKeys = new Set(["session_file_path", "log_path", "updated_ts"]);
   const priorityDetailEntries = detailEntries.filter(([key]) => prioritizedDetailKeys.has(key));
   const genericDetailEntries = detailEntries.filter(([key]) => !prioritizedDetailKeys.has(key));
   const queueItems = queueItemsFromValue(queue);
   const showDetails = mode === "details";
-  const hasWorkspaceData = metadataEntries.length > 0 || diagnosticsEntries.length > 0 || queueItems.length > 0 || Boolean(activeWait);
-  const showTabs = showDetails || hasWorkspaceData || requests.length > 0;
+  const hasWorkspaceData = metadataEntries.length > 0 || detailEntries.length > 0 || queueItems.length > 0 || Boolean(activeWait);
+  const showTabs = true;
   const derivedDefaultTab = activeWait
     ? "wait"
     : showDetails
@@ -286,12 +302,38 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
       ? "requests"
       : metadataEntries.length > 0
         ? "metadata"
-        : diagnosticsEntries.length > 0
+        : detailEntries.length > 0
           ? "diagnostics"
           : queueItems.length > 0
             ? "queue"
-            : "requests";
+            : "insight";
   const defaultTab = initialTab ?? derivedDefaultTab;
+
+  const calculateContextUsage = async () => {
+    if (!workspaceSessionId || contextUsageCalculating) {
+      return;
+    }
+    setContextUsageCalculating(true);
+    setContextUsageError("");
+    try {
+      const payload = runtimeId
+        ? await api.listMessages(workspaceSessionId, true, undefined, undefined, undefined, undefined, runtimeId)
+        : await api.listMessages(workspaceSessionId, true);
+      const events = Array.isArray(payload.items)
+        ? payload.items
+        : Array.isArray(payload.events)
+          ? payload.events
+          : [];
+      const diagnosticsModel = diagnostics && typeof diagnostics === "object" && typeof (diagnostics as { model?: unknown }).model === "string"
+        ? (diagnostics as { model: string }).model
+        : "";
+      setContextUsageResult(await calculateContextTokenUsage(events as MessageEvent[], activeSession?.model || diagnosticsModel));
+    } catch (error) {
+      setContextUsageError(error instanceof Error && error.message.trim() ? error.message : "Context usage calculation failed");
+    } finally {
+      setContextUsageCalculating(false);
+    }
+  };
 
   const cancelQueue = async () => {
     if (!sessionId || queueCancelling) {
@@ -354,6 +396,7 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
           {showTabs ? (
             <Tabs defaultValue={defaultTab} className="min-h-0 flex-1">
               <TabsList className="workspaceTabsList flex h-auto flex-wrap items-center gap-2 rounded-2xl bg-muted/60 p-1">
+                <TabsTrigger value="insight">Insight</TabsTrigger>
                 {showDetails ? <TabsTrigger value="overview">Overview</TabsTrigger> : null}
                 <TabsTrigger value="wait">Wait</TabsTrigger>
                 <TabsTrigger value="waiting-inbox">Waiting Inbox</TabsTrigger>
@@ -365,6 +408,23 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
               </TabsList>
               <Separator className="bg-border/70" />
               <CardContent className="flex min-h-0 flex-1 flex-col p-0 pt-4">
+                <TabsContent value="insight" className="min-h-0">
+                  <ScrollArea className="workspaceScroll h-full pr-1">
+                    <Tabs defaultValue="context-usage" className="min-h-0">
+                      <TabsList className="workspaceTabsList flex h-auto flex-wrap items-center gap-2 rounded-2xl bg-muted/60 p-1">
+                        <TabsTrigger value="context-usage">Context Usage</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="context-usage" className="min-h-0">
+                        <ContextUsagePanel
+                          calculating={contextUsageCalculating}
+                          error={contextUsageError}
+                          usage={contextUsageResult}
+                          onCalculate={() => { void calculateContextUsage(); }}
+                        />
+                      </TabsContent>
+                    </Tabs>
+                  </ScrollArea>
+                </TabsContent>
                 {showDetails ? (
                   <TabsContent value="overview" className="min-h-0">
                     <ScrollArea className="workspaceScroll h-full pr-1">
@@ -372,11 +432,10 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
                         <WorkspaceSection title="Metadata" badge={metadataEntries.length ? `${metadataEntries.length}` : undefined}>
                           {metadataEntries.length ? renderKeyValueList(metadataEntries) : <p className="text-sm text-muted-foreground">No metadata available.</p>}
                         </WorkspaceSection>
-                        <WorkspaceSection title="Diagnostics" badge={diagnosticsEntries.length ? `${diagnosticsEntries.length}` : undefined}>
-                          {detailEntries.length || todoSnapshot.available || todoSnapshot.error ? (
+                        <WorkspaceSection title="Diagnostics" badge={detailEntries.length ? `${detailEntries.length}` : undefined}>
+                          {detailEntries.length ? (
                             <div className="space-y-4">
                               {priorityDetailEntries.length ? renderKeyValueList(priorityDetailEntries) : null}
-                              {todoSnapshot.available || todoSnapshot.error ? renderTodoSnapshotSection(todoSnapshot) : null}
                               {genericDetailEntries.length ? renderKeyValueList(genericDetailEntries) : null}
                             </div>
                           ) : (
@@ -657,10 +716,9 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
                 <TabsContent value="diagnostics" className="min-h-0">
                   <ScrollArea className="workspaceScroll h-full pr-1">
                     <WorkspaceSection title="Diagnostics" badge={diagnosticsEntries.length ? `${diagnosticsEntries.length}` : undefined}>
-                      {detailEntries.length || todoSnapshot.available || todoSnapshot.error ? (
+                      {detailEntries.length ? (
                         <div className="space-y-4">
                           {priorityDetailEntries.length ? renderKeyValueList(priorityDetailEntries) : null}
-                          {todoSnapshot.available || todoSnapshot.error ? renderTodoSnapshotSection(todoSnapshot) : null}
                           {genericDetailEntries.length ? renderKeyValueList(genericDetailEntries) : null}
                         </div>
                       ) : (

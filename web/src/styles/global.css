@@ -2375,6 +2375,74 @@ select {
   margin: 0;
 }
 
+.contextUsageChartWrap {
+  --context-system: #64748b;
+  --context-tool: #0ea5e9;
+  --context-user: #22c55e;
+  --context-assist: #a855f7;
+  display: grid;
+  grid-template-columns: minmax(8rem, 11rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+}
+
+.contextUsagePie {
+  width: min(11rem, 48vw);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 10px color-mix(in srgb, var(--background) 88%, transparent);
+}
+
+.contextUsageLegend {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.contextUsageLegendItem {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.contextUsageLegendItem dt {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--foreground);
+}
+
+.contextUsageLegendItem dd {
+  margin: 0 0 0 1.15rem;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+}
+
+.contextUsageSwatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: var(--context-assist);
+}
+
+.contextUsageSwatch.is-systemPrompt {
+  background: var(--context-system);
+}
+
+.contextUsageSwatch.is-tool {
+  background: var(--context-tool);
+}
+
+.contextUsageSwatch.is-user {
+  background: var(--context-user);
+}
+
+.contextUsageSwatch.is-assist {
+  background: var(--context-assist);
+}
+
 .workspaceCollection {
   margin: 0;
   padding: 0;
