@@ -138,6 +138,39 @@ it("polls the active busy session every 2 seconds and workspace every 15 seconds
   expect(sessionUiStoreApi.refresh).toHaveBeenCalledTimes(2);
 });
 
+it("keeps polling active busy sessions even when realtime is connected", async () => {
+  vi.useFakeTimers();
+  const liveSessionStoreApi = {
+    loadInitial: vi.fn().mockResolvedValue(undefined),
+    poll: vi.fn().mockResolvedValue(undefined),
+  } as any;
+
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        {...baseProps({
+          activeSessionLiveBusy: true,
+          items: [{ session_id: "sess-1", busy: true }] as any,
+          liveSessionStoreApi,
+          realtimeConnected: true,
+        })}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  await act(async () => {
+    vi.advanceTimersByTime(2000);
+    await Promise.resolve();
+  });
+
+  expect(liveSessionStoreApi.poll).toHaveBeenCalledWith("sess-1");
+});
+
 it("slows active idle live polling to every 12 seconds", async () => {
   vi.useFakeTimers();
   const liveSessionStoreApi = {
