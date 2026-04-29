@@ -20,38 +20,33 @@ interface SessionCardProps {
   onDelete?: () => void;
 }
 
-type SessionHealth = "healthy" | "unhealthy" | "silent" | "stalled" | "unknown";
+type SessionHealth = "healthy" | "working" | "unhealthy" | "unknown";
 
 function sessionTransportHealth(session: SessionSummary, historical: boolean): SessionHealth {
   if (historical) {
     return "unknown";
   }
   const state = String(session.transport_state || "").trim();
-  if (session.reset_required === true || state === "broken" || state === "ended") {
+  if (session.reset_required === true || state === "broken" || state === "ended" || state === "silent" || state === "stalled") {
     return "unhealthy";
   }
-  if (state === "attached") {
+  if (session.busy === true) {
+    return "working";
+  }
+  if (state === "attached" || state === "") {
     return "healthy";
   }
-  if (state === "stalled") {
-    return "stalled";
-  }
-  if (state === "silent") {
-    return "silent";
-  }
-  return "unknown";
+  return "unhealthy";
 }
 
 function sessionHealthLabel(health: SessionHealth) {
   switch (health) {
     case "healthy":
-      return "backend healthy";
+      return "ready";
+    case "working":
+      return "working";
     case "unhealthy":
-      return "backend unavailable";
-    case "silent":
-      return "backend silent";
-    case "stalled":
-      return "backend stalled";
+      return "restart session required";
     default:
       return "backend health unknown";
   }
@@ -214,7 +209,7 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
             <div className="sessionCardFooterRow">
               <div className="sessionCardHeaderAside">
                 <div className="sessionMetaBadges flex items-center justify-end gap-1">
-                  {!isHistorical ? <span className={cn("stateDot", health, session.busy && "busy")} title={healthLabel} aria-label={healthLabel} /> : null}
+                  {!isHistorical ? <span className={cn("stateDot", health)} title={healthLabel} aria-label={healthLabel} /> : null}
                   <Badge variant="secondary" className="backendBadge">{session.agent_backend || "codex"}</Badge>
                   {isHistorical ? <Badge variant="outline" className="ownerBadge">history</Badge> : null}
                   {!isHistorical && session.focused ? <Badge variant="outline" className="ownerBadge">Focus</Badge> : null}

@@ -1219,7 +1219,7 @@ select {
   box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.1);
 }
 
-.stateDot.busy {
+.stateDot.working {
   background: rgba(29, 78, 216, 0.95);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
@@ -1232,12 +1232,6 @@ select {
 .stateDot.unhealthy {
   background: rgba(220, 38, 38, 0.95);
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
-}
-
-.stateDot.silent,
-.stateDot.stalled {
-  background: rgba(217, 119, 6, 0.95);
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
 }
 
 .backendBadge,

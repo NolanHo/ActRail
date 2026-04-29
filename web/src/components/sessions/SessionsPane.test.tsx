@@ -164,7 +164,8 @@ describe("SessionsPane", () => {
     renderSessionsPane({
       items: [
         { session_id: "sess-1", alias: "Alive", agent_backend: "pi", transport_state: "attached" },
-        { session_id: "sess-2", alias: "Dead", agent_backend: "pi", transport_state: "ended" },
+        { session_id: "sess-2", alias: "Busy", agent_backend: "pi", transport_state: "attached", busy: true },
+        { session_id: "sess-3", alias: "Dead", agent_backend: "pi", transport_state: "ended" },
       ],
       activeSessionId: "sess-1",
       loading: false,
@@ -176,9 +177,11 @@ describe("SessionsPane", () => {
 
     const dots = Array.from(root?.querySelectorAll<HTMLElement>(".stateDot") || []);
     expect(dots[0]?.classList.contains("healthy")).toBe(true);
-    expect(dots[0]?.getAttribute("title")).toBe("backend healthy");
-    expect(dots[1]?.classList.contains("unhealthy")).toBe(true);
-    expect(dots[1]?.getAttribute("title")).toBe("backend unavailable");
+    expect(dots[0]?.getAttribute("title")).toBe("ready");
+    expect(dots[1]?.classList.contains("working")).toBe(true);
+    expect(dots[1]?.getAttribute("title")).toBe("working");
+    expect(dots[2]?.classList.contains("unhealthy")).toBe(true);
+    expect(dots[2]?.getAttribute("title")).toBe("restart session required");
     expect(root?.querySelector<HTMLButtonElement>('button[aria-label="More session actions"]')).not.toBeNull();
     expect(root?.querySelector<HTMLButtonElement>('button[aria-label="Start Pi..."]')).toBeNull();
   });
