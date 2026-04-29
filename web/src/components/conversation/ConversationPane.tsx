@@ -936,6 +936,37 @@ function renderCardHeader(kind: string, title?: string, summary?: string, ts?: n
   );
 }
 
+async function writeClipboardText(text: string) {
+  const value = text.trim();
+  if (!value) {
+    return false;
+  }
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (_error) {
+      // Fall through to execCommand for browsers that expose clipboard but deny it outside secure contexts.
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-1000px";
+  textarea.style.left = "-1000px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, value.length);
+  let copied = false;
+  try {
+    copied = typeof document.execCommand === "function" && document.execCommand("copy") === true;
+  } finally {
+    textarea.remove();
+  }
+  return copied;
+}
+
 function CopyMessageIcon() {
   return (
     <svg className="messageCopyIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -981,10 +1012,9 @@ function ChatMessageCard({
   }, []);
 
   const handleCopy = async () => {
-    if (!text.trim() || !navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+    if (!await writeClipboardText(text)) {
       return;
     }
-    await navigator.clipboard.writeText(text);
     setCopied(true);
     if (resetTimerRef.current !== null) {
       window.clearTimeout(resetTimerRef.current);

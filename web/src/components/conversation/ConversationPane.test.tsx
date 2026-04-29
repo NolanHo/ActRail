@@ -1246,6 +1246,59 @@ describe("ConversationPane", () => {
     expect(copyButton?.className).toContain("isCopied");
   });
 
+  it("falls back to execCommand when navigator clipboard rejects copy", async () => {
+    const writeText = vi.fn(async () => { throw new Error("denied"); });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
+    const execCommand = vi.mocked(document.execCommand);
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-copy-fallback", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const liveSessionStore = createStaticStore(
+      { offsetsBySessionId: {}, liveOffsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: {}, loadingBySessionId: {} },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-copy-fallback": [{ role: "assistant", text: "Fallback copy" }],
+        },
+        offsetsBySessionId: { "sess-copy-fallback": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} liveSessionStore={liveSessionStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const copyButton = root.querySelector("button[aria-label='Copy assistant message']") as HTMLButtonElement | null;
+    expect(copyButton).not.toBeNull();
+
+    await act(async () => {
+      copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(writeText).toHaveBeenCalledWith("Fallback copy");
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(copyButton?.className).toContain("isCopied");
+  });
+
   it("only binds the newest duplicate ask_user card to a matching live request", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-dup", loading: false, newSessionDefaults: null },
