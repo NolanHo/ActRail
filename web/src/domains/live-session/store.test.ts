@@ -150,11 +150,37 @@ describe("createLiveSessionStore", () => {
     await liveStore.poll("s1");
     await liveStore.poll("s1");
 
+    expect(api.listMessages).toHaveBeenCalledTimes(2);
+    expect(api.getSessionState).toHaveBeenCalledTimes(3);
     expect(messagesStore.getState().bySessionId.s1).toEqual([
       { seq: 1, role: "user", text: "hello" },
       { seq: 2, role: "assistant", text: "world" },
     ]);
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(2);
+  });
+
+  it("uses state probes to skip unchanged transcript snapshots", async () => {
+    vi.mocked(api.listMessages).mockResolvedValueOnce({
+      items: [{ seq: 1, role: "assistant", text: "durable" }],
+      tail_seq: 1,
+    } as never);
+    vi.mocked(api.getSessionState)
+      .mockResolvedValueOnce({ busy: true, tail_seq: 1, resume_cursors: { session: "1", ui: "1" } } as never)
+      .mockResolvedValueOnce({ busy: false, tail_seq: 1, resume_cursors: { session: "2", ui: "1" } } as never);
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    await liveStore.loadInitial("s1");
+    await liveStore.poll("s1");
+
+    expect(api.listMessages).toHaveBeenCalledTimes(1);
+    expect(api.getSessionState).toHaveBeenCalledTimes(2);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { seq: 1, role: "assistant", text: "durable" },
+    ]);
+    expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+    expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(2);
+    expect(liveStore.getState().offsetsBySessionId.s1).toBe(1);
   });
 
   it("queues a trailing poll when a non-replace poll arrives during an in-flight snapshot", async () => {
