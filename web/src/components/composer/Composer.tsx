@@ -10,24 +10,24 @@ import {
   useComposerStoreApi,
   useLiveSessionStore,
   useLiveSessionStoreApi,
-  useMessagesStore,
   useSessionUiStore,
   useSessionUiStoreApi,
   useSessionsStore,
   useSessionsStoreApi,
+  useWaitsStore,
+  useWaitsStoreApi,
 } from "../../app/providers";
 import { getRealtimeConnectionState } from "../../domains/realtime/client";
 import { api } from "../../lib/api";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import type {
-  ContextUsagePayload,
-  LaunchBackendDefaults,
-  MessageEvent,
-  NewSessionDefaults,
+  ActiveWaitSummary,
   SessionCommand,
   SessionSummary,
-  TurnTimingPayload,
 } from "../../lib/types";
+import { WaitAnswerForm } from "@/components/waits/WaitAnswerForm";
+import { WaitJustification } from "@/components/waits/WaitJustification";
+import { WaitStateBadge } from "@/components/waits/WaitStateBadge";
 import { getDisplayableTodoSnapshot, TodoComposerPanel } from "./TodoComposerPanel";
 
 function enterToSendEnabled() {
@@ -48,45 +48,69 @@ function formatSlashCommandValue(commandName: string) {
   return `${normalized} `;
 }
 
-function uniqueStrings(values: Array<string | null | undefined>) {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = typeof value === "string" ? value.trim() : "";
-    if (!normalized || seen.has(normalized)) {
-      continue;
-    }
-    seen.add(normalized);
-    out.push(normalized);
+function sessionBackendUnavailable(session: SessionSummary | null) {
+  if (!session) {
+    return false;
   }
-  return out;
+  const state = String(session.transport_state || "").trim();
+  return session.reset_required === true || state === "ended" || state === "broken";
 }
 
-function modelChoicesForSession(defaults: NewSessionDefaults | null, session: SessionSummary | null) {
-  if (!defaults || !session) {
-    return [] as string[];
+function sessionBackendUnavailableLabel(session: SessionSummary | null) {
+  const state = String(session?.transport_state || "").trim();
+  if (session?.reset_required === true) {
+    return "Session backend requires restart before sending.";
   }
-  const backendName = session.agent_backend === "pi" ? "pi" : "codex";
-  const backendDefaults = (defaults.backends?.[backendName] ?? null) as LaunchBackendDefaults | null;
-  if (!backendDefaults) {
-    return uniqueStrings([session.model ?? undefined]);
+  if (state === "ended") {
+    return "Session backend has ended. Restart or create a new session before sending.";
   }
-
-  const providerModelValues = Object.values(backendDefaults.provider_models ?? {}).flatMap((choices) =>
-    Array.isArray(choices) ? choices : [],
-  );
-  return uniqueStrings([
-    ...(Array.isArray(backendDefaults.models) ? backendDefaults.models : []),
-    ...providerModelValues,
-    backendDefaults.model ?? undefined,
-    session.model ?? undefined,
-  ]);
+  if (state === "broken") {
+    return "Session backend is broken. Restart or create a new session before sending.";
+  }
+  return "Session backend is unavailable.";
 }
 
 const MOBILE_COMPOSER_QUERY = "(max-width: 880px)";
 const MOBILE_COMPOSER_MIN_HEIGHT_PX = 56;
 const MOBILE_COMPOSER_MAX_HEIGHT_PX = 176;
 const POST_SEND_REFRESH_DELAYS_MS = [1500, 4000, 8000];
+
+export type ComposerMode = "idle" | "typing" | "slash_menu" | "attachment" | "sending" | "busy" | "waiting_user" | "disabled";
+
+export interface ComposerModeInputs {
+  waitingUser?: boolean;
+  disabled?: boolean;
+  sending?: boolean;
+  slashMenu?: boolean;
+  attachment?: boolean;
+  busy?: boolean;
+  typing?: boolean;
+}
+
+export function deriveComposerMode(input: ComposerModeInputs): ComposerMode {
+  if (input.waitingUser) {
+    return "waiting_user";
+  }
+  if (input.disabled) {
+    return "disabled";
+  }
+  if (input.sending) {
+    return "sending";
+  }
+  if (input.slashMenu) {
+    return "slash_menu";
+  }
+  if (input.attachment) {
+    return "attachment";
+  }
+  if (input.busy) {
+    return "busy";
+  }
+  if (input.typing) {
+    return "typing";
+  }
+  return "idle";
+}
 
 function shouldUseMobileComposerAutosize() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -131,133 +155,6 @@ function syncComposerTextareaHeight(textarea: HTMLTextAreaElement | null, enable
 }
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-
-function formatContextK(value: number) {
-  const normalized = Math.max(0, Math.round(value));
-  if (normalized <= 0) {
-    return "0";
-  }
-  return `${Math.round(normalized / 1000)}K`;
-}
-
-function getContextUsageLabel(contextUsage: ContextUsagePayload | null | undefined) {
-  if (!contextUsage) {
-    return "?";
-  }
-  const totalTokens = typeof contextUsage.total_tokens === "number" && Number.isFinite(contextUsage.total_tokens)
-    ? Math.max(0, Math.round(contextUsage.total_tokens))
-    : null;
-  const usedTokens = typeof contextUsage.used_tokens === "number" && Number.isFinite(contextUsage.used_tokens)
-    ? Math.max(0, Math.round(contextUsage.used_tokens))
-    : null;
-  const percentUsed = typeof contextUsage.percent_used === "number" && Number.isFinite(contextUsage.percent_used)
-    ? Math.round(contextUsage.percent_used)
-    : null;
-  if (totalTokens === null || totalTokens <= 0 || usedTokens === null || percentUsed === null) {
-    return "?";
-  }
-  return `${formatContextK(usedTokens)}/${formatContextK(totalTokens)} ${percentUsed}%`;
-}
-
-function getDiagnosticsContextUsage(diagnostics: Record<string, unknown> | null | undefined): ContextUsagePayload | null {
-  if (!diagnostics || typeof diagnostics !== "object") {
-    return null;
-  }
-  const usage = (diagnostics as { context_usage?: unknown }).context_usage;
-  return usage && typeof usage === "object" ? usage as ContextUsagePayload : null;
-}
-
-function getDiagnosticsTurnTiming(diagnostics: Record<string, unknown> | null | undefined): TurnTimingPayload | null {
-  if (!diagnostics || typeof diagnostics !== "object") {
-    return null;
-  }
-  const timing = (diagnostics as { turn_timing?: unknown }).turn_timing;
-  return timing && typeof timing === "object" ? timing as TurnTimingPayload : null;
-}
-
-function getDiagnosticsModel(diagnostics: Record<string, unknown> | null | undefined) {
-  if (!diagnostics || typeof diagnostics !== "object") {
-    return "";
-  }
-  const model = (diagnostics as { model?: unknown }).model;
-  return typeof model === "string" ? model.trim() : "";
-}
-
-function getDiagnosticsReasoningEffort(diagnostics: Record<string, unknown> | null | undefined) {
-  if (!diagnostics || typeof diagnostics !== "object") {
-    return "";
-  }
-  const effort = (diagnostics as { reasoning_effort?: unknown }).reasoning_effort;
-  return typeof effort === "string" ? effort.trim() : "";
-}
-
-function formatElapsedSeconds(totalSeconds: number) {
-  const seconds = Math.max(0, Math.round(totalSeconds));
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
-  if (hours > 0) {
-    return `${hours}h ${String(minutes).padStart(2, "0")}m`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m ${String(secs).padStart(2, "0")}s`;
-  }
-  return `${secs}s`;
-}
-
-function getTurnElapsedLabelFromTiming(timing: TurnTimingPayload | null | undefined, busy: boolean, nowMs: number) {
-  const startedTsMs = timing && typeof timing.started_ts === "number" && Number.isFinite(timing.started_ts)
-    ? timing.started_ts * 1000
-    : null;
-  const lastEventTsMs = timing && typeof timing.last_event_ts === "number" && Number.isFinite(timing.last_event_ts)
-    ? timing.last_event_ts * 1000
-    : null;
-
-  if (startedTsMs === null) {
-    return null;
-  }
-  if (!busy && lastEventTsMs === null) {
-    return null;
-  }
-  const endTsMs = busy ? Math.max(nowMs, lastEventTsMs ?? startedTsMs) : (lastEventTsMs ?? startedTsMs);
-  const elapsedSeconds = Math.max(0, (endTsMs - startedTsMs) / 1000);
-  return `Turn ${formatElapsedSeconds(elapsedSeconds)}`;
-}
-
-function getTurnElapsedLabel(events: MessageEvent[], busy: boolean, nowMs: number) {
-  let latestUserTsMs: number | null = null;
-  let latestFollowupTsMs: number | null = null;
-
-  for (const event of events) {
-    if (!event || event.display === false) {
-      continue;
-    }
-    const ts = typeof event.ts === "number" && Number.isFinite(event.ts) ? event.ts * 1000 : null;
-    if (ts === null) {
-      continue;
-    }
-    if (event.role === "user") {
-      latestUserTsMs = ts;
-      latestFollowupTsMs = null;
-      continue;
-    }
-    if (latestUserTsMs === null || ts < latestUserTsMs) {
-      continue;
-    }
-    latestFollowupTsMs = Math.max(latestFollowupTsMs ?? ts, ts);
-  }
-
-  return getTurnElapsedLabelFromTiming(
-    latestUserTsMs === null
-      ? null
-      : {
-        started_ts: latestUserTsMs / 1000,
-        last_event_ts: latestFollowupTsMs === null ? null : latestFollowupTsMs / 1000,
-      },
-    busy,
-    nowMs,
-  );
-}
 
 function safeStem(name: string) {
   const base = String(name || "file").split("/").pop() || "file";
@@ -362,39 +259,69 @@ async function toJpegBlob(file: File, options: { maxDim: number; quality: number
   }
 }
 
-interface ComposerProps {
-  compactMobile?: boolean;
+interface MobileWaitActionPanelProps {
+  wait: ActiveWaitSummary;
+  disabled?: boolean;
+  onClaim(): void;
+  onCancel(): void;
+  onAnswer(answer: string): void;
 }
 
-export function Composer({ compactMobile = false }: ComposerProps = {}) {
-  const { activeSessionId, items, newSessionDefaults } = useSessionsStore();
-  const { bySessionId = {} } = useMessagesStore() as {
-    bySessionId?: Record<string, MessageEvent[]>;
-  };
-  const { busyBySessionId = {}, contextUsageBySessionId = {}, turnTimingBySessionId = {} } = useLiveSessionStore() as {
+function MobileWaitActionPanel({ wait, disabled, onClaim, onCancel, onAnswer }: MobileWaitActionPanelProps) {
+  return (
+    <Card data-testid="mobile-wait-composer-panel" className="mobileWaitComposerPanel rounded-[1.2rem] border-border/70 bg-card/95 shadow-lg shadow-primary/5">
+      <CardContent className="space-y-3 p-4">
+        <div className="waitPanelHeader compact">
+          <WaitStateBadge state={wait.state} />
+          <h3>{wait.question}</h3>
+        </div>
+        <WaitJustification wait={wait} />
+        {wait.state === "pending_unread" ? (
+          <div className="waitPanelActions">
+            <Button type="button" disabled={disabled} onClick={onClaim}>Claim</Button>
+            <Button type="button" variant="outline" disabled={disabled} onClick={onCancel}>Cancel wait</Button>
+          </div>
+        ) : null}
+        {wait.state === "claimed" ? (
+          <div className="waitPanelActionsVertical">
+            <WaitAnswerForm disabled={disabled} submitting={disabled} onSubmit={onAnswer} />
+            <Button type="button" variant="outline" disabled={disabled} onClick={onCancel}>Cancel wait</Button>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface ComposerProps {
+  compactMobile?: boolean;
+  commandSheetRequestKey?: number;
+}
+
+export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: ComposerProps = {}) {
+  const { activeSessionId, items } = useSessionsStore();
+  const { busyBySessionId = {} } = useLiveSessionStore() as {
     busyBySessionId?: Record<string, boolean>;
-    contextUsageBySessionId?: Record<string, ContextUsagePayload | null>;
-    turnTimingBySessionId?: Record<string, TurnTimingPayload | null>;
   };
   const composerState = useComposerStore();
+  const waitsState = useWaitsStore();
+  const waitsStoreApi = useWaitsStoreApi();
   const sending = composerState.sending;
-  const { sessionId: sessionUiSessionId, runtimeId: sessionUiRuntimeId, diagnostics } = useSessionUiStore();
+  const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const sessionUiStoreApi = useSessionUiStoreApi();
   const [todoExpandedBySessionId, setTodoExpandedBySessionId] = useState<Record<string, boolean>>({});
   const [commandsBySessionId, setCommandsBySessionId] = useState<Record<string, SessionCommand[]>>({});
-  const [turnNowMs, setTurnNowMs] = useState(() => Date.now());
   const [commandsLoadedBySessionId, setCommandsLoadedBySessionId] = useState<Record<string, boolean>>({});
   const [commandsLoadingBySessionId, setCommandsLoadingBySessionId] = useState<Record<string, boolean>>({});
   const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
-  const [modelDraftBySessionId, setModelDraftBySessionId] = useState<Record<string, string>>({});
-  const [modelSwitchingBySessionId, setModelSwitchingBySessionId] = useState<Record<string, boolean>>({});
-  const [modelErrorBySessionId, setModelErrorBySessionId] = useState<Record<string, string>>({});
   const [attachedFilesBySessionId, setAttachedFilesBySessionId] = useState<Record<string, number>>({});
   const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [mobileWaitSubmitting, setMobileWaitSubmitting] = useState(false);
+  const [mobileWaitError, setMobileWaitError] = useState("");
   const [mobileComposerAutosize, setMobileComposerAutosize] = useState(() => shouldUseMobileComposerAutosize());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -403,49 +330,16 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
   const draft = activeSessionId ? composerState.draftBySessionId?.[activeSessionId] ?? "" : "";
   const activeSessionPending = activeSession?.pending_startup === true;
+  const activeWait = activeSessionId ? waitsState.activeBySessionId[activeSessionId] ?? activeSession?.active_wait ?? null : null;
+  const activeSessionBackendUnavailable = sessionBackendUnavailable(activeSession);
+  const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(activeWait);
+  const activeSessionSendBlockReason = activeWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : "";
   const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
+  const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
+    ? Math.max(0, Math.round(activeSession.queue_len))
+    : 0;
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
-  const sessionUiMatchesActive = Boolean(
-    activeSessionId
-      && (
-        sessionUiSessionId === activeSessionId
-        || (
-          typeof sessionUiRuntimeId === "string"
-          && sessionUiRuntimeId.trim().length > 0
-          && typeof activeSessionRuntimeId === "string"
-          && activeSessionRuntimeId.trim().length > 0
-          && sessionUiRuntimeId === activeSessionRuntimeId
-        )
-      ),
-  );
-  const diagnosticsModel = sessionUiMatchesActive ? getDiagnosticsModel(diagnostics) : "";
-  const diagnosticsReasoningEffort = sessionUiMatchesActive ? getDiagnosticsReasoningEffort(diagnostics) : "";
   const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
-  const activeSessionHasLivePiControl = Boolean(activeSessionIsPi && !activeSessionIsHistoricalPi && activeSessionRuntimeId);
-  const activeModel = activeSessionHasLivePiControl ? diagnosticsModel : (
-    typeof activeSession?.model === "string" && activeSession.model.trim()
-      ? activeSession.model.trim()
-      : ""
-  );
-  const activeReasoningEffort = activeSessionHasLivePiControl ? diagnosticsReasoningEffort : (
-    typeof activeSession?.reasoning_effort === "string" && activeSession.reasoning_effort.trim()
-      ? activeSession.reasoning_effort.trim()
-      : ""
-  );
-  const modelChoices = useMemo(() => modelChoicesForSession(newSessionDefaults ?? null, activeSession), [newSessionDefaults, activeSession]);
-  const modelDraft = activeSessionId
-    ? (typeof modelDraftBySessionId[activeSessionId] === "string" ? modelDraftBySessionId[activeSessionId] : activeModel)
-    : "";
-  const modelSwitching = activeSessionId ? modelSwitchingBySessionId[activeSessionId] === true : false;
-  const modelError = activeSessionId ? modelErrorBySessionId[activeSessionId] ?? "" : "";
-  const modelDraftTrimmed = modelDraft.trim();
-  const modelSwitchDisabled = !activeSessionId
-    || !activeSessionHasLivePiControl
-    || activeSessionPending
-    || sending
-    || modelSwitching
-    || !modelDraftTrimmed
-    || modelDraftTrimmed === activeModel;
   const activeAttachmentCount = activeSessionId ? attachedFilesBySessionId[activeSessionId] ?? 0 : 0;
   const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi");
   const slashQuery = getSlashDraftQuery(draft);
@@ -467,25 +361,6 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     return getDisplayableTodoSnapshot(snapshot);
   }, [activeSession?.agent_backend, activeSessionId, diagnostics, sessionUiSessionId]);
 
-  const composerContextUsageLabel = useMemo(() => {
-    if (!activeSessionId || !activeSessionIsPi) {
-      return null;
-    }
-    const liveUsage = contextUsageBySessionId[activeSessionId] ?? null;
-    const diagnosticsUsage = sessionUiSessionId === activeSessionId ? getDiagnosticsContextUsage(diagnostics) : null;
-    return getContextUsageLabel(liveUsage ?? diagnosticsUsage);
-  }, [activeSessionId, activeSessionIsPi, contextUsageBySessionId, diagnostics, sessionUiSessionId]);
-
-  const composerTurnElapsedLabel = useMemo(() => {
-    if (!activeSessionId || !activeSessionIsPi) {
-      return null;
-    }
-    const liveTurnTiming = turnTimingBySessionId[activeSessionId] ?? null;
-    const diagnosticsTurnTiming = sessionUiSessionId === activeSessionId ? getDiagnosticsTurnTiming(diagnostics) : null;
-    return getTurnElapsedLabelFromTiming(liveTurnTiming ?? diagnosticsTurnTiming, activeSessionBusy, turnNowMs)
-      ?? getTurnElapsedLabel(bySessionId[activeSessionId] ?? [], activeSessionBusy, turnNowMs);
-  }, [activeSessionBusy, activeSessionId, activeSessionIsPi, bySessionId, diagnostics, sessionUiSessionId, turnNowMs, turnTimingBySessionId]);
-
   const visibleTodoExpanded = activeSessionId ? Boolean(todoExpandedBySessionId[activeSessionId]) : false;
   const visibleCommands = useMemo(() => {
     if (!activeSessionId || !activeSessionIsPi || slashQuery === null) {
@@ -503,6 +378,16 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const commandMenuOpen = Boolean(
     activeSessionIsPi && slashQuery !== null && !slashMenuDismissed && (commandsLoading || visibleCommands.length > 0),
   );
+  const composerMode = deriveComposerMode({
+    waitingUser: Boolean(activeWait),
+    disabled: activeSessionBackendUnavailable,
+    sending,
+    slashMenu: commandMenuOpen,
+    attachment: attachmentUploading,
+    busy: activeSessionBusy,
+    typing: draft.trim().length > 0,
+  });
+  const commandMenuVisible = composerMode === "slash_menu";
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -536,45 +421,6 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     }
     postSendRefreshTimeoutsRef.current = [];
   }, []);
-
-  useEffect(() => {
-    setTurnNowMs(Date.now());
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    if (!activeSessionId) {
-      return;
-    }
-    const currentDraft = modelDraftBySessionId[activeSessionId];
-    if (typeof currentDraft === "string") {
-      if (!activeModel || currentDraft === activeModel) {
-        return;
-      }
-      if (currentDraft.trim().length > 0) {
-        return;
-      }
-    }
-    if (!activeModel) {
-      return;
-    }
-    setModelDraftBySessionId((value) => ({
-      ...value,
-      [activeSessionId]: activeModel,
-    }));
-  }, [activeModel, activeSessionId, modelDraftBySessionId]);
-
-  useEffect(() => {
-    if (!activeSessionBusy) {
-      setTurnNowMs(Date.now());
-      return;
-    }
-    const intervalId = window.setInterval(() => {
-      setTurnNowMs(Date.now());
-    }, 1000);
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [activeSessionBusy, activeSessionId]);
 
   useLayoutEffect(() => {
     syncComposerTextareaHeight(textareaRef.current, mobileComposerAutosize);
@@ -697,6 +543,17 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   }, [activeSessionId, slashQuery]);
 
   useEffect(() => {
+    if (!compactMobile || !commandSheetRequestKey || !activeSessionId) {
+      return;
+    }
+    setSlashMenuDismissed(false);
+    const currentDraft = composerStoreApi.getState().draftBySessionId?.[activeSessionId] ?? "";
+    if (!currentDraft.startsWith("/")) {
+      composerStoreApi.setDraft(activeSessionId, "/");
+    }
+  }, [activeSessionId, commandSheetRequestKey, compactMobile, composerStoreApi]);
+
+  useEffect(() => {
     if (!visibleCommands.length) {
       setHighlightedCommandIndex(0);
       return;
@@ -746,7 +603,10 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     postSendRefreshTimeoutsRef.current = [];
 
     if (getRealtimeConnectionState() === "open") {
-      return refreshNow();
+      return Promise.allSettled([
+        refreshWorkspace(),
+        sessionsStoreApi.refresh(),
+      ]);
     }
 
     for (const delayMs of POST_SEND_REFRESH_DELAYS_MS) {
@@ -780,7 +640,7 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   };
 
   const submitCurrentDraft = () => {
-    if (!activeSessionId || !draft.trim() || sending || activeSessionPending) {
+    if (!activeSessionId || !draft.trim() || sending || activeSessionSendBlocked) {
       return;
     }
 
@@ -796,7 +656,7 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   };
 
   const queueCurrentDraft = () => {
-    if (!activeSessionId || !draft.trim() || sending) {
+    if (!activeSessionId || !draft.trim() || sending || activeWait) {
       return;
     }
 
@@ -840,46 +700,6 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
           : sessionUiStoreApi.refresh(activeSessionId, { agentBackend: activeSession?.agent_backend }),
       ]))
       .catch(() => undefined);
-  };
-
-  const switchSessionModel = () => {
-    if (!activeSessionId || !activeSessionIsPi || modelSwitchDisabled) {
-      return;
-    }
-    const targetModel = modelDraftTrimmed;
-
-    setModelSwitchingBySessionId((value) => ({
-      ...value,
-      [activeSessionId]: true,
-    }));
-    setModelErrorBySessionId((value) => ({
-      ...value,
-      [activeSessionId]: "",
-    }));
-
-    (activeSessionRuntimeId
-      ? api.switchSessionModel(activeSessionId, { model: targetModel }, activeSessionRuntimeId)
-      : api.switchSessionModel(activeSessionId, { model: targetModel }))
-      .then(async () => {
-        setModelDraftBySessionId((value) => ({
-          ...value,
-          [activeSessionId]: targetModel,
-        }));
-        await refreshSessionAfterSend(activeSessionId, activeSessionRuntimeId, activeSession?.agent_backend);
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : "Failed to switch model";
-        setModelErrorBySessionId((value) => ({
-          ...value,
-          [activeSessionId]: message,
-        }));
-      })
-      .finally(() => {
-        setModelSwitchingBySessionId((value) => ({
-          ...value,
-          [activeSessionId]: false,
-        }));
-      });
   };
 
   const handleAttachClick = () => {
@@ -971,6 +791,22 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     }
   };
 
+  const runMobileWaitAction = async (action: () => Promise<void>) => {
+    if (mobileWaitSubmitting) {
+      return;
+    }
+    setMobileWaitSubmitting(true);
+    setMobileWaitError("");
+    try {
+      await action();
+      await sessionsStoreApi.refresh();
+    } catch (error) {
+      setMobileWaitError(error instanceof Error ? error.message : "wait action failed");
+    } finally {
+      setMobileWaitSubmitting(false);
+    }
+  };
+
   const attachButtonTitle = !activeSessionId
     ? "Select a session first"
     : activeSessionIsPi
@@ -999,58 +835,24 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
           }}
         />
       ) : null}
+      {compactMobile && activeWait && activeSessionId ? (
+        <>
+          <MobileWaitActionPanel
+            wait={activeWait}
+            disabled={mobileWaitSubmitting}
+            onClaim={() => void runMobileWaitAction(() => waitsStoreApi.claimWait(activeSessionId, activeWait.wait_id, activeSessionRuntimeId))}
+            onCancel={() => void runMobileWaitAction(() => waitsStoreApi.cancelWait(activeSessionId, activeWait.wait_id, activeSessionRuntimeId))}
+            onAnswer={(answer) => void runMobileWaitAction(() => waitsStoreApi.answerWait(activeSessionId, activeWait.wait_id, answer, activeSessionRuntimeId))}
+          />
+          {mobileWaitError ? <p className="text-sm font-medium text-destructive">{mobileWaitError}</p> : null}
+        </>
+      ) : (
       <Card
         data-testid="composer-card"
         className="composerCard rounded-[1.5rem] border-border/70 bg-card/95 shadow-lg shadow-primary/5 backdrop-blur-sm"
       >
         <CardContent className="p-3 sm:p-4 space-y-2">
-          {activeSessionId && activeSessionHasLivePiControl ? (
-            <div className={cn("composerModelRow", compactMobile && "compactMobile")}>
-              <div className="composerModelCurrent" data-testid="composer-model-current">
-                <span className="composerModelLabel">Model</span>
-                <strong>{activeModel || "unknown"}</strong>
-                {activeReasoningEffort ? <span className="composerModelEffort">effort: {activeReasoningEffort}</span> : null}
-              </div>
-              <div className="composerModelControls">
-                <input
-                  data-testid="composer-model-input"
-                  className="composerModelInput"
-                  type="text"
-                  list="composer-model-choices"
-                  value={modelDraft}
-                  placeholder="target model"
-                  onInput={(event) => {
-                    const value = (event.currentTarget as HTMLInputElement).value;
-                    if (!activeSessionId) {
-                      return;
-                    }
-                    setModelDraftBySessionId((current) => ({
-                      ...current,
-                      [activeSessionId]: value,
-                    }));
-                  }}
-                  disabled={sending || modelSwitching || activeSessionPending}
-                />
-                <datalist id="composer-model-choices">
-                  {modelChoices.map((choice) => (
-                    <option key={choice} value={choice} />
-                  ))}
-                </datalist>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  data-testid="composer-model-switch"
-                  className="composerModelSwitchButton"
-                  onClick={switchSessionModel}
-                  disabled={modelSwitchDisabled}
-                >
-                  {modelSwitching ? "Switching" : "Switch"}
-                </Button>
-              </div>
-              {modelError ? <div className="composerModelError">{modelError}</div> : null}
-            </div>
-          ) : null}
+          {activeSessionSendBlocked && activeSessionSendBlockReason ? <div className="composerModelError">{activeSessionSendBlockReason}</div> : null}
           <form
             className={cn("composer composerShell flex items-end gap-2 border-t-0", draft.includes("\n") && "multiline")}
             onSubmit={(event) => {
@@ -1058,19 +860,35 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
               submitCurrentDraft();
             }}
           >
+            {!compactMobile ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="composerAttachButton"
+                aria-label="Attach file"
+                title={attachButtonTitle}
+                disabled={!attachmentsSupported || attachmentUploading || sending || Boolean(activeWait)}
+                onClick={handleAttachClick}
+              >
+                <span>Attach</span>
+                {activeAttachmentCount > 0 ? <span className="composerAttachBadge">{activeAttachmentCount}</span> : null}
+              </Button>
+            ) : null}
+            <input ref={fileInputRef} type="file" hidden tabIndex={-1} onChange={handleAttachChange} />
             <div className="composerInputWrap flex-1">
               <Textarea
                 textareaRef={textareaRef}
                 value={draft}
                 rows={mobileComposerAutosize ? 2 : undefined}
-                placeholder="Enter your instructions here"
+                placeholder={activeWait ? "Answer the active wait in Details" : "Enter your instructions here"}
                 className="composerTextarea"
                 onInput={(event) => {
                   syncComposerTextareaHeight(event.currentTarget, mobileComposerAutosize);
                   composerStoreApi.setDraft(activeSessionId, event.currentTarget.value);
                 }}
                 onKeyDown={(event) => {
-                  if (commandMenuOpen) {
+                  if (commandMenuVisible) {
                     if (event.key === "ArrowDown") {
                       event.preventDefault();
                       setHighlightedCommandIndex((value) => (visibleCommands.length ? (value + 1) % visibleCommands.length : 0));
@@ -1113,9 +931,9 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
                   event.preventDefault();
                   submitCurrentDraft();
                 }}
-                disabled={sending}
+                disabled={sending || Boolean(activeWait)}
               />
-              {commandMenuOpen ? (
+              {commandMenuVisible && !compactMobile ? (
                 <div className="composerCommandMenu" data-testid="composer-command-menu">
                   {commandsLoading ? <div className="composerCommandHint">Loading Pi commands...</div> : null}
                   {!commandsLoading
@@ -1129,6 +947,7 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
                       >
                         <span className="composerCommandName">/{command.name}</span>
                         {command.description ? <span className="composerCommandDescription">{command.description}</span> : null}
+                        {command.source ? <span className="composerCommandSource">{command.source}</span> : null}
                       </button>
                     ))
                     : null}
@@ -1136,43 +955,7 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
               ) : null}
             </div>
             <div className={cn("composerControlsColumn", compactMobile && "compactMobile") }>
-              {composerTurnElapsedLabel || composerContextUsageLabel ? (
-                <div className={cn("composerMetaRow", compactMobile && "compactMobile")}>
-                  {composerTurnElapsedLabel ? <div className="composerTurnTiming">{composerTurnElapsedLabel}</div> : null}
-                  {composerContextUsageLabel ? <div className="composerContextUsage">{composerContextUsageLabel}</div> : null}
-                </div>
-              ) : null}
               <div className={cn("composerControlsRow", compactMobile && "compactMobile")}>
-                <input ref={fileInputRef} type="file" hidden tabIndex={-1} onChange={handleAttachChange} />
-                {!compactMobile ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="composerAttachButton"
-                    aria-label="Attach file"
-                    title={attachButtonTitle}
-                    disabled={!attachmentsSupported || attachmentUploading || sending}
-                    onClick={handleAttachClick}
-                  >
-                    <span className="buttonGlyph">📎</span>
-                    {activeAttachmentCount > 0 ? <span className="composerAttachBadge">{activeAttachmentCount}</span> : null}
-                    <span className="visuallyHidden">Attach file</span>
-                  </Button>
-                ) : null}
-                {!compactMobile ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="composerQueueButton"
-                    aria-label="Queued messages"
-                    disabled={sending || !draft.trim()}
-                    onClick={queueCurrentDraft}
-                  >
-                    Queue
-                  </Button>
-                ) : null}
                 {activeSessionBusy ? (
                   <Button
                     type="button"
@@ -1185,11 +968,26 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
                     Cancel loop
                   </Button>
                 ) : null}
+                {!compactMobile ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="composerQueueButton"
+                    aria-label="Queue message"
+                    disabled={sending || Boolean(activeWait) || !draft.trim()}
+                    title={activeSessionBackendUnavailable ? "Queue this draft until the session backend is restarted." : undefined}
+                    onClick={queueCurrentDraft}
+                  >
+                    {activeQueueCount > 0 ? `Queue ${activeQueueCount}` : "Queue"}
+                  </Button>
+                ) : null}
                 <Button
                   type="submit"
                   className="sendButton"
                   aria-label={sending ? "Sending" : "Send"}
-                  disabled={sending || activeSessionPending || !draft.trim()}
+                  disabled={sending || activeSessionSendBlocked || !draft.trim()}
+                  title={activeSessionSendBlockReason || undefined}
                 >
                   <span className="buttonGlyph">➤</span>
                   <span className="visuallyHidden">{sending ? "Sending..." : "Send"}</span>
@@ -1197,8 +995,39 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
               </div>
             </div>
           </form>
+          {commandMenuVisible && compactMobile ? (
+            <div className="composerCommandSheetBackdrop" data-testid="composer-command-menu" onMouseDown={() => setSlashMenuDismissed(true)}>
+              <div className="composerCommandSheet" role="dialog" aria-label="Slash commands" onMouseDown={(event) => event.stopPropagation()}>
+                <div className="composerCommandSheetHeader">
+                  <div>
+                    <strong>Slash commands</strong>
+                    <span>Filtering by /{slashQuery ?? ""}</span>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setSlashMenuDismissed(true)}>Close</Button>
+                </div>
+                {commandsLoading ? <div className="composerCommandHint">Loading Pi commands...</div> : null}
+                {!commandsLoading ? (
+                  <div className="composerCommandSheetList">
+                    {visibleCommands.map((command, index) => (
+                      <button
+                        key={command.name}
+                        type="button"
+                        className={cn("composerCommandItem", index === highlightedCommandIndex && "is-active")}
+                        onClick={() => applySlashCommand(command)}
+                      >
+                        <span className="composerCommandName">/{command.name}</span>
+                        {command.description ? <span className="composerCommandDescription">{command.description}</span> : null}
+                        {command.source ? <span className="composerCommandSource">{command.source}</span> : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }

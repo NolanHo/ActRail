@@ -11,6 +11,7 @@ vi.mock("../../lib/api", () => ({
 
 describe("createSessionsStore", () => {
   afterEach(() => {
+    window.localStorage.clear();
     vi.clearAllMocks();
   });
 
@@ -76,6 +77,39 @@ describe("createSessionsStore", () => {
       cwdGroups: { "/tmp/project": { label: "Project", collapsed: true } },
       tmuxAvailable: true,
     });
+  });
+
+  it("persists fetched new-session model defaults across bootstrap refreshes", async () => {
+    vi.mocked(api.getSessionsBootstrap)
+      .mockResolvedValueOnce({
+        new_session_defaults: {
+          default_backend: "pi",
+          backends: {
+            pi: {
+              provider_choice: "openai",
+              provider_choices: ["openai"],
+              model: "gpt-5.4",
+              provider_models: { openai: ["gpt-5.4"] },
+            },
+          },
+        },
+      } as never)
+      .mockResolvedValueOnce({
+        new_session_defaults: {
+          default_backend: "pi",
+          backends: {
+            pi: { provider_choice: "openai", provider_choices: ["openai"] },
+          },
+        },
+      } as never);
+
+    const first = createSessionsStore();
+    await first.refreshBootstrap({ refreshPiModels: true });
+    const second = createSessionsStore();
+    await second.refreshBootstrap();
+
+    expect(second.getState().newSessionDefaults?.backends?.pi.model).toBe("gpt-5.4");
+    expect(second.getState().newSessionDefaults?.backends?.pi.provider_models).toEqual({ openai: ["gpt-5.4"] });
   });
 
   it("loads more rows through flat pagination", async () => {

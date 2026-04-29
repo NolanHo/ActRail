@@ -13,7 +13,7 @@ import (
 )
 
 type Service interface {
-	Bootstrap(context.Context) BootstrapSnapshot
+	Bootstrap(context.Context, BootstrapRequest) BootstrapSnapshot
 	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
 	CreateSession(context.Context, CreateSessionRequest) (CreateSessionResponse, error)
 	SessionResumeCandidates(context.Context, SessionResumeCandidatesRequest) (SessionResumeCandidatesResponse, error)
@@ -30,23 +30,37 @@ type Service interface {
 	EditSession(context.Context, EditSessionRequest) (EditSessionResponse, error)
 	EditCwdGroup(context.Context, EditCwdGroupRequest) (EditCwdGroupResponse, error)
 	SwitchSessionModel(context.Context, SwitchSessionModelRequest) (SwitchSessionModelResponse, error)
+	SessionCommands(context.Context, SessionCommandsRequest) (SessionCommandsResponse, error)
+	ExecuteSessionCommand(context.Context, ExecuteSessionCommandRequest) (ExecuteSessionCommandResponse, error)
+	WaitInbox(context.Context) (WaitInboxResponse, error)
+	WaitThreads(context.Context, WaitThreadsRequest) (WaitThreadsResponse, error)
+	WaitThread(context.Context, WaitThreadRequest) (WaitThreadResponse, error)
+	CreateWait(context.Context, CreateWaitRequest) (WaitLifecycleResponse, error)
+	ClaimWait(context.Context, WaitLifecycleRequest) (WaitLifecycleResponse, error)
+	AnswerWait(context.Context, WaitLifecycleRequest) (WaitLifecycleResponse, error)
+	CancelWait(context.Context, WaitLifecycleRequest) (WaitLifecycleResponse, error)
 	DeleteSession(context.Context, DeleteSessionRequest) (DeleteSessionResponse, error)
 	RestartSession(context.Context, RestartSessionRequest) (RestartSessionResponse, error)
 	HandoffSession(context.Context, HandoffSessionRequest) (HandoffSessionResponse, error)
 }
 
 type Stub struct {
-	cfg            config.Config
-	registry       *sessionRegistry
-	launcher       runtimeLauncher
-	sink           RuntimeEventSink
-	appStore       appStateStore
-	helperDialer   helperDialer
-	helperBindings helperBindingStore
-	helpers        *helperRegistry
-	appStateMu     sync.RWMutex
-	recentCwds     []string
-	cwdGroups      map[string]CwdGroupMeta
+	cfg                 config.Config
+	registry            *sessionRegistry
+	launcher            runtimeLauncher
+	sink                RuntimeEventSink
+	appStore            appStateStore
+	helperDialer        helperDialer
+	helperBindings      helperBindingStore
+	helpers             *helperRegistry
+	messageCache        *sessionMessageCache
+	waitStore           waitStore
+	runtimeAgentMu      sync.RWMutex
+	runtimeAgentRunning map[session.SessionID]bool
+	piModels            piModelCache
+	appStateMu          sync.RWMutex
+	recentCwds          []string
+	cwdGroups           map[string]CwdGroupMeta
 }
 
 func NewStub(cfg config.Config) (*Stub, error) {
@@ -70,25 +84,34 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		runtimeCfg.IODRuntimeRoot = cfg.Storage.IODRuntimeRoot()
 	}
 	return &Stub{
-		cfg:            cfg,
-		registry:       newSessionRegistry(now),
-		launcher:       newRuntimeLauncher(runtimeCfg),
-		helperDialer:   runtimeCfg.IODDialer,
-		helperBindings: newHelperBindingStore(cfg.Storage.IODBindingsDir()),
-		helpers:        newHelperRegistry(),
-		recentCwds:     []string{},
-		cwdGroups:      map[string]CwdGroupMeta{},
+		cfg:                 cfg,
+		registry:            newSessionRegistry(now),
+		launcher:            newRuntimeLauncher(runtimeCfg),
+		helperDialer:        runtimeCfg.IODDialer,
+		helperBindings:      newHelperBindingStore(cfg.Storage.IODBindingsDir()),
+		helpers:             newHelperRegistry(),
+		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
+		waitStore:           newMemoryWaitStore(),
+		runtimeAgentRunning: map[session.SessionID]bool{},
+		piModels:            piModelCache{},
+		recentCwds:          []string{},
+		cwdGroups:           map[string]CwdGroupMeta{},
 	}
 }
 
+type BootstrapRequest struct {
+	RefreshPIModels bool
+}
+
 type BootstrapSnapshot struct {
-	ProtocolVersion int                     `json:"protocol_version"`
-	Capabilities    Capabilities            `json:"capabilities"`
-	WS              WSConfig                `json:"ws"`
-	LaunchDefaults  LaunchConfig            `json:"launch_defaults"`
-	UI              UIConfig                `json:"ui"`
-	RecentCwds      []string                `json:"recent_cwds,omitempty"`
-	CwdGroups       map[string]CwdGroupMeta `json:"cwd_groups,omitempty"`
+	ProtocolVersion    int                     `json:"protocol_version"`
+	Capabilities       Capabilities            `json:"capabilities"`
+	WS                 WSConfig                `json:"ws"`
+	LaunchDefaults     LaunchConfig            `json:"launch_defaults"`
+	NewSessionDefaults NewSessionDefaults      `json:"new_session_defaults,omitempty"`
+	UI                 UIConfig                `json:"ui"`
+	RecentCwds         []string                `json:"recent_cwds,omitempty"`
+	CwdGroups          map[string]CwdGroupMeta `json:"cwd_groups,omitempty"`
 }
 
 type Capabilities struct {
@@ -114,6 +137,26 @@ type LaunchConfig struct {
 	Models            []string `json:"models"`
 }
 
+type NewSessionDefaults struct {
+	DefaultBackend string                           `json:"default_backend,omitempty"`
+	Backends       map[string]LaunchBackendDefaults `json:"backends,omitempty"`
+}
+
+type LaunchBackendDefaults struct {
+	ProviderChoice   string              `json:"provider_choice,omitempty"`
+	ProviderChoices  []string            `json:"provider_choices,omitempty"`
+	Model            string              `json:"model,omitempty"`
+	Models           []string            `json:"models,omitempty"`
+	ProviderModels   map[string][]string `json:"provider_models,omitempty"`
+	ModelProvider    string              `json:"model_provider,omitempty"`
+	ModelProviders   []string            `json:"model_providers,omitempty"`
+	ReasoningEffort  string              `json:"reasoning_effort,omitempty"`
+	ReasoningEfforts []string            `json:"reasoning_efforts,omitempty"`
+	ServiceTier      string              `json:"service_tier,omitempty"`
+	SupportsFast     bool                `json:"supports_fast,omitempty"`
+	ModelsCachedAt   int64               `json:"models_cached_at,omitempty"`
+}
+
 type UIConfig struct {
 	DeferredFeatures []string `json:"deferred_features"`
 }
@@ -124,44 +167,49 @@ type CwdGroupMeta struct {
 }
 
 type SessionSummary struct {
-	SessionID           string  `json:"session_id"`
-	RuntimeID           string  `json:"runtime_id,omitempty"`
-	ThreadID            string  `json:"thread_id,omitempty"`
-	GenerationID        string  `json:"generation_id,omitempty"`
-	AgentBackend        string  `json:"agent_backend"`
-	Title               string  `json:"title"`
-	Alias               string  `json:"alias,omitempty"`
-	DisplayName         string  `json:"display_name,omitempty"`
-	FirstUserMessage    string  `json:"first_user_message,omitempty"`
-	CWD                 string  `json:"cwd"`
-	Busy                bool    `json:"busy"`
-	Focused             bool    `json:"focused,omitempty"`
-	QueueLen            int     `json:"queue_len,omitempty"`
-	TransportState      string  `json:"transport_state,omitempty"`
-	ResetRequired       bool    `json:"reset_required,omitempty"`
-	TransportReason     string  `json:"transport_reason,omitempty"`
-	LastUpdatedTS       float64 `json:"last_updated_ts"`
-	UpdatedTS           float64 `json:"updated_ts,omitempty"`
-	Historical          bool    `json:"historical"`
-	Model               string  `json:"model,omitempty"`
-	ProviderChoice      string  `json:"provider_choice,omitempty"`
-	ReasoningEffort     string  `json:"reasoning_effort,omitempty"`
-	PriorityOffset      float64 `json:"priority_offset,omitempty"`
-	SnoozeUntil         *int64  `json:"snooze_until,omitempty"`
-	DependencySessionID string  `json:"dependency_session_id,omitempty"`
+	SessionID           string             `json:"session_id"`
+	RuntimeID           string             `json:"runtime_id,omitempty"`
+	ThreadID            string             `json:"thread_id,omitempty"`
+	GenerationID        string             `json:"generation_id,omitempty"`
+	AgentBackend        string             `json:"agent_backend"`
+	Title               string             `json:"title"`
+	Alias               string             `json:"alias,omitempty"`
+	DisplayName         string             `json:"display_name,omitempty"`
+	FirstUserMessage    string             `json:"first_user_message,omitempty"`
+	CWD                 string             `json:"cwd"`
+	Busy                bool               `json:"busy"`
+	Focused             bool               `json:"focused,omitempty"`
+	QueueLen            int                `json:"queue_len,omitempty"`
+	TransportState      string             `json:"transport_state,omitempty"`
+	ResetRequired       bool               `json:"reset_required,omitempty"`
+	TransportReason     string             `json:"transport_reason,omitempty"`
+	LastUpdatedTS       float64            `json:"last_updated_ts"`
+	UpdatedTS           float64            `json:"updated_ts,omitempty"`
+	Historical          bool               `json:"historical"`
+	Model               string             `json:"model,omitempty"`
+	ProviderChoice      string             `json:"provider_choice,omitempty"`
+	ReasoningEffort     string             `json:"reasoning_effort,omitempty"`
+	PriorityOffset      float64            `json:"priority_offset,omitempty"`
+	SnoozeUntil         *int64             `json:"snooze_until,omitempty"`
+	DependencySessionID string             `json:"dependency_session_id,omitempty"`
+	ActiveWait          *ActiveWaitSummary `json:"active_wait,omitempty"`
 }
 
 type ListSessionsRequest struct {
-	GroupKey    string
-	Offset      int
-	Limit       int
-	GroupOffset int
-	GroupLimit  int
+	GroupKey     string
+	Offset       int
+	Limit        int
+	GroupOffset  int
+	GroupLimit   int
+	AgentBackend string
+	CWD          string
+	Title        string
 }
 
 type ListSessionsResponse struct {
 	Items          []SessionSummary `json:"items"`
 	RemainingCount int              `json:"remaining_count"`
+	TotalCount     int              `json:"total_count"`
 	GroupKey       *string          `json:"group_key"`
 }
 
@@ -240,7 +288,7 @@ func NotFound(message string) *Error {
 	return &Error{Code: "not_found", Message: message}
 }
 
-func (s *Stub) Bootstrap(_ context.Context) BootstrapSnapshot {
+func (s *Stub) Bootstrap(ctx context.Context, req BootstrapRequest) BootstrapSnapshot {
 	recentCwds, cwdGroups := s.bootstrapAppStateSnapshot()
 	return BootstrapSnapshot{
 		ProtocolVersion: s.cfg.Protocol.Version,
@@ -264,6 +312,7 @@ func (s *Stub) Bootstrap(_ context.Context) BootstrapSnapshot {
 			Providers:         append([]string(nil), s.cfg.Launch.Providers...),
 			Models:            append([]string(nil), s.cfg.Launch.Models...),
 		},
+		NewSessionDefaults: s.newSessionDefaults(ctx, req),
 		UI: UIConfig{
 			DeferredFeatures: append([]string(nil), s.cfg.DisabledUI...),
 		},
@@ -272,22 +321,48 @@ func (s *Stub) Bootstrap(_ context.Context) BootstrapSnapshot {
 	}
 }
 
+func filterSessionRecords(records []sessionRecord, req ListSessionsRequest) []sessionRecord {
+	backend := strings.TrimSpace(req.AgentBackend)
+	cwd := normalizeSessionCWD(req.CWD)
+	title := strings.TrimSpace(req.Title)
+	if backend == "" && cwd == "" && title == "" {
+		return records
+	}
+	out := make([]sessionRecord, 0, len(records))
+	for _, record := range records {
+		if backend != "" && !strings.EqualFold(record.identity.Backend().String(), backend) {
+			continue
+		}
+		if cwd != "" && normalizeSessionCWD(record.cwd) != cwd {
+			continue
+		}
+		if title != "" && record.title != title && record.alias != title && sessionDisplayName(record) != title {
+			continue
+		}
+		out = append(out, record)
+	}
+	return out
+}
+
 func (s *Stub) ListSessions(_ context.Context, req ListSessionsRequest) (ListSessionsResponse, error) {
 	var groupKey *string
 	if req.GroupKey != "" {
 		v := req.GroupKey
 		groupKey = &v
 	}
-	items := sortSessionsForDisplay(s.registry.List(), s.registry.now())
+	items := sortSessionsForDisplay(filterSessionRecords(s.registry.List(), req), s.registry.now())
 	offset, limit := listWindow(req)
 	start, end := paginate(len(items), offset, limit)
 	summaries := make([]SessionSummary, 0, end-start)
 	for _, item := range items[start:end] {
-		summaries = append(summaries, sessionSummaryFromRecord(item.record, item.updatedAt))
+		record := item.record
+		record.runtime = s.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime)
+		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt))
 	}
 	return ListSessionsResponse{
 		Items:          summaries,
 		RemainingCount: len(items) - end,
+		TotalCount:     len(items),
 		GroupKey:       groupKey,
 	}, nil
 }
@@ -301,15 +376,45 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	if err != nil {
 		return CreateSessionResponse{}, Invalid("agent_backend", err.Error())
 	}
+	resumeSourcePath := ""
+	resumeBackendSessionID := ""
 	if resumeID := optionalString(req.ResumeSessionID); resumeID != "" {
 		parsed, err := session.ParseSessionID(resumeID)
 		if err != nil {
 			return CreateSessionResponse{}, Invalid("resume_session_id", err.Error())
 		}
-		if _, ok := s.registry.Lookup(parsed); !ok {
-			return CreateSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", parsed))
+		if parsed.IsHistorical() {
+			if backend != session.BackendPI {
+				return CreateSessionResponse{}, Invalid("resume_session_id", "historical Pi resume requires pi backend")
+			}
+			path, backendSessionID, ok := piSourcePathForHistoricalSession(cwd, parsed)
+			if !ok {
+				return CreateSessionResponse{}, NotFound(fmt.Sprintf("pi session %q not found for cwd %q", parsed, cwd))
+			}
+			resumeSourcePath = path
+			resumeBackendSessionID = backendSessionID
+		} else {
+			record, ok := s.registry.Lookup(parsed)
+			if !ok {
+				return CreateSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", parsed))
+			}
+			if backend != record.identity.Backend() {
+				return CreateSessionResponse{}, Invalid("resume_session_id", "resume session backend does not match requested backend")
+			}
+			if backend != session.BackendPI {
+				return CreateSessionResponse{}, Unsupported("session resume is only implemented for pi backend history")
+			}
+			resumeSourcePath = strings.TrimSpace(record.importedSourcePath)
+			if resumeSourcePath == "" {
+				return CreateSessionResponse{}, NotFound(fmt.Sprintf("pi session %q has no source path to resume", parsed))
+			}
+			resumeBackendSessionID = strings.TrimSpace(record.importedBackendSessionID)
+			if resumeBackendSessionID == "" {
+				if backendSessionID, ok, err := piSessionIDFromSourcePath(resumeSourcePath); err == nil && ok {
+					resumeBackendSessionID = backendSessionID
+				}
+			}
 		}
-		return CreateSessionResponse{}, Unsupported("session resume not implemented")
 	}
 	if err := s.recordRecentCWD(cwd); err != nil {
 		return CreateSessionResponse{}, err
@@ -318,6 +423,14 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	if err != nil {
 		return CreateSessionResponse{}, err
 	}
+	sourcePath := resumeSourcePath
+	if backend == session.BackendPI && sourcePath == "" {
+		var err error
+		sourcePath, err = newPISessionSourcePath(cwd, identity.SessionID(), s.registry.now())
+		if err != nil {
+			return CreateSessionResponse{}, err
+		}
+	}
 	runtime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
 		SessionID:       identity.SessionID(),
 		Backend:         backend,
@@ -325,6 +438,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		Provider:        optionalString(req.Provider),
 		Model:           optionalString(req.Model),
 		ReasoningEffort: optionalString(req.ReasoningEffort),
+		SessionPath:     sourcePath,
 	})
 	if err != nil {
 		_ = runtime.CleanupHelperArtifacts()
@@ -344,14 +458,17 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}
 	bindingSaved = true
 	record, err := s.registry.Create(sessionCreateSpec{
-		Identity:        &identity,
-		Backend:         backend,
-		CWD:             cwd,
-		Provider:        optionalString(req.Provider),
-		Model:           optionalString(req.Model),
-		ReasoningEffort: optionalString(req.ReasoningEffort),
-		Title:           optionalString(req.Title),
-		Runtime:         runtime,
+		Identity:         &identity,
+		Backend:          backend,
+		CWD:              cwd,
+		Provider:         optionalString(req.Provider),
+		Model:            optionalString(req.Model),
+		ReasoningEffort:  optionalString(req.ReasoningEffort),
+		Title:            optionalString(req.Title),
+		SourcePath:       sourcePath,
+		BackendSessionID: resumeBackendSessionID,
+		SourceConfidence: map[bool]string{true: sourceConfidenceExact, false: sourceConfidenceProvisional}[resumeBackendSessionID != ""],
+		Runtime:          runtime,
 	})
 	if err != nil {
 		rollbackRuntime()
@@ -372,10 +489,10 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}, nil
 }
 
-func sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {
+func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
-	transport := sessionTransportSnapshot(record)
+	transport := s.sessionTransportSnapshot(record)
 	return SessionSummary{
 		SessionID:           record.identity.SessionID().String(),
 		RuntimeID:           runtimeID.String(),
@@ -402,6 +519,7 @@ func sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) Session
 		PriorityOffset:      record.priorityOffset,
 		SnoozeUntil:         unixSecondsPtr(record.snoozeUntil),
 		DependencySessionID: sessionIDString(record.dependencySessionID),
+		ActiveWait:          s.activeWaitForSession(record.identity.SessionID()),
 	}
 }
 

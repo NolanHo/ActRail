@@ -29,14 +29,17 @@ type sessionIDGenerator struct {
 }
 
 type sessionCreateSpec struct {
-	Identity        *session.Identity
-	Backend         session.Backend
-	CWD             string
-	Provider        string
-	Model           string
-	ReasoningEffort string
-	Title           string
-	Runtime         sessionRuntime
+	Identity         *session.Identity
+	Backend          session.Backend
+	CWD              string
+	Provider         string
+	Model            string
+	ReasoningEffort  string
+	Title            string
+	SourcePath       string
+	BackendSessionID string
+	SourceConfidence string
+	Runtime          sessionRuntime
 }
 
 type sessionRecord struct {
@@ -60,12 +63,17 @@ type sessionRecord struct {
 	workspace                       workspaceBrowserState
 	transcript                      message.Transcript
 	importedSourcePath              string
+	importedBackendSessionID        string
+	importedSourceConfidence        string
 	importedFirstUserMessage        string
 	importedHasLegacySessionUIState bool
 	runtime                         sessionRuntime
 	uiRequest                       *SessionUIRequestSnapshot
 	transport                       SessionTransportSnapshot
 	resumeCursors                   SessionResumeCursors
+	contextUsage                    *SessionContextUsageSnapshot
+	turnTiming                      *SessionTurnTimingSnapshot
+	runtimeAgentRunning             bool
 	inputMu                         *sync.Mutex
 }
 
@@ -101,20 +109,24 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 	}
 	name := normalizeSessionTitle(spec.Title, spec.CWD)
 	record := sessionRecord{
-		identity:        identity,
-		title:           name,
-		alias:           name,
-		cwd:             strings.TrimSpace(spec.CWD),
-		provider:        strings.TrimSpace(spec.Provider),
-		model:           strings.TrimSpace(spec.Model),
-		reasoningEffort: strings.TrimSpace(spec.ReasoningEffort),
-		createdAt:       now,
-		updatedAt:       now,
-		activityAt:      now,
-		state:           state,
-		transcript:      transcript,
-		runtime:         spec.Runtime,
-		inputMu:         &sync.Mutex{},
+		identity:                 identity,
+		title:                    name,
+		alias:                    name,
+		cwd:                      strings.TrimSpace(spec.CWD),
+		provider:                 strings.TrimSpace(spec.Provider),
+		model:                    strings.TrimSpace(spec.Model),
+		reasoningEffort:          strings.TrimSpace(spec.ReasoningEffort),
+		focused:                  true,
+		createdAt:                now,
+		updatedAt:                now,
+		activityAt:               now,
+		state:                    state,
+		transcript:               transcript,
+		importedSourcePath:       strings.TrimSpace(spec.SourcePath),
+		importedBackendSessionID: strings.TrimSpace(spec.BackendSessionID),
+		importedSourceConfidence: normalizeSourceConfidence(spec.SourceConfidence),
+		runtime:                  spec.Runtime,
+		inputMu:                  &sync.Mutex{},
 	}
 	cp := copySessionRecord(record)
 	if err := r.persistLocked(cp); err != nil {
@@ -242,7 +254,28 @@ func (r *sessionRegistry) ReserveRestartIdentity(routeID session.SessionID) (ses
 	}
 }
 
-func (r *sessionRegistry) SwapRuntime(routeID session.SessionID, identity session.Identity, runtime sessionRuntime) (sessionRecord, bool, error) {
+func (r *sessionRegistry) SetSourceBinding(sessionID session.SessionID, backendSessionID, sourcePath, confidence string) (sessionRecord, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return sessionRecord{}, true, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actualID, record, ok := r.resolveLocked(sessionID)
+	if !ok {
+		return sessionRecord{}, false, nil
+	}
+	record.importedBackendSessionID = strings.TrimSpace(backendSessionID)
+	record.importedSourcePath = strings.TrimSpace(sourcePath)
+	record.importedSourceConfidence = normalizeSourceConfidence(confidence)
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return sessionRecord{}, true, err
+	}
+	r.sessions[actualID] = cp
+	return copySessionRecord(cp), true, nil
+}
+
+func (r *sessionRegistry) SwapRuntime(routeID session.SessionID, identity session.Identity, runtime sessionRuntime, sourcePath string) (sessionRecord, bool, error) {
 	if err := identity.Validate(); err != nil {
 		return sessionRecord{}, true, err
 	}
@@ -264,9 +297,18 @@ func (r *sessionRegistry) SwapRuntime(routeID session.SessionID, identity sessio
 	now := r.now().UTC()
 	record.identity = identity
 	record.runtime = runtime
+	if strings.TrimSpace(sourcePath) != "" {
+		nextSourcePath := strings.TrimSpace(sourcePath)
+		if nextSourcePath != record.importedSourcePath {
+			record.importedBackendSessionID = ""
+			record.importedSourceConfidence = sourceConfidenceProvisional
+		}
+		record.importedSourcePath = nextSourcePath
+	}
 	record.updatedAt = now
 	record.activityAt = now
 	record.uiRequest = nil
+	record.transport = SessionTransportSnapshot{}
 	record.resumeCursors = SessionResumeCursors{}
 	record.transcript.DiscardPartialAssistantTurn()
 	if err := syncSessionRecordStateWithQueue(&record, false, record.state.Queue()); err != nil {
@@ -446,6 +488,41 @@ func (r *sessionRegistry) ActivateSend(sessionID session.SessionID, text string)
 	return item, copySessionState(cp.state), copySessionUIRequest(cp.uiRequest), true, nil
 }
 
+func (r *sessionRegistry) UpdateRuntimeMetadata(sessionID session.SessionID, model string, provider string, usage *SessionContextUsageSnapshot, timing *SessionTurnTimingSnapshot) (sessionRecord, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return sessionRecord{}, false, nil
+	}
+	changed := false
+	if trimmed := strings.TrimSpace(model); trimmed != "" && record.model != trimmed {
+		record.model = trimmed
+		changed = true
+	}
+	if trimmed := strings.TrimSpace(provider); trimmed != "" && record.provider != trimmed {
+		record.provider = trimmed
+		changed = true
+	}
+	if usage != nil {
+		record.contextUsage = copyContextUsage(usage)
+		changed = true
+	}
+	if timing != nil {
+		record.turnTiming = mergeTurnTiming(record.turnTiming, timing)
+		changed = true
+	}
+	if !changed {
+		return copySessionRecord(record), true, nil
+	}
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return sessionRecord{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionRecord(cp), true, nil
+}
+
 func (r *sessionRegistry) ReplaceQueue(sessionID session.SessionID, text string) (session.State, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -468,6 +545,26 @@ func (r *sessionRegistry) ReplaceQueue(sessionID session.SessionID, text string)
 	if err := syncSessionRecordStateWithQueue(&record, record.state.Busy(), queue); err != nil {
 		return session.State{}, true, err
 	}
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return session.State{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionState(cp.state), true, nil
+}
+
+func (r *sessionRegistry) ClearQueue(sessionID session.SessionID) (session.State, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return session.State{}, false, nil
+	}
+	queue := session.EmptyQueueSnapshot()
+	if err := syncSessionRecordStateWithQueue(&record, record.state.Busy(), queue); err != nil {
+		return session.State{}, true, err
+	}
+	record.updatedAt = r.now().UTC()
 	cp := copySessionRecord(record)
 	if err := r.persistLocked(cp); err != nil {
 		return session.State{}, true, err
@@ -590,6 +687,55 @@ func (r *sessionRegistry) ClearUIRequest(sessionID session.SessionID, requestID 
 	return resolved, copySessionState(cp.state), true, nil
 }
 
+func (r *sessionRegistry) MarkRuntimeCompleted(sessionID session.SessionID) (session.State, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return session.State{}, false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return session.State{}, false, nil
+	}
+	record.transcript.DiscardPartialAssistantTurn()
+	record.runtimeAgentRunning = false
+	now := r.now().UTC()
+	record.updatedAt = now
+	record.activityAt = now
+	if err := syncSessionRecordState(&record, false); err != nil {
+		return session.State{}, true, err
+	}
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return session.State{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionState(cp.state), true, nil
+}
+
+func (r *sessionRegistry) SetRuntimeAgentRunning(sessionID session.SessionID, running bool) error {
+	if err := sessionID.Validate(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return nil
+	}
+	if record.runtimeAgentRunning == running {
+		return nil
+	}
+	record.runtimeAgentRunning = running
+	record.updatedAt = r.now().UTC()
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return err
+	}
+	r.sessions[sessionID] = cp
+	return nil
+}
+
 func (r *sessionRegistry) SetResumeCursor(sessionID session.SessionID, kind session.StreamKind, cursor string) error {
 	if err := sessionID.Validate(); err != nil {
 		return err
@@ -617,7 +763,11 @@ func (r *sessionRegistry) SetResumeCursor(sessionID session.SessionID, kind sess
 	default:
 		return fmt.Errorf("stream kind %q is not supported", kind)
 	}
-	r.sessions[sessionID] = copySessionRecord(record)
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return err
+	}
+	r.sessions[sessionID] = cp
 	return nil
 }
 
@@ -633,6 +783,25 @@ func (r *sessionRegistry) SetTransport(sessionID session.SessionID, transport Se
 	}
 	record.transport = transport
 	record.updatedAt = r.now().UTC()
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return SessionTransportSnapshot{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return cp.transport, true, nil
+}
+
+func (r *sessionRegistry) SetStartupTransport(sessionID session.SessionID, transport SessionTransportSnapshot) (SessionTransportSnapshot, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return SessionTransportSnapshot{}, false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return SessionTransportSnapshot{}, false, nil
+	}
+	record.transport = transport
 	cp := copySessionRecord(record)
 	if err := r.persistLocked(cp); err != nil {
 		return SessionTransportSnapshot{}, true, err
@@ -722,12 +891,17 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		workspace:                       copyWorkspaceBrowserState(record.workspace),
 		transcript:                      record.transcript.Clone(),
 		importedSourcePath:              record.importedSourcePath,
+		importedBackendSessionID:        record.importedBackendSessionID,
+		importedSourceConfidence:        record.importedSourceConfidence,
 		importedFirstUserMessage:        record.importedFirstUserMessage,
 		importedHasLegacySessionUIState: record.importedHasLegacySessionUIState,
 		runtime:                         record.runtime,
 		uiRequest:                       copySessionUIRequest(record.uiRequest),
 		transport:                       record.transport,
 		resumeCursors:                   record.resumeCursors,
+		contextUsage:                    copyContextUsage(record.contextUsage),
+		turnTiming:                      copyTurnTiming(record.turnTiming),
+		runtimeAgentRunning:             record.runtimeAgentRunning,
 		inputMu:                         record.inputMu,
 	}
 }

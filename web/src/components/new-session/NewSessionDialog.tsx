@@ -28,7 +28,7 @@ interface SessionCwdInfo {
 }
 
 type LaunchSettingField = "backend" | "model" | "providerChoice" | "reasoningEffort" | "createInTmux" | "fastMode";
-type NewSessionSurfaceTab = "launch" | "focus";
+type NewSessionSurfaceTab = "start" | "resume";
 
 const DEFAULT_NEW_SESSION_CWD = "/root/docs";
 
@@ -52,16 +52,40 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return result;
 }
 
-function initialCwdForDialog(_activeSessionCwd: string | null | undefined, _recentCwds: string[]) {
-  return DEFAULT_NEW_SESSION_CWD;
+function initialCwdForDialog(activeSessionCwd: string | null | undefined, recentCwds: string[]) {
+  const active = String(activeSessionCwd || "").trim();
+  if (active) return active;
+  const recent = recentCwds.find((item) => String(item || "").trim().length > 0)?.trim();
+  return recent || DEFAULT_NEW_SESSION_CWD;
 }
 
 function providerChoicesForDefaults(defaults: LaunchBackendDefaults) {
   return uniqueStrings([...(defaults.provider_choices ?? []), defaults.provider_choice, ...(defaults.model_providers ?? [])]);
 }
 
-function reasoningChoicesForDefaults(defaults: LaunchBackendDefaults) {
-  return uniqueStrings([...(defaults.reasoning_efforts ?? []), defaults.reasoning_effort]);
+function reasoningChoicesForDefaults(defaults: LaunchBackendDefaults, backend = "") {
+  return uniqueStrings([
+    ...(defaults.reasoning_efforts ?? []),
+    defaults.reasoning_effort,
+    ...(backend === "pi" ? ["off", "minimal", "low", "medium", "high", "xhigh"] : []),
+  ]);
+}
+
+function defaultProviderFor(defaults: LaunchBackendDefaults) {
+  const choices = providerChoicesForDefaults(defaults);
+  return defaults.provider_choice?.trim() || defaults.model_provider?.trim() || choices[0] || "";
+}
+
+function defaultModelFor(defaults: LaunchBackendDefaults, backend: string, providerChoice: string) {
+  if (backend === "pi") {
+    return defaultPiModelForProvider(defaults, providerChoice);
+  }
+  return defaults.model?.trim() || modelChoicesForDefaults(defaults, backend, providerChoice)[0] || "";
+}
+
+function defaultReasoningFor(defaults: LaunchBackendDefaults, backend: string) {
+  const choices = reasoningChoicesForDefaults(defaults, backend);
+  return defaults.reasoning_effort?.trim() || (backend === "pi" ? "high" : choices[0] || "");
 }
 
 function modelChoicesForDefaults(defaults: LaunchBackendDefaults, backend: string, providerChoice: string) {
@@ -114,6 +138,12 @@ function resumeOptionLabel(item: SessionResumeCandidate) {
   return branch ? `${title} (${branch})` : title;
 }
 
+function resumeUpdatedLabel(item: SessionResumeCandidate) {
+  const ts = Number(item.updated_ts || 0);
+  if (!Number.isFinite(ts) || ts <= 0) return "";
+  return `Modified ${new Date(ts * 1000).toLocaleString()}`;
+}
+
 function SelectField(props: JSX.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
@@ -161,7 +191,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const [cwd, setCwd] = useState("");
   const [backend, setBackend] = useState("pi");
   const [sessionName, setSessionName] = useState("");
-  const [surfaceTab, setSurfaceTab] = useState<NewSessionSurfaceTab>("launch");
+  const [surfaceTab, setSurfaceTab] = useState<NewSessionSurfaceTab>("start");
   const [model, setModel] = useState("");
   const [providerChoice, setProviderChoice] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState("");
@@ -172,6 +202,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const [resumeOffset, setResumeOffset] = useState(0);
   const [resumeRemaining, setResumeRemaining] = useState(0);
   const [resumeLoading, setResumeLoading] = useState(false);
+  const [resumeTitleFilter, setResumeTitleFilter] = useState("");
   const [refreshingPiModels, setRefreshingPiModels] = useState(false);
   const [useWorktree, setUseWorktree] = useState(false);
   const [worktreeBranch, setWorktreeBranch] = useState("");
@@ -202,21 +233,40 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     [newSessionDefaults?.backends],
   );
   const backendDefaults = newSessionDefaults?.backends?.[backend] || {};
-  const providerChoices = useMemo(() => providerChoicesForDefaults(backendDefaults), [backendDefaults]);
-  const reasoningChoices = useMemo(() => reasoningChoicesForDefaults(backendDefaults), [backendDefaults]);
-  const modelChoices = useMemo(() => modelChoicesForDefaults(backendDefaults, backend, providerChoice), [backendDefaults, backend, providerChoice]);
-  const supportsFast = !!backendDefaults.supports_fast;
-  const supportsTmux = tmuxAvailable;
-  const supportsWorktree = backend === "codex";
   const activeSession = useMemo(
     () => items.find((session) => session.session_id === activeSessionId) ?? null,
     [activeSessionId, items],
   );
-  const focusedSessions = useMemo(
-    () => items.filter((session) => session.focused === true && session.historical !== true),
-    [items],
-  );
+  const providerChoices = useMemo(() => uniqueStrings([
+    ...providerChoicesForDefaults(backendDefaults),
+    providerChoice,
+  ]), [backendDefaults, providerChoice]);
+  const reasoningChoices = useMemo(() => uniqueStrings([
+    ...reasoningChoicesForDefaults(backendDefaults, backend),
+    reasoningEffort,
+  ]), [backend, backendDefaults, reasoningEffort]);
+  const modelChoices = useMemo(() => uniqueStrings([
+    ...modelChoicesForDefaults(backendDefaults, backend, providerChoice),
+    model,
+  ]), [backend, backendDefaults, model, providerChoice]);
+  const supportsFast = !!backendDefaults.supports_fast;
+  const supportsTmux = tmuxAvailable;
+  const supportsWorktree = backend === "codex";
   const sessionNamePlaceholder = baseName(cwd) || "session-name";
+  const filteredResumeCandidates = useMemo(() => {
+    const query = resumeTitleFilter.trim().toLowerCase();
+    if (!query) {
+      return resumeCandidates;
+    }
+    return resumeCandidates.filter((item) => [
+      item.title,
+      item.alias,
+      item.display_name,
+      item.first_user_message,
+      item.session_id,
+    ].some((value) => String(value || "").toLowerCase().includes(query)));
+  }, [resumeCandidates, resumeTitleFilter]);
+  const selectedResumeCandidate = filteredResumeCandidates.find((item) => item.session_id === resumeSessionId) ?? null;
   const dialogTitleId = "new-session-dialog-title";
 
   useEffect(() => {
@@ -239,16 +289,15 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     wasOpenRef.current = true;
     const initialBackend = newSessionDefaults?.default_backend || "pi";
     const initialDefaults = newSessionDefaults?.backends?.[initialBackend] || {};
-    const initialProviders = providerChoicesForDefaults(initialDefaults);
-    const initialReasoning = reasoningChoicesForDefaults(initialDefaults);
+    const initialProvider = defaultProviderFor(initialDefaults);
     hydratedDefaultsRef.current = Object.keys(newSessionDefaults?.backends || {}).length > 0;
     setCwd(initialCwdForDialog(activeSession?.cwd, recentCwds));
     setBackend(initialBackend);
     setSessionName("");
-    setSurfaceTab("launch");
-    setModel(initialDefaults.model?.trim() || "");
-    setProviderChoice(initialDefaults.provider_choice?.trim() || initialProviders[0] || "");
-    setReasoningEffort(initialDefaults.reasoning_effort?.trim() || initialReasoning[0] || "high");
+    setSurfaceTab("start");
+    setProviderChoice(initialProvider);
+    setModel(defaultModelFor(initialDefaults, initialBackend, initialProvider));
+    setReasoningEffort(defaultReasoningFor(initialDefaults, initialBackend));
     setCreateInTmux(Boolean(tmuxAvailable));
     setFastMode(String(initialDefaults.service_tier || "").trim().toLowerCase() === "fast");
     setResumeSessionId("");
@@ -256,6 +305,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeOffset(0);
     setResumeRemaining(0);
     setResumeLoading(false);
+    setResumeTitleFilter("");
     setRefreshingPiModels(false);
     setUseWorktree(false);
     setWorktreeBranch("");
@@ -279,20 +329,19 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     const defaultBackend = newSessionDefaults?.default_backend || backendNames[0] || "pi";
     const selectedBackend = touchedLaunchSettingsRef.current.backend && backend ? backend : defaultBackend;
     const defaultValues = newSessionDefaults?.backends?.[selectedBackend] || {};
-    const providerDefaults = providerChoicesForDefaults(defaultValues);
-    const reasoningDefaults = reasoningChoicesForDefaults(defaultValues);
+    const defaultProvider = defaultProviderFor(defaultValues);
 
     if (!touchedLaunchSettingsRef.current.backend) {
       setBackend(selectedBackend);
     }
     if (!touchedLaunchSettingsRef.current.model) {
-      setModel(defaultValues.model?.trim() || "");
+      setModel(defaultModelFor(defaultValues, selectedBackend, defaultProvider));
     }
     if (!touchedLaunchSettingsRef.current.providerChoice) {
-      setProviderChoice(defaultValues.provider_choice?.trim() || providerDefaults[0] || "");
+      setProviderChoice(defaultProvider);
     }
     if (!touchedLaunchSettingsRef.current.reasoningEffort) {
-      setReasoningEffort(defaultValues.reasoning_effort?.trim() || reasoningDefaults[0] || "high");
+      setReasoningEffort(defaultReasoningFor(defaultValues, selectedBackend));
     }
     if (!touchedLaunchSettingsRef.current.createInTmux) {
       setCreateInTmux(Boolean(tmuxAvailable));
@@ -335,10 +384,18 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeSessionId("");
     setResumeRemaining(0);
     setLookupError("");
-  }, [backend, cwd, open]);
+  }, [backend, cwd, open, surfaceTab]);
 
   useEffect(() => {
     if (!open) return;
+    if (surfaceTab !== "resume") {
+      setResumeCandidates([]);
+      setResumeSessionId("");
+      setResumeRemaining(0);
+      setResumeLoading(false);
+      setLookupError("");
+      return;
+    }
     const rawCwd = cwd.trim();
     if (!rawCwd) {
       setResumeCandidates([]);
@@ -388,19 +445,19 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [backend, cwd, open, resumeOffset]);
+  }, [backend, cwd, open, resumeOffset, surfaceTab]);
 
   if (!open) return null;
 
   const cwdHint = cwd.trim()
     ? resumeLoading
-      ? "Inspecting directory and looking for resumable sessions..."
+      ? "Inspecting..."
       : cwdInfo.gitRepo
-        ? `Git repo${cwdInfo.gitBranch ? ` · ${cwdInfo.gitBranch}` : ""}${cwdInfo.gitRoot ? ` · ${cwdInfo.gitRoot}` : ""}`
+        ? `Git${cwdInfo.gitBranch ? ` · ${cwdInfo.gitBranch}` : ""}${cwdInfo.gitRoot ? ` · ${cwdInfo.gitRoot}` : ""}`
         : cwdInfo.exists
-          ? "Directory exists and will start fresh unless you choose a previous session."
+          ? "Dir exists. Start creates fresh."
           : cwdInfo.willCreate
-            ? "Directory does not exist yet. The backend will create it on launch."
+            ? "Will create dir."
             : ""
     : "";
 
@@ -411,15 +468,14 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const applyBackend = (nextBackend: string) => {
     touchedLaunchSettingsRef.current.backend = true;
     const nextDefaults = newSessionDefaults?.backends?.[nextBackend] || {};
-    const nextProviders = providerChoicesForDefaults(nextDefaults);
-    const nextReasoning = reasoningChoicesForDefaults(nextDefaults);
+    const nextProvider = defaultProviderFor(nextDefaults);
     const hasLaunchDefaults = Boolean(
       nextDefaults.model
       || nextDefaults.provider_choice
       || nextDefaults.reasoning_effort
       || nextDefaults.service_tier
-      || nextProviders.length
-      || nextReasoning.length,
+      || providerChoicesForDefaults(nextDefaults).length
+      || reasoningChoicesForDefaults(nextDefaults, nextBackend).length,
     );
 
     if (hasLaunchDefaults) {
@@ -430,9 +486,9 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       touchedLaunchSettingsRef.current.fastMode = false;
     }
     setBackend(nextBackend);
-    setProviderChoice(nextDefaults.provider_choice?.trim() || nextProviders[0] || "");
-    setModel(nextDefaults.model?.trim() || "");
-    setReasoningEffort(nextDefaults.reasoning_effort?.trim() || nextReasoning[0] || "high");
+    setProviderChoice(nextProvider);
+    setModel(defaultModelFor(nextDefaults, nextBackend, nextProvider));
+    setReasoningEffort(defaultReasoningFor(nextDefaults, nextBackend));
     setFastMode(String(nextDefaults.service_tier || "").trim().toLowerCase() === "fast");
     setCreateInTmux(Boolean(tmuxAvailable));
     setResumeSessionId("");
@@ -483,7 +539,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   {supportsFast ? <Badge variant="outline">Fast available</Badge> : null}
                   {supportsTmux ? <Badge variant="outline">tmux ready</Badge> : null}
                   {supportsWorktree ? <Badge variant="outline">worktree support</Badge> : null}
-                  {focusedSessions.length ? <Badge variant="outline">{focusedSessions.length} Focus</Badge> : null}
                 </div>
               </div>
               <div className="agentBackendTabs grid min-w-[14rem] grid-cols-2 gap-2 rounded-2xl bg-muted/60 p-1">
@@ -501,22 +556,22 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                 ))}
               </div>
             </div>
-            <div className="newSessionSurfaceTabs grid w-full max-w-sm grid-cols-2 gap-2 rounded-2xl bg-muted/60 p-1">
+            <div className="newSessionSurfaceTabs grid w-full max-w-md grid-cols-2 gap-2 rounded-2xl bg-muted/60 p-1">
               <Button
                 type="button"
-                variant={surfaceTab === "launch" ? "default" : "ghost"}
+                variant={surfaceTab === "start" ? "default" : "ghost"}
                 className="h-10 rounded-[1rem]"
-                onClick={() => setSurfaceTab("launch")}
+                onClick={() => setSurfaceTab("start")}
               >
-                Launch
+                Start
               </Button>
               <Button
                 type="button"
-                variant={surfaceTab === "focus" ? "default" : "ghost"}
+                variant={surfaceTab === "resume" ? "default" : "ghost"}
                 className="h-10 rounded-[1rem]"
-                onClick={() => setSurfaceTab("focus")}
+                onClick={() => setSurfaceTab("resume")}
               >
-                Focus
+                Resume
               </Button>
             </div>
           </DialogHeader>
@@ -533,11 +588,16 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                 setError("Working directory is required.");
                 return;
               }
-              if (supportsWorktree && useWorktree && !resumeSessionId && !trimmedWorktreeBranch) {
+              const selectedResumeId = surfaceTab === "resume" ? resumeSessionId : "";
+              if (surfaceTab === "start" && supportsWorktree && useWorktree && !trimmedWorktreeBranch) {
                 setError("Branch name is required.");
                 return;
               }
-              if (resumeSessionId && !resumeCandidates.some((item) => item.session_id === resumeSessionId)) {
+              if (surfaceTab === "resume" && !selectedResumeId) {
+                setError("Select a resume candidate first.");
+                return;
+              }
+              if (selectedResumeId && !filteredResumeCandidates.some((item) => item.session_id === selectedResumeId)) {
                 setError("Selected resume conversation is no longer available for this directory.");
                 return;
               }
@@ -550,12 +610,12 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
               setSubmitting(true);
               setError("");
               try {
-                const trimmedSessionName = sessionName.trim() || undefined;
+                const trimmedSessionName = surfaceTab === "start" ? sessionName.trim() || undefined : undefined;
                 const response = await api.createSession({
                   cwd: trimmedCwd,
                   title: trimmedSessionName,
                   agent_backend: backend,
-                  resume_session_id: resumeSessionId || undefined,
+                  resume_session_id: selectedResumeId || undefined,
                   provider: providerChoice.trim() || backendDefaults.provider_choice?.trim() || undefined,
                   model: model.trim() || undefined,
                   reasoning_effort: backendSupportsReasoningEffort(backend) ? reasoningEffort.trim() || undefined : undefined,
@@ -595,35 +655,104 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
             }}
           >
             <div className="newSessionFormBody space-y-5 overflow-y-auto px-6 py-5">
-              {surfaceTab === "focus" ? (
+              {surfaceTab === "resume" ? (
                 <section className="dialogSection space-y-4">
                   <div>
-                    <h3 className="text-sm font-semibold text-foreground">Focus</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">Jump straight to the sessions you manually shortlisted.</p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-foreground">Resume backend history</h3>
+                      <Badge variant="outline">{resumeLoading ? "Loading" : `${filteredResumeCandidates.length} candidates`}</Badge>
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">Create a new ActRail slot from an exact backend history identity.</p>
                   </div>
-                  {focusedSessions.length ? (
+                  <div className="fieldGrid twoCol gap-3">
+                    <label className="fieldBlock space-y-2">
+                      <span className="fieldLabel">Working directory</span>
+                      <Input
+                        name="cwd"
+                        value={cwd}
+                        onInput={(event) => setCwd(event.currentTarget.value)}
+                        onChange={(event) => setCwd(event.currentTarget.value)}
+                        placeholder="/path/to/project"
+                        list="new-session-recent-cwds"
+                      />
+                    </label>
+                    <label className="fieldBlock space-y-2">
+                      <span className="fieldLabel">Title contains</span>
+                      <Input
+                        name="resumeTitle"
+                        value={resumeTitleFilter}
+                        onInput={(event) => setResumeTitleFilter(event.currentTarget.value)}
+                        onChange={(event) => setResumeTitleFilter(event.currentTarget.value)}
+                        placeholder="Session title or first user text"
+                      />
+                    </label>
+                  </div>
+                  {recentCwds.length ? (
+                    <datalist id="new-session-recent-cwds">
+                      {recentCwds.map((recentCwd) => (
+                        <option key={recentCwd} value={recentCwd} />
+                      ))}
+                    </datalist>
+                  ) : null}
+                  {cwdHint ? <p className="fieldHint text-sm text-muted-foreground">{cwdHint}</p> : null}
+                  {lookupError ? <p className="errorText text-sm font-medium">{lookupError}</p> : null}
+                  {filteredResumeCandidates.length ? (
                     <div className="focusSessionList">
-                      {focusedSessions.map((session) => (
+                      {filteredResumeCandidates.map((item) => (
                         <button
-                          key={session.session_id}
+                          key={item.session_id}
                           type="button"
-                          className="focusSessionItem"
-                          onClick={() => {
-                            sessionsStoreApi.select(session.session_id);
-                            onClose();
-                          }}
+                          className={cn("focusSessionItem", resumeSessionId === item.session_id && "ring-1 ring-primary")}
+                          onClick={() => setResumeSessionId(item.session_id)}
                         >
-                          <span className="focusSessionTitle">{getSessionDisplayName(session)}</span>
+                          <span className="focusSessionTitle">{resumeOptionLabel(item)}</span>
                           <span className="focusSessionMeta">
-                            {session.agent_backend || "codex"}
-                            {session.cwd?.trim() ? ` · ${session.cwd.trim()}` : ""}
+                            {item.session_id}
+                            {item.cwd?.trim() ? ` · ${item.cwd.trim()}` : ""}
+                            {resumeUpdatedLabel(item) ? ` · ${resumeUpdatedLabel(item)}` : ""}
                           </span>
+                          {item.first_user_message?.trim() ? (
+                            <span className="focusSessionMeta">{item.first_user_message.trim()}</span>
+                          ) : null}
                         </button>
                       ))}
                     </div>
                   ) : (
-                    <div className="focusSessionEmpty">No live sessions are in Focus yet. Use the star button in the left rail first.</div>
+                    <div className="focusSessionEmpty">{resumeLoading ? "Loading resumable sessions..." : "No matching backend history found for this directory."}</div>
                   )}
+                  {resumeCandidates.length || resumeOffset > 0 || resumeRemaining > 0 ? (
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        {resumeCandidates.length
+                          ? `Showing ${resumeOffset + 1}-${resumeOffset + resumeCandidates.length}`
+                          : `Showing ${resumeOffset + 1}-${resumeOffset}`}
+                        {resumeRemaining > 0 ? `, ${resumeRemaining} older` : ""}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-8 px-2"
+                          disabled={resumeLoading || resumeOffset <= 0}
+                          onClick={() => setResumeOffset((current) => Math.max(0, current - RESUME_PAGE_SIZE))}
+                        >
+                          Newer
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-8 px-2"
+                          disabled={resumeLoading || resumeRemaining <= 0}
+                          onClick={() => setResumeOffset((current) => current + RESUME_PAGE_SIZE)}
+                        >
+                          Older
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {selectedResumeCandidate ? (
+                    <p className="fieldHint text-sm text-muted-foreground">Selected: {resumeOptionLabel(selectedResumeCandidate)}</p>
+                  ) : null}
                 </section>
               ) : (
                 <>
@@ -631,9 +760,8 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-foreground">Project target</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">Pick the working directory, then choose whether to resume or branch off.</p>
+                    <p className="mt-1 text-sm text-muted-foreground">Pick the working directory for the new runtime.</p>
                   </div>
-                  {resumeCandidates.length ? <Badge variant="outline">{resumeCandidates.length} resumable</Badge> : null}
                 </div>
                 <label className="fieldBlock space-y-2">
                   <span className="fieldLabel">Working directory</span>
@@ -665,52 +793,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                       onChange={(event) => setSessionName(event.currentTarget.value)}
                       placeholder={sessionNamePlaceholder}
                     />
-                  </label>
-                  <label className="fieldBlock space-y-2">
-                    <span className="fieldLabel">Resume conversation</span>
-                    <SelectField
-                      name="resumeSessionId"
-                      value={resumeSessionId}
-                      onInput={(event) => setResumeSessionId(event.currentTarget.value)}
-                      onChange={(event) => setResumeSessionId(event.currentTarget.value)}
-                    >
-                      <option value="">Start fresh</option>
-                      {resumeCandidates.map((item) => (
-                        <option key={item.session_id} value={item.session_id}>
-                          {resumeOptionLabel(item)}
-                        </option>
-                      ))}
-                    </SelectField>
-                    {resumeCandidates.length || resumeOffset > 0 || resumeRemaining > 0 ? (
-                      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                        <span>
-                          {resumeCandidates.length
-                            ? `Showing ${resumeOffset + 1}-${resumeOffset + resumeCandidates.length}`
-                            : `Showing ${resumeOffset + 1}-${resumeOffset}`}
-                          {resumeRemaining > 0 ? `, ${resumeRemaining} older` : ""}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            className="h-8 px-2"
-                            disabled={resumeLoading || resumeOffset <= 0}
-                            onClick={() => setResumeOffset((current) => Math.max(0, current - RESUME_PAGE_SIZE))}
-                          >
-                            Newer
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            className="h-8 px-2"
-                            disabled={resumeLoading || resumeRemaining <= 0}
-                            onClick={() => setResumeOffset((current) => current + RESUME_PAGE_SIZE)}
-                          >
-                            Older
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
                   </label>
                 </div>
               </section>
@@ -877,11 +959,9 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
               <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
                 Cancel
               </Button>
-              {surfaceTab === "launch" ? (
-                <Button type="submit" disabled={submitting || !cwd.trim()}>
-                  {submitting ? "Launching..." : "Start session"}
-                </Button>
-              ) : null}
+              <Button type="submit" disabled={submitting || !cwd.trim() || (surfaceTab === "resume" && !resumeSessionId)}>
+                {submitting ? (surfaceTab === "resume" ? "Resuming..." : "Launching...") : (surfaceTab === "resume" ? "Resume" : "Start session")}
+              </Button>
             </div>
           </form>
         </DialogContent>

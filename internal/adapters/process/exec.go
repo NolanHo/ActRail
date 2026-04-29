@@ -42,6 +42,7 @@ func (r *ExecRunner) Start(ctx context.Context, spec LaunchSpec) (Handle, error)
 	cmd := exec.Command(path, spec.Command().Args()...)
 	cmd.Dir = spec.CWD().String()
 	cmd.Env = spec.Environment().Resolve(os.Environ())
+	applyProcessAttrs(cmd, spec)
 	if spec.IO().Mode() == IOModePTY {
 		return r.startWithPTY(spec, cmd)
 	}
@@ -49,24 +50,35 @@ func (r *ExecRunner) Start(ctx context.Context, spec LaunchSpec) (Handle, error)
 }
 
 func (r *ExecRunner) startWithPipes(spec LaunchSpec, cmd *exec.Cmd) (Handle, error) {
+	if spec.Detached() {
+		return r.startDetachedWithPipes(spec, cmd)
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		_ = stdin.Close()
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		_ = stdin.Close()
 		_ = stdout.Close()
 		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
 	logs := spec.IO().Logs()
 	stdoutMirror, err := r.openOptionalLog(logs.Stdout)
 	if err != nil {
+		_ = stdin.Close()
 		_ = stdout.Close()
 		_ = stderr.Close()
 		return nil, err
 	}
 	stderrMirror, err := r.openOptionalLog(logs.Stderr)
 	if err != nil {
+		_ = stdin.Close()
 		_ = stdout.Close()
 		_ = stderr.Close()
 		_ = closeWriteCloser(stdoutMirror)
@@ -75,6 +87,7 @@ func (r *ExecRunner) startWithPipes(spec LaunchSpec, cmd *exec.Cmd) (Handle, err
 	stdoutHook := wrapMirroredReadCloser(stdout, stdoutMirror)
 	stderrHook := wrapMirroredReadCloser(stderr, stderrMirror)
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
 		_ = stdoutHook.Close()
 		_ = stderrHook.Close()
 		return nil, fmt.Errorf("start command %q: %w", spec.Command().Path(), err)
@@ -83,6 +96,7 @@ func (r *ExecRunner) startWithPipes(spec LaunchSpec, cmd *exec.Cmd) (Handle, err
 		spec:   spec,
 		pid:    cmd.Process.Pid,
 		logs:   logs,
+		stdin:  stdin,
 		stdout: stdoutHook,
 		stderr: stderrHook,
 		waitCh: make(chan waitResult, 1),
@@ -90,6 +104,40 @@ func (r *ExecRunner) startWithPipes(spec LaunchSpec, cmd *exec.Cmd) (Handle, err
 		cmd:    cmd,
 	}
 	return handle, nil
+}
+
+func (r *ExecRunner) startDetachedWithPipes(spec LaunchSpec, cmd *exec.Cmd) (Handle, error) {
+	logs := spec.IO().Logs()
+	stdoutMirror, err := r.openOptionalLog(logs.Stdout)
+	if err != nil {
+		return nil, err
+	}
+	stderrMirror, err := r.openOptionalLog(logs.Stderr)
+	if err != nil {
+		_ = closeWriteCloser(stdoutMirror)
+		return nil, err
+	}
+	if stdoutMirror != nil {
+		cmd.Stdout = stdoutMirror
+	}
+	if stderrMirror != nil {
+		cmd.Stderr = stderrMirror
+	}
+	if err := cmd.Start(); err != nil {
+		_ = closeWriteCloser(stdoutMirror)
+		_ = closeWriteCloser(stderrMirror)
+		return nil, fmt.Errorf("start command %q: %w", spec.Command().Path(), err)
+	}
+	_ = closeWriteCloser(stdoutMirror)
+	_ = closeWriteCloser(stderrMirror)
+	return &execHandle{
+		spec:   spec,
+		pid:    cmd.Process.Pid,
+		logs:   logs,
+		waitCh: make(chan waitResult, 1),
+		proc:   cmd.Process,
+		cmd:    cmd,
+	}, nil
 }
 
 func (r *ExecRunner) startWithPTY(spec LaunchSpec, cmd *exec.Cmd) (Handle, error) {
@@ -154,6 +202,7 @@ type execHandle struct {
 	spec      LaunchSpec
 	pid       int
 	logs      LogPaths
+	stdin     io.WriteCloser
 	stdout    io.ReadCloser
 	stderr    io.ReadCloser
 	pty       PTY
@@ -181,6 +230,10 @@ func (h *execHandle) Spec() LaunchSpec {
 
 func (h *execHandle) Logs() LogPaths {
 	return h.logs
+}
+
+func (h *execHandle) Stdin() io.WriteCloser {
+	return h.stdin
 }
 
 func (h *execHandle) Stdout() io.ReadCloser {

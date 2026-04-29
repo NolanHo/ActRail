@@ -16,15 +16,17 @@ import (
 
 func main() {
 	var (
-		sessionRaw      = flag.String("session-id", "", "live session id")
-		generationRaw   = flag.String("generation-id", "", "live generation id")
-		runtimeRoot     = flag.String("runtime-root", "", "directory containing per-generation helper files")
-		childCWDRaw     = flag.String("child-cwd", "", "child working directory; defaults to current working directory")
-		legacyCWDRaw    = flag.String("cwd", "", "deprecated alias for -child-cwd")
-		childEnvModeRaw = flag.String("child-env-mode", string(process.EnvModeInherit), "child environment mode: inherit or replace")
-		protocolVersion = flag.Int("protocol-version", iod.DefaultProtocolVersion, "helper protocol version")
-		rows            = flag.Uint("pty-rows", 24, "initial PTY rows")
-		cols            = flag.Uint("pty-cols", 80, "initial PTY cols")
+		sessionRaw            = flag.String("session-id", "", "live session id")
+		generationRaw         = flag.String("generation-id", "", "live generation id")
+		runtimeRoot           = flag.String("runtime-root", "", "directory containing per-generation helper files")
+		childCWDRaw           = flag.String("child-cwd", "", "child working directory; defaults to current working directory")
+		legacyCWDRaw          = flag.String("cwd", "", "deprecated alias for -child-cwd")
+		childEnvModeRaw       = flag.String("child-env-mode", string(process.EnvModeInherit), "child environment mode: inherit or replace")
+		childIOModeRaw        = flag.String("child-io-mode", string(iod.ChildIOModePTY), "child IO mode: pty or stdio")
+		sessionHistoryPathRaw = flag.String("session-history-path", "", "Pi session JSONL path for helper history cache")
+		protocolVersion       = flag.Int("protocol-version", iod.DefaultProtocolVersion, "helper protocol version")
+		rows                  = flag.Uint("pty-rows", 24, "initial PTY rows")
+		cols                  = flag.Uint("pty-cols", 80, "initial PTY cols")
 	)
 	var childEnvRaw multiStringFlag
 	flag.Var(&childEnvRaw, "child-env", "child environment entry in NAME=VALUE form; repeatable")
@@ -60,17 +62,23 @@ func main() {
 	if err != nil {
 		failf("actrail-iod: parse child environment: %v", err)
 	}
+	childIOMode, err := iod.ParseChildIOMode(*childIOModeRaw)
+	if err != nil {
+		failf("actrail-iod: parse -child-io-mode: %v", err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := iod.RunHelper(ctx, iod.HelperOptions{
-		SessionID:       sessionID,
-		GenerationID:    generationID,
-		Paths:           paths,
-		Command:         command,
-		CWD:             cwd,
-		Environment:     env,
-		PTYSize:         process.PTYSize{Rows: uint16(*rows), Cols: uint16(*cols)},
-		ProtocolVersion: *protocolVersion,
+		SessionID:          sessionID,
+		GenerationID:       generationID,
+		Paths:              paths,
+		Command:            command,
+		CWD:                cwd,
+		Environment:        env,
+		PTYSize:            process.PTYSize{Rows: uint16(*rows), Cols: uint16(*cols)},
+		ChildIOMode:        childIOMode,
+		ProtocolVersion:    *protocolVersion,
+		SessionHistoryPath: *sessionHistoryPathRaw,
 	}); err != nil {
 		failf("actrail-iod: %v", err)
 	}

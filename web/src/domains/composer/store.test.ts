@@ -59,6 +59,8 @@ describe("createComposerStore", () => {
             role: "user",
             text: "hello",
             pending: true,
+            ts: expect.any(Number),
+            request_state: "sending",
           },
         ],
       },
@@ -125,11 +127,27 @@ describe("createComposerStore", () => {
     await store.submit("s1");
     expect(store.getState().pendingBySessionId.s1).toHaveLength(1);
 
+    const pendingTS = store.getState().pendingBySessionId.s1[0].ts;
     store.clearAcknowledgedPending("s1", [
       { role: "assistant", text: "working" },
-      { role: "user", text: "hello" },
+      { role: "user", text: "hello", ts: pendingTS + 0.1 },
     ]);
 
     expect(store.getState()).toEqual({ draftBySessionId: {}, sending: false, pendingBySessionId: { s1: [] } });
+  });
+
+  it("does not clear a repeated pending prompt against older durable text", async () => {
+    vi.mocked(api.sendMessage).mockResolvedValue({ ok: true } as never);
+    const store = createComposerStore();
+    store.setDraft("s1", "continue");
+
+    await store.submit("s1");
+    const pending = store.getState().pendingBySessionId.s1[0];
+    store.clearAcknowledgedPending("s1", [
+      { role: "user", text: "continue", ts: pending.ts - 120 },
+    ]);
+
+    expect(store.getState().pendingBySessionId.s1).toHaveLength(1);
+    expect(store.getState().pendingBySessionId.s1[0]).toMatchObject({ text: "continue", pending: true });
   });
 });

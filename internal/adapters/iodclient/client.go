@@ -110,6 +110,34 @@ func (c *Client) Command(ctx context.Context, packet iod.CommandPacket) (Command
 	}
 }
 
+func (c *Client) SessionHistory(ctx context.Context, request iod.SessionHistoryRequestPacket) (iod.SessionHistoryResponsePacket, error) {
+	if err := request.Validate(); err != nil {
+		return iod.SessionHistoryResponsePacket{}, err
+	}
+	if err := c.writePacket(ctx, request); err != nil {
+		return iod.SessionHistoryResponsePacket{}, err
+	}
+	for {
+		packet, err := c.readPacket(ctx)
+		if err != nil {
+			return iod.SessionHistoryResponsePacket{}, err
+		}
+		switch v := packet.(type) {
+		case iod.StatePacket, iod.GenerationBreakPacket:
+			continue
+		case iod.SessionHistoryResponsePacket:
+			if v.SessionID != request.SessionID || v.GenerationID != request.GenerationID {
+				return iod.SessionHistoryResponsePacket{}, fmt.Errorf("session history response does not match %q/%q", request.SessionID, request.GenerationID)
+			}
+			return v, nil
+		case iod.ErrorPacket:
+			return iod.SessionHistoryResponsePacket{}, HelperError{Packet: v}
+		default:
+			return iod.SessionHistoryResponsePacket{}, fmt.Errorf("unexpected session history response %T", packet)
+		}
+	}
+}
+
 func (c *Client) Replay(ctx context.Context, request iod.ReplayRequestPacket, visit func(iod.ReplayItemPacket) error) (iod.ReplayDonePacket, error) {
 	if err := request.Validate(); err != nil {
 		return iod.ReplayDonePacket{}, err
@@ -256,6 +284,12 @@ func decodePacket(raw json.RawMessage) (any, error) {
 	case iod.PacketReplayDone:
 		var packet iod.ReplayDonePacket
 		return packet, decodeInto(raw, &packet)
+	case iod.PacketSessionHistoryRequest:
+		var packet iod.SessionHistoryRequestPacket
+		return packet, decodeInto(raw, &packet)
+	case iod.PacketSessionHistoryResponse:
+		var packet iod.SessionHistoryResponsePacket
+		return packet, decodeInto(raw, &packet)
 	case iod.PacketGenerationBreak:
 		var packet iod.GenerationBreakPacket
 		return packet, decodeInto(raw, &packet)
@@ -295,6 +329,10 @@ func validatePacket(packet any) error {
 	case iod.ReplayItemPacket:
 		return v.Validate()
 	case iod.ReplayDonePacket:
+		return v.Validate()
+	case iod.SessionHistoryRequestPacket:
+		return v.Validate()
+	case iod.SessionHistoryResponsePacket:
 		return v.Validate()
 	case iod.StatePacket:
 		return v.Validate()

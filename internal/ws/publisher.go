@@ -98,6 +98,9 @@ func (p *Publisher) broadcastAt(now time.Time, stream StreamName, frame Frame) (
 	delivered := 0
 	var errs []error
 	for _, conn := range subscribers {
+		if frame.Type == FrameTypeMessageDelta && conn.SuppressesMessageDeltas(stream) {
+			continue
+		}
 		if err := conn.WriteFrames(now, frame); err != nil {
 			errs = append(errs, fmt.Errorf("connection %q: %w", conn.ID(), err))
 			continue

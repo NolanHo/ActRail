@@ -157,13 +157,16 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 		t.Fatalf("helperLaunchSpec(codex) error = %v", err)
 	}
 
-	assertHelperLaunchContract(t, piSpec.Command().Args(), piChild)
-	assertHelperLaunchContract(t, codexSpec.Command().Args(), codexChild)
+	assertHelperLaunchContract(t, piSpec.Command().Args(), piChild, iod.ChildIOModeStdio)
+	assertHelperLaunchContract(t, codexSpec.Command().Args(), codexChild, "")
 	if !reflect.DeepEqual(piSpec.Environment().Vars(), launcherEnv.Vars()) {
 		t.Fatalf("helper environment vars = %#v, want launcher env vars %#v", piSpec.Environment().Vars(), launcherEnv.Vars())
 	}
 	if piSpec.Environment().Mode() != launcherEnv.Mode() {
 		t.Fatalf("helper environment mode = %q, want %q", piSpec.Environment().Mode(), launcherEnv.Mode())
+	}
+	if !piSpec.Detached() || !codexSpec.Detached() {
+		t.Fatalf("helper launch detached = (%t, %t), want both true", piSpec.Detached(), codexSpec.Detached())
 	}
 	if codexSpec.CWD().String() != "/tmp/project-codex" {
 		t.Fatalf("codex helper cwd = %q, want %q", codexSpec.CWD().String(), "/tmp/project-codex")
@@ -227,7 +230,7 @@ func mustLaunchSpecForHelperContractTest(t *testing.T, path string, args []strin
 	return spec
 }
 
-func assertHelperLaunchContract(t *testing.T, got []string, childSpec process.LaunchSpec) {
+func assertHelperLaunchContract(t *testing.T, got []string, childSpec process.LaunchSpec, childIOMode iod.ChildIOMode) {
 	t.Helper()
 	wantPrefix := []string{
 		helperFlagSessionID, "s_helper_contract",
@@ -235,11 +238,16 @@ func assertHelperLaunchContract(t *testing.T, got []string, childSpec process.La
 		helperFlagRuntimeRoot, "/tmp/actrail-data/runtime/iod",
 		helperFlagChildCWD, childSpec.CWD().String(),
 		helperFlagChildEnvMode, string(childSpec.Environment().Mode()),
+	}
+	if childIOMode != "" {
+		wantPrefix = append(wantPrefix, helperFlagChildIOMode, string(childIOMode))
+	}
+	wantPrefix = append(wantPrefix,
 		helperFlagChildEnv, "ACTRAIL_ALPHA=one",
 		helperFlagChildEnv, "ACTRAIL_BRAVO=two=2",
 		"--",
 		childSpec.Command().Path(),
-	}
+	)
 	want := append(wantPrefix, childSpec.Command().Args()...)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("helper launch args = %#v, want %#v", got, want)

@@ -5,6 +5,8 @@
 :root {
   --sidebar-w: 23rem;
   --workspace-w: 24rem;
+  --conversation-font-size: 16px;
+  --composer-font-size: 16px;
 }
 
 html,
@@ -275,11 +277,11 @@ select {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 12px 12px;
+  padding: 8px 14px 14px;
   position: sticky;
   bottom: 0;
   z-index: 3;
-  background: linear-gradient(180deg, transparent, color-mix(in srgb, white 60%, var(--panel)) 24%, color-mix(in srgb, white 88%, var(--panel)) 100%);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, white 58%, var(--panel)) 24%, color-mix(in srgb, white 94%, var(--panel)) 100%);
 }
 
 .composerTodoBar {
@@ -425,11 +427,16 @@ select {
 }
 
 .mobileChatPane,
-.mobileReadPane {
+.mobileReadPane,
+.mobileConversationPane,
+.mobileWorkspacePane,
+.mobileWaitsPane,
+.mobileSettingsPane {
   min-height: 0;
   background: color-mix(in srgb, var(--panel) 97%, white);
 }
 
+.mobileRouteHeader,
 .mobileChatHeader,
 .mobileReadHeader,
 .mobileSectionHeader {
@@ -439,6 +446,32 @@ select {
   gap: 0.9rem;
   padding: 0.95rem 1rem 0.75rem;
   border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 78%, white);
+}
+
+.mobileRouteHeader {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.mobileRouteHeaderTop,
+.mobileRouteActions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.mobileRouteHeaderTop {
+  justify-content: space-between;
+}
+
+.mobileRouteActions {
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+}
+
+.mobileBackButton,
+.mobileRouteActions button {
+  flex: 0 0 auto;
 }
 
 .mobileChatHeading {
@@ -564,17 +597,23 @@ select {
 
 .mobileBottomNav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.45rem;
-  padding: 0.75rem 0.9rem calc(0.75rem + env(safe-area-inset-bottom));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.35rem;
+  padding: 0.75rem 0.9rem calc(0.75rem + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));
   border-top: 1px solid color-mix(in srgb, var(--legacy-border) 78%, white);
   background: color-mix(in srgb, var(--panel) 94%, white);
 }
 
 .mobileBottomNavButton {
-  min-height: 2.9rem;
+  min-height: 2.7rem;
   border-radius: 999px;
-  padding-inline: 0.45rem;
+  padding-inline: 0.35rem;
+  font-size: 0.72rem;
+}
+
+.mobileToolCardStatic {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
 }
 
 .conversationToolbar {
@@ -630,13 +669,69 @@ select {
   min-height: 0;
 }
 
+.conversationIdentityBlock {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  flex: 1 1 auto;
+}
+
 .conversationTitle {
   min-width: 0;
   font-weight: 650;
-  flex:1;
   color: var(--text);
   text-wrap: balance;
   font-size: 0.98rem;
+}
+
+.conversationStatusStrip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.conversationStatusStrip::-webkit-scrollbar {
+  display: none;
+}
+
+.conversationStatusChip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+  min-height: 1.55rem;
+  max-width: 22rem;
+  padding: 0.16rem 0.52rem;
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 66%, white);
+  border-radius: 999px;
+  background: color-mix(in srgb, white 88%, var(--panel));
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+
+.conversationStatusChip strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.conversationStatusChip.attention {
+  border-color: color-mix(in srgb, #f59e0b 42%, var(--legacy-border));
+  background: color-mix(in srgb, #f59e0b 10%, var(--panel));
+}
+
+.conversationStatusChip.error {
+  border-color: color-mix(in srgb, hsl(var(--destructive)) 36%, var(--legacy-border));
+  background: color-mix(in srgb, hsl(var(--destructive)) 8%, var(--panel));
 }
 
 .sessionsPane {
@@ -1070,6 +1165,11 @@ select {
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28), 0 2px 8px rgba(15, 23, 42, 0.12);
+  opacity: 1;
 }
 
 .sessionActionMenuItem {
@@ -1079,14 +1179,16 @@ select {
   width: 100%;
   padding: 0.5rem 0.7rem;
   border-radius: 0.8rem;
-  color: var(--text);
+  color: hsl(var(--popover-foreground));
+  background: transparent;
   font-size: 0.84rem;
   text-align: left;
 }
 
 .sessionActionMenuItem:hover,
 .sessionActionMenuItem:focus-visible {
-  background: color-mix(in srgb, var(--accent) 88%, white);
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
   outline: none;
 }
 
@@ -1120,6 +1222,22 @@ select {
 .stateDot.busy {
   background: rgba(29, 78, 216, 0.95);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.stateDot.healthy {
+  background: rgba(22, 163, 74, 0.95);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.16);
+}
+
+.stateDot.unhealthy {
+  background: rgba(220, 38, 38, 0.95);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+}
+
+.stateDot.silent,
+.stateDot.stalled {
+  background: rgba(217, 119, 6, 0.95);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
 }
 
 .backendBadge,
@@ -1168,10 +1286,12 @@ select {
 .conversationPane {
   flex: 1 1 0;
   overflow-y: auto;
-  padding: 18px 18px 10px;
+  font-size: var(--conversation-font-size);
+  padding: 22px 24px 14px;
   min-height: 0;
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: 112px;
+  scroll-padding-bottom: 128px;
+  background: color-mix(in srgb, var(--panel) 98%, white);
 }
 
 .conversationPane.emptyState {
@@ -1220,9 +1340,65 @@ select {
   height: 16px;
 }
 
+.conversationStateTray {
+  flex: 0 0 auto;
+  padding: 0 14px 0;
+  background: color-mix(in srgb, var(--panel) 98%, white);
+}
+
+.conversationQueueTray {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  border: 1px solid color-mix(in srgb, #f59e0b 34%, var(--chrome-border));
+  border-radius: 1.1rem;
+  padding: 0.8rem 0.9rem;
+  background: color-mix(in srgb, #f59e0b 9%, var(--panel));
+  color: var(--text);
+}
+
+.conversationQueueTrayHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.conversationQueueTray h2 {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+.conversationQueueTray p {
+  margin: 0.18rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.conversationQueueTrayList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.34rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.conversationQueueTrayList li {
+  overflow-wrap: anywhere;
+}
+
+.conversationQueueTrayMore,
+.conversationQueueTrayFallback {
+  color: var(--text-muted);
+}
+
 .messageList {
   display: flex;
   flex-direction: column;
+  gap: 0.65rem;
 }
 
 .messageRow {
@@ -1350,9 +1526,9 @@ select {
 .machineTraceStrip {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
+  gap: 0.38rem;
   align-items: center;
-  padding: 0.5rem 0.25rem;
+  padding: 0.35rem 0.2rem;
 }
 
 .machineTraceToken {
@@ -1360,13 +1536,15 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.2rem;
-  height: 2.2rem;
+  width: 2.15rem;
+  height: 2.15rem;
+  min-width: 2.15rem;
   padding: 0;
-  border-radius: 999px;
+  border-radius: 0.7rem;
   border: 1px solid var(--control-border);
   background: var(--control-surface);
   color: var(--text-muted);
+  text-align: center;
   transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
@@ -1395,10 +1573,41 @@ select {
   color: hsl(var(--destructive));
 }
 
-.machineTraceToken.isProcessTool {
+.machineTraceToken.isProcessTool,
+.machineTraceToken[data-tool="terminal"] {
   background: color-mix(in srgb, var(--message-card-base) 80%, #0ea5e9);
   border-color: color-mix(in srgb, var(--chrome-border) 70%, #0ea5e9);
   color: color-mix(in srgb, var(--text) 82%, #0369a1);
+}
+
+.machineTraceToken[data-tool="read"] {
+  background: color-mix(in srgb, var(--message-card-base) 82%, #6366f1);
+  border-color: color-mix(in srgb, var(--chrome-border) 72%, #6366f1);
+  color: color-mix(in srgb, var(--text) 80%, #4338ca);
+}
+
+.machineTraceToken[data-tool="write"] {
+  background: color-mix(in srgb, var(--message-card-base) 82%, #f59e0b);
+  border-color: color-mix(in srgb, var(--chrome-border) 70%, #f59e0b);
+  color: color-mix(in srgb, var(--text) 72%, #92400e);
+}
+
+.machineTraceToken[data-tool="search"] {
+  background: color-mix(in srgb, var(--message-card-base) 82%, #10b981);
+  border-color: color-mix(in srgb, var(--chrome-border) 72%, #10b981);
+  color: color-mix(in srgb, var(--text) 76%, #047857);
+}
+
+.machineTraceToken[data-tool="context"] {
+  background: color-mix(in srgb, var(--message-card-base) 82%, #8b5cf6);
+  border-color: color-mix(in srgb, var(--chrome-border) 72%, #8b5cf6);
+  color: color-mix(in srgb, var(--text) 76%, #6d28d9);
+}
+
+.machineTraceToken.tool_result.isError {
+  background: var(--message-card-tool-error-bg);
+  border-color: var(--message-card-tool-error-border);
+  color: hsl(var(--destructive));
 }
 
 .machineTraceToken.reasoning {
@@ -1453,16 +1662,42 @@ select {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
 }
 
+.machineTraceToken.isStalledTool {
+  color: hsl(var(--destructive));
+  border-color: color-mix(in srgb, hsl(var(--destructive)) 70%, var(--message-card-tool-border));
+  background: color-mix(in srgb, hsl(var(--destructive)) 12%, var(--message-card-tool-bg));
+  box-shadow: 0 0 0 3px color-mix(in srgb, hsl(var(--destructive)) 20%, transparent);
+}
+
+.machineTraceTokenRuntime {
+  position: absolute;
+  right: -0.35rem;
+  bottom: -0.45rem;
+  min-width: 1.6rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, hsl(var(--destructive)) 60%, var(--chrome-border));
+  background: var(--card);
+  color: hsl(var(--destructive));
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.12rem 0.22rem;
+}
+
 .machineTraceTokenIcon {
-  width: 1rem;
-  height: 1rem;
+  width: 1.05rem;
+  height: 1.05rem;
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
 }
 
 .machineTraceTokenIcon svg {
   width: 100%;
   height: 100%;
 }
+
 
 .machineTraceTokenPulse {
   position: absolute;
@@ -1559,14 +1794,36 @@ select {
 
 .messageBubble.user {
   align-self: flex-end;
-  background: var(--bubble-user);
+  max-width: min(72ch, 86%);
+  background: color-mix(in srgb, var(--bubble-user) 88%, white);
+  border-color: color-mix(in srgb, var(--primary) 24%, transparent);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
 }
 
-.messageBubble.assistant,
+.messageBubble.assistant {
+  align-self: flex-start;
+  max-width: min(78ch, 100%);
+  padding: 2px 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
 .messageBubble.ask_user,
 .messageBubble.event {
   align-self: flex-start;
   background: var(--bubble-assistant);
+}
+
+.messageBubble.assistant .messageCardHeader {
+  display: none;
+}
+
+.messageSurface.isError {
+  width: min(64rem, 100%);
+  border-color: color-mix(in srgb, hsl(var(--destructive)) 34%, var(--chrome-border));
+  background: color-mix(in srgb, hsl(var(--destructive)) 7%, var(--panel));
+  box-shadow: none;
 }
 
 .messageCard {
@@ -1583,6 +1840,38 @@ select {
 
 .messageCard.ask_user {
   background: color-mix(in srgb, var(--bubble-assistant) 88%, var(--message-card-tool-bg));
+}
+
+.messageCard.waitCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: color-mix(in srgb, var(--bubble-assistant) 82%, var(--message-card-tool-bg));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border));
+}
+
+.messageCard.waitCard.resolved {
+  opacity: 0.8;
+}
+
+.waitCardHeader,
+.waitCardActions,
+.waitInboxItemTopline,
+.waitPanelActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.waitCardQuestion {
+  font-weight: 650;
+  color: var(--foreground);
+}
+
+.waitCardMeta {
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
 }
 
 .messageCard.reasoning {
@@ -2079,6 +2368,110 @@ select {
   list-style: none;
 }
 
+.waitThreadPanel,
+.waitInbox,
+.waitAnswerForm,
+.waitPanelActionsVertical {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.waitPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.waitPanelHeader.compact {
+  align-items: center;
+}
+
+.mobileWaitComposerPanel {
+  margin: 0 10px calc(8px + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));
+}
+
+.waitPanelHeader h3,
+.waitInboxHeader h3,
+.waitPanelSection h4 {
+  margin: 0;
+}
+
+.waitPanelHeader p,
+.waitInbox p,
+.waitPanelSection p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.waitPanelSection,
+.waitInboxItem,
+.waitHistoryItem {
+  border: 1px solid var(--chrome-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--card) 86%, transparent);
+  padding: 12px;
+}
+
+.waitInboxHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.waitInboxList {
+  max-height: 42rem;
+  min-height: 0;
+}
+
+.waitInboxItem {
+  width: 100%;
+  margin-bottom: 10px;
+  text-align: left;
+  color: inherit;
+}
+
+.waitInboxItem strong,
+.waitInboxItem span,
+.waitHistoryItem strong {
+  display: block;
+}
+
+.waitJustification {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.waitField dt,
+.waitAnswerLabel {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.waitField dd {
+  margin: 3px 0 0;
+  color: var(--foreground);
+}
+
+.waitFileList,
+.waitHistoryList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.waitAnswerTextarea {
+  min-height: 8rem;
+}
+
 .workspaceOption input {
   margin-top: 0.2rem;
 }
@@ -2180,14 +2573,32 @@ select {
   resize: none;
 }
 
+.composerCard {
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 62%, white) !important;
+  border-radius: 1.35rem !important;
+  background: color-mix(in srgb, white 91%, var(--panel)) !important;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08) !important;
+  backdrop-filter: none !important;
+  overflow: hidden;
+}
+
+.composerCard > div {
+  padding: 0.58rem !important;
+}
+
 .composerShell {
   display: flex;
-  gap: 10px;
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
-  border-top: 1px solid color-mix(in srgb, var(--legacy-border) 60%, white);
-  background: color-mix(in srgb, white 90%, var(--panel));
+  gap: 8px;
+  padding: 6px 7px calc(6px + env(safe-area-inset-bottom));
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 54%, white);
+  background: color-mix(in srgb, white 96%, var(--panel));
   align-items: center;
-  border-radius: 1.25rem;
+  border-radius: 1rem;
+}
+
+.composerShell.multiline {
+  border-radius: 1rem;
+  align-items: flex-end;
 }
 
 .composerControlsColumn {
@@ -2205,32 +2616,52 @@ select {
   align-items: center;
   justify-content: flex-end;
   gap: 0.55rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .composerModelRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 0.6rem;
+  justify-content: space-between;
+  gap: 0.7rem;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 1px;
 }
 
 .composerModelRow.compactMobile {
-  grid-template-columns: 1fr;
-  align-items: stretch;
+  flex-wrap: nowrap;
+  align-items: center;
 }
 
-.composerModelCurrent {
+.composerMetadataItems {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.7rem;
   min-width: 0;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.composerModelCurrent,
+.composerMetadataItem {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 0 0 auto;
   font-size: 0.78rem;
   color: var(--legacy-muted);
 }
 
-.composerModelCurrent strong {
+.composerModelCurrent strong,
+.composerMetadataItem strong {
   color: var(--legacy-text);
   font-size: 0.8rem;
   max-width: 26rem;
@@ -2295,8 +2726,8 @@ select {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .composerTurnTiming,
@@ -2316,22 +2747,25 @@ select {
 .composerInputWrap {
   flex: 1 1 auto;
   min-width: 0;
-  background: color-mix(in srgb, white 94%, var(--panel));
+  background: transparent;
   position: relative;
-  min-height: 52px;
+  min-height: 56px;
   display: flex;
   align-items: center;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  overflow: hidden;
+  border-radius: 0.82rem;
 }
 
+.composerAttachButton,
 .composerQueueButton,
 .composerInterruptButton {
   flex: 0 0 auto;
+  width: auto;
   min-width: fit-content;
-  height: 44px;
-  padding: 0 14px;
+  height: 40px;
+  padding: 0 12px;
   border: 1px solid color-mix(in srgb, var(--legacy-border) 64%, white);
-  border-radius: 999px;
+  border-radius: 0.82rem;
   background: color-mix(in srgb, white 90%, var(--panel));
   color: var(--text);
 }
@@ -2341,12 +2775,15 @@ select {
   color: var(--danger);
 }
 
-.composerTextarea {
-  min-height: 42px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  padding: 12px 44px 12px 14px;
+.composerInputWrap .composerTextarea {
+  min-height: 52px;
+  border: 0 !important;
+  border-radius: 0.82rem !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 14px 14px;
+  font-size: var(--composer-font-size);
+  line-height: 1.45;
 }
 
 .composerCommandMenu {
@@ -2392,9 +2829,56 @@ select {
 }
 
 .composerCommandDescription,
-.composerCommandHint {
+.composerCommandHint,
+.composerCommandSource {
   font-size: 0.82rem;
   color: var(--legacy-muted);
+}
+
+.composerCommandSource {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.composerCommandSheetBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.composerCommandSheet {
+  width: 100%;
+  max-height: min(72dvh, calc(var(--appH, 100dvh) - 24px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px 14px calc(14px + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 72%, white);
+  border-radius: 22px 22px 0 0;
+  background: color-mix(in srgb, white 96%, var(--panel));
+  box-shadow: 0 -18px 42px rgba(15, 23, 42, 0.18);
+}
+
+.composerCommandSheetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 10px;
+}
+
+.composerCommandSheetHeader div,
+.composerCommandSheetList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composerCommandSheetHeader span {
+  color: var(--legacy-muted);
+  font-size: 0.82rem;
 }
 
 .composerCommandHint {
@@ -2417,7 +2901,7 @@ select {
   height: 44px;
   padding: 0;
   border: 1px solid rgba(29, 78, 216, 0.16);
-  border-radius: 999px;
+  border-radius: 0.82rem;
   background: var(--legacy-accent);
   color: #fff;
 }
@@ -2734,14 +3218,41 @@ select {
 :root[data-theme="dark"] .composerInputWrap,
 :root[data-theme="dark"] .composerQueueButton,
 :root[data-theme="dark"] .composerCommandMenu,
+:root[data-theme="dark"] .composerCommandSheet,
 :root[data-theme="dark"] .focusSessionItem,
 :root[data-theme="dark"] .focusSessionEmpty,
 :root[data-theme="dark"] .focusRailEmpty {
   background: var(--chrome-elevated);
 }
 
+:root[data-theme="dark"] .conversationStatusChip {
+  border-color: color-mix(in srgb, var(--chrome-border) 86%, white 0%);
+  background: color-mix(in srgb, var(--chrome-elevated) 88%, white 0%);
+  color: color-mix(in srgb, var(--text-muted) 92%, white 0%);
+}
+
+:root[data-theme="dark"] .conversationStatusChip strong {
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .conversationStatusChip.attention {
+  border-color: color-mix(in srgb, #f59e0b 48%, var(--chrome-border));
+  background: color-mix(in srgb, #f59e0b 16%, var(--chrome-elevated));
+}
+
+:root[data-theme="dark"] .conversationStatusChip.error {
+  border-color: color-mix(in srgb, hsl(var(--destructive)) 48%, var(--chrome-border));
+  background: color-mix(in srgb, hsl(var(--destructive)) 16%, var(--chrome-elevated));
+}
+
 :root[data-theme="dark"] .composerContextUsage {
   color: color-mix(in srgb, var(--text-muted) 88%, var(--text));
+}
+
+:root[data-theme="dark"] .composerCard {
+  border-color: var(--chrome-border) !important;
+  background: var(--chrome-surface) !important;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28) !important;
 }
 
 :root[data-theme="dark"] .composerModelInput {
@@ -3001,7 +3512,7 @@ select {
 
   .composerStack {
     gap: 6px;
-    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));
   }
 
   .composerTodoPanel {
@@ -3054,6 +3565,7 @@ select {
     min-height: 0;
   }
 
+  .mobileRouteHeader,
   .mobileChatHeader,
   .mobileSectionHeader {
     padding: 0.85rem 0.9rem 0.7rem;

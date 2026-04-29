@@ -9,8 +9,9 @@ import (
 )
 
 type Subscription struct {
-	Name       StreamName `json:"name"`
-	ResumeFrom *int64     `json:"resume_from,omitempty"`
+	Name                  StreamName `json:"name"`
+	ResumeFrom            *int64     `json:"resume_from,omitempty"`
+	SuppressMessageDeltas bool       `json:"suppress_message_deltas,omitempty"`
 }
 
 func (s Subscription) Validate() error {
@@ -102,6 +103,12 @@ type EnqueueCommand struct {
 	Stream    StreamName
 	SessionID session.SessionID
 	Text      string
+}
+
+type QueueCancelCommand struct {
+	RequestID string
+	Stream    StreamName
+	SessionID session.SessionID
 }
 
 type InterruptCommand struct {
@@ -234,6 +241,24 @@ func DecodeEnqueueCommand(frame RawFrame) (EnqueueCommand, error) {
 		return EnqueueCommand{}, fmt.Errorf("enqueue text is required")
 	}
 	return EnqueueCommand{RequestID: requestID, Stream: stream, SessionID: sessionID, Text: text}, nil
+}
+
+func DecodeQueueCancelCommand(frame RawFrame) (QueueCancelCommand, error) {
+	requestID, stream, route, err := decodeSessionCommand(frame, FrameTypeQueueCancel, session.StreamKindMain)
+	if err != nil {
+		return QueueCancelCommand{}, err
+	}
+	var payload struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return QueueCancelCommand{}, fmt.Errorf("decode queue cancel payload: %w", err)
+	}
+	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeQueueCancel)
+	if err != nil {
+		return QueueCancelCommand{}, err
+	}
+	return QueueCancelCommand{RequestID: requestID, Stream: stream, SessionID: sessionID}, nil
 }
 
 func DecodeInterruptCommand(frame RawFrame) (InterruptCommand, error) {

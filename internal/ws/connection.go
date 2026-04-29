@@ -88,6 +88,11 @@ func (s SubscriptionSet) Has(name StreamName) bool {
 	return ok
 }
 
+func (s SubscriptionSet) Lookup(name StreamName) (Subscription, bool) {
+	sub, ok := s.items[name]
+	return sub, ok
+}
+
 func streamSortKey(name StreamName) int {
 	switch name {
 	case SystemStream:
@@ -185,6 +190,13 @@ func (c *ConnectionState) HasSubscription(name StreamName) bool {
 	return c.subscriptions.Has(name)
 }
 
+func (c *ConnectionState) SuppressesMessageDeltas(name StreamName) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	sub, ok := c.subscriptions.Lookup(name)
+	return ok && sub.SuppressMessageDeltas
+}
+
 func (c *ConnectionState) Heartbeat() HeartbeatState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -258,6 +270,14 @@ func (c *ConnectionState) HandleFrame(now time.Time, frame RawFrame, replay *Rep
 		return c.handleCommand(now, cmd.Stream, cmd.RequestID, FrameTypeEnqueue, target, func(target CommandTarget) error {
 			return target.HandleEnqueue(cmd)
 		})
+	case FrameTypeQueueCancel:
+		cmd, err := DecodeQueueCancelCommand(frame)
+		if err != nil {
+			return c.errorFrames(now, frame, ErrorCodeInvalidRequest, err.Error(), "payload"), nil
+		}
+		return c.handleCommand(now, cmd.Stream, cmd.RequestID, FrameTypeQueueCancel, target, func(target CommandTarget) error {
+			return target.HandleQueueCancel(cmd)
+		})
 	case FrameTypeInterrupt:
 		cmd, err := DecodeInterruptCommand(frame)
 		if err != nil {
@@ -304,7 +324,7 @@ func (c *ConnectionState) handleSubscribe(now time.Time, cmd SubscribeCommand, r
 			}
 			return nil, err
 		}
-		replayed = append(replayed, frames...)
+		replayed = append(replayed, filterReplayedFrames(frames, sub)...)
 	}
 	c.mu.Lock()
 	err := c.subscriptions.ApplySubscribe(cmd.Payload)
@@ -315,6 +335,20 @@ func (c *ConnectionState) handleSubscribe(now time.Time, cmd SubscribeCommand, r
 	frames := []Frame{NewAckFrame(now, c.ids.Next(), cmd.Stream, cmd.RequestID, FrameTypeSubscribe)}
 	frames = append(frames, replayed...)
 	return c.serverFrames(frames...), nil
+}
+
+func filterReplayedFrames(frames []Frame, sub Subscription) []Frame {
+	if !sub.SuppressMessageDeltas {
+		return frames
+	}
+	out := make([]Frame, 0, len(frames))
+	for _, frame := range frames {
+		if frame.Type == FrameTypeMessageDelta {
+			continue
+		}
+		out = append(out, frame)
+	}
+	return out
 }
 
 func (c *ConnectionState) handleCommand(now time.Time, stream StreamName, requestID string, command FrameType, target CommandTarget, dispatch func(CommandTarget) error) ([]Frame, error) {

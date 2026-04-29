@@ -129,6 +129,9 @@ func (piAdapter) CommandArgs(opts Options) ([]string, error) {
 	if effort := opts.ReasoningEffort(); effort != "" {
 		args = append(args, "--thinking", effort)
 	}
+	if sessionPath := opts.SessionPath(); sessionPath != "" {
+		args = append(args, "--session", sessionPath)
+	}
 	return args, nil
 }
 

@@ -23,6 +23,8 @@ type EventKind string
 const (
 	EventKindMessage      EventKind = "message"
 	EventKindMessageDelta EventKind = "message_delta"
+	EventKindTool         EventKind = "tool"
+	EventKindError        EventKind = "error"
 	EventKindUIRequest    EventKind = "ui_request"
 	EventKindUIResolved   EventKind = "ui_resolved"
 	EventKindBoundary     EventKind = "turn_boundary"
@@ -76,10 +78,12 @@ const (
 type BoundaryKind string
 
 const (
-	BoundaryKindTurnStarted   BoundaryKind = "turn_started"
-	BoundaryKindTurnCompleted BoundaryKind = "turn_completed"
-	BoundaryKindTurnAborted   BoundaryKind = "turn_aborted"
-	BoundaryKindCommitted     BoundaryKind = "message_committed"
+	BoundaryKindAgentStarted   BoundaryKind = "agent_started"
+	BoundaryKindAgentCompleted BoundaryKind = "agent_completed"
+	BoundaryKindTurnStarted    BoundaryKind = "turn_started"
+	BoundaryKindTurnCompleted  BoundaryKind = "turn_completed"
+	BoundaryKindTurnAborted    BoundaryKind = "turn_aborted"
+	BoundaryKindCommitted      BoundaryKind = "message_committed"
 )
 
 // Event is one normalized event extracted from Pi session material.
@@ -93,6 +97,8 @@ type Event struct {
 	TurnID     string
 	Message    *Message
 	Delta      *MessageDelta
+	Tool       *ToolEvent
+	Error      *ErrorMessage
 	UIRequest  *UIRequest
 	UIResolved *UIResolution
 	Boundary   *Boundary
@@ -114,6 +120,24 @@ type Message struct {
 type MessageDelta struct {
 	Role MessageRole
 	Text string
+}
+
+// ToolEvent is one completed tool call or tool result.
+type ToolEvent struct {
+	CallID      string
+	Name        string
+	Text        string
+	Arguments   map[string]any
+	Result      bool
+	ResultIndex int
+	IsError     bool
+}
+
+// ErrorMessage is a terminal runtime error surfaced separately from chat roles.
+type ErrorMessage struct {
+	Message    string
+	Source     string
+	StopReason string
 }
 
 // UIRequest is one interactive request that later maps to ui.request frames.

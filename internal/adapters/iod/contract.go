@@ -79,6 +79,8 @@ const (
 	PacketReplayRequest           PacketKind = "iod.replay.request"
 	PacketReplayItem              PacketKind = "iod.replay.item"
 	PacketReplayDone              PacketKind = "iod.replay.done"
+	PacketSessionHistoryRequest   PacketKind = "iod.session_history.request"
+	PacketSessionHistoryResponse  PacketKind = "iod.session_history.response"
 	PacketGenerationBreak         PacketKind = "iod.generation.break"
 	PacketError                   PacketKind = "iod.error"
 )
@@ -104,6 +106,8 @@ func (k PacketKind) Validate() error {
 		PacketReplayRequest,
 		PacketReplayItem,
 		PacketReplayDone,
+		PacketSessionHistoryRequest,
+		PacketSessionHistoryResponse,
 		PacketGenerationBreak,
 		PacketError:
 		return nil
@@ -317,8 +321,9 @@ func (p HelloProof) Validate() error {
 // GenerationManifest freezes the durable proof fields used for helper discovery
 // and same-generation reattach.
 type GenerationManifest struct {
-	SessionID    session.SessionID `json:"session_id"`
-	GenerationID GenerationID      `json:"generation_id"`
+	SessionID          session.SessionID `json:"session_id"`
+	GenerationID       GenerationID      `json:"generation_id"`
+	SessionHistoryPath string            `json:"session_history_path,omitempty"`
 	HelloProof
 }
 
@@ -670,6 +675,70 @@ func (p ReplayDonePacket) Validate() error {
 	}
 	if p.LastOffset < p.AfterOffset {
 		return fmt.Errorf("replay done last offset %d cannot be before after offset %d", p.LastOffset, p.AfterOffset)
+	}
+	return nil
+}
+
+// SessionHistoryRequestPacket asks the helper for its in-memory Pi session JSONL cache.
+type SessionHistoryRequestPacket struct {
+	Envelope
+}
+
+func NewSessionHistoryRequestPacket(sessionID session.SessionID, generationID GenerationID) (SessionHistoryRequestPacket, error) {
+	env, err := NewEnvelope(sessionID, generationID, PacketSessionHistoryRequest)
+	if err != nil {
+		return SessionHistoryRequestPacket{}, err
+	}
+	packet := SessionHistoryRequestPacket{Envelope: env}
+	if err := packet.Validate(); err != nil {
+		return SessionHistoryRequestPacket{}, err
+	}
+	return packet, nil
+}
+
+func (p SessionHistoryRequestPacket) Validate() error {
+	if err := p.Envelope.Validate(); err != nil {
+		return err
+	}
+	if p.Kind != PacketSessionHistoryRequest {
+		return fmt.Errorf("session history request kind = %q, want %q", p.Kind, PacketSessionHistoryRequest)
+	}
+	return nil
+}
+
+// SessionHistoryResponsePacket returns cached authoritative Pi session JSONL lines.
+type SessionHistoryResponsePacket struct {
+	Envelope
+	SourcePath string   `json:"source_path,omitempty"`
+	Lines      []string `json:"lines,omitempty"`
+	Warmed     bool     `json:"warmed"`
+	Complete   bool     `json:"complete"`
+}
+
+func NewSessionHistoryResponsePacket(sessionID session.SessionID, generationID GenerationID, snapshot SessionHistorySnapshot) (SessionHistoryResponsePacket, error) {
+	env, err := NewEnvelope(sessionID, generationID, PacketSessionHistoryResponse)
+	if err != nil {
+		return SessionHistoryResponsePacket{}, err
+	}
+	packet := SessionHistoryResponsePacket{
+		Envelope:   env,
+		SourcePath: strings.TrimSpace(snapshot.SourcePath),
+		Lines:      append([]string(nil), snapshot.Lines...),
+		Warmed:     snapshot.Warmed,
+		Complete:   snapshot.Complete,
+	}
+	if err := packet.Validate(); err != nil {
+		return SessionHistoryResponsePacket{}, err
+	}
+	return packet, nil
+}
+
+func (p SessionHistoryResponsePacket) Validate() error {
+	if err := p.Envelope.Validate(); err != nil {
+		return err
+	}
+	if p.Kind != PacketSessionHistoryResponse {
+		return fmt.Errorf("session history response kind = %q, want %q", p.Kind, PacketSessionHistoryResponse)
 	}
 	return nil
 }

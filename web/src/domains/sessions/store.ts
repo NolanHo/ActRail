@@ -40,6 +40,7 @@ export interface SessionsStore {
 }
 
 const PAGE_SIZE = 50;
+const NEW_SESSION_DEFAULTS_CACHE_KEY = "actrail.newSessionDefaults.v1";
 
 function normalizeSessionsResponse(data: SessionsResponse) {
   return Array.isArray(data.items)
@@ -49,9 +50,81 @@ function normalizeSessionsResponse(data: SessionsResponse) {
       : [];
 }
 
+function readCachedNewSessionDefaults(): NewSessionDefaults | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(NEW_SESSION_DEFAULTS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as NewSessionDefaults;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedNewSessionDefaults(defaults: NewSessionDefaults | null) {
+  if (!defaults || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(NEW_SESSION_DEFAULTS_CACHE_KEY, JSON.stringify(defaults));
+  } catch {
+    // localStorage can be disabled; runtime defaults remain authoritative.
+  }
+}
+
+function mergeStringArrays(...values: Array<string[] | undefined>) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const list of values) {
+    for (const value of list ?? []) {
+      const trimmed = String(value || "").trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      out.push(trimmed);
+    }
+  }
+  return out;
+}
+
+function mergeProviderModels(...values: Array<Record<string, string[]> | undefined>) {
+  const out: Record<string, string[]> = {};
+  for (const providerModels of values) {
+    for (const [provider, models] of Object.entries(providerModels ?? {})) {
+      const trimmedProvider = provider.trim();
+      if (!trimmedProvider) continue;
+      out[trimmedProvider] = mergeStringArrays(out[trimmedProvider], models);
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function mergeNewSessionDefaults(incoming: NewSessionDefaults | null, cached: NewSessionDefaults | null): NewSessionDefaults | null {
+  if (!incoming) return cached;
+  if (!cached) return incoming;
+  const backendNames = mergeStringArrays(Object.keys(incoming.backends ?? {}), Object.keys(cached.backends ?? {}));
+  const backends = Object.fromEntries(backendNames.map((backend) => {
+    const next = incoming.backends?.[backend] ?? {};
+    const prior = cached.backends?.[backend] ?? {};
+    return [backend, {
+      ...prior,
+      ...next,
+      provider_choices: mergeStringArrays(next.provider_choices, prior.provider_choices),
+      model_providers: mergeStringArrays(next.model_providers, prior.model_providers),
+      models: mergeStringArrays(next.models, prior.models),
+      provider_models: mergeProviderModels(next.provider_models, prior.provider_models),
+      model: next.model || prior.model,
+      provider_choice: next.provider_choice || prior.provider_choice,
+    }];
+  }));
+  return {
+    default_backend: incoming.default_backend || cached.default_backend,
+    backends,
+  };
+}
+
 function normalizeNewSessionDefaults(data: SessionBootstrapResponse): NewSessionDefaults | null {
+  const cached = readCachedNewSessionDefaults();
   if (data.new_session_defaults) {
-    return data.new_session_defaults;
+    return mergeNewSessionDefaults(data.new_session_defaults, cached);
   }
   const defaultBackend = String(data.launch_defaults?.default_backend || "").trim();
   const availableBackends = Array.isArray(data.launch_defaults?.available_backends)
@@ -65,10 +138,10 @@ function normalizeNewSessionDefaults(data: SessionBootstrapResponse): NewSession
       provider_choices: Array.isArray(data.launch_defaults?.providers) ? data.launch_defaults.providers : [],
       models: Array.isArray(data.launch_defaults?.models) ? data.launch_defaults.models : [],
     }]));
-  return {
+  return mergeNewSessionDefaults({
     default_backend: defaultBackend || availableBackends[0] || "pi",
     backends,
-  };
+  }, cached);
 }
 
 function sessionDedupeKey(session: SessionSummary) {
@@ -222,6 +295,8 @@ export function createSessionsStore(): SessionsStore {
         url: data.capabilities?.ws_realtime === false ? null : data.ws?.url,
         heartbeatIntervalMs: data.ws?.heartbeat_interval_ms,
       });
+      const newSessionDefaults = normalizeNewSessionDefaults(data) ?? state.newSessionDefaults;
+      writeCachedNewSessionDefaults(newSessionDefaults);
       state = {
         ...state,
         bootstrapLoaded: true,
@@ -229,7 +304,7 @@ export function createSessionsStore(): SessionsStore {
         deferredFeatures: Array.isArray(data.ui?.deferred_features)
           ? data.ui.deferred_features.filter((feature): feature is string => typeof feature === "string" && feature.trim().length > 0)
           : state.deferredFeatures,
-        newSessionDefaults: normalizeNewSessionDefaults(data) ?? state.newSessionDefaults,
+        newSessionDefaults,
         recentCwds: Array.isArray(data.recent_cwds)
           ? data.recent_cwds.filter((cwd): cwd is string => typeof cwd === "string")
           : state.recentCwds,

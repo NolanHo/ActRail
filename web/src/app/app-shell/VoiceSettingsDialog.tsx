@@ -11,6 +11,9 @@ interface VoiceSettingsDialogProps {
     totalDevices: number;
   };
   enterToSendDraft: boolean;
+  conversationFontSizePxDraft?: number;
+  composerFontSizePxDraft?: number;
+  bufferAssistantOutputDraft?: boolean;
   narrationEnabledDraft: boolean;
   open: boolean;
   replySoundEnabled: boolean;
@@ -19,6 +22,9 @@ interface VoiceSettingsDialogProps {
   voiceApiKeyDraft: string;
   voiceBaseUrlDraft: string;
   onChangeEnterToSend(value: boolean): void;
+  onChangeConversationFontSizePx?(value: number): void;
+  onChangeComposerFontSizePx?(value: number): void;
+  onChangeBufferAssistantOutput?(value: boolean): void;
   onChangeNarrationEnabled(value: boolean): void;
   onChangeReplySoundEnabled(value: boolean): void;
   onChangeThemeMode(value: ThemeMode): void;
@@ -32,6 +38,9 @@ interface VoiceSettingsDialogProps {
 export function VoiceSettingsDialog({
   audioMeta,
   enterToSendDraft,
+  conversationFontSizePxDraft = 16,
+  composerFontSizePxDraft = 16,
+  bufferAssistantOutputDraft = true,
   narrationEnabledDraft,
   open,
   replySoundEnabled,
@@ -40,6 +49,9 @@ export function VoiceSettingsDialog({
   voiceApiKeyDraft,
   voiceBaseUrlDraft,
   onChangeEnterToSend,
+  onChangeConversationFontSizePx,
+  onChangeComposerFontSizePx,
+  onChangeBufferAssistantOutput,
   onChangeNarrationEnabled,
   onChangeReplySoundEnabled,
   onChangeThemeMode,
@@ -113,6 +125,46 @@ export function VoiceSettingsDialog({
               />
               <span>Play a short beep when the assistant finishes a reply</span>
             </label>
+          </div>
+          <div className="fieldBlock toggleField">
+            <span className="fieldLabel">Assistant output</span>
+            <label className="checkField">
+              <input
+                type="checkbox"
+                checked={bufferAssistantOutputDraft}
+                onChange={(event) => onChangeBufferAssistantOutput?.(event.currentTarget.checked)}
+              />
+              <span>Buffer assistant output until the final message</span>
+            </label>
+          </div>
+          <div className="fieldBlock">
+            <span className="fieldLabel">Text size</span>
+            <div className="fieldGrid twoCol">
+              <label className="fieldBlock">
+                <span className="fieldHint">Conversation {Math.round(conversationFontSizePxDraft)}px</span>
+                <input
+                  type="range"
+                  min="12"
+                  max="24"
+                  step="1"
+                  value={Math.round(conversationFontSizePxDraft)}
+                  onInput={(event) => onChangeConversationFontSizePx?.(Number(event.currentTarget.value))}
+                  onChange={(event) => onChangeConversationFontSizePx?.(Number(event.currentTarget.value))}
+                />
+              </label>
+              <label className="fieldBlock">
+                <span className="fieldHint">Input {Math.round(composerFontSizePxDraft)}px</span>
+                <input
+                  type="range"
+                  min="12"
+                  max="24"
+                  step="1"
+                  value={Math.round(composerFontSizePxDraft)}
+                  onInput={(event) => onChangeComposerFontSizePx?.(Number(event.currentTarget.value))}
+                  onChange={(event) => onChangeComposerFontSizePx?.(Number(event.currentTarget.value))}
+                />
+              </label>
+            </div>
           </div>
           <div className="fieldBlock">
             <span className="fieldLabel">Theme</span>

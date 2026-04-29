@@ -80,11 +80,11 @@ export function AppShellWorkspaceOverlays({
       </div>
       <div data-testid="mobile-workspace-sheet">
         <Sheet open={detailsOpen}>
-          <button type="button" className="sheetBackdropButton" aria-label="Close workspace panel" onClick={onCloseDetails} />
+          <button type="button" className="sheetBackdropButton" aria-label="Close details panel" onClick={onCloseDetails} />
           <SheetContent side="right" className="mobileSheetContent" titleId="mobile-workspace-title">
             <div className="mobileWorkspaceSheet">
               <header className="mobileSheetHeader">
-                <h2 id="mobile-workspace-title">Workspace</h2>
+                <h2 id="mobile-workspace-title">Details</h2>
                 <Button type="button" variant="ghost" size="sm" onClick={onCloseDetails}>Close</Button>
               </header>
               {workspaceDetails}
@@ -102,8 +102,8 @@ export function AppShellWorkspaceOverlays({
             <DialogHeader className="workspaceDialogHeader">
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-1">
-                  <DialogTitle id="workspace-dialog-title">Workspace</DialogTitle>
-                  <p className="text-sm text-muted-foreground">Inspect session metadata, queue state, tracked files, diagnostics, and UI requests.</p>
+                  <DialogTitle id="workspace-dialog-title">Details</DialogTitle>
+                  <p className="text-sm text-muted-foreground">Inspect waits, session metadata, queue state, tracked files, diagnostics, and UI requests.</p>
                 </div>
                 <Button type="button" variant="ghost" size="sm" onClick={onCloseWorkspace}>Close</Button>
               </div>

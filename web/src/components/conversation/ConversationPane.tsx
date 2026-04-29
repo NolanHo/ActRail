@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
+import { WaitCard } from "../waits/WaitCard";
 import { useComposerStore, useComposerStoreApi, useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import type { MessageEvent, TodoSnapshotItem } from "../../lib/types";
@@ -21,6 +22,7 @@ const MAIN_TIMELINE_KINDS = new Set([
   "user",
   "assistant",
   "ask_user",
+  "wait",
   "reasoning",
   "tool",
   "tool_result",
@@ -32,9 +34,11 @@ const MAIN_TIMELINE_KINDS = new Set([
   "pi_thinking_level_change",
   "pi_event",
   "event",
+  "error",
 ]);
 
 const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
+const COMPACT_EVENT_KINDS = new Set(["event", "pi_event"]);
 const PI_EVENT_COMPACT_VARIANTS = {
   turn_terminal: "turn_terminal",
   empty_output: "empty_output",
@@ -48,6 +52,7 @@ const COLLAPSIBLE_CHAR_THRESHOLD = 420;
 
 const EVENT_LABELS: Record<string, string> = {
   ask_user: "Question",
+  wait: "Wait",
   reasoning: "Reasoning",
   tool: "Tool",
   tool_result: "Tool Result",
@@ -59,6 +64,7 @@ const EVENT_LABELS: Record<string, string> = {
   pi_thinking_level_change: "Thinking Level",
   pi_event: "System Event",
   event: "Event",
+  error: "Error",
 };
 
 interface MarkdownRenderOptions {
@@ -515,6 +521,9 @@ function contentTextFromMessage(event: MessageEvent): string {
 }
 
 function eventKind(event: MessageEvent): string {
+  if (event.is_error === true && typeof event.type === "string" && event.type) {
+    return event.type;
+  }
   if (typeof event.role === "string" && event.role) {
     return event.role;
   }
@@ -524,22 +533,46 @@ function eventKind(event: MessageEvent): string {
   if (event.toolName === "ask_user") {
     return "ask_user";
   }
+  if (typeof event.type === "string" && event.type.startsWith("wait.")) {
+    return "wait";
+  }
+  if (typeof event.wait_id === "string" && typeof event.thread_id === "string" && typeof event.question === "string") {
+    return "wait";
+  }
   return typeof event.type === "string" && event.type ? event.type : "event";
 }
 
-function isBridgePseudoUserEvent(event: MessageEvent): boolean {
-  return event.role === "user" && event.bridge_pseudo === true;
+function isPendingUserEvent(event: MessageEvent): boolean {
+  return event.role === "user" && (event.bridge_pseudo === true || event.pending === true);
 }
 
-function filterResolvedBridgePseudoEvents(events: MessageEvent[]): MessageEvent[] {
-  const pendingBridgeEvents = events.filter(isBridgePseudoUserEvent);
+function isPiConfirmedUserEvent(event: MessageEvent): boolean {
+  return event.role === "user" && typeof event.event_id === "string" && event.event_id.startsWith("pi:");
+}
+
+function durableUserAcknowledgesPending(durable: MessageEvent, pending: MessageEvent, requirePiConfirmation = false): boolean {
+  if (durable.role !== "user" || isPendingUserEvent(durable) || typeof durable.text !== "string" || durable.text !== pending.text) {
+    return false;
+  }
+  if (requirePiConfirmation && !isPiConfirmedUserEvent(durable)) {
+    return false;
+  }
+  const pendingTS = eventTimestampSeconds(pending);
+  const durableTS = eventTimestampSeconds(durable);
+  if (pendingTS !== null) {
+    return durableTS !== null && durableTS >= pendingTS - 2;
+  }
+  return true;
+}
+
+function filterResolvedBridgePseudoEvents(events: MessageEvent[], requirePiConfirmation = false): MessageEvent[] {
+  const pendingBridgeEvents = events.filter(isPendingUserEvent);
   if (!pendingBridgeEvents.length) {
     return events;
   }
 
-  const durableUserTexts = events
-    .filter((event) => event.role === "user" && !isBridgePseudoUserEvent(event) && typeof event.text === "string")
-    .map((event) => String(event.text));
+  const durableUsers = events
+    .filter((event) => event.role === "user" && !isPendingUserEvent(event) && typeof event.text === "string");
   const failedRequestIds = new Set(
     events
       .filter((event) => typeof event.request_id === "string" && event.request_state === "failed")
@@ -552,13 +585,11 @@ function filterResolvedBridgePseudoEvents(events: MessageEvent[]): MessageEvent[
   );
 
   const acknowledgedEventIds = new Set<string>();
-  let durableIdx = durableUserTexts.length - 1;
+  let durableIdx = durableUsers.length - 1;
   let pendingIdx = pendingBridgeEvents.length - 1;
   while (durableIdx >= 0 && pendingIdx >= 0) {
-    const pendingText = typeof pendingBridgeEvents[pendingIdx]?.text === "string"
-      ? String(pendingBridgeEvents[pendingIdx].text)
-      : "";
-    if (durableUserTexts[durableIdx] === pendingText) {
+    const requirePi = requirePiConfirmation && pendingBridgeEvents[pendingIdx].bridge_pseudo !== true;
+    if (durableUserAcknowledgesPending(durableUsers[durableIdx], pendingBridgeEvents[pendingIdx], requirePi)) {
       const eventId = String(pendingBridgeEvents[pendingIdx]?.event_id || "").trim();
       if (eventId) {
         acknowledgedEventIds.add(eventId);
@@ -582,15 +613,47 @@ function filterResolvedBridgePseudoEvents(events: MessageEvent[]): MessageEvent[
     }
   }
 
-  if (!acknowledgedEventIds.size) {
-    return events;
-  }
   return events.filter((event) => {
-    if (!isBridgePseudoUserEvent(event)) {
+    if (!isPendingUserEvent(event)) {
       return true;
     }
     const eventId = String(event.event_id || "").trim();
-    return !eventId || !acknowledgedEventIds.has(eventId);
+    if (!eventId) {
+      const requirePi = requirePiConfirmation && event.bridge_pseudo !== true;
+      return !durableUsers.some((durable) => durableUserAcknowledgesPending(durable, event, requirePi));
+    }
+    return !acknowledgedEventIds.has(eventId);
+  });
+}
+
+function filterLocalUserEchoes(events: MessageEvent[]): MessageEvent[] {
+  const pendingUsers = events.filter(isPendingUserEvent);
+  const piUsers = events.filter(isPiConfirmedUserEvent);
+  const durableUsers = events.filter((event) => event.role === "user" && !isPendingUserEvent(event));
+  if (!pendingUsers.length && !piUsers.length && durableUsers.length < 2) {
+    return events;
+  }
+  return events.filter((event) => {
+    if (event.role !== "user" || isPendingUserEvent(event) || isPiConfirmedUserEvent(event)) {
+      return true;
+    }
+    if (pendingUsers.some((pending) => typeof pending.text === "string" && durableUserAcknowledgesPending(event, pending))) {
+      return false;
+    }
+    if (piUsers.some((piUser) => durableUserAcknowledgesPending(piUser, event))) {
+      return false;
+    }
+    const eventTS = eventTimestampSeconds(event);
+    const laterDuplicate = durableUsers.some((other) => other !== event
+      && !isPiConfirmedUserEvent(other)
+      && typeof other.text === "string"
+      && typeof event.text === "string"
+      && other.text === event.text
+      && eventTimestampSeconds(other) !== null
+      && eventTS !== null
+      && (eventTimestampSeconds(other) ?? 0) > eventTS
+      && (eventTimestampSeconds(other) ?? 0) - eventTS <= 2);
+    return !laterDuplicate;
   });
 }
 
@@ -643,7 +706,7 @@ function compactTraceKind(event: MessageEvent): CompactTraceKind | null {
   if (isProcessUpdateCustomMessage(event)) {
     return "custom_message";
   }
-  if (piEventCompactVariant(event)) {
+  if (piEventCompactVariant(event) || COMPACT_EVENT_KINDS.has(kind)) {
     return "pi_event";
   }
   return null;
@@ -810,10 +873,11 @@ function compactSingleLine(value: string, maxLength = 140): string {
   if (!normalized) {
     return "";
   }
-  if (normalized.length <= maxLength) {
+  const chars = Array.from(normalized);
+  if (chars.length <= maxLength) {
     return normalized;
   }
-  return `${normalized.slice(0, maxLength - 1).trimEnd()}...`;
+  return `${chars.slice(0, Math.max(0, maxLength - 1)).join("").trimEnd()}...`;
 }
 
 function ExpandableRichText({
@@ -1132,6 +1196,125 @@ function CompactionIcon() {
       <path d="M17.5 6h-3" />
     </svg>
   );
+}
+
+function TerminalToolIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="m8 10 3 2-3 2" />
+      <path d="M13 15h3" />
+    </svg>
+  );
+}
+
+function ReadToolIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 4h8l4 4v12H6z" />
+      <path d="M14 4v5h4" />
+      <path d="M9 13h6" />
+      <path d="M9 16h4" />
+    </svg>
+  );
+}
+
+function WriteToolIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 4h8l4 4v12H6z" />
+      <path d="M14 4v5h4" />
+      <path d="m9 16 5.5-5.5 2 2L11 18H9z" />
+    </svg>
+  );
+}
+
+function SearchToolIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="5.5" />
+      <path d="m15 15 5 5" />
+      <path d="M8 10h5" />
+    </svg>
+  );
+}
+
+function ContextToolIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="6" cy="12" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <circle cx="18" cy="18" r="2" />
+      <path d="M8 12h4" />
+      <path d="m13 11 3-4" />
+      <path d="m13 13 3 4" />
+    </svg>
+  );
+}
+
+function normalizedToolName(event: MessageEvent): string {
+  return firstNonEmptyText(event.name, typeof event.details?.name === "string" ? event.details.name : "").trim().toLowerCase();
+}
+
+function machineTraceToolFamily(event: MessageEvent): string {
+  const name = normalizedToolName(event);
+  if (!name) {
+    return "generic";
+  }
+  if (name === "bash" || name === "shell" || name === "exec" || name === "process") {
+    return "terminal";
+  }
+  if (name === "read" || name === "file_read" || name === "open" || name === "glob") {
+    return "read";
+  }
+  if (name === "write" || name === "edit" || name === "multi_edit" || name === "file_write") {
+    return "write";
+  }
+  if (name === "grep" || name === "rg" || name === "find" || name === "search") {
+    return "search";
+  }
+  if (name === "manage_todo_list" || name.includes("todo")) {
+    return "todo";
+  }
+  if (name.startsWith("context_")) {
+    return "context";
+  }
+  return "generic";
+}
+
+function machineTraceIcon(event: MessageEvent, kind: CompactTraceKind, piEventVariant: string | null) {
+  if (kind === "tool" || kind === "tool_result") {
+    switch (machineTraceToolFamily(event)) {
+      case "terminal":
+        return <TerminalToolIcon />;
+      case "read":
+        return <ReadToolIcon />;
+      case "write":
+        return <WriteToolIcon />;
+      case "search":
+        return <SearchToolIcon />;
+      case "todo":
+        return <TodoChangeIcon />;
+      case "context":
+        return <ContextToolIcon />;
+      default:
+        return kind === "tool_result" ? <ToolResultIcon /> : <ToolCallIcon />;
+    }
+  }
+  if (kind === "todo_snapshot") {
+    return <TodoChangeIcon />;
+  }
+  if (kind === "custom_message") {
+    return <ProcessUpdateIcon />;
+  }
+  if (kind === "pi_event") {
+    return piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction
+      ? <CompactionIcon />
+      : piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal
+        ? <TurnTerminalIcon />
+        : <EmptyOutputIcon />;
+  }
+  return <ReasoningIcon />;
 }
 
 function machineTraceTitle(event: MessageEvent, kind: CompactTraceKind) {
@@ -1594,6 +1777,48 @@ function renderStructuredToolResult(event: MessageEvent) {
   return null;
 }
 
+function toolCallID(event: MessageEvent): string {
+  if (typeof event.tool_call_id === "string" && event.tool_call_id.trim()) {
+    return event.tool_call_id.trim();
+  }
+  const details = event.details && typeof event.details === "object" ? event.details as Record<string, unknown> : null;
+  return typeof details?.tool_call_id === "string" ? details.tool_call_id.trim() : "";
+}
+
+function hasToolResultAfter(events: MessageEvent[], tool: MessageEvent, startIndex: number): boolean {
+  const callID = toolCallID(tool);
+  for (let index = startIndex + 1; index < events.length; index += 1) {
+    const event = events[index];
+    if (eventKind(event) !== "tool_result") {
+      continue;
+    }
+    if (!callID || toolCallID(event) === callID) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function unresolvedToolRuntimeSeconds(events: MessageEvent[], index: number, nowSeconds: number): number | null {
+  const event = events[index];
+  if (!event || eventKind(event) !== "tool" || hasToolResultAfter(events, event, index)) {
+    return null;
+  }
+  const ts = eventTimestampSeconds(event);
+  if (ts === null) {
+    return null;
+  }
+  return Math.max(0, Math.floor(nowSeconds - ts));
+}
+
+function formatRuntime(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function hasTrailingUnresolvedTool(events: MessageEvent[]) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const kind = eventKind(events[index]);
@@ -1791,11 +2016,19 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {
   const traceEvents = sortMachineTraceEvents(events);
   const runningIndex = machineTraceRunningIndex(traceEvents, isBusy);
-  const initialSelected = runningIndex >= 0 ? runningIndex : null;
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(initialSelected);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000);
   const selectedEvent = selectedIndex == null ? null : traceEvents[selectedIndex] ?? null;
   const selectedKind = selectedEvent ? compactTraceKind(selectedEvent) : null;
   const selectedVariant = selectedEvent ? piEventCompactVariant(selectedEvent) : null;
+
+  useEffect(() => {
+    if (!isBusy) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => setNowSeconds(Date.now() / 1000), 30_000);
+    return () => window.clearInterval(interval);
+  }, [isBusy]);
 
   return (
     <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
@@ -1808,8 +2041,15 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
           const piEventVariant = kind === "pi_event" ? piEventCompactVariant(event) : null;
           const isSelected = selectedIndex === index;
           const isRunning = index === runningIndex;
+          const runtimeSeconds = kind === "tool" ? unresolvedToolRuntimeSeconds(traceEvents, index, nowSeconds) : null;
           const summary = machineTraceSummary(event, kind);
+          const tokenSummary = kind === "tool_result" && (todoItemsFromEvent(event).length > 0 || summary.includes('"todos"'))
+            ? ""
+            : summary;
           const title = machineTraceTitle(event, kind);
+          const toolFamily = kind === "tool" || kind === "tool_result" ? machineTraceToolFamily(event) : undefined;
+          const runtimeLabel = typeof runtimeSeconds === "number" ? `running ${formatRuntime(runtimeSeconds)}` : "";
+          const accessibleLabel = [tokenSummary ? `${title}: ${tokenSummary}` : title, runtimeLabel].filter(Boolean).join("; ");
           const statusLabel = kind === "tool_result"
             ? (event.is_error ? "error" : "complete")
             : kind === "todo_snapshot"
@@ -1824,6 +2064,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
               data-kind={kind}
               data-status={statusLabel}
               data-variant={piEventVariant || undefined}
+              data-tool={toolFamily}
               className={cn(
                 "machineTraceToken",
                 kind,
@@ -1836,29 +2077,12 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
               )}
               aria-expanded={isSelected ? "true" : "false"}
-              title={summary ? `${title}: ${summary}` : title}
+              title={accessibleLabel}
+              aria-label={accessibleLabel}
               onClick={() => setSelectedIndex((current) => (current === index ? null : index))}
             >
               <span className="machineTraceTokenIcon" aria-hidden="true">
-                {kind === "tool"
-                  ? event.name === "process"
-                    ? <ProcessUpdateIcon />
-                    : <ToolCallIcon />
-                  : kind === "tool_result"
-                    ? event.name === "process"
-                      ? <ProcessUpdateIcon />
-                      : <ToolResultIcon />
-                    : kind === "todo_snapshot"
-                      ? <TodoChangeIcon />
-                      : kind === "custom_message"
-                        ? <ProcessUpdateIcon />
-                        : kind === "pi_event"
-                          ? piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction
-                            ? <CompactionIcon />
-                            : piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal
-                              ? <TurnTerminalIcon />
-                              : <EmptyOutputIcon />
-                          : <ReasoningIcon />}
+                {machineTraceIcon(event, kind, piEventVariant)}
               </span>
               {isRunning ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
             </button>
@@ -1987,7 +2211,7 @@ function renderSystemCard(event: MessageEvent, kind: string, options: MarkdownRe
   const hideTodoJsonBody = todoItems.length > 0 && todoItemsFromBody.length > 0;
 
   return (
-    <MessageSurface kind={kind}>
+    <MessageSurface kind={kind} isError={event.is_error === true}>
       {renderCardHeader(kind, title || undefined, undefined, event.ts)}
       {structured}
       {todoItems.length ? renderTodoItemsList(todoItems) : null}
@@ -2012,6 +2236,8 @@ function renderConversationEvent(
       return renderChatCard(event, kind, options);
     case "ask_user":
       return renderAskUserCard(event, sessionId, runtimeId, options, allowFuzzyLiveMatch, allowLegacyFallback);
+    case "wait":
+      return <WaitCard event={event} sessionId={sessionId} />;
     case "reasoning":
       return renderReasoningCard(event, options);
     case "tool":
@@ -2028,6 +2254,7 @@ function renderConversationEvent(
     case "pi_thinking_level_change":
     case "pi_event":
     case "event":
+    case "error":
       return renderSystemCard(event, kind, options);
     default:
       return renderSystemCard(event, kind, options);
@@ -2056,7 +2283,7 @@ function renderLoadingCards() {
   );
 }
 
-function WorkingIndicator() {
+function WorkingIndicator({ label = "Working" }: { label?: string }) {
   return (
     <div className="messageRow assistant workingIndicator flex px-1 py-1">
       <div className="flex items-center gap-2 rounded-2xl border border-border/40 bg-muted/30 px-3 py-2 text-muted-foreground/70 shadow-sm">
@@ -2065,7 +2292,7 @@ function WorkingIndicator() {
           <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
           <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
         </div>
-        <span className="text-xs font-medium uppercase tracking-wider">Working</span>
+        <span className="text-xs font-medium uppercase tracking-wider">{label}</span>
       </div>
     </div>
   );
@@ -2185,9 +2412,11 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const { activeSessionId, items } = useSessionsStore();
   const liveSessionState = useLiveSessionStore() as {
     busyBySessionId?: Record<string, boolean>;
+    generatingBySessionId?: Record<string, boolean>;
     errorBySessionId?: Record<string, string>;
   };
   const busyBySessionId = liveSessionState.busyBySessionId ?? {};
+  const generatingBySessionId = liveSessionState.generatingBySessionId ?? {};
   const errorBySessionId = liveSessionState.errorBySessionId ?? {};
   const composerState = useComposerStore();
   const composerStoreApi = useComposerStoreApi();
@@ -2203,17 +2432,31 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const activeSession = items.find((session) => session.session_id === activeSessionId) ?? null;
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
-  const activeSessionIsHistoricalPi = activeSession?.historical === true && activeSession?.agent_backend === "pi";
-  const allowLegacyAskUserFallback = Boolean(activeSession?.agent_backend === "pi" && activeSession?.transport !== "pi-rpc");
+  const activeSessionIsPi = activeSession?.agent_backend === "pi";
+  const activeSessionIsHistoricalPi = activeSession?.historical === true && activeSessionIsPi;
+  const allowLegacyAskUserFallback = Boolean(activeSessionIsPi && activeSession?.transport !== "pi-rpc");
+  const isGenerating = Boolean(activeSessionId && generatingBySessionId[activeSessionId] === true);
   const isBusy = Boolean(
-    (activeSessionId && busyBySessionId[activeSessionId] === true)
+    isGenerating
+    || (activeSessionId && busyBySessionId[activeSessionId] === true)
     || activeSession?.busy === true,
   );
   const persistedMessages = activeSessionId ? bySessionId[activeSessionId] ?? [] : [];
   const pendingMessages = activeSessionId ? pendingBySessionId[activeSessionId] ?? [] : [];
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
   const rawMessages = [...persistedMessages, ...pendingMessages];
-  const messages = sortEventsByTimestamp(filterResolvedBridgePseudoEvents(rawMessages).filter(shouldRenderInMainConversation));
+  const messages = sortEventsByTimestamp(filterLocalUserEchoes(filterResolvedBridgePseudoEvents(rawMessages, activeSessionIsPi)).filter(shouldRenderInMainConversation));
+  const lastMessage = messages[messages.length - 1] ?? null;
+  const latestMessageScrollKey = lastMessage
+    ? [
+      messages.length,
+      eventKind(lastMessage),
+      typeof lastMessage.event_id === "string" ? lastMessage.event_id : "",
+      typeof lastMessage.stream_id === "string" ? lastMessage.stream_id : "",
+      typeof lastMessage.text === "string" ? lastMessage.text.length : 0,
+      lastMessage.streaming === true ? "streaming" : "durable",
+    ].join(":")
+    : "empty";
   const rows = messages.reduce<Array<{
     key: string;
     kind: string;
@@ -2316,8 +2559,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     if ((pendingBySessionId[activeSessionId] ?? []).length === 0) return;
     const clearAcknowledgedPending = (composerStoreApi as { clearAcknowledgedPending?: (sessionId: string, events: MessageEvent[]) => void }).clearAcknowledgedPending;
     if (typeof clearAcknowledgedPending !== "function") return;
-    clearAcknowledgedPending(activeSessionId, persistedMessages);
-  }, [activeSessionId, persistedMessages, pendingBySessionId, composerStoreApi]);
+    clearAcknowledgedPending(activeSessionId, activeSessionIsPi ? persistedMessages.filter((event) => event.role !== "user" || isPiConfirmedUserEvent(event) || event.request_state === "failed") : persistedMessages);
+  }, [activeSessionId, activeSessionIsPi, persistedMessages, pendingBySessionId, composerStoreApi]);
 
   const recomputeFloatingNavigation = () => {
     const pane = sectionRef.current?.querySelector(".conversationPane") as HTMLElement | null;
@@ -2363,7 +2606,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
     scrollModeRef.current = null;
     recomputeFloatingNavigation();
-  }, [messages.length, activeSessionId, isBusy]);
+  }, [messages.length, latestMessageScrollKey, activeSessionId, isBusy]);
 
   useEffect(() => {
     const pane = sectionRef.current?.querySelector(".conversationPane") as HTMLElement | null;
@@ -2522,7 +2765,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                 </CardContent>
               </Card>
             )}
-            {isBusy && <WorkingIndicator />}
+            {isBusy && <WorkingIndicator label={isGenerating ? "Generating" : "Working"} />}
           </div>
         )}
       </ScrollArea>

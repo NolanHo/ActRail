@@ -15,6 +15,7 @@ import { SessionCard } from "./SessionCard";
 
 interface SessionsPaneProps {
   onNewSession?: () => void;
+  onSessionSelect?: (session: SessionSummary) => void;
 }
 
 type SessionsSurfaceTab = "sessions" | "focus";
@@ -42,22 +43,29 @@ function handoffSessionConfirmText(session: SessionSummary) {
   return `Start a fresh Pi runtime for session${target}? ActRail will archive the current Pi history, launch a new durable session, and switch only after the new runtime is live.`;
 }
 
+function sessionBackendUnavailable(session: SessionSummary) {
+  const state = String(session.transport_state || "").trim();
+  return session.reset_required === true || state === "ended" || state === "broken";
+}
+
 function restartSessionActionLabel(session: SessionSummary) {
-  return normalizeLaunchBackend(session.agent_backend) === "pi" ? "Restart Pi" : "Restart Codex";
+  const backend = normalizeLaunchBackend(session.agent_backend) === "pi" ? "Pi" : "Codex";
+  return sessionBackendUnavailable(session) ? `Start ${backend}` : `Restart ${backend}`;
 }
 
 function restartSessionConfirmText(session: SessionSummary) {
   const name = getSessionDisplayName({ ...session, session_id: "" }, "");
   const sid = shortSessionId(session.session_id);
   const target = name ? ` \"${name}\" (${sid})` : ` ${sid}`;
-  return `${restartSessionActionLabel(session)} for session${target}? ActRail will keep the durable session history and launch a fresh runtime.`;
+  return `${restartSessionActionLabel(session)} for session${target}? ActRail will keep the durable session metadata and launch a fresh runtime.`;
 }
 
 function restartSessionProgressLabel(session: SessionSummary) {
-  return normalizeLaunchBackend(session.agent_backend) === "pi" ? "Restarting Pi..." : "Restarting Codex...";
+  const backend = normalizeLaunchBackend(session.agent_backend) === "pi" ? "Pi" : "Codex";
+  return sessionBackendUnavailable(session) ? `Starting ${backend}...` : `Restarting ${backend}...`;
 }
 
-export function SessionsPane({ onNewSession }: SessionsPaneProps) {
+export function SessionsPane({ onNewSession, onSessionSelect }: SessionsPaneProps) {
   const { items, activeSessionId, remainingCount = 0 } = useSessionsStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
@@ -305,10 +313,12 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
                 active={session.session_id === activeSessionId}
                 onSelect={() => {
                   if (session.historical && normalizeLaunchBackend(session.agent_backend) !== "pi") {
+                    onSessionSelect?.(session);
                     void resumeHistoricalSession(session);
                     return;
                   }
                   sessionsStoreApi.select(session.session_id);
+                  onSessionSelect?.(session);
                 }}
                 onToggleFocus={() => { void toggleSessionFocus(session); }}
                 onDuplicate={session.historical ? undefined : () => { void duplicateSession(session); }}

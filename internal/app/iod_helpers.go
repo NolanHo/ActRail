@@ -290,7 +290,78 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 		}
 	}
 	s.helpers.replaceAll(attachments, fenced)
+	if err := s.applyStartupTransportHealth(bindings, attachments, fenced); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helperGenerationBinding, attachments map[session.SessionID]attachedHelper, fenced []helperFence) error {
+	if s == nil || s.registry == nil {
+		return nil
+	}
+	fencedBySession := make(map[session.SessionID][]helperFence, len(fenced))
+	for _, fence := range fenced {
+		fencedBySession[fence.SessionID] = append(fencedBySession[fence.SessionID], fence)
+	}
+	for _, record := range s.registry.List() {
+		sessionID := record.identity.SessionID()
+		if record.identity.Historical() || startupTransportAlreadyTerminal(record.transport) {
+			continue
+		}
+		transport := startupTransportForSession(sessionID, bindings, attachments, fencedBySession[sessionID])
+		if transport.State == "" {
+			continue
+		}
+		if _, ok, err := s.registry.SetStartupTransport(sessionID, transport); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("session %q not found while setting startup transport", sessionID)
+		}
+		if (transport.State == SessionTransportStateEnded || transport.State == SessionTransportStateBroken) && record.state.Busy() {
+			if _, ok, err := s.registry.MarkRuntimeCompleted(sessionID); err != nil {
+				return err
+			} else if !ok {
+				return fmt.Errorf("session %q not found while clearing startup busy state", sessionID)
+			}
+			if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func startupTransportAlreadyTerminal(transport SessionTransportSnapshot) bool {
+	return transport.ResetRequired || transport.State == SessionTransportStateBroken || transport.State == SessionTransportStateEnded
+}
+
+func startupTransportForSession(sessionID session.SessionID, bindings map[session.SessionID]helperGenerationBinding, attachments map[session.SessionID]attachedHelper, fences []helperFence) SessionTransportSnapshot {
+	if attachment, ok := attachments[sessionID]; ok {
+		return transportSnapshotAttached(attachment.Binding.GenerationID)
+	}
+	if binding, ok := bindings[sessionID]; ok {
+		if transport, ok := startupTransportFromFences(binding.GenerationID, fences); ok {
+			return transport
+		}
+		return transportSnapshotEnded(binding.GenerationID, "helper_not_running")
+	}
+	if transport, ok := startupTransportFromFences("", fences); ok {
+		return transport
+	}
+	return SessionTransportSnapshot{State: SessionTransportStateEnded, Reason: "helper_binding_missing"}
+}
+
+func startupTransportFromFences(generationID iod.GenerationID, fences []helperFence) (SessionTransportSnapshot, bool) {
+	for _, fence := range fences {
+		if generationID != "" && fence.GenerationID != generationID {
+			continue
+		}
+		if transport, ok := transportSnapshotFromFence(fence); ok {
+			return transport, true
+		}
+	}
+	return SessionTransportSnapshot{}, false
 }
 
 func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBinding, discovered iodclient.DiscoveredManifest) (attachedHelper, helperGenerationBinding, helperFenceReason, error) {
@@ -307,32 +378,8 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 		_ = client.Close()
 		return attachedHelper{}, binding, helperFenceHelloProofMismatch, err
 	}
-	replayReq, err := iod.NewReplayRequestPacket(binding.SessionID, binding.GenerationID, binding.LastReplayOffset)
-	if err != nil {
-		_ = client.Close()
-		return attachedHelper{}, binding, helperFenceReplayFailed, err
-	}
-	replayState := newHelperReplayState(binding.LastReplayOffset, func(packet iod.ReplayItemPacket) error {
-		record, err := s.lookupSession(binding.SessionID)
-		if err != nil {
-			return err
-		}
-		if !runtimeProjectionSupported(record.identity.Backend()) {
-			return nil
-		}
-		return s.applyRuntimeHelperPacket(binding.SessionID, record.identity.Backend(), packet)
-	})
-	done, err := client.Replay(ctx, replayReq, replayState.accept)
-	if err != nil {
-		_ = client.Close()
-		return attachedHelper{}, binding, replayFenceReason(err), err
-	}
-	if err := replayState.finish(done); err != nil {
-		_ = client.Close()
-		return attachedHelper{}, binding, replayFenceReason(err), err
-	}
 	updatedBinding := binding
-	updatedBinding.LastReplayOffset = replayState.lastOffset
+	updatedBinding.LastReplayOffset = 0
 	return attachedHelper{
 		Binding:      updatedBinding,
 		ManifestPath: discovered.Path,

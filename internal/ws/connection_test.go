@@ -9,15 +9,17 @@ import (
 )
 
 type fakeCommandTarget struct {
-	mu            sync.Mutex
-	sends         []SendCommand
-	enqueues      []EnqueueCommand
-	interrupts    []InterruptCommand
-	uiResponses   []UIResponseCommand
-	sendErr       error
-	enqueueErr    error
-	interruptErr  error
-	uiResponseErr error
+	mu             sync.Mutex
+	sends          []SendCommand
+	enqueues       []EnqueueCommand
+	queueCancels   []QueueCancelCommand
+	interrupts     []InterruptCommand
+	uiResponses    []UIResponseCommand
+	sendErr        error
+	enqueueErr     error
+	queueCancelErr error
+	interruptErr   error
+	uiResponseErr  error
 }
 
 func (f *fakeCommandTarget) HandleSend(cmd SendCommand) error {
@@ -32,6 +34,13 @@ func (f *fakeCommandTarget) HandleEnqueue(cmd EnqueueCommand) error {
 	defer f.mu.Unlock()
 	f.enqueues = append(f.enqueues, cmd)
 	return f.enqueueErr
+}
+
+func (f *fakeCommandTarget) HandleQueueCancel(cmd QueueCancelCommand) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queueCancels = append(f.queueCancels, cmd)
+	return f.queueCancelErr
 }
 
 func (f *fakeCommandTarget) HandleInterrupt(cmd InterruptCommand) error {

@@ -3,11 +3,18 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FileIcon, HarnessIcon, MenuIcon, SessionsIcon, StopIcon, TodoListIcon, WorkspaceIcon } from "./icons";
 
+export interface ConversationStatusItem {
+  label: string;
+  value: string;
+  tone?: "default" | "attention" | "error";
+}
+
 interface AppShellToolbarProps {
   activeSessionId: string | null;
   activeTitle: string;
   canInterrupt: boolean;
   showInterruptAction: boolean;
+  statusItems?: ConversationStatusItem[];
   showMobileSessionsTrigger: boolean;
   showMobileToolbarMenu: boolean;
   onInterrupt(): void;
@@ -15,6 +22,7 @@ interface AppShellToolbarProps {
   onOpenHarness(): void;
   onOpenSessions(): void;
   onOpenTodo(): void;
+  onOpenWaits(): void;
   onOpenWorkspace(): void;
 }
 
@@ -23,6 +31,7 @@ export function AppShellToolbar({
   activeTitle,
   canInterrupt,
   showInterruptAction,
+  statusItems = [],
   showMobileSessionsTrigger,
   showMobileToolbarMenu,
   onInterrupt,
@@ -30,6 +39,7 @@ export function AppShellToolbar({
   onOpenHarness,
   onOpenSessions,
   onOpenTodo,
+  onOpenWaits,
   onOpenWorkspace,
 }: AppShellToolbarProps) {
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
@@ -121,8 +131,24 @@ export function AppShellToolbar({
         variant={mobileMenu ? "ghost" : "outline"}
         size={mobileMenu ? "sm" : "icon"}
         className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Workspace"
-        title="Workspace"
+        aria-label="Waiting Inbox"
+        title="Waiting Inbox"
+        disabled={!activeSessionId}
+        onClick={() => {
+          closeMobileToolsMenu();
+          onOpenWaits();
+        }}
+      >
+        <TodoListIcon />
+        {mobileMenu ? <span>Waiting Inbox</span> : null}
+      </Button>
+      <Button
+        type="button"
+        variant={mobileMenu ? "ghost" : "outline"}
+        size={mobileMenu ? "sm" : "icon"}
+        className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
+        aria-label="Details"
+        title="Details"
         disabled={!activeSessionId}
         onClick={() => {
           closeMobileToolsMenu();
@@ -130,7 +156,7 @@ export function AppShellToolbar({
         }}
       >
         <WorkspaceIcon />
-        {mobileMenu ? <span>Workspace</span> : null}
+        {mobileMenu ? <span>Details</span> : null}
       </Button>
       {showInterruptAction ? (
         <Button
@@ -191,7 +217,19 @@ export function AppShellToolbar({
             {mobileToolsOpen ? <div className="conversationMenuPanel">{renderConversationActionButtons(true)}</div> : null}
           </div>
         ) : null}
-        <div className="conversationTitle">{activeSessionId ? activeTitle : "No session selected"}</div>
+        <div className="conversationIdentityBlock">
+          <div className="conversationTitle">{activeSessionId ? activeTitle : "No session selected"}</div>
+          {activeSessionId && statusItems.length ? (
+            <div className="conversationStatusStrip" aria-label="Session status">
+              {statusItems.map((item) => (
+                <span key={`${item.label}:${item.value}`} className={cn("conversationStatusChip", item.tone && item.tone !== "default" && item.tone)}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
       <div className="conversationToolbarGroup conversationToolbarGroupActions">
         {showMobileToolbarMenu ? null : renderConversationActionButtons()}

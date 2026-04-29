@@ -31,6 +31,10 @@ import type {
   SessionUiStateResponse,
   SessionsResponse,
   VoiceSettingsResponse,
+  WaitInboxResponse,
+  WaitLifecycleResponse,
+  WaitThreadResponse,
+  WaitThreadsResponse,
   WorkspaceResponse,
 } from "./types";
 
@@ -143,7 +147,7 @@ export const api = {
   login(password: string, signal?: AbortSignal) {
     return postJson<LoginResponse>("/api/login", { password }, signal);
   },
-  listSessions(options?: { groupKey?: string; offset?: number; limit?: number; groupOffset?: number; groupLimit?: number }, signal?: AbortSignal) {
+  listSessions(options?: { groupKey?: string; offset?: number; limit?: number; groupOffset?: number; groupLimit?: number; agentBackend?: string; cwd?: string; title?: string }, signal?: AbortSignal) {
     const query = new URLSearchParams();
     if (options?.groupKey) {
       query.set("group_key", options.groupKey);
@@ -159,6 +163,15 @@ export const api = {
     }
     if (typeof options?.groupLimit === "number" && Number.isFinite(options.groupLimit) && options.groupLimit > 0) {
       query.set("group_limit", String(options.groupLimit));
+    }
+    if (typeof options?.agentBackend === "string" && options.agentBackend.trim()) {
+      query.set("agent_backend", options.agentBackend.trim());
+    }
+    if (typeof options?.cwd === "string" && options.cwd.trim()) {
+      query.set("cwd", options.cwd.trim());
+    }
+    if (typeof options?.title === "string" && options.title.trim()) {
+      query.set("title", options.title.trim());
     }
     const suffix = query.size ? `?${query.toString()}` : "";
     return getJson<SessionsResponse>(`/api/sessions${suffix}`, signal);
@@ -199,6 +212,29 @@ export const api = {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson<SessionUiStateResponse>(`/api/sessions/${routeId}/ui_state`, signal);
   },
+  getWaitInbox(signal?: AbortSignal) {
+    return getJson<WaitInboxResponse>(`/api/waits/inbox`, signal);
+  },
+  getWaitThreads(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return getJson<WaitThreadsResponse>(`/api/sessions/${routeId}/waits/threads`, signal);
+  },
+  getWaitThread(sessionId: string, threadId: string, signal?: AbortSignal, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return getJson<WaitThreadResponse>(`/api/sessions/${routeId}/waits/threads/${encodeURIComponent(threadId)}`, signal);
+  },
+  claimWait(sessionId: string, waitId: string, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return postJson<WaitLifecycleResponse>(`/api/sessions/${routeId}/waits/${encodeURIComponent(waitId)}/claim`, {});
+  },
+  answerWait(sessionId: string, waitId: string, answer: string, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return postJson<WaitLifecycleResponse>(`/api/sessions/${routeId}/waits/${encodeURIComponent(waitId)}/answer`, { answer });
+  },
+  cancelWait(sessionId: string, waitId: string, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return postJson<WaitLifecycleResponse>(`/api/sessions/${routeId}/waits/${encodeURIComponent(waitId)}/cancel`, {});
+  },
   getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson<LiveSessionResponse>(`/api/sessions/${routeId}/state`, signal);
@@ -238,6 +274,13 @@ export const api = {
       type: "enqueue",
       stream: sessionStreamName(sessionId),
       payload: withSessionIdentity(sessionId, runtimeId, { text }),
+    });
+  },
+  async cancelQueue(sessionId: string, runtimeId?: string | null) {
+    return sendRealtimeCommand({
+      type: "queue.cancel",
+      stream: sessionStreamName(sessionId),
+      payload: withSessionIdentity(sessionId, runtimeId),
     });
   },
   deleteSession(sessionId: string, runtimeId?: string | null) {

@@ -68,9 +68,14 @@ export function createSessionUiStore(): SessionUiStore {
       let request: Promise<void> | null = null;
       request = (async () => {
         try {
-          const workspace = _options?.runtimeId
-            ? await api.getWorkspace(sessionId, undefined, _options.runtimeId)
-            : await api.getWorkspace(sessionId);
+          const [workspace, sessionState] = await Promise.all([
+            _options?.runtimeId
+              ? api.getWorkspace(sessionId, undefined, _options.runtimeId)
+              : api.getWorkspace(sessionId),
+            _options?.runtimeId
+              ? api.getSessionState(sessionId, undefined, _options.runtimeId)
+              : api.getSessionState(sessionId),
+          ]);
           if (refreshId !== currentRefreshId) {
             return;
           }
@@ -105,7 +110,7 @@ export function createSessionUiStore(): SessionUiStore {
               ? workspace.runtime_id
               : (_options?.runtimeId ?? null),
             diagnostics: diagnosticsEntries.length ? Object.fromEntries(diagnosticsEntries) : null,
-            queue: null,
+            queue: sessionState.queue && typeof sessionState.queue === "object" ? sessionState.queue as Record<string, unknown> : null,
             files,
             loading: false,
           };

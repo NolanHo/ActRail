@@ -27,6 +27,11 @@ func main() {
 		logger.Error("actrail service init failed", "sqlite_path", cfg.SQLitePath(), "err", err)
 		os.Exit(1)
 	}
+	defer func() {
+		if err := service.Close(); err != nil {
+			logger.Error("actrail service close failed", "err", err)
+		}
+	}()
 	replay, err := ws.NewReplayBuffer(cfg.Protocol.ResumeBuffer)
 	if err != nil {
 		logger.Error("invalid websocket replay buffer", "err", err)

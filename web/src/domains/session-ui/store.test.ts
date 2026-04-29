@@ -5,6 +5,7 @@ import { createSessionUiStore } from "./store";
 vi.mock("../../lib/api", () => ({
   api: {
     getWorkspace: vi.fn(),
+    getSessionState: vi.fn(),
   },
 }));
 
@@ -12,6 +13,10 @@ describe("createSessionUiStore", () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
+
+  function mockSessionState(queue: Record<string, unknown> | null = null) {
+    vi.mocked(api.getSessionState).mockResolvedValue({ queue } as any);
+  }
 
   function createDeferred<T>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -30,6 +35,7 @@ describe("createSessionUiStore", () => {
       open_paths: ["src/main.tsx"],
       history_items: [{ path: "README.md", label: "README" }],
     } as any);
+    mockSessionState();
 
     const store = createSessionUiStore();
     await store.refresh("s1");
@@ -51,6 +57,7 @@ describe("createSessionUiStore", () => {
 
   it("refreshes workspace data the same way for non-pi sessions", async () => {
     vi.mocked(api.getWorkspace).mockResolvedValue({ root_path: "/tmp/project" } as any);
+    mockSessionState();
 
     const store = createSessionUiStore();
     await store.refresh("s1", { agentBackend: "codex" });
@@ -68,6 +75,7 @@ describe("createSessionUiStore", () => {
     const nextWorkspace = createDeferred<Record<string, unknown>>();
 
     vi.mocked(api.getWorkspace).mockReturnValueOnce(nextWorkspace.promise as any);
+    mockSessionState();
 
     const store = createSessionUiStore();
 
@@ -109,6 +117,7 @@ describe("createSessionUiStore", () => {
     const nextWorkspace = createDeferred<Record<string, unknown>>();
 
     vi.mocked(api.getWorkspace).mockReturnValueOnce(nextWorkspace.promise as any);
+    mockSessionState();
 
     const store = createSessionUiStore();
 
@@ -144,6 +153,7 @@ describe("createSessionUiStore", () => {
   it("reuses an in-flight refresh for the same session and runtime", async () => {
     const deferred = createDeferred<Record<string, unknown>>();
     vi.mocked(api.getWorkspace).mockReturnValueOnce(deferred.promise as any);
+    mockSessionState();
 
     const store = createSessionUiStore();
     const first = store.refresh("s1", { runtimeId: "rt-1" });

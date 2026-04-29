@@ -18,6 +18,48 @@ import (
 	"actrail/internal/domain/session"
 )
 
+func TestRuntimeLineBufferReturnsFinalJSONWithoutTrailingNewline(t *testing.T) {
+	var buffer runtimeLineBuffer
+	buffer.append(`{"type":"turn.completed","turn_id":"turn-no-newline","role":"assistant","text":"final"}`)
+	line, ok := buffer.nextLine()
+	if !ok {
+		t.Fatal("nextLine() ok = false, want true for complete JSON without newline")
+	}
+	if string(line) != `{"type":"turn.completed","turn_id":"turn-no-newline","role":"assistant","text":"final"}` {
+		t.Fatalf("nextLine() = %q", string(line))
+	}
+	if _, ok := buffer.nextLine(); ok {
+		t.Fatal("nextLine() returned a second frame after draining final JSON")
+	}
+}
+
+func TestRuntimeDecoderIgnoresHelperStderr(t *testing.T) {
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	projection := decoder.decodeHelperOutput(iodTerminalOutputPayload{
+		Stream: "stderr",
+		Data:   `{"type":"message_update","message":{"timestamp":1777450000000,"model":"gpt-5.5","provider":"openai"}}` + "\n",
+	})
+	if projection.model != "" || projection.provider != "" || len(projection.events) != 0 || projection.turnTiming != nil {
+		t.Fatalf("stderr projection = %#v, want zero projection", projection)
+	}
+}
+
+func TestRuntimeLineBufferKeepsPartialJSONWithoutTrailingNewline(t *testing.T) {
+	var buffer runtimeLineBuffer
+	buffer.append(`{"type":"turn.completed"`)
+	if _, ok := buffer.nextLine(); ok {
+		t.Fatal("nextLine() ok = true, want false for partial JSON")
+	}
+	buffer.append(`,"turn_id":"turn-finished"}`)
+	line, ok := buffer.nextLine()
+	if !ok {
+		t.Fatal("nextLine() ok = false after JSON completion")
+	}
+	if string(line) != `{"type":"turn.completed","turn_id":"turn-finished"}` {
+		t.Fatalf("nextLine() = %q", string(line))
+	}
+}
+
 type captureRuntimeSink struct {
 	mu                     sync.Mutex
 	states                 []SessionStateEvent
@@ -197,8 +239,8 @@ func TestCreateSessionConsumesPIRPCRuntimeOutputIntoStateTranscriptAndEvents(t *
 		"{\"type\":\"turn_start\"}" + "\n" +
 		"{\"type\":\"message_update\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves \"}],\"timestamp\":1774708716099},\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"Codoxear serves \",\"partial\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves \"}],\"timestamp\":1774708716099}}}" + "\n" +
 		"{\"type\":\"message_update\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"timestamp\":1774708716099},\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"a browser UI for Codex-style sessions.\",\"partial\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"timestamp\":1774708716099}}}" + "\n" +
-		"{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"stopReason\":\"stop\",\"timestamp\":1774708716099}}" + "\n" +
-		"{\"type\":\"turn_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"stopReason\":\"stop\",\"timestamp\":1774708716099},\"toolResults\":[]}" + "\n"))
+		"{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"provider\":\"openai\",\"model\":\"gpt-5.5\",\"usage\":{\"input\":1200,\"output\":34,\"totalTokens\":1234},\"stopReason\":\"stop\",\"timestamp\":1774708716099}}" + "\n" +
+		"{\"type\":\"turn_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Codoxear serves a browser UI for Codex-style sessions.\"}],\"provider\":\"openai\",\"model\":\"gpt-5.5\",\"usage\":{\"input\":1200,\"output\":34,\"totalTokens\":1234},\"stopReason\":\"stop\",\"timestamp\":1774708716099},\"toolResults\":[]}" + "\n"))
 	_ = stdoutW.Close()
 
 	waitForAppCondition(t, func() bool {
@@ -233,6 +275,16 @@ func TestCreateSessionConsumesPIRPCRuntimeOutputIntoStateTranscriptAndEvents(t *
 	if state.PartialAssistantTurn != nil {
 		t.Fatalf("SessionState().PartialAssistantTurn = %+v, want nil", state.PartialAssistantTurn)
 	}
+	if state.ContextUsage == nil || state.ContextUsage.UsedTokens == nil || *state.ContextUsage.UsedTokens != 1234 {
+		t.Fatalf("SessionState().ContextUsage = %+v, want used_tokens=1234", state.ContextUsage)
+	}
+	details, err := svc.SessionDetails(context.Background(), SessionDetailsRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionDetails() error = %v", err)
+	}
+	if details.Model != "gpt-5.5" || details.Provider != "openai" {
+		t.Fatalf("SessionDetails() model/provider = %q/%q, want gpt-5.5/openai", details.Model, details.Provider)
+	}
 
 	snapshot := sink.snapshot()
 	if len(snapshot.deltas) != 2 || snapshot.deltas[0].Delta != "Codoxear serves " || snapshot.deltas[1].Delta != "a browser UI for Codex-style sessions." {
@@ -243,6 +295,60 @@ func TestCreateSessionConsumesPIRPCRuntimeOutputIntoStateTranscriptAndEvents(t *
 	}
 	if len(snapshot.uiRequests) != 0 || len(snapshot.uiResolved) != 0 {
 		t.Fatalf("runtime ui events = requests:%#v resolved:%#v, want none", snapshot.uiRequests, snapshot.uiResolved)
+	}
+}
+
+func TestPIRPCFinalAssistantMessageClearsBusyWithoutAgentEnd(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	apply := func(raw string) {
+		t.Helper()
+		if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(raw))); err != nil {
+			t.Fatalf("applyRuntimeProjection(%s) error = %v", raw, err)
+		}
+	}
+	assertBusy := func(want bool) {
+		t.Helper()
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		if err != nil {
+			t.Fatalf("SessionState() error = %v", err)
+		}
+		if state.Busy != want {
+			t.Fatalf("SessionState().Busy = %v, want %v", state.Busy, want)
+		}
+	}
+
+	apply(`{"type":"agent_start"}`)
+	assertBusy(true)
+	apply(`{"type":"turn_start"}`)
+	assertBusy(true)
+	apply(`{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"final"}],"timestamp":1774708716099},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"final","partial":{"role":"assistant","content":[{"type":"text","text":"final"}],"timestamp":1774708716099}}}`)
+	assertBusy(true)
+	apply(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"final"}],"stopReason":"stop","timestamp":1774708716099}}`)
+	assertBusy(false)
+	apply(`{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"final"}],"stopReason":"stop","timestamp":1774708716099},"toolResults":[]}`)
+	assertBusy(false)
+
+	snapshot := sink.snapshot()
+	if len(snapshot.states) == 0 {
+		t.Fatal("runtime session state events = 0, want lifecycle states")
+	}
+	if snapshot.states[len(snapshot.states)-1].Busy {
+		t.Fatalf("last state Busy = true, want false: %#v", snapshot.states)
 	}
 }
 

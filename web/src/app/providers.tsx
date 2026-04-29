@@ -6,18 +6,21 @@ import { createLiveSessionStore, type LiveSessionStore } from "../domains/live-s
 import { createSessionsStore, type SessionsStore } from "../domains/sessions/store";
 import { createComposerStore, type ComposerStore } from "../domains/composer/store";
 import { createSessionUiStore, type SessionUiStore } from "../domains/session-ui/store";
+import { createWaitsStore, type WaitsStore } from "../domains/waits/store";
 
 const defaultSessionsStore = createSessionsStore();
 const defaultMessagesStore = createMessagesStore();
 const defaultLiveSessionStore = createLiveSessionStore(defaultMessagesStore);
 const defaultComposerStore = createComposerStore();
 const defaultSessionUiStore = createSessionUiStore();
+const defaultWaitsStore = createWaitsStore();
 
 const SessionsStoreContext = createContext<SessionsStore>(defaultSessionsStore);
 const MessagesStoreContext = createContext<MessagesStore>(defaultMessagesStore);
 const LiveSessionStoreContext = createContext<LiveSessionStore>(defaultLiveSessionStore);
 const ComposerStoreContext = createContext<ComposerStore>(defaultComposerStore);
 const SessionUiStoreContext = createContext<SessionUiStore>(defaultSessionUiStore);
+const WaitsStoreContext = createContext<WaitsStore>(defaultWaitsStore);
 
 interface AppProvidersProps {
   children: preact.ComponentChildren;
@@ -26,6 +29,7 @@ interface AppProvidersProps {
   liveSessionStore?: LiveSessionStore;
   composerStore?: ComposerStore;
   sessionUiStore?: SessionUiStore;
+  waitsStore?: WaitsStore;
 }
 
 export function AppProviders({
@@ -35,13 +39,16 @@ export function AppProviders({
   liveSessionStore = defaultLiveSessionStore,
   composerStore = defaultComposerStore,
   sessionUiStore = defaultSessionUiStore,
+  waitsStore = defaultWaitsStore,
 }: AppProvidersProps) {
   return (
     <SessionsStoreContext.Provider value={sessionsStore}>
       <MessagesStoreContext.Provider value={messagesStore}>
         <LiveSessionStoreContext.Provider value={liveSessionStore}>
           <ComposerStoreContext.Provider value={composerStore}>
-            <SessionUiStoreContext.Provider value={sessionUiStore}>{children}</SessionUiStoreContext.Provider>
+            <SessionUiStoreContext.Provider value={sessionUiStore}>
+              <WaitsStoreContext.Provider value={waitsStore}>{children}</WaitsStoreContext.Provider>
+            </SessionUiStoreContext.Provider>
           </ComposerStoreContext.Provider>
         </LiveSessionStoreContext.Provider>
       </MessagesStoreContext.Provider>
@@ -74,6 +81,11 @@ export function useSessionUiStore() {
   return useSyncExternalStore(store.subscribe, store.getState);
 }
 
+export function useWaitsStore() {
+  const store = useContext(WaitsStoreContext);
+  return useSyncExternalStore(store.subscribe, store.getState);
+}
+
 export function useSessionsStoreApi() {
   return useContext(SessionsStoreContext);
 }
@@ -92,4 +104,8 @@ export function useComposerStoreApi() {
 
 export function useSessionUiStoreApi() {
   return useContext(SessionUiStoreContext);
+}
+
+export function useWaitsStoreApi() {
+  return useContext(WaitsStoreContext);
 }

@@ -36,7 +36,9 @@ func transportSnapshotBroken(generationID iod.GenerationID, reason string, reset
 
 func transportSnapshotFromFence(fence helperFence) (SessionTransportSnapshot, bool) {
 	switch fence.Reason {
-	case helperFenceAttachFailed, helperFenceHelloProofMismatch, helperFenceReplayFailed, helperFenceReplayGap, helperFenceReplayCorruptTail, helperFenceCurrentGenerationUnbound:
+	case helperFenceAttachFailed:
+		return transportSnapshotEnded(fence.GenerationID, "helper_not_running"), true
+	case helperFenceHelloProofMismatch, helperFenceReplayFailed, helperFenceReplayGap, helperFenceReplayCorruptTail, helperFenceCurrentGenerationUnbound:
 		return transportSnapshotBroken(fence.GenerationID, string(fence.Reason), true), true
 	default:
 		return SessionTransportSnapshot{}, false

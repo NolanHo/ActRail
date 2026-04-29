@@ -22,6 +22,7 @@ type Handle interface {
 	PID() int
 	Spec() LaunchSpec
 	Logs() LogPaths
+	Stdin() io.WriteCloser
 	Stdout() io.ReadCloser
 	Stderr() io.ReadCloser
 	PTY() PTY

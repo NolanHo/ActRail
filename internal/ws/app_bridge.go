@@ -29,10 +29,29 @@ type messageDeltaPayload struct {
 	Delta     string `json:"delta"`
 }
 
+type messageGeneratingPayload struct {
+	SessionID string `json:"session_id"`
+	StreamSeq int64  `json:"stream_seq"`
+	TurnID    string `json:"turn_id"`
+	Role      string `json:"role"`
+	Active    bool   `json:"active"`
+}
+
 type committedMessagePayload struct {
-	Seq  uint64 `json:"seq"`
-	Role string `json:"role"`
-	Text string `json:"text"`
+	Seq           uint64         `json:"seq"`
+	Role          string         `json:"role,omitempty"`
+	Kind          string         `json:"kind,omitempty"`
+	Type          string         `json:"type,omitempty"`
+	Text          string         `json:"text"`
+	TS            float64        `json:"ts,omitempty"`
+	EventID       string         `json:"event_id,omitempty"`
+	ParentEventID string         `json:"parent_event_id,omitempty"`
+	SourceOrder   string         `json:"source_order,omitempty"`
+	Name          string         `json:"name,omitempty"`
+	Summary       string         `json:"summary,omitempty"`
+	ToolCallID    string         `json:"tool_call_id,omitempty"`
+	IsError       bool           `json:"is_error,omitempty"`
+	Details       map[string]any `json:"details,omitempty"`
 }
 
 type messageCommitPayload struct {
@@ -88,18 +107,20 @@ type AppBridge struct {
 	now        func() time.Time
 	frameIDs   IDSource
 
-	mu         sync.Mutex
-	streamSeqs map[StreamName]int64
+	mu               sync.Mutex
+	streamSeqs       map[StreamName]int64
+	generatingByTurn map[string]struct{}
 }
 
 func NewAppBridge(controller app.SessionController, cursors app.SessionResumeCursorWriter, publisher *Publisher) *AppBridge {
 	return &AppBridge{
-		controller: controller,
-		cursors:    cursors,
-		publisher:  publisher,
-		now:        time.Now,
-		frameIDs:   NewCounterIDSource("evt"),
-		streamSeqs: make(map[StreamName]int64),
+		controller:       controller,
+		cursors:          cursors,
+		publisher:        publisher,
+		now:              time.Now,
+		frameIDs:         NewCounterIDSource("evt"),
+		streamSeqs:       make(map[StreamName]int64),
+		generatingByTurn: make(map[string]struct{}),
 	}
 }
 
@@ -119,6 +140,17 @@ func (b *AppBridge) HandleEnqueue(cmd EnqueueCommand) error {
 		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
 	}
 	_, err := b.controller.Enqueue(context.Background(), app.EnqueueRequest{SessionID: cmd.SessionID, Text: cmd.Text})
+	if err != nil {
+		return mapAppCommandError(err)
+	}
+	return nil
+}
+
+func (b *AppBridge) HandleQueueCancel(cmd QueueCancelCommand) error {
+	if b.controller == nil {
+		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
+	}
+	_, err := b.controller.CancelQueue(context.Background(), app.CancelQueueRequest{SessionID: cmd.SessionID})
 	if err != nil {
 		return mapAppCommandError(err)
 	}
@@ -169,6 +201,7 @@ func (b *AppBridge) PublishSessionState(event app.SessionStateEvent) {
 }
 
 func (b *AppBridge) PublishMessageDelta(event app.MessageDeltaEvent) {
+	b.publishGenerating(event.SessionID, event.TurnID, event.Role, true)
 	b.publish(event.SessionID, session.StreamKindMain, FrameTypeMessageDelta, func(cursor int64) any {
 		return messageDeltaPayload{
 			SessionID: event.SessionID.String(),
@@ -187,12 +220,24 @@ func (b *AppBridge) PublishMessageCommit(event app.MessageCommitEvent) {
 			StreamSeq: cursor,
 			TurnID:    event.TurnID,
 			Message: committedMessagePayload{
-				Seq:  event.Message.Seq,
-				Role: event.Message.Role,
-				Text: event.Message.Text,
+				Seq:           event.Message.Seq,
+				Role:          event.Message.Role,
+				Kind:          event.Message.Kind,
+				Type:          event.Message.Type,
+				Text:          event.Message.Text,
+				TS:            event.Message.TS,
+				EventID:       event.Message.EventID,
+				ParentEventID: event.Message.ParentEventID,
+				SourceOrder:   event.Message.SourceOrder,
+				Name:          event.Message.Name,
+				Summary:       event.Message.Summary,
+				ToolCallID:    event.Message.ToolCallID,
+				IsError:       event.Message.IsError,
+				Details:       event.Message.Details,
 			},
 		}
 	})
+	b.publishGenerating(event.SessionID, event.TurnID, event.Message.Role, false)
 }
 
 func (b *AppBridge) PublishQueueState(event app.QueueStateEvent) {
@@ -239,6 +284,34 @@ func (b *AppBridge) PublishTransportResetRequired(event app.TransportResetRequir
 			StreamSeq:    cursor,
 			GenerationID: event.GenerationID,
 			Reason:       event.Reason,
+		}
+	})
+}
+
+func (b *AppBridge) publishGenerating(sessionID session.SessionID, turnID, role string, active bool) {
+	if b == nil || turnID == "" {
+		return
+	}
+	key := sessionID.String() + ":" + turnID
+	b.mu.Lock()
+	_, alreadyActive := b.generatingByTurn[key]
+	if active && alreadyActive {
+		b.mu.Unlock()
+		return
+	}
+	if active {
+		b.generatingByTurn[key] = struct{}{}
+	} else {
+		delete(b.generatingByTurn, key)
+	}
+	b.mu.Unlock()
+	b.publish(sessionID, session.StreamKindMain, FrameTypeMessageGenerating, func(cursor int64) any {
+		return messageGeneratingPayload{
+			SessionID: sessionID.String(),
+			StreamSeq: cursor,
+			TurnID:    turnID,
+			Role:      role,
+			Active:    active,
 		}
 	})
 }

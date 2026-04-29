@@ -19,6 +19,7 @@ const (
 	FrameTypeSessionsUpdated         FrameType = "sessions.updated"
 	FrameTypeSessionState            FrameType = "session.state"
 	FrameTypeMessageDelta            FrameType = "message.delta"
+	FrameTypeMessageGenerating       FrameType = "message.generating"
 	FrameTypeMessageCommit           FrameType = "message.commit"
 	FrameTypeQueueState              FrameType = "queue.state"
 	FrameTypeUIRequest               FrameType = "ui.request"
@@ -28,6 +29,7 @@ const (
 	FrameTypePing                    FrameType = "ping"
 	FrameTypeSend                    FrameType = "send"
 	FrameTypeEnqueue                 FrameType = "enqueue"
+	FrameTypeQueueCancel             FrameType = "queue.cancel"
 	FrameTypeInterrupt               FrameType = "interrupt"
 	FrameTypeUIResponse              FrameType = "ui.response"
 )

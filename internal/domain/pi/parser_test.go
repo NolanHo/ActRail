@@ -78,6 +78,43 @@ func TestParseJSONLRuntimeSessionExtractsHeaderAndCommitLikeMessages(t *testing.
 	}
 }
 
+func TestParseGenericErrorEventSurfacesUnknownErrorPayload(t *testing.T) {
+	material, err := ParseJSONLBytes([]byte(`{"type":"stream_read_error","error":"read: connection reset by peer"}` + "\n"))
+	if err != nil {
+		t.Fatalf("ParseJSONLBytes() error = %v", err)
+	}
+	if len(material.Events) != 1 {
+		t.Fatalf("len(Events) = %d, want 1", len(material.Events))
+	}
+	event := material.Events[0]
+	if event.Kind != EventKindError || event.Error == nil {
+		t.Fatalf("Events[0] = %#v, want error", event)
+	}
+	if event.Error.Message != "stream_read_error: read: connection reset by peer" {
+		t.Fatalf("Events[0].Error.Message = %q", event.Error.Message)
+	}
+}
+
+func TestParseExtensionUIRequestStatusMessageIsNotError(t *testing.T) {
+	material, err := ParseJSONLBytes([]byte(`{"type":"extension_ui_request","message":"Indexed 90 searchable tools and skills"}` + "\n"))
+	if err != nil {
+		t.Fatalf("ParseJSONLBytes() error = %v", err)
+	}
+	if len(material.Events) != 1 {
+		t.Fatalf("len(Events) = %d, want 1", len(material.Events))
+	}
+	event := material.Events[0]
+	if event.Kind != EventKindMessage || event.Message == nil {
+		t.Fatalf("Events[0] = %#v, want message", event)
+	}
+	if event.Error != nil {
+		t.Fatalf("Events[0].Error = %#v, want nil", event.Error)
+	}
+	if event.Message.Text != "extension_ui_request: Indexed 90 searchable tools and skills" {
+		t.Fatalf("Events[0].Message.Text = %q", event.Message.Text)
+	}
+}
+
 func TestParseJSONLAskUserRoundTripExtractsTypedRequestAndResolution(t *testing.T) {
 	material, err := ParseJSONLBytes(loadFixture(t, "ask_user_roundtrip.jsonl"))
 	if err != nil {
@@ -193,6 +230,23 @@ func TestParseJSONLLiveRuntimeEventsExtractInteractiveRequestDeltaResolutionAndB
 	}
 }
 
+func TestParseJSONLRPCAgentLifecycleBoundaries(t *testing.T) {
+	data := []byte("{\"type\":\"agent_start\"}\n{\"type\":\"agent_end\"}\n")
+	material, err := ParseJSONLBytes(data)
+	if err != nil {
+		t.Fatalf("ParseJSONLBytes() error = %v", err)
+	}
+	if len(material.Events) != 2 {
+		t.Fatalf("len(Events) = %d, want %d", len(material.Events), 2)
+	}
+	if material.Events[0].Boundary == nil || material.Events[0].Boundary.Kind != BoundaryKindAgentStarted {
+		t.Fatalf("Events[0].Boundary = %#v, want agent_started", material.Events[0].Boundary)
+	}
+	if material.Events[1].Boundary == nil || material.Events[1].Boundary.Kind != BoundaryKindAgentCompleted {
+		t.Fatalf("Events[1].Boundary = %#v, want agent_completed", material.Events[1].Boundary)
+	}
+}
+
 func TestParseJSONLRPCRuntimeEventsExtractDeltasCommittedReplyAndBoundary(t *testing.T) {
 	material, err := ParseJSONLBytes(loadFixture(t, "rpc_runtime_events.jsonl"))
 	if err != nil {
@@ -250,19 +304,22 @@ func TestParseJSONLAssistantNarrationAndFinalHeuristics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseJSONLBytes() error = %v", err)
 	}
-	if len(material.Events) != 3 {
-		t.Fatalf("len(Events) = %d, want %d", len(material.Events), 3)
+	if len(material.Events) != 4 {
+		t.Fatalf("len(Events) = %d, want %d", len(material.Events), 4)
 	}
-	if material.Events[0].Message == nil || material.Events[0].Message.Class != MessageClassNarration {
-		t.Fatalf("Events[0].Message = %#v, want narration", material.Events[0].Message)
+	if material.Events[0].Tool == nil || material.Events[0].Tool.Name != "bash" {
+		t.Fatalf("Events[0].Tool = %#v, want bash tool", material.Events[0].Tool)
 	}
-	if material.Events[0].Message.CommitLike {
-		t.Fatal("Events[0].Message.CommitLike = true, want false")
+	if material.Events[1].Message == nil || material.Events[1].Message.Class != MessageClassNarration {
+		t.Fatalf("Events[1].Message = %#v, want narration", material.Events[1].Message)
 	}
-	if material.Events[1].Message == nil || material.Events[1].Message.Class != MessageClassFinal {
-		t.Fatalf("Events[1].Message = %#v, want final response", material.Events[1].Message)
+	if material.Events[1].Message.CommitLike {
+		t.Fatal("Events[1].Message.CommitLike = true, want false")
 	}
-	if material.Events[2].Boundary == nil || material.Events[2].Boundary.Kind != BoundaryKindTurnCompleted {
-		t.Fatalf("Events[2].Boundary = %#v, want inferred turn_completed", material.Events[2].Boundary)
+	if material.Events[2].Message == nil || material.Events[2].Message.Class != MessageClassFinal {
+		t.Fatalf("Events[2].Message = %#v, want final response", material.Events[2].Message)
+	}
+	if material.Events[3].Boundary == nil || material.Events[3].Boundary.Kind != BoundaryKindTurnCompleted {
+		t.Fatalf("Events[3].Boundary = %#v, want inferred turn_completed", material.Events[3].Boundary)
 	}
 }

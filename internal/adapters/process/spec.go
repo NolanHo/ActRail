@@ -358,15 +358,28 @@ func (io IO) Logs() LogPaths {
 	return io.logs
 }
 
-// LaunchSpec freezes the validated process launch contract for later runtime integration.
-type LaunchSpec struct {
-	command Command
-	cwd     WorkingDir
-	env     Environment
-	io      IO
+// LaunchOption configures process launch behavior that is independent of argv.
+type LaunchOption func(*LaunchSpec)
+
+// Detached starts the process in a lifecycle boundary that does not inherit the parent's terminal session.
+func Detached() LaunchOption {
+	return func(spec *LaunchSpec) {
+		if spec != nil {
+			spec.detached = true
+		}
+	}
 }
 
-func NewLaunchSpec(command Command, cwd string, env Environment, io IO) (LaunchSpec, error) {
+// LaunchSpec freezes the validated process launch contract for later runtime integration.
+type LaunchSpec struct {
+	command  Command
+	cwd      WorkingDir
+	env      Environment
+	io       IO
+	detached bool
+}
+
+func NewLaunchSpec(command Command, cwd string, env Environment, io IO, options ...LaunchOption) (LaunchSpec, error) {
 	if err := command.Validate(); err != nil {
 		return LaunchSpec{}, err
 	}
@@ -380,11 +393,21 @@ func NewLaunchSpec(command Command, cwd string, env Environment, io IO) (LaunchS
 	if err := io.Validate(); err != nil {
 		return LaunchSpec{}, err
 	}
-	return LaunchSpec{command: command, cwd: dir, env: env, io: io}, nil
+	spec := LaunchSpec{command: command, cwd: dir, env: env, io: io}
+	for _, option := range options {
+		if option != nil {
+			option(&spec)
+		}
+	}
+	return spec, nil
 }
 
 func (s LaunchSpec) Validate() error {
-	_, err := NewLaunchSpec(s.command, s.cwd.String(), s.env, s.io)
+	options := []LaunchOption{}
+	if s.detached {
+		options = append(options, Detached())
+	}
+	_, err := NewLaunchSpec(s.command, s.cwd.String(), s.env, s.io, options...)
 	return err
 }
 
@@ -402,4 +425,8 @@ func (s LaunchSpec) Environment() Environment {
 
 func (s LaunchSpec) IO() IO {
 	return s.io
+}
+
+func (s LaunchSpec) Detached() bool {
+	return s.detached
 }

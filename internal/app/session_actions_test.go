@@ -153,6 +153,39 @@ func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	}
 }
 
+func TestStubCreateSessionCanResumeListedPISessionCandidate(t *testing.T) {
+	svc, handles, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	resumeID := sessionID.String()
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+		AgentBackend:    "pi",
+		CWD:             record.cwd,
+		ResumeSessionID: &resumeID,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession(resume) error = %v", err)
+	}
+	if created.Session.SessionID == resumeID {
+		t.Fatalf("CreateSession(resume).SessionID = %q, want new ActRail slot", created.Session.SessionID)
+	}
+	if len(*handles) != 2 {
+		t.Fatalf("len(handles) = %d, want 2", len(*handles))
+	}
+	args := (*handles)[1].Spec().Command().Args()
+	found := false
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--session" && args[i+1] == record.importedSourcePath {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("resume launch args = %#v, want --session %q", args, record.importedSourcePath)
+	}
+}
+
 func TestStubSessionResumeCandidatesAndRuntimeRouteLookup(t *testing.T) {
 	svc, _, sessionID, runtimeRoute := newSessionActionFixture(t)
 	otherDir := t.TempDir()
@@ -193,7 +226,7 @@ func TestStubSessionResumeCandidatesAndRuntimeRouteLookup(t *testing.T) {
 	}
 }
 
-func TestStubSessionResumeCandidatesMatchSidebarOrderingForDemotedSessions(t *testing.T) {
+func TestStubSessionResumeCandidatesUseUpdatedTimeDescendingForDemotedSessions(t *testing.T) {
 	cfg := config.Load()
 	now := time.Unix(1760000000, 0).UTC()
 	svc := newStub(cfg, func() time.Time { return now })
@@ -205,6 +238,7 @@ func TestStubSessionResumeCandidatesMatchSidebarOrderingForDemotedSessions(t *te
 	}
 	blockedPriority := 1.0
 	blockedDependency := "s_1"
+	now = now.Add(time.Minute)
 	if _, err := svc.EditSession(context.Background(), EditSessionRequest{
 		SessionID:           mustSessionID(t, "s_2"),
 		PriorityOffset:      Float64Patch{Present: true, Value: &blockedPriority},
@@ -213,6 +247,7 @@ func TestStubSessionResumeCandidatesMatchSidebarOrderingForDemotedSessions(t *te
 		t.Fatalf("EditSession(blocked) error = %v", err)
 	}
 	snoozedPriority := 1.0
+	now = now.Add(time.Minute)
 	snoozeUntil := now.Add(time.Hour).Unix()
 	if _, err := svc.EditSession(context.Background(), EditSessionRequest{
 		SessionID:      mustSessionID(t, "s_3"),
@@ -226,7 +261,7 @@ func TestStubSessionResumeCandidatesMatchSidebarOrderingForDemotedSessions(t *te
 	if err != nil {
 		t.Fatalf("ListSessions() error = %v", err)
 	}
-	want := []string{"s_1", "s_2", "s_3"}
+	want := []string{"s_1", "s_3", "s_2"}
 	listedOrder := make([]string, 0, len(want))
 	for _, item := range listed.Items {
 		if item.CWD == cwd && item.AgentBackend == "pi" {
@@ -243,10 +278,10 @@ func TestStubSessionResumeCandidatesMatchSidebarOrderingForDemotedSessions(t *te
 	for _, item := range resume.Sessions {
 		resumeOrder = append(resumeOrder, item.SessionID)
 	}
-	assertSessionIDOrder(t, "SessionResumeCandidates()", resumeOrder, want)
+	assertSessionIDOrder(t, "SessionResumeCandidates()", resumeOrder, []string{"s_3", "s_2", "s_1"})
 }
 
-func TestStubSessionResumeCandidatesMatchSidebarTieBreakers(t *testing.T) {
+func TestStubSessionResumeCandidatesUseUpdatedTimeTieBreaker(t *testing.T) {
 	cfg := config.Load()
 	now := time.Unix(1760000000, 0).UTC()
 	svc := newStub(cfg, func() time.Time { return now })
@@ -278,7 +313,7 @@ func TestStubSessionResumeCandidatesMatchSidebarTieBreakers(t *testing.T) {
 	for _, item := range resume.Sessions {
 		resumeOrder = append(resumeOrder, item.SessionID)
 	}
-	assertSessionIDOrder(t, "SessionResumeCandidates()", resumeOrder, want)
+	assertSessionIDOrder(t, "SessionResumeCandidates()", resumeOrder, []string{"s_1", "s_2"})
 }
 
 func TestStubSessionActionsReturnNotFoundOrUnsupported(t *testing.T) {
@@ -332,6 +367,9 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	if err := svc.SetSessionUIRequest(sessionID, SessionUIRequestSnapshot{RequestID: "ask_1", Kind: "ask_user", Prompt: "Choose one"}); err != nil {
 		t.Fatalf("SetSessionUIRequest() error = %v", err)
 	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{State: SessionTransportStateEnded, Reason: "helper_not_running"}); err != nil || !ok {
+		t.Fatalf("registry.SetTransport() = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
 
 	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: runtimeID})
 	if err != nil {
@@ -351,6 +389,9 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	}
 	if restarted.Session == nil || restarted.Session.RuntimeID != restarted.RuntimeID {
 		t.Fatalf("RestartSession().Session = %+v, want runtime %q", restarted.Session, restarted.RuntimeID)
+	}
+	if restarted.Session.TransportState != SessionTransportStateAttached.String() {
+		t.Fatalf("RestartSession().Session.TransportState = %q, want %q", restarted.Session.TransportState, SessionTransportStateAttached)
 	}
 	if restarted.WSAttach == nil || restarted.WSAttach.SessionID != sessionID.String() {
 		t.Fatalf("RestartSession().WSAttach = %+v, want session %q", restarted.WSAttach, sessionID)
@@ -385,6 +426,9 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	if record.uiRequest != nil {
 		t.Fatalf("record.uiRequest = %+v, want nil after restart", record.uiRequest)
 	}
+	if record.transport != (SessionTransportSnapshot{}) {
+		t.Fatalf("record.transport = %+v, want empty after restart", record.transport)
+	}
 	if record.resumeCursors != (SessionResumeCursors{}) {
 		t.Fatalf("record.resumeCursors = %+v, want empty", record.resumeCursors)
 	}
@@ -405,6 +449,9 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	}
 	if state.UIRequest != nil {
 		t.Fatalf("SessionState().UIRequest = %+v, want nil after restart", state.UIRequest)
+	}
+	if state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState().Transport = %+v, want attached after restart", state.Transport)
 	}
 	if state.PartialAssistantTurn != nil {
 		t.Fatalf("SessionState().PartialAssistantTurn = %+v, want nil after restart", state.PartialAssistantTurn)

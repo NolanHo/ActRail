@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 7
 
 const tsLayout = time.RFC3339Nano
 
@@ -192,6 +192,106 @@ var migrations = []migration{
 				return err
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 4, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 5,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			if err := ensureColumnExists(ctx, tx, "session_source_refs", "backend_session_id", `ALTER TABLE session_source_refs ADD COLUMN backend_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "session_source_refs", "source_confidence", `ALTER TABLE session_source_refs ADD COLUMN source_confidence TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 5, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 6,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS wait_threads (
+					thread_id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					title TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL,
+					closed_at TEXT,
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE INDEX IF NOT EXISTS wait_threads_session_idx ON wait_threads(session_id, updated_at DESC)`,
+				`CREATE TABLE IF NOT EXISTS waits (
+					wait_id TEXT PRIMARY KEY,
+					thread_id TEXT NOT NULL,
+					session_id TEXT NOT NULL,
+					request_id TEXT NOT NULL DEFAULT '',
+					state TEXT NOT NULL,
+					question TEXT NOT NULL DEFAULT '',
+					context TEXT NOT NULL DEFAULT '',
+					blocking_reason TEXT NOT NULL DEFAULT '',
+					attempted TEXT NOT NULL DEFAULT '',
+					default_if_no_reply TEXT NOT NULL DEFAULT '',
+					answer TEXT NOT NULL DEFAULT '',
+					fallback_used TEXT NOT NULL DEFAULT '',
+					claimed_at TEXT,
+					answered_at TEXT,
+					cancelled_at TEXT,
+					timed_out_at TEXT,
+					orphaned_at TEXT,
+					timeout_at TEXT,
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL,
+					files_json TEXT NOT NULL DEFAULT '[]',
+					FOREIGN KEY(thread_id) REFERENCES wait_threads(thread_id) ON DELETE CASCADE,
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE INDEX IF NOT EXISTS waits_session_thread_idx ON waits(session_id, thread_id, created_at DESC)`,
+				`CREATE UNIQUE INDEX IF NOT EXISTS active_wait_per_session_idx ON waits(session_id) WHERE state IN ('pending_unread', 'claimed')`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 6, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 7,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS session_live_state (
+					session_id TEXT PRIMARY KEY,
+					busy INTEGER NOT NULL DEFAULT 0,
+					tail_seq INTEGER NOT NULL DEFAULT 0,
+					tail_owner TEXT NOT NULL DEFAULT 'transcript',
+					tail_turn_id TEXT NOT NULL DEFAULT '',
+					partial_turn_id TEXT NOT NULL DEFAULT '',
+					partial_text TEXT NOT NULL DEFAULT '',
+					ui_request_json TEXT NOT NULL DEFAULT '',
+					transport_generation_id TEXT NOT NULL DEFAULT '',
+					transport_state TEXT NOT NULL DEFAULT '',
+					transport_reset_required INTEGER NOT NULL DEFAULT 0,
+					transport_reason TEXT NOT NULL DEFAULT '',
+					resume_session_cursor TEXT NOT NULL DEFAULT '',
+					resume_ui_cursor TEXT NOT NULL DEFAULT '',
+					resume_transport_cursor TEXT NOT NULL DEFAULT '',
+					context_usage_json TEXT NOT NULL DEFAULT '',
+					turn_timing_json TEXT NOT NULL DEFAULT '',
+					runtime_agent_running INTEGER NOT NULL DEFAULT 0,
+					updated_at TEXT NOT NULL,
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 7, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},

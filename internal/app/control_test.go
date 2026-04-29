@@ -64,6 +64,45 @@ func newControlFixture(t *testing.T) (*Stub, session.SessionID, *process.FakeHan
 	return svc, sessionID, handle, pty
 }
 
+func TestSessionTransportSnapshotMarksStaleAttachedHelperEnded(t *testing.T) {
+	identity, err := session.NewLiveIdentity("s_stale", "r_1", "t_1", session.BackendPI.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	record := sessionRecord{
+		identity: identity,
+		transport: SessionTransportSnapshot{
+			GenerationID: "g_dead",
+			State:        SessionTransportStateAttached,
+		},
+	}
+	snapshot := sessionTransportSnapshot(record)
+	if snapshot.State != SessionTransportStateEnded || snapshot.Reason != "helper_not_running" {
+		t.Fatalf("sessionTransportSnapshot() = %+v, want ended helper_not_running", snapshot)
+	}
+}
+
+func TestEnqueueAcceptsEndedSessionAndCancelClearsPersistedQueue(t *testing.T) {
+	svc, sessionID, _, _ := newControlFixture(t)
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{State: SessionTransportStateEnded, Reason: "helper_not_running"}); err != nil || !ok {
+		t.Fatalf("SetTransport() = (_, %v, %v), want ok", ok, err)
+	}
+	queued, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "send after restart"})
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	if len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "send after restart" {
+		t.Fatalf("Enqueue().Queue = %+v, want persisted queued prompt", queued.Queue)
+	}
+	cancelled, err := svc.CancelQueue(context.Background(), CancelQueueRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("CancelQueue() error = %v", err)
+	}
+	if len(cancelled.Queue.Items) != 0 {
+		t.Fatalf("CancelQueue().Queue = %+v, want empty", cancelled.Queue)
+	}
+}
+
 func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	svc, sessionID, handle, pty := newControlFixture(t)
 

@@ -188,7 +188,7 @@ describe("conversation layout scroll guards", () => {
     const mobileTextareaRule = ruleBody(mobileRules, ".composerTextarea");
 
     expect(mobileShellRule).toContain("grid-template-columns: 1fr;");
-    expect(mobileStackRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom));");
+    expect(mobileStackRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));");
     expect(mobilePanelRule).toContain("max-height: min(28dvh, 220px);");
     expect(mobileShellComposerRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom));");
     expect(mobileTextareaRule).toContain("min-height: 56px;");

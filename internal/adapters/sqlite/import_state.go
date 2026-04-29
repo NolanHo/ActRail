@@ -11,7 +11,9 @@ import (
 type SessionSourceRefRow struct {
 	SessionID               string
 	Backend                 string
+	BackendSessionID        string
 	SourcePath              string
+	SourceConfidence        string
 	FirstUserMessage        string
 	HasLegacySessionUIState bool
 }
@@ -75,9 +77,13 @@ func (c *SessionCatalog) ReplaceImportBundle(ctx context.Context, bundle ImportB
 			_ = tx.Rollback()
 			return err
 		}
+		if err := upsertLiveStateTx(ctx, tx, snapshot.Session.SessionID, snapshot.Live); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	for _, row := range bundle.SessionSourceRefs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, source_path, first_user_message, has_legacy_session_ui_state) VALUES(?, ?, ?, ?, ?)`, row.SessionID, row.Backend, row.SourcePath, row.FirstUserMessage, boolToInt(row.HasLegacySessionUIState)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state) VALUES(?, ?, ?, ?, ?, ?, ?)`, row.SessionID, row.Backend, row.BackendSessionID, row.SourcePath, row.SourceConfidence, row.FirstUserMessage, boolToInt(row.HasLegacySessionUIState)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("insert session source ref %q: %w", row.SessionID, err)
 		}
@@ -120,6 +126,7 @@ func clearImportBundleTx(ctx context.Context, tx execer) error {
 		`DELETE FROM session_workspace_open_paths`,
 		`DELETE FROM session_workspace_history_items`,
 		`DELETE FROM session_workspace_state`,
+		`DELETE FROM session_live_state`,
 		`DELETE FROM session_source_refs`,
 		`DELETE FROM session_catalog`,
 		`DELETE FROM app_recent_cwds`,
@@ -161,11 +168,23 @@ func replaceAppStateTx(ctx context.Context, tx execer, state AppStateRow) error 
 	return nil
 }
 
+func (c *SessionCatalog) UpsertSessionSourceRef(ctx context.Context, row SessionSourceRefRow) error {
+	if c == nil || c.db == nil {
+		return fmt.Errorf("sqlite catalog is not initialized")
+	}
+	_, err := c.db.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state) VALUES(?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET backend=excluded.backend, backend_session_id=excluded.backend_session_id, source_path=excluded.source_path, source_confidence=excluded.source_confidence, first_user_message=excluded.first_user_message, has_legacy_session_ui_state=excluded.has_legacy_session_ui_state`, row.SessionID, row.Backend, row.BackendSessionID, row.SourcePath, row.SourceConfidence, row.FirstUserMessage, boolToInt(row.HasLegacySessionUIState))
+	if err != nil {
+		return fmt.Errorf("upsert session source ref %q: %w", row.SessionID, err)
+	}
+	return nil
+}
+
 func (c *SessionCatalog) ListSessionSourceRefs(ctx context.Context) ([]SessionSourceRefRow, error) {
 	if c == nil || c.db == nil {
 		return nil, fmt.Errorf("sqlite catalog is not initialized")
 	}
-	rows, err := c.db.QueryContext(ctx, `SELECT session_id, backend, source_path, first_user_message, has_legacy_session_ui_state FROM session_source_refs ORDER BY session_id ASC`)
+	rows, err := c.db.QueryContext(ctx, `SELECT session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state FROM session_source_refs ORDER BY session_id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query session source refs: %w", err)
 	}
@@ -176,7 +195,7 @@ func (c *SessionCatalog) ListSessionSourceRefs(ctx context.Context) ([]SessionSo
 			row                     SessionSourceRefRow
 			hasLegacySessionUIState int
 		)
-		if err := rows.Scan(&row.SessionID, &row.Backend, &row.SourcePath, &row.FirstUserMessage, &hasLegacySessionUIState); err != nil {
+		if err := rows.Scan(&row.SessionID, &row.Backend, &row.BackendSessionID, &row.SourcePath, &row.SourceConfidence, &row.FirstUserMessage, &hasLegacySessionUIState); err != nil {
 			return nil, fmt.Errorf("scan session source ref row: %w", err)
 		}
 		row.HasLegacySessionUIState = hasLegacySessionUIState != 0

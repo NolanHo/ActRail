@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 type sessionStore interface {
 	UpsertSessionSnapshot(context.Context, sqlitestore.SessionSnapshotRow) error
+	UpsertSessionSourceRef(context.Context, sqlitestore.SessionSourceRefRow) error
 	ListSessionSnapshots(context.Context, bool) ([]sqlitestore.SessionSnapshotRow, error)
 }
 
@@ -37,6 +39,54 @@ func durableSessionRowFromRecord(record sessionRecord) sqlitestore.SessionRow {
 		DependencySessionID: sessionIDPtrString(record.dependencySessionID),
 		ArchivedAt:          copyTimePtr(record.archivedAt),
 	}
+}
+
+func durableLiveStateFromRecord(record sessionRecord) sqlitestore.LiveStateRow {
+	tail := record.state.Tail()
+	turnID := ""
+	if id, ok := tail.TurnID(); ok {
+		turnID = id.String()
+	}
+	partialTurnID := ""
+	partialText := ""
+	if partial, ok := record.transcript.PartialAssistantTurn(); ok {
+		partialTurnID = partial.TurnID().String()
+		partialText = partial.Text()
+	}
+	return sqlitestore.LiveStateRow{
+		Busy:                   record.state.Busy(),
+		TailSeq:                tail.Seq().Uint64(),
+		TailOwner:              string(tail.Owner()),
+		TailTurnID:             turnID,
+		PartialTurnID:          partialTurnID,
+		PartialText:            partialText,
+		UIRequestJSON:          marshalLiveJSON(record.uiRequest),
+		TransportGenerationID:  strings.TrimSpace(record.transport.GenerationID),
+		TransportState:         strings.TrimSpace(record.transport.State.String()),
+		TransportResetRequired: record.transport.ResetRequired,
+		TransportReason:        strings.TrimSpace(record.transport.Reason),
+		ResumeSessionCursor:    strings.TrimSpace(record.resumeCursors.Session),
+		ResumeUICursor:         strings.TrimSpace(record.resumeCursors.UI),
+		ResumeTransportCursor:  strings.TrimSpace(record.resumeCursors.Transport),
+		ContextUsageJSON:       marshalLiveJSON(record.contextUsage),
+		TurnTimingJSON:         marshalLiveJSON(record.turnTiming),
+		RuntimeAgentRunning:    record.runtimeAgentRunning,
+		UpdatedAt:              record.updatedAt.UTC(),
+	}
+}
+
+func marshalLiveJSON(value any) string {
+	if value == nil {
+		return ""
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	if string(body) == "null" {
+		return ""
+	}
+	return string(body)
 }
 
 func durableSessionSnapshotFromRecord(record sessionRecord) sqlitestore.SessionSnapshotRow {
@@ -66,6 +116,7 @@ func durableSessionSnapshotFromRecord(record sessionRecord) sqlitestore.SessionS
 			OpenPaths:    append([]string(nil), record.workspace.OpenPaths...),
 			HistoryItems: history,
 		},
+		Live: durableLiveStateFromRecord(record),
 	}
 }
 
@@ -79,7 +130,32 @@ func sessionRecordFromDurableSnapshot(snapshot sqlitestore.SessionSnapshotRow) (
 		return sessionRecord{}, err
 	}
 	transcript := message.NewTranscript()
-	state, err := session.NewState(identity, false, queue, transcript.Tail())
+	if strings.TrimSpace(snapshot.Live.PartialTurnID) != "" && strings.TrimSpace(snapshot.Live.PartialText) != "" {
+		if _, err := transcript.AppendAssistantDelta(snapshot.Live.PartialTurnID, snapshot.Live.PartialText); err != nil {
+			return sessionRecord{}, err
+		}
+	}
+	tail, err := tailSnapshotFromDurableLive(snapshot.Live, transcript)
+	if err != nil {
+		return sessionRecord{}, err
+	}
+	busy := snapshot.Live.Busy
+	if identity.Historical() {
+		busy = false
+	}
+	state, err := session.NewState(identity, busy, queue, tail)
+	if err != nil {
+		return sessionRecord{}, err
+	}
+	uiRequest, err := uiRequestFromLiveJSON(snapshot.Live.UIRequestJSON)
+	if err != nil {
+		return sessionRecord{}, err
+	}
+	contextUsage, err := contextUsageFromLiveJSON(snapshot.Live.ContextUsageJSON)
+	if err != nil {
+		return sessionRecord{}, err
+	}
+	turnTiming, err := turnTimingFromLiveJSON(snapshot.Live.TurnTimingJSON)
 	if err != nil {
 		return sessionRecord{}, err
 	}
@@ -103,8 +179,76 @@ func sessionRecordFromDurableSnapshot(snapshot sqlitestore.SessionSnapshotRow) (
 		state:               state,
 		workspace:           workspaceStateFromDurableRow(snapshot.Workspace),
 		transcript:          transcript,
+		uiRequest:           uiRequest,
+		transport: SessionTransportSnapshot{
+			GenerationID:  strings.TrimSpace(snapshot.Live.TransportGenerationID),
+			State:         SessionTransportState(strings.TrimSpace(snapshot.Live.TransportState)),
+			ResetRequired: snapshot.Live.TransportResetRequired,
+			Reason:        strings.TrimSpace(snapshot.Live.TransportReason),
+		},
+		resumeCursors: SessionResumeCursors{
+			Session:   strings.TrimSpace(snapshot.Live.ResumeSessionCursor),
+			UI:        strings.TrimSpace(snapshot.Live.ResumeUICursor),
+			Transport: strings.TrimSpace(snapshot.Live.ResumeTransportCursor),
+		},
+		contextUsage:        contextUsage,
+		turnTiming:          turnTiming,
+		runtimeAgentRunning: snapshot.Live.RuntimeAgentRunning,
 		inputMu:             &sync.Mutex{},
 	}, nil
+}
+
+func tailSnapshotFromDurableLive(live sqlitestore.LiveStateRow, transcript message.Transcript) (message.TailSnapshot, error) {
+	ownerRaw := strings.TrimSpace(live.TailOwner)
+	if ownerRaw == "" {
+		return transcript.Tail(), nil
+	}
+	owner, err := message.ParseTailOwner(ownerRaw)
+	if err != nil {
+		return message.TailSnapshot{}, err
+	}
+	seq := message.Seq(live.TailSeq)
+	if owner == message.TailOwnerTranscript {
+		return message.NewCommittedTail(seq), nil
+	}
+	turnID, err := message.NewTurnID(live.TailTurnID)
+	if err != nil {
+		return message.TailSnapshot{}, err
+	}
+	return message.NewTailSnapshot(seq, owner, &turnID)
+}
+
+func uiRequestFromLiveJSON(raw string) (*SessionUIRequestSnapshot, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var snapshot SessionUIRequestSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
+func contextUsageFromLiveJSON(raw string) (*SessionContextUsageSnapshot, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var snapshot SessionContextUsageSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}
+
+func turnTimingFromLiveJSON(raw string) (*SessionTurnTimingSnapshot, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var snapshot SessionTurnTimingSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
 }
 
 func queueSnapshotFromDurableRows(rows []sqlitestore.QueueItemRow) (session.QueueSnapshot, error) {
@@ -207,7 +351,38 @@ func (r *sessionRegistry) persistLocked(record sessionRecord) error {
 	if r == nil || r.store == nil {
 		return nil
 	}
-	return r.store.UpsertSessionSnapshot(context.Background(), durableSessionSnapshotFromRecord(record))
+	if err := r.store.UpsertSessionSnapshot(context.Background(), durableSessionSnapshotFromRecord(record)); err != nil {
+		return err
+	}
+	if strings.TrimSpace(record.importedSourcePath) != "" || strings.TrimSpace(record.importedBackendSessionID) != "" {
+		return r.store.UpsertSessionSourceRef(context.Background(), sqlitestore.SessionSourceRefRow{
+			SessionID:        record.identity.SessionID().String(),
+			Backend:          record.identity.Backend().String(),
+			BackendSessionID: strings.TrimSpace(record.importedBackendSessionID),
+			SourcePath:       strings.TrimSpace(record.importedSourcePath),
+			SourceConfidence: strings.TrimSpace(record.importedSourceConfidence),
+			FirstUserMessage: strings.TrimSpace(record.importedFirstUserMessage),
+		})
+	}
+	return nil
+}
+
+func (r *sessionRegistry) PersistAll() error {
+	if r == nil || r.store == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, sessionID := range r.order {
+		record, ok := r.sessions[sessionID]
+		if !ok {
+			continue
+		}
+		if err := r.persistLocked(copySessionRecord(record)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *sessionRegistry) Rehydrate(records []sessionRecord) error {

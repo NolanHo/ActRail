@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"actrail/internal/adapters/iod"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
 )
@@ -43,6 +44,9 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	if created.Session.ThreadID != "t_1" {
 		t.Fatalf("CreateSession().ThreadID = %q, want %q", created.Session.ThreadID, "t_1")
 	}
+	if !created.Session.Focused {
+		t.Fatal("CreateSession().Focused = false, want true")
+	}
 	if created.WSAttach == nil || len(created.WSAttach.SuggestSubscriptions) != 1 || created.WSAttach.SuggestSubscriptions[0] != "session:s_1" {
 		t.Fatalf("CreateSession().WSAttach = %+v, want session:s_1", created.WSAttach)
 	}
@@ -68,6 +72,9 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	}
 	if listed.Items[0].Busy {
 		t.Fatal("ListSessions().Items[0].Busy = true, want false")
+	}
+	if !listed.Items[0].Focused {
+		t.Fatal("ListSessions().Items[0].Focused = false, want true")
 	}
 	if listed.Items[0].Historical {
 		t.Fatal("ListSessions().Items[0].Historical = true, want false")
@@ -133,6 +140,48 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	}
 	if state.ResumeCursors != (SessionResumeCursors{}) {
 		t.Fatalf("SessionState().ResumeCursors = %+v, want empty", state.ResumeCursors)
+	}
+}
+
+func TestStubListSessionsUsesAttachedHelperForTransportSnapshot(t *testing.T) {
+	cfg := config.Load()
+	svc := newStub(cfg, time.Now)
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/docs"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_list_attach")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime = sessionRuntime{}
+		record.transport = SessionTransportSnapshot{}
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
+	svc.helpers.replaceAll(map[session.SessionID]attachedHelper{
+		sessionID: {
+			Binding:      helperGenerationBinding{SessionID: sessionID, GenerationID: generationID},
+			ManifestPath: "/tmp/actrail-iod/g_list_attach/generation-manifest.json",
+			Hello:        iod.HelloPacket{HelloProof: iod.HelloProof{HelperPID: 12345}},
+		},
+	}, nil)
+
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
+	}
+	if listed.Items[0].TransportState != SessionTransportStateAttached.String() || listed.Items[0].GenerationID != generationID.String() {
+		t.Fatalf("ListSessions().Items[0] transport = (%q, %q), want attached %q", listed.Items[0].TransportState, listed.Items[0].GenerationID, generationID)
 	}
 }
 

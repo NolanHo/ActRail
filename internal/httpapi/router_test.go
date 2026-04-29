@@ -45,8 +45,8 @@ func newServiceStub(cfg config.Config) serviceStub {
 	return serviceStub{base: app.NewStubForTest(cfg, time.Now, app.RuntimeConfig{})}
 }
 
-func (s serviceStub) Bootstrap(ctx context.Context) app.BootstrapSnapshot {
-	return s.base.Bootstrap(ctx)
+func (s serviceStub) Bootstrap(ctx context.Context, req app.BootstrapRequest) app.BootstrapSnapshot {
+	return s.base.Bootstrap(ctx, req)
 }
 
 func (s serviceStub) ListSessions(ctx context.Context, req app.ListSessionsRequest) (app.ListSessionsResponse, error) {
@@ -161,6 +161,42 @@ func (s serviceStub) SwitchSessionModel(ctx context.Context, req app.SwitchSessi
 	return s.base.SwitchSessionModel(ctx, req)
 }
 
+func (s serviceStub) SessionCommands(ctx context.Context, req app.SessionCommandsRequest) (app.SessionCommandsResponse, error) {
+	return s.base.SessionCommands(ctx, req)
+}
+
+func (s serviceStub) ExecuteSessionCommand(ctx context.Context, req app.ExecuteSessionCommandRequest) (app.ExecuteSessionCommandResponse, error) {
+	return s.base.ExecuteSessionCommand(ctx, req)
+}
+
+func (s serviceStub) WaitInbox(ctx context.Context) (app.WaitInboxResponse, error) {
+	return s.base.WaitInbox(ctx)
+}
+
+func (s serviceStub) WaitThreads(ctx context.Context, req app.WaitThreadsRequest) (app.WaitThreadsResponse, error) {
+	return s.base.WaitThreads(ctx, req)
+}
+
+func (s serviceStub) WaitThread(ctx context.Context, req app.WaitThreadRequest) (app.WaitThreadResponse, error) {
+	return s.base.WaitThread(ctx, req)
+}
+
+func (s serviceStub) CreateWait(ctx context.Context, req app.CreateWaitRequest) (app.WaitLifecycleResponse, error) {
+	return s.base.CreateWait(ctx, req)
+}
+
+func (s serviceStub) ClaimWait(ctx context.Context, req app.WaitLifecycleRequest) (app.WaitLifecycleResponse, error) {
+	return s.base.ClaimWait(ctx, req)
+}
+
+func (s serviceStub) AnswerWait(ctx context.Context, req app.WaitLifecycleRequest) (app.WaitLifecycleResponse, error) {
+	return s.base.AnswerWait(ctx, req)
+}
+
+func (s serviceStub) CancelWait(ctx context.Context, req app.WaitLifecycleRequest) (app.WaitLifecycleResponse, error) {
+	return s.base.CancelWait(ctx, req)
+}
+
 func (s serviceStub) DeleteSession(ctx context.Context, req app.DeleteSessionRequest) (app.DeleteSessionResponse, error) {
 	if s.deleteFunc != nil {
 		return s.deleteFunc(ctx, req)
@@ -204,7 +240,7 @@ type fixtureService struct {
 	handoffReq      app.HandoffSessionRequest
 }
 
-func (s *fixtureService) Bootstrap(_ context.Context) app.BootstrapSnapshot {
+func (s *fixtureService) Bootstrap(_ context.Context, _ app.BootstrapRequest) app.BootstrapSnapshot {
 	return app.BootstrapSnapshot{
 		ProtocolVersion: 1,
 		Capabilities: app.Capabilities{
@@ -463,6 +499,48 @@ func (s *fixtureService) SwitchSessionModel(_ context.Context, req app.SwitchSes
 		provider = *req.Provider.Value
 	}
 	return app.SwitchSessionModelResponse{OK: true, Model: model, Provider: provider}, nil
+}
+
+func (s *fixtureService) SessionCommands(_ context.Context, req app.SessionCommandsRequest) (app.SessionCommandsResponse, error) {
+	return app.SessionCommandsResponse{Commands: []app.SessionCommand{{Name: "rename", Source: "actrail"}}}, nil
+}
+
+func (s *fixtureService) ExecuteSessionCommand(_ context.Context, req app.ExecuteSessionCommandRequest) (app.ExecuteSessionCommandResponse, error) {
+	return app.ExecuteSessionCommandResponse{OK: true, Command: req.Name, SessionID: req.SessionID.String()}, nil
+}
+
+func (s *fixtureService) WaitInbox(_ context.Context) (app.WaitInboxResponse, error) {
+	return app.WaitInboxResponse{OK: true}, nil
+}
+
+func (s *fixtureService) WaitThreads(_ context.Context, req app.WaitThreadsRequest) (app.WaitThreadsResponse, error) {
+	return app.WaitThreadsResponse{OK: true}, nil
+}
+
+func (s *fixtureService) WaitThread(_ context.Context, req app.WaitThreadRequest) (app.WaitThreadResponse, error) {
+	return app.WaitThreadResponse{OK: true, Thread: app.WaitThreadSummary{ThreadID: req.ThreadID, SessionID: req.SessionID.String()}}, nil
+}
+
+func (s *fixtureService) CreateWait(_ context.Context, req app.CreateWaitRequest) (app.WaitLifecycleResponse, error) {
+	wait := app.WaitRecord{ActiveWaitSummary: app.ActiveWaitSummary{WaitID: "wait_1", ThreadID: "thread_1", SessionID: req.SessionID.String(), State: app.WaitPendingUnread, Question: req.Question}}
+	active := wait.ActiveWaitSummary
+	return app.WaitLifecycleResponse{OK: true, Wait: &wait, ActiveWait: &active}, nil
+}
+
+func (s *fixtureService) ClaimWait(_ context.Context, req app.WaitLifecycleRequest) (app.WaitLifecycleResponse, error) {
+	wait := app.WaitRecord{ActiveWaitSummary: app.ActiveWaitSummary{WaitID: req.WaitID, ThreadID: "thread_1", SessionID: req.SessionID.String(), State: app.WaitClaimed, Question: "question"}}
+	active := wait.ActiveWaitSummary
+	return app.WaitLifecycleResponse{OK: true, Wait: &wait, ActiveWait: &active}, nil
+}
+
+func (s *fixtureService) AnswerWait(_ context.Context, req app.WaitLifecycleRequest) (app.WaitLifecycleResponse, error) {
+	wait := app.WaitRecord{ActiveWaitSummary: app.ActiveWaitSummary{WaitID: req.WaitID, ThreadID: "thread_1", SessionID: req.SessionID.String(), State: app.WaitAnswered, Question: "question"}, Answer: req.Answer}
+	return app.WaitLifecycleResponse{OK: true, Wait: &wait}, nil
+}
+
+func (s *fixtureService) CancelWait(_ context.Context, req app.WaitLifecycleRequest) (app.WaitLifecycleResponse, error) {
+	wait := app.WaitRecord{ActiveWaitSummary: app.ActiveWaitSummary{WaitID: req.WaitID, ThreadID: "thread_1", SessionID: req.SessionID.String(), State: app.WaitCancelled, Question: "question"}}
+	return app.WaitLifecycleResponse{OK: true, Wait: &wait}, nil
 }
 
 func (s *fixtureService) DeleteSession(_ context.Context, req app.DeleteSessionRequest) (app.DeleteSessionResponse, error) {

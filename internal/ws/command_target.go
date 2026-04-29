@@ -10,6 +10,7 @@ import (
 type CommandTarget interface {
 	HandleSend(SendCommand) error
 	HandleEnqueue(EnqueueCommand) error
+	HandleQueueCancel(QueueCancelCommand) error
 	HandleInterrupt(InterruptCommand) error
 	HandleUIResponse(UIResponseCommand) error
 }

@@ -9,13 +9,15 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
-import { useLiveSessionStore, useLiveSessionStoreApi, useSessionUiStore, useSessionUiStoreApi, useSessionsStore } from "../../app/providers";
+import { useLiveSessionStore, useLiveSessionStoreApi, useSessionUiStore, useSessionUiStoreApi, useSessionsStore, useWaitsStore } from "../../app/providers";
 import { api } from "../../lib/api";
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary, SessionUiRequest, TodoSnapshot, TodoSnapshotItem } from "../../lib/types";
 import type { AskUserBridgeAnswers } from "../../domains/ask-user/contract";
 import { encodeAskUserBridgeResponse, parseAskUserBridgeRequest } from "../../domains/ask-user/codec";
 import { getInitialDraftValue, normalizeOption, normalizeRequestValue } from "../../domains/ask-user/normalize";
+import { WaitInbox } from "../waits/WaitInbox";
+import { WaitThreadPanel } from "../waits/WaitThreadPanel";
 
 type DraftValue = string | string[];
 
@@ -34,14 +36,18 @@ function entriesFromRecord(value: Record<string, unknown> | null) {
 function queueItemsFromValue(queue: Record<string, unknown> | null) {
   const rawItems = queue?.items;
   if (!Array.isArray(rawItems)) {
-    return [];
+    return [] as Array<{ id: string; text: string }>;
   }
-  return rawItems.map((item) => {
-    if (item && typeof item === "object" && "text" in item) {
-      return String((item as { text?: unknown }).text ?? "");
+  return rawItems.map((item, index) => {
+    if (item && typeof item === "object") {
+      const record = item as { id?: unknown; queue_id?: unknown; text?: unknown };
+      return {
+        id: String(record.id ?? record.queue_id ?? index),
+        text: String(record.text ?? ""),
+      };
     }
-    return String(item);
-  });
+    return { id: String(index), text: String(item) };
+  }).filter((item) => item.text.trim().length > 0);
 }
 
 function normalizeTodoItem(value: unknown): TodoSnapshotItem | null {
@@ -229,9 +235,10 @@ function WorkspaceSection({
 
 interface SessionWorkspaceProps {
   mode?: "default" | "details";
+  initialTab?: "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files";
 }
 
-export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
+export function SessionWorkspace({ mode = "default", initialTab }: SessionWorkspaceProps) {
   const sessionUiState = useSessionUiStore() as {
     sessionId: string | null;
     runtimeId: string | null;
@@ -242,8 +249,10 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
     files?: string[];
   };
   const { sessionId, runtimeId, diagnostics, queue, loading } = sessionUiState;
-  const { items } = useSessionsStore();
+  const { items, activeSessionId } = useSessionsStore();
+  const workspaceSessionId = sessionId ?? activeSessionId;
   const liveSessionState = useLiveSessionStore();
+  const waitsState = useWaitsStore();
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const liveRequests = sessionId ? liveSessionState.requestsBySessionId[sessionId] ?? [] : [];
   const requests = liveRequests.length ? liveRequests : Array.isArray(sessionUiState.requests) ? sessionUiState.requests : [];
@@ -254,10 +263,12 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
   const [askUserBridgeDrafts, setAskUserBridgeDrafts] = useState<Record<string, AskUserBridgeAnswers>>({});
   const [requestSubmittingById, setRequestSubmittingById] = useState<Record<string, boolean>>({});
   const [requestErrorById, setRequestErrorById] = useState<Record<string, string>>({});
+  const [queueCancelling, setQueueCancelling] = useState(false);
   const requestSubmittingIdsRef = useRef(new Set<string>());
   const diagnosticsEntries = entriesFromRecord(diagnostics);
-  const activeSession = sessionId ? items.find((item) => item.session_id === sessionId) ?? null : null;
-  const metadataEntries = metadataEntriesFromSession(activeSession, sessionId, runtimeId);
+  const activeSession = workspaceSessionId ? items.find((item) => item.session_id === workspaceSessionId) ?? null : null;
+  const activeWait = workspaceSessionId ? waitsState.activeBySessionId[workspaceSessionId] ?? activeSession?.active_wait ?? null : null;
+  const metadataEntries = metadataEntriesFromSession(activeSession, workspaceSessionId, runtimeId);
   const todoSnapshot = normalizeTodoSnapshot(diagnostics && typeof diagnostics === "object" ? (diagnostics as { todo_snapshot?: unknown }).todo_snapshot : null);
   const detailEntries = diagnosticsEntries.filter(([key]) => key !== "todo_snapshot");
   const prioritizedDetailKeys = new Set(["session_file_path", "log_path", "updated_ts"]);
@@ -265,11 +276,13 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
   const genericDetailEntries = detailEntries.filter(([key]) => !prioritizedDetailKeys.has(key));
   const queueItems = queueItemsFromValue(queue);
   const showDetails = mode === "details";
-  const hasWorkspaceData = metadataEntries.length > 0 || diagnosticsEntries.length > 0 || queueItems.length > 0;
+  const hasWorkspaceData = metadataEntries.length > 0 || diagnosticsEntries.length > 0 || queueItems.length > 0 || Boolean(activeWait);
   const showTabs = showDetails || hasWorkspaceData || requests.length > 0;
-  const defaultTab = showDetails
-    ? "overview"
-    : requests.length > 0
+  const derivedDefaultTab = activeWait
+    ? "wait"
+    : showDetails
+      ? "overview"
+      : requests.length > 0
       ? "requests"
       : metadataEntries.length > 0
         ? "metadata"
@@ -278,6 +291,23 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
           : queueItems.length > 0
             ? "queue"
             : "requests";
+  const defaultTab = initialTab ?? derivedDefaultTab;
+
+  const cancelQueue = async () => {
+    if (!sessionId || queueCancelling) {
+      return;
+    }
+    setQueueCancelling(true);
+    try {
+      await (runtimeId ? api.cancelQueue(sessionId, runtimeId) : api.cancelQueue(sessionId));
+      await Promise.allSettled([
+        runtimeId ? liveSessionStoreApi.loadInitial(sessionId, runtimeId) : liveSessionStoreApi.loadInitial(sessionId),
+        runtimeId ? sessionUiStoreApi.refresh(sessionId, { agentBackend: activeSession?.agent_backend, runtimeId }) : sessionUiStoreApi.refresh(sessionId, { agentBackend: activeSession?.agent_backend }),
+      ]);
+    } finally {
+      setQueueCancelling(false);
+    }
+  };
 
   const submitRequestResponse = async (requestId: string, payload: Record<string, unknown>) => {
     if (!sessionId || requestSubmittingIdsRef.current.has(requestId)) {
@@ -312,7 +342,7 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
         <CardHeader className="space-y-4 pb-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
-              <CardTitle className="text-base">Workspace</CardTitle>
+              <CardTitle className="text-base">Details</CardTitle>
               <p className="text-sm text-muted-foreground">
                 {requests.length ? `${requests.length} pending UI request${requests.length === 1 ? "" : "s"}` : "No pending UI requests"}
               </p>
@@ -325,6 +355,8 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
             <Tabs defaultValue={defaultTab} className="min-h-0 flex-1">
               <TabsList className="workspaceTabsList flex h-auto flex-wrap items-center gap-2 rounded-2xl bg-muted/60 p-1">
                 {showDetails ? <TabsTrigger value="overview">Overview</TabsTrigger> : null}
+                <TabsTrigger value="wait">Wait</TabsTrigger>
+                <TabsTrigger value="waiting-inbox">Waiting Inbox</TabsTrigger>
                 <TabsTrigger value="requests">UI Requests</TabsTrigger>
                 <TabsTrigger value="metadata">Metadata</TabsTrigger>
                 <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
@@ -353,13 +385,18 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
                         </WorkspaceSection>
                         <WorkspaceSection title="Queue" badge={queueItems.length ? `${queueItems.length}` : undefined}>
                           {queueItems.length ? (
-                            <ul className="workspaceCollection space-y-2 text-sm text-foreground">
-                              {queueItems.map((item, index) => (
-                                <li key={`${item}-${index}`} className="rounded-xl border border-border/60 bg-card/60 px-3 py-2">
-                                  {item}
-                                </li>
-                              ))}
-                            </ul>
+                            <div className="space-y-3">
+                              <ul className="workspaceCollection space-y-2 text-sm text-foreground">
+                                {queueItems.map((item) => (
+                                  <li key={item.id} className="rounded-xl border border-border/60 bg-card/60 px-3 py-2">
+                                    {item.text}
+                                  </li>
+                                ))}
+                              </ul>
+                              <Button type="button" variant="outline" size="sm" disabled={queueCancelling} onClick={() => { void cancelQueue(); }}>
+                                {queueCancelling ? "Cancelling..." : "Cancel queued send"}
+                              </Button>
+                            </div>
                           ) : (
                             <p className="text-sm text-muted-foreground">No queued items.</p>
                           )}
@@ -384,6 +421,12 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
                     </ScrollArea>
                   </TabsContent>
                 ) : null}
+                <TabsContent value="wait" className="min-h-0">
+                  <WaitThreadPanel sessionId={workspaceSessionId} runtimeId={runtimeId} activeWait={activeWait} />
+                </TabsContent>
+                <TabsContent value="waiting-inbox" className="min-h-0">
+                  <WaitInbox />
+                </TabsContent>
                 <TabsContent value="requests" className="min-h-0">
                   <ScrollArea className="workspaceScroll h-full pr-1">
                     <div className="space-y-4">
@@ -630,13 +673,18 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
                   <ScrollArea className="workspaceScroll h-full pr-1">
                     <WorkspaceSection title="Queue" badge={queueItems.length ? `${queueItems.length}` : undefined}>
                       {queueItems.length ? (
-                        <ul className="workspaceCollection space-y-2 text-sm text-foreground">
-                          {queueItems.map((item, index) => (
-                            <li key={`${item}-${index}`} className="rounded-xl border border-border/60 bg-card/60 px-3 py-2">
-                              {item}
-                            </li>
-                          ))}
-                        </ul>
+                        <div className="space-y-3">
+                          <ul className="workspaceCollection space-y-2 text-sm text-foreground">
+                            {queueItems.map((item) => (
+                              <li key={item.id} className="rounded-xl border border-border/60 bg-card/60 px-3 py-2">
+                                {item.text}
+                              </li>
+                            ))}
+                          </ul>
+                          <Button type="button" variant="outline" size="sm" disabled={queueCancelling} onClick={() => { void cancelQueue(); }}>
+                            {queueCancelling ? "Cancelling..." : "Cancel queued send"}
+                          </Button>
+                        </div>
                       ) : (
                         <p className="text-sm text-muted-foreground">No queued items.</p>
                       )}

@@ -205,6 +205,48 @@ describe("createMessagesStore", () => {
     expect(store.getState().bySessionId.s1).toEqual([{ role: "assistant", text: "hello" }]);
   });
 
+  it("drops a live user echo when Pi snapshot contains the same prompt at the same time", async () => {
+    const store = createMessagesStore();
+
+    store.applyLive("s1", [{ seq: 22, role: "user", text: "continue", ts: 1000 } as any], { replace: false, offset: 22 });
+    store.applySnapshot("s1", [{ seq: 301, event_id: "pi:message:u1", role: "user", text: "continue", ts: 1030 } as any], { offset: 301 });
+
+    expect(store.getState().bySessionId.s1).toEqual([
+      { seq: 301, event_id: "pi:message:u1", role: "user", text: "continue", ts: 1030 },
+    ]);
+  });
+
+  it("keeps repeated user text when timestamps indicate separate turns", async () => {
+    const store = createMessagesStore();
+
+    store.applyLive("s1", [{ seq: 22, role: "user", text: "continue", ts: 2000 } as any], { replace: false, offset: 22 });
+    store.applySnapshot("s1", [{ seq: 1, event_id: "pi:message:u1", role: "user", text: "continue", ts: 1000 } as any], { offset: 1 });
+
+    expect(store.getState().bySessionId.s1).toEqual([
+      { seq: 1, event_id: "pi:message:u1", role: "user", text: "continue", ts: 1000 },
+      { seq: 22, role: "user", text: "continue", ts: 2000 },
+    ]);
+  });
+
+  it("preserves live user messages when a stale initial snapshot resolves later", async () => {
+    let resolveInitial: (v: any) => void;
+    vi.mocked(api.listMessages).mockReturnValueOnce(new Promise((resolve) => {
+      resolveInitial = resolve;
+    }) as never);
+    const store = createMessagesStore();
+
+    const initialPromise = store.loadInitial("s1");
+    store.applyLive("s1", [{ seq: 2, role: "user", text: "new prompt" } as any], { replace: false, offset: 2 });
+
+    resolveInitial!({ events: [{ seq: 1, role: "assistant", text: "old" }], offset: 1 });
+    await initialPromise;
+
+    expect(store.getState().bySessionId.s1).toEqual([
+      { seq: 1, role: "assistant", text: "old" },
+      { seq: 2, role: "user", text: "new prompt" },
+    ]);
+  });
+
   it("applies snapshot replacement and live appends without duplicating stable ids", () => {
     const store = createMessagesStore();
 

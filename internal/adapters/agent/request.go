@@ -36,9 +36,14 @@ type Options struct {
 	provider        string
 	model           string
 	reasoningEffort string
+	sessionPath     string
 }
 
 func NewOptions(provider, model, reasoningEffort string) (Options, error) {
+	return NewOptionsWithSessionPath(provider, model, reasoningEffort, "")
+}
+
+func NewOptionsWithSessionPath(provider, model, reasoningEffort, sessionPath string) (Options, error) {
 	normalizedProvider, err := normalizeOptionValue("provider", provider)
 	if err != nil {
 		return Options{}, err
@@ -51,15 +56,20 @@ func NewOptions(provider, model, reasoningEffort string) (Options, error) {
 	if err != nil {
 		return Options{}, err
 	}
+	normalizedSessionPath, err := normalizeOptionValue("session_path", sessionPath)
+	if err != nil {
+		return Options{}, err
+	}
 	return Options{
 		provider:        normalizedProvider,
 		model:           normalizedModel,
 		reasoningEffort: normalizedReasoning,
+		sessionPath:     normalizedSessionPath,
 	}, nil
 }
 
 func (o Options) Validate() error {
-	_, err := NewOptions(o.provider, o.model, o.reasoningEffort)
+	_, err := NewOptionsWithSessionPath(o.provider, o.model, o.reasoningEffort, o.sessionPath)
 	return err
 }
 
@@ -73,6 +83,10 @@ func (o Options) Model() string {
 
 func (o Options) ReasoningEffort() string {
 	return o.reasoningEffort
+}
+
+func (o Options) SessionPath() string {
+	return o.sessionPath
 }
 
 func normalizeOptionValue(label, raw string) (string, error) {

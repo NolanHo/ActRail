@@ -44,6 +44,7 @@ type FakeHandle struct {
 	spec           LaunchSpec
 	pid            int
 	logs           LogPaths
+	stdin          io.WriteCloser
 	stdout         io.ReadCloser
 	stderr         io.ReadCloser
 	pty            PTY
@@ -87,6 +88,18 @@ func (h *FakeHandle) Logs() LogPaths {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.logs
+}
+
+func (h *FakeHandle) SetStdin(stdin io.WriteCloser) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.stdin = stdin
+}
+
+func (h *FakeHandle) Stdin() io.WriteCloser {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.stdin
 }
 
 func (h *FakeHandle) SetStdout(stdout io.ReadCloser) {

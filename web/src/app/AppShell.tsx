@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api";
 import { ConversationPane } from "../components/conversation/ConversationPane";
+import { ConversationStateTray } from "../components/conversation/ConversationStateTray";
 import { Composer } from "../components/composer/Composer";
 import { SessionWorkspace } from "../components/workspace/SessionWorkspace";
 import type { FileViewMode } from "../components/workspace/FileViewerDialog";
 import { TodoPopover } from "../components/workspace/TodoPopover";
 import { AppShellSidebar } from "./app-shell/AppShellSidebar";
-import { AppShellToolbar } from "./app-shell/AppShellToolbar";
+import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
 import { MobileShell } from "./app-shell/MobileShell";
 import { VoiceSettingsDialog } from "./app-shell/VoiceSettingsDialog";
@@ -14,7 +15,7 @@ import { useAppShellAudio } from "./app-shell/useAppShellAudio";
 import { useAppShellEvents } from "./app-shell/useAppShellEvents";
 import { useAppShellNotifications } from "./app-shell/useAppShellNotifications";
 import { useAppShellSessionEffects } from "./app-shell/useAppShellSessionEffects";
-import { useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useSessionUiStore, useSessionUiStoreApi, useSessionsStore, useSessionsStoreApi } from "./providers";
+import { useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useSessionUiStore, useSessionUiStoreApi, useSessionsStore, useSessionsStoreApi, useWaitsStore, useWaitsStoreApi } from "./providers";
 import {
   applyThemeMode,
   readThemeMode,
@@ -24,6 +25,37 @@ import {
 } from "./app-shell/utils";
 import { getSessionRuntimeId } from "../lib/session-identity";
 import { getSessionDisplayName } from "../lib/session-display";
+import { applyUserDisplaySettings, readUserDisplaySettings, writeUserDisplaySettings } from "../lib/user-settings";
+
+function formatTokenK(value: number) {
+  const normalized = Math.max(0, Math.round(value));
+  if (normalized <= 0) {
+    return "0";
+  }
+  return `${Math.round(normalized / 1000)}K`;
+}
+
+function contextUsageStatusLabel(usage: { used_tokens?: number; total_tokens?: number; percent_used?: number } | null | undefined) {
+  if (!usage) {
+    return "";
+  }
+  const usedTokens = typeof usage.used_tokens === "number" && Number.isFinite(usage.used_tokens)
+    ? Math.max(0, Math.round(usage.used_tokens))
+    : null;
+  const totalTokens = typeof usage.total_tokens === "number" && Number.isFinite(usage.total_tokens)
+    ? Math.max(0, Math.round(usage.total_tokens))
+    : null;
+  const percentUsed = typeof usage.percent_used === "number" && Number.isFinite(usage.percent_used)
+    ? Math.round(usage.percent_used)
+    : null;
+  if (usedTokens === null) {
+    return "";
+  }
+  if (totalTokens === null || totalTokens <= 0 || percentUsed === null) {
+    return `${formatTokenK(usedTokens)} used`;
+  }
+  return `${formatTokenK(usedTokens)}/${formatTokenK(totalTokens)} ${percentUsed}%`;
+}
 
 function EmptyDetailsWorkspace() {
   return (
@@ -55,11 +87,17 @@ function EmptyDetailsWorkspace() {
 export function AppShell() {
   const { bySessionId } = useMessagesStore();
   const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items } = useSessionsStore();
-  const { busyBySessionId } = useLiveSessionStore();
+  const { busyBySessionId, contextUsageBySessionId, generatingBySessionId } = useLiveSessionStore() as {
+    busyBySessionId: Record<string, boolean>;
+    generatingBySessionId?: Record<string, boolean>;
+    contextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
+  };
   const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
+  const waitsState = useWaitsStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const sessionUiStoreApi = useSessionUiStoreApi();
+  const waitsStoreApi = useWaitsStoreApi();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -72,6 +110,8 @@ export function AppShell() {
   const [fileViewerRequestKey, setFileViewerRequestKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [themeMode, setThemeMode] = useState(() => readThemeMode());
+  const [displaySettings, setDisplaySettings] = useState(() => readUserDisplaySettings());
+  const [displaySettingsDraft, setDisplaySettingsDraft] = useState(() => readUserDisplaySettings());
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const voiceSupported = bootstrapCapabilities?.voice !== false;
   const harnessSupported = bootstrapCapabilities?.harness !== false;
@@ -103,6 +143,17 @@ export function AppShell() {
   const activeSessionReplySoundPrimingRef = useRef<string | null>(null);
 
   useEffect(() => {
+    applyUserDisplaySettings(displaySettings);
+    (liveSessionStoreApi as { setBufferAssistantOutput?: (value: boolean) => void }).setBufferAssistantOutput?.(displaySettings.bufferAssistantOutput);
+  }, [displaySettings, liveSessionStoreApi]);
+
+  useEffect(() => {
+    if (voiceSettingsOpen) {
+      setDisplaySettingsDraft(displaySettings);
+    }
+  }, [displaySettings, voiceSettingsOpen]);
+
+  useEffect(() => {
     if (!activeSessionId) return;
     suppressedReplySoundSessionIdsRef.current.add(activeSessionId);
     activeSessionReplySoundPrimingRef.current = activeSessionId;
@@ -115,8 +166,11 @@ export function AppShell() {
   const activeSession = items.find((session) => session.session_id === activeSessionId) ?? null;
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
   const activeSessionPending = activeSession?.pending_startup === true;
+  const activeSessionGenerating = Boolean(activeSessionId && generatingBySessionId?.[activeSessionId] === true);
+  const activeWait = activeSessionId ? waitsState.activeBySessionId[activeSessionId] ?? activeSession?.active_wait ?? null : null;
   const activeSessionBusy = Boolean(
-    (activeSessionId && busyBySessionId[activeSessionId] === true)
+    activeSessionGenerating
+    || (activeSessionId && busyBySessionId[activeSessionId] === true)
     || activeSession?.busy === true,
   );
   const activeTodoSnapshot = sessionUiSessionId === activeSessionId && diagnostics && typeof diagnostics === "object"
@@ -125,6 +179,56 @@ export function AppShell() {
   const activeTitle = activeSession
     ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
     : "No session selected";
+  const activeSessionDiagnostics = sessionUiSessionId === activeSessionId && diagnostics && typeof diagnostics === "object"
+    ? diagnostics as { model?: unknown; reasoning_effort?: unknown; context_usage?: unknown }
+    : null;
+  const diagnosticsModel = typeof activeSessionDiagnostics?.model === "string" ? activeSessionDiagnostics.model.trim() : "";
+  const diagnosticsReasoningEffort = typeof activeSessionDiagnostics?.reasoning_effort === "string" ? activeSessionDiagnostics.reasoning_effort.trim() : "";
+  const diagnosticsContextUsage = activeSessionDiagnostics?.context_usage && typeof activeSessionDiagnostics.context_usage === "object"
+    ? activeSessionDiagnostics.context_usage as { used_tokens?: number; total_tokens?: number; percent_used?: number }
+    : null;
+  const activeModel = diagnosticsModel || (typeof activeSession?.model === "string" ? activeSession.model.trim() : "");
+  const activeReasoningEffort = diagnosticsReasoningEffort || (typeof activeSession?.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "");
+  const activeContextUsageLabel = activeSessionId ? contextUsageStatusLabel(contextUsageBySessionId?.[activeSessionId] ?? diagnosticsContextUsage) : "";
+  const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
+    ? Math.max(0, Math.round(activeSession.queue_len))
+    : 0;
+  const conversationStatusItems = useMemo<ConversationStatusItem[]>(() => {
+    if (!activeSession) {
+      return [];
+    }
+    const items: ConversationStatusItem[] = [];
+    if (activeSession.agent_backend) {
+      items.push({ label: "Backend", value: activeSession.agent_backend });
+    }
+    if (activeModel) {
+      items.push({ label: "Model", value: activeModel });
+    }
+    if (activeReasoningEffort) {
+      items.push({ label: "Effort", value: activeReasoningEffort });
+    }
+    if (activeContextUsageLabel) {
+      items.push({ label: "Context", value: activeContextUsageLabel });
+    }
+    if (activeQueueCount > 0) {
+      items.push({ label: "Queue", value: String(activeQueueCount), tone: "attention" });
+    }
+    if (activeWait) {
+      items.push({ label: "Wait", value: "user input", tone: "attention" });
+    }
+    if (activeSession.reset_required === true || activeSession.transport_state === "broken") {
+      items.push({ label: "Runtime", value: "broken", tone: "error" });
+    } else if (activeSession.transport_state === "stalled") {
+      items.push({ label: "Runtime", value: "stalled", tone: "error" });
+    } else if (activeSession.pending_startup === true) {
+      items.push({ label: "Runtime", value: "starting", tone: "attention" });
+    } else if (activeSessionGenerating) {
+      items.push({ label: "Runtime", value: "generating", tone: "attention" });
+    } else if (activeSessionBusy) {
+      items.push({ label: "Runtime", value: "running", tone: "attention" });
+    }
+    return items;
+  }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeSession, activeSessionBusy, activeSessionGenerating, activeWait]);
 
   const playReplyBeep = () => {
     try {
@@ -187,7 +291,9 @@ export function AppShell() {
     refreshNotificationsFeed: refreshNotificationFeed,
     sessionUiStoreApi,
     sessionsStoreApi,
+    waitsStoreApi,
     workspaceOpen: workspaceOpen || detailsOpen,
+    bufferAssistantOutput: displaySettings.bufferAssistantOutput,
   });
 
   useAppShellSessionEffects({
@@ -285,11 +391,18 @@ export function AppShell() {
   const shellClassName = useMemo(() => ["appShell", "editorialShell"].join(" "), []);
 
   const renderWorkspaceDetails = () => (
-    sessionUiMatchesActiveSession ? <SessionWorkspace mode="details" /> : <EmptyDetailsWorkspace />
+    sessionUiMatchesActiveSession || activeWait ? <SessionWorkspace mode="details" /> : <EmptyDetailsWorkspace />
   );
 
   const openWorkspace = () => {
     setWorkspaceOpen(true);
+  };
+
+  const openWaitDetails = () => {
+    if (activeWait && activeSessionId) {
+      waitsStoreApi.openWait({ ...activeWait, session_id: activeWait.session_id || activeSessionId });
+    }
+    setDetailsOpen(true);
   };
 
   const interruptActiveSession = async () => {
@@ -407,7 +520,6 @@ export function AppShell() {
             onOpenHarness={() => setHarnessOpen(true)}
             onOpenSettings={() => openVoiceSettings()}
             onOpenTodo={() => setTodoViewerOpen(true)}
-            onOpenWorkspace={openWorkspace}
             onToggleAnnouncements={() => {
               void toggleAnnouncements();
               if (!announcementEnabled) {
@@ -427,6 +539,7 @@ export function AppShell() {
                 activeTitle={activeTitle}
                 canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
                 showInterruptAction={showInterruptAction}
+                statusItems={conversationStatusItems}
                 showMobileSessionsTrigger={false}
                 showMobileToolbarMenu={false}
                 onInterrupt={() => {
@@ -436,12 +549,14 @@ export function AppShell() {
                 onOpenHarness={() => setHarnessOpen(true)}
                 onOpenSessions={() => setSidebarOpen(true)}
                 onOpenTodo={() => setTodoViewerOpen(true)}
+                onOpenWaits={openWaitDetails}
                 onOpenWorkspace={openWorkspace}
               />
               <ConversationPane
                 key={activeSessionId || "no-session"}
                 onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
               />
+              <ConversationStateTray />
               <Composer />
             </section>
           </>
@@ -477,16 +592,24 @@ export function AppShell() {
             replySoundEnabled={replySoundEnabled}
             status={voiceSettingsStatus}
             themeMode={themeMode}
+            conversationFontSizePxDraft={displaySettingsDraft.conversationFontSizePx}
+            composerFontSizePxDraft={displaySettingsDraft.composerFontSizePx}
+            bufferAssistantOutputDraft={displaySettingsDraft.bufferAssistantOutput}
             voiceApiKeyDraft={voiceApiKeyDraft}
             voiceBaseUrlDraft={voiceBaseUrlDraft}
             onChangeEnterToSend={setEnterToSendDraft}
             onChangeNarrationEnabled={setNarrationEnabledDraft}
             onChangeReplySoundEnabled={setReplySoundEnabled}
             onChangeThemeMode={setThemeMode}
+            onChangeConversationFontSizePx={(value) => setDisplaySettingsDraft((current) => ({ ...current, conversationFontSizePx: value }))}
+            onChangeComposerFontSizePx={(value) => setDisplaySettingsDraft((current) => ({ ...current, composerFontSizePx: value }))}
+            onChangeBufferAssistantOutput={(value) => setDisplaySettingsDraft((current) => ({ ...current, bufferAssistantOutput: value }))}
             onChangeVoiceApiKey={setVoiceApiKeyDraft}
             onChangeVoiceBaseUrl={setVoiceBaseUrlDraft}
             onClose={closeVoiceSettings}
             onSave={() => {
+              setDisplaySettings(displaySettingsDraft);
+              writeUserDisplaySettings(displaySettingsDraft);
               void saveVoiceSettings();
             }}
             onTriggerTestPush={() => {

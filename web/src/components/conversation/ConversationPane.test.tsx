@@ -1677,6 +1677,105 @@ describe("ConversationPane", () => {
     expect(runningTokens[0]?.dataset.kind).toBe("tool");
   });
 
+  it("does not mark long-running unresolved tool calls as stalled while the session is busy", () => {
+    const ts = Date.now() / 1000 - 601;
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-trace-stalled", busy: true }], activeSessionId: "sess-trace-stalled", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const liveSessionStore = createStaticStore(
+      { offsetsBySessionId: {}, liveOffsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: { "sess-trace-stalled": true }, loadingBySessionId: {} },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-trace-stalled": [{ type: "tool", name: "bash", tool_call_id: "call-stalled", text: "long build", ts }],
+        },
+        offsetsBySessionId: { "sess-trace-stalled": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} liveSessionStore={liveSessionStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const stalledTokens = Array.from(root.querySelectorAll(".machineTraceToken.isStalledTool")) as HTMLButtonElement[];
+    expect(stalledTokens).toHaveLength(0);
+    const runningTokens = Array.from(root.querySelectorAll(".machineTraceToken.isRunning")) as HTMLButtonElement[];
+    expect(runningTokens).toHaveLength(1);
+    expect(runningTokens[0]?.title).toContain("running 10m");
+  });
+
+  it("keeps pi user sends pending until a pi-confirmed user event arrives", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-pi-pending", agent_backend: "pi" }], activeSessionId: "sess-pi-pending", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const localAckMessagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-pi-pending": [
+            { role: "user", text: "Run tests", ts: 1000 },
+            { role: "user", text: "Run tests", pending: true, localId: "local-1", request_state: "sending", ts: 1001 },
+          ],
+        },
+        offsetsBySessionId: { "sess-pi-pending": 2 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    const composerStore = createStaticStore(
+      { draft: "", sending: false, pendingBySessionId: {} },
+      { setDraft: () => undefined, submit: () => Promise.resolve(), clearAcknowledgedPending: () => undefined },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={localAckMessagesStore as any} composerStore={composerStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.querySelectorAll("[data-testid='message-surface'][data-kind='user']")).toHaveLength(1);
+    expect(root.textContent).toContain("Sending");
+
+    const piAckMessagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-pi-pending": [
+            { role: "user", text: "Run tests", ts: 1000 },
+            { role: "user", text: "Run tests", pending: true, localId: "local-1", request_state: "sending", ts: 1001 },
+            { role: "user", text: "Run tests", event_id: "pi:message:user-1", ts: 1002 },
+          ],
+        },
+        offsetsBySessionId: { "sess-pi-pending": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={piAckMessagesStore as any} composerStore={composerStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.querySelectorAll("[data-testid='message-surface'][data-kind='user']")).toHaveLength(1);
+    expect(root.textContent).not.toContain("Sending");
+  });
+
   it("scrolls the conversation pane to the bottom on initial render when messages exist", async () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-7", loading: false, newSessionDefaults: null },
@@ -2612,6 +2711,39 @@ describe("ConversationPane", () => {
     const userSurfaces = root.querySelectorAll("[data-testid='message-surface'][data-kind='user']");
     expect(userSurfaces).toHaveLength(1);
     expect(root.textContent).not.toContain("Queued");
+  });
+
+  it("keeps a repeated bridge pseudo user message when the matching durable text is older", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-repeat", agent_backend: "pi" }], activeSessionId: "sess-repeat", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-repeat": [
+            { role: "user", text: "continue", ts: 1000 },
+            { role: "assistant", text: "previous answer", ts: 1001 },
+            { role: "user", text: "continue", pending: true, bridge_pseudo: true, event_id: "bridge-outbound:req-repeat", request_id: "req-repeat", request_state: "queued", ts: 1200 },
+          ],
+        },
+        offsetsBySessionId: { "sess-repeat": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.querySelectorAll("[data-testid='message-surface'][data-kind='user']")).toHaveLength(2);
+    expect(root.textContent).toContain("Queued");
   });
 
   it("inserts day separators when consecutive messages cross calendar days", () => {

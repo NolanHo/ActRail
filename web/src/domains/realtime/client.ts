@@ -12,6 +12,7 @@ export interface RealtimeClientConfig {
 export interface RealtimeStreamSubscription {
   name: string;
   resumeFrom?: number;
+  suppressMessageDeltas?: boolean;
 }
 
 export interface RealtimeCommand {
@@ -122,8 +123,8 @@ function syncSubscriptions() {
     payload: {
       streams: Array.from(desiredSubscriptions.values()).map((subscription) => (
         typeof subscription.resumeFrom === "number" && Number.isFinite(subscription.resumeFrom)
-          ? { name: subscription.name, resume_from: Math.max(0, Math.floor(subscription.resumeFrom)) }
-          : { name: subscription.name }
+          ? { name: subscription.name, resume_from: Math.max(0, Math.floor(subscription.resumeFrom)), suppress_message_deltas: subscription.suppressMessageDeltas === true }
+          : { name: subscription.name, suppress_message_deltas: subscription.suppressMessageDeltas === true }
       )),
     },
   });

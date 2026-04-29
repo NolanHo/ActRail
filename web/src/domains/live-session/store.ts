@@ -20,6 +20,7 @@ export interface LiveSessionState {
   requestsBySessionId: Record<string, SessionUiRequest[]>;
   requestVersionsBySessionId: Record<string, string>;
   busyBySessionId: Record<string, boolean>;
+  generatingBySessionId: Record<string, boolean>;
   loadingBySessionId: Record<string, boolean>;
   errorBySessionId: Record<string, string>;
   tokenBySessionId: Record<string, Record<string, unknown> | null>;
@@ -34,6 +35,7 @@ export interface LiveSessionStore {
   poll(sessionId: string, runtimeId?: string | null): Promise<void>;
   applyFrame(frame: RealtimeEnvelope): void;
   resetSession(sessionId: string): void;
+  setBufferAssistantOutput(value: boolean): void;
 }
 
 function liveSessionErrorMessage(error: unknown): string {
@@ -121,7 +123,10 @@ function normalizeMessageSnapshot(payload: Awaited<ReturnType<typeof api.listMes
   };
 }
 
-function partialAssistantTurnEvent(payload: LiveSessionResponse) {
+function partialAssistantTurnEvent(payload: LiveSessionResponse, bufferAssistantOutput = false) {
+  if (bufferAssistantOutput) {
+    return [] as MessageEvent[];
+  }
   const turn = toObjectRecord(payload.partial_assistant_turn);
   const turnId = typeof turn?.turn_id === "string" && turn.turn_id.trim() ? turn.turn_id.trim() : "";
   const text = typeof turn?.text === "string" ? turn.text : "";
@@ -138,8 +143,8 @@ function partialAssistantTurnEvent(payload: LiveSessionResponse) {
   }] as MessageEvent[];
 }
 
-function normalizeSnapshotEvents(messagePayload: Awaited<ReturnType<typeof api.listMessages>>, statePayload: LiveSessionResponse) {
-  return [...normalizeMessageSnapshot(messagePayload).events, ...partialAssistantTurnEvent(statePayload)];
+function normalizeSnapshotEvents(messagePayload: Awaited<ReturnType<typeof api.listMessages>>, statePayload: LiveSessionResponse, bufferAssistantOutput = false) {
+  return [...normalizeMessageSnapshot(messagePayload).events, ...partialAssistantTurnEvent(statePayload, bufferAssistantOutput)];
 }
 
 function transportSnapshotFromValue(value: unknown): SessionTransportSnapshot | null {
@@ -220,6 +225,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     requestsBySessionId: {},
     requestVersionsBySessionId: {},
     busyBySessionId: {},
+    generatingBySessionId: {},
     loadingBySessionId: {},
     errorBySessionId: {},
     tokenBySessionId: {},
@@ -228,7 +234,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
   };
   const listeners = new Set<() => void>();
   const inFlightBySessionId: Record<string, Promise<void> | undefined> = {};
+  const queuedPollRuntimeBySessionId: Record<string, string | null | undefined> = {};
   const streamingTextBySessionId = new Map<string, Map<string, string>>();
+  let bufferAssistantOutput = false;
+
+  const hasActiveAssistantOutput = (sessionId: string) => Boolean(
+    state.generatingBySessionId[sessionId]
+    || (streamingTextBySessionId.get(sessionId)?.size ?? 0) > 0,
+  );
 
   const emit = () => {
     for (const listener of listeners) {
@@ -240,13 +253,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     sessionId: string,
     messagePayload: Awaited<ReturnType<typeof api.listMessages>>,
     statePayload: LiveSessionResponse,
-    _replace: boolean,
+    replace: boolean,
   ) => {
     const normalizedMessages = normalizeMessageSnapshot(messagePayload);
-    messagesStore.applySnapshot(sessionId, normalizeSnapshotEvents(messagePayload, statePayload), {
+    messagesStore.applySnapshot(sessionId, normalizeSnapshotEvents(messagePayload, statePayload, bufferAssistantOutput), {
       offset: normalizedMessages.offset,
       hasOlder: normalizedMessages.hasOlder,
       nextBefore: normalizedMessages.nextBefore,
+      replace,
     });
     const nextRequests = normalizeSnapshotRequests(statePayload);
     const nextRequestVersionsBySessionId = { ...state.requestVersionsBySessionId };
@@ -292,7 +306,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       requestVersionsBySessionId: nextRequestVersionsBySessionId,
       busyBySessionId: {
         ...state.busyBySessionId,
-        [sessionId]: transportBusyValue(statePayload, statePayload.busy === true),
+        [sessionId]: transportBusyValue(statePayload, statePayload.busy === true || hasActiveAssistantOutput(sessionId)),
       },
       loadingBySessionId: {
         ...state.loadingBySessionId,
@@ -318,9 +332,20 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     emit();
   };
 
-  const runLoad = async (sessionId: string, replace: boolean, runtimeId?: string | null) => {
+  const runLoad = async (sessionId: string, replace: boolean, runtimeId?: string | null): Promise<void> => {
     const existing = inFlightBySessionId[sessionId];
     if (existing) {
+      if (!replace) {
+        queuedPollRuntimeBySessionId[sessionId] = runtimeId ?? null;
+        return existing.then((): Promise<void> | undefined => {
+          if (!(sessionId in queuedPollRuntimeBySessionId)) {
+            return undefined;
+          }
+          const queuedRuntimeId = queuedPollRuntimeBySessionId[sessionId];
+          delete queuedPollRuntimeBySessionId[sessionId];
+          return runLoad(sessionId, false, queuedRuntimeId);
+        });
+      }
       return existing;
     }
 
@@ -403,6 +428,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
 
       if (type === "session.state") {
+        const busy = transportBusyValue(payload, payload?.busy === true || hasActiveAssistantOutput(sessionId));
         state = {
           ...state,
           streamCursorsBySessionId: {
@@ -411,7 +437,11 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
           busyBySessionId: {
             ...state.busyBySessionId,
-            [sessionId]: transportBusyValue(payload, payload?.busy === true),
+            [sessionId]: busy,
+          },
+          generatingBySessionId: {
+            ...state.generatingBySessionId,
+            [sessionId]: busy ? state.generatingBySessionId[sessionId] === true : false,
           },
           errorBySessionId: {
             ...state.errorBySessionId,
@@ -432,16 +462,18 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         const nextText = previous + delta;
         perSession.set(turnId, nextText);
         streamingTextBySessionId.set(sessionId, perSession);
-        appendRealtimeEvent(sessionId, {
-          event_id: typeof frame.id === "string" ? frame.id : undefined,
-          role: typeof payload?.role === "string" ? payload.role : "assistant",
-          streaming: true,
-          completed: false,
-          stream_id: turnId,
-          turn_id: turnId,
-          text: nextText,
-          ts: typeof frame.ts === "number" ? frame.ts : undefined,
-        });
+        if (!bufferAssistantOutput) {
+          appendRealtimeEvent(sessionId, {
+            event_id: typeof frame.id === "string" ? frame.id : undefined,
+            role: typeof payload?.role === "string" ? payload.role : "assistant",
+            streaming: true,
+            completed: false,
+            stream_id: turnId,
+            turn_id: turnId,
+            text: nextText,
+            ts: typeof frame.ts === "number" ? frame.ts : undefined,
+          });
+        }
         state = {
           ...state,
           streamCursorsBySessionId: {
@@ -451,6 +483,31 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           busyBySessionId: {
             ...state.busyBySessionId,
             [sessionId]: true,
+          },
+          generatingBySessionId: {
+            ...state.generatingBySessionId,
+            [sessionId]: true,
+          },
+        };
+        emit();
+        return;
+      }
+
+      if (type === "message.generating") {
+        const active = payload?.active === true;
+        state = {
+          ...state,
+          streamCursorsBySessionId: {
+            ...state.streamCursorsBySessionId,
+            [sessionId]: nextCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq),
+          },
+          busyBySessionId: {
+            ...state.busyBySessionId,
+            [sessionId]: active ? true : state.busyBySessionId[sessionId] === true,
+          },
+          generatingBySessionId: {
+            ...state.generatingBySessionId,
+            [sessionId]: active,
           },
         };
         emit();
@@ -467,7 +524,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         const message = toObjectRecord(payload?.message);
         appendRealtimeEvent(sessionId, {
           ...message,
-          event_id: typeof frame.id === "string" ? frame.id : undefined,
+          event_id: typeof message?.event_id === "string" ? message.event_id : undefined,
           turn_id: turnId || (typeof message?.turn_id === "string" ? message.turn_id : undefined),
           role: typeof message?.role === "string" ? message.role : typeof payload?.role === "string" ? payload.role : undefined,
           text: typeof message?.text === "string" ? message.text : undefined,
@@ -478,6 +535,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           streamCursorsBySessionId: {
             ...state.streamCursorsBySessionId,
             [sessionId]: nextCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq),
+          },
+          generatingBySessionId: {
+            ...state.generatingBySessionId,
+            [sessionId]: false,
           },
         };
         emit();
@@ -543,6 +604,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.busyBySessionId,
             [sessionId]: false,
           },
+          generatingBySessionId: {
+            ...state.generatingBySessionId,
+            [sessionId]: false,
+          },
           errorBySessionId: {
             ...state.errorBySessionId,
             [sessionId]: typeof payload?.reason === "string" && payload.reason.trim()
@@ -565,6 +630,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
           busyBySessionId: {
             ...state.busyBySessionId,
+            [sessionId]: false,
+          },
+          generatingBySessionId: {
+            ...state.generatingBySessionId,
             [sessionId]: false,
           },
           streamCursorsBySessionId: {
@@ -595,8 +664,15 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           ...state.requestsBySessionId,
           [sessionId]: [],
         },
+        generatingBySessionId: {
+          ...state.generatingBySessionId,
+          [sessionId]: false,
+        },
       };
       emit();
+    },
+    setBufferAssistantOutput(value: boolean) {
+      bufferAssistantOutput = value;
     },
   };
 }

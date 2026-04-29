@@ -14,6 +14,7 @@ import (
 type SessionController interface {
 	Send(context.Context, SendRequest) (SendResponse, error)
 	Enqueue(context.Context, EnqueueRequest) (EnqueueResponse, error)
+	CancelQueue(context.Context, CancelQueueRequest) (CancelQueueResponse, error)
 	Interrupt(context.Context, InterruptRequest) (InterruptResponse, error)
 	RespondUI(context.Context, UIResponseRequest) (UIResponseResponse, error)
 }
@@ -46,6 +47,15 @@ type EnqueueResponse struct {
 	Queue SessionQueueSnapshot `json:"queue"`
 }
 
+type CancelQueueRequest struct {
+	SessionID session.SessionID
+}
+
+type CancelQueueResponse struct {
+	Busy  bool                 `json:"busy"`
+	Queue SessionQueueSnapshot `json:"queue"`
+}
+
 type InterruptRequest struct {
 	SessionID session.SessionID
 }
@@ -74,7 +84,10 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 	}
 	var response SendResponse
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
-		if err := transportControlError(record.transport); err != nil {
+		if s.activeWaitForSession(req.SessionID) != nil {
+			return Conflict("session is waiting on user")
+		}
+		if err := transportControlError(sessionTransportSnapshot(record)); err != nil {
 			return err
 		}
 		if err := s.prepareRuntimeSend(ctx, req.SessionID, record.runtime); err != nil {
@@ -91,6 +104,7 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 		if !ok {
 			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 		}
+		s.messageCache.Invalidate(req.SessionID)
 		response = SendResponse{
 			Message: sessionMessageFromCommitted(item),
 			Busy:    state.Busy(),
@@ -112,6 +126,13 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 	if text == "" {
 		return EnqueueResponse{}, Invalid("text", "text required")
 	}
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
+		return EnqueueResponse{}, err
+	}
+	if s.activeWaitForSession(req.SessionID) != nil {
+		return EnqueueResponse{}, Conflict("session is waiting on user")
+	}
 	state, ok, err := s.registry.ReplaceQueue(req.SessionID, text)
 	if err != nil {
 		return EnqueueResponse{}, err
@@ -122,9 +143,23 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 	response := EnqueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
-	if !state.Busy() {
+	if !state.Busy() && transportControlError(sessionTransportSnapshot(record)) == nil {
 		s.scheduleQueuedDispatch(req.SessionID)
 	}
+	return response, nil
+}
+
+func (s *Stub) CancelQueue(_ context.Context, req CancelQueueRequest) (CancelQueueResponse, error) {
+	state, ok, err := s.registry.ClearQueue(req.SessionID)
+	if err != nil {
+		return CancelQueueResponse{}, err
+	}
+	if !ok {
+		return CancelQueueResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+	}
+	response := CancelQueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
+	s.emitQueueState(req.SessionID, response.Queue)
+	s.emitSessionState(req.SessionID)
 	return response, nil
 }
 
@@ -133,11 +168,14 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 	if err != nil {
 		return InterruptResponse{}, err
 	}
-	if err := transportControlError(record.transport); err != nil {
+	if err := transportControlError(sessionTransportSnapshot(record)); err != nil {
 		return InterruptResponse{}, err
 	}
 	if err := record.runtime.Interrupt(ctx); err != nil {
 		return InterruptResponse{}, mapRuntimeControlError(err)
+	}
+	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
+		return InterruptResponse{}, err
 	}
 	state, ok, err := s.registry.SetBusy(req.SessionID, false)
 	if err != nil {
@@ -166,7 +204,7 @@ func (s *Stub) RespondUI(ctx context.Context, req UIResponseRequest) (UIResponse
 	}
 	var response UIResponseResponse
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
-		if err := transportControlError(record.transport); err != nil {
+		if err := transportControlError(sessionTransportSnapshot(record)); err != nil {
 			return err
 		}
 		if record.uiRequest == nil {

@@ -246,6 +246,85 @@ func TestPersistentStubColdStartRehydratesImportedSessions(t *testing.T) {
 	}
 }
 
+func TestPersistentStubColdStartRehydratesLiveSessionState(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfig())
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/live-state"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	if _, err := svc.AppendAssistantDelta(sessionID, "turn-live", "partial text"); err != nil {
+		t.Fatalf("AppendAssistantDelta() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{GenerationID: "g_live", State: SessionTransportStateAttached, Reason: "attached"}); err != nil || !ok {
+		t.Fatalf("SetTransport() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.SetSessionResumeCursor(sessionID, session.StreamKindMain, 42); err != nil {
+		t.Fatalf("SetSessionResumeCursor(main) error = %v", err)
+	}
+	if err := svc.SetSessionResumeCursor(sessionID, session.StreamKindTransport, 84); err != nil {
+		t.Fatalf("SetSessionResumeCursor(transport) error = %v", err)
+	}
+	if err := svc.SetSessionUIRequest(sessionID, SessionUIRequestSnapshot{RequestID: "ask-live", Kind: "ask_user", Prompt: "Choose"}); err != nil {
+		t.Fatalf("SetSessionUIRequest() error = %v", err)
+	}
+	used := 123
+	lastEvent := 456.5
+	if _, ok, err := svc.registry.UpdateRuntimeMetadata(sessionID, "gpt-live", "openai", &SessionContextUsageSnapshot{UsedTokens: &used}, &SessionTurnTimingSnapshot{LastEventTS: &lastEvent}); err != nil || !ok {
+		t.Fatalf("UpdateRuntimeMetadata() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog(reload) error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+	records, err := loadPersistedSessions(catalog)
+	if err != nil {
+		t.Fatalf("loadPersistedSessions() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	record := records[0]
+	if !record.state.Busy() {
+		t.Fatal("persisted Busy = false, want true")
+	}
+	partial, ok := record.transcript.PartialAssistantTurn()
+	if !ok || partial.TurnID().String() != "turn-live" || partial.Text() != "partial text" {
+		t.Fatalf("persisted partial = %+v ok=%v", partial, ok)
+	}
+	if record.transport.GenerationID != "g_live" || record.transport.State != SessionTransportStateAttached || record.transport.Reason != "attached" {
+		t.Fatalf("persisted transport = %+v", record.transport)
+	}
+	if record.resumeCursors.Session != "42" || record.resumeCursors.Transport != "84" {
+		t.Fatalf("persisted resume cursors = %+v", record.resumeCursors)
+	}
+	if record.uiRequest == nil || record.uiRequest.RequestID != "ask-live" {
+		t.Fatalf("persisted UI request = %+v", record.uiRequest)
+	}
+	if record.contextUsage == nil || record.contextUsage.UsedTokens == nil || *record.contextUsage.UsedTokens != 123 {
+		t.Fatalf("persisted context usage = %+v", record.contextUsage)
+	}
+	if record.turnTiming == nil || record.turnTiming.LastEventTS == nil || *record.turnTiming.LastEventTS != lastEvent {
+		t.Fatalf("persisted turn timing = %+v", record.turnTiming)
+	}
+	if !record.runtimeAgentRunning {
+		t.Fatal("persisted runtimeAgentRunning = false, want true")
+	}
+}
+
 func TestPersistentStubColdStartRehydratesQueuedPromptExactlyOnce(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
@@ -409,7 +488,7 @@ func TestPersistentStubColdStartResumeCandidatesUseImportedPISourceActivity(t *t
 	}
 }
 
-func TestPersistentStubColdStartResumeCandidatesMatchSidebarOrderingForDemotedImportedSessions(t *testing.T) {
+func TestPersistentStubColdStartResumeCandidatesUseModifiedTimeDescending(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sourceDir := t.TempDir()
@@ -483,7 +562,7 @@ func TestPersistentStubColdStartResumeCandidatesMatchSidebarOrderingForDemotedIm
 	for _, item := range resume.Sessions {
 		resumeOrder = append(resumeOrder, item.SessionID)
 	}
-	assertSessionIDOrder(t, "SessionResumeCandidates()", resumeOrder, want)
+	assertSessionIDOrder(t, "SessionResumeCandidates()", resumeOrder, []string{"imported-pi-3", "imported-pi-2", "imported-pi-1"})
 }
 
 func TestPersistentStubColdStartSessionDetailsUsesImportedPIDisplayTimestamp(t *testing.T) {
@@ -723,7 +802,7 @@ func TestPersistentStubColdStartRehydratesRecentCwdsAndCwdGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
 	}
-	bootstrap := rehydrated.Bootstrap(context.Background())
+	bootstrap := rehydrated.Bootstrap(context.Background(), BootstrapRequest{})
 	if !reflect.DeepEqual(bootstrap.RecentCwds, []string{"/tmp/project-b", "/tmp/project-a"}) {
 		t.Fatalf("Bootstrap().RecentCwds = %#v", bootstrap.RecentCwds)
 	}
@@ -787,6 +866,88 @@ func TestPersistentStubDeleteArchivesSessionRow(t *testing.T) {
 	}
 	if all[0].ArchivedAt == nil {
 		t.Fatal("archived row ArchivedAt = nil")
+	}
+}
+
+func TestPersistentStubSessionMessagesInvalidatesPISourceCacheWhenFileGrows(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+
+	sourcePath := filepath.Join(t.TempDir(), "pi-session.jsonl")
+	initial := `{"type":"message","id":"u1","timestamp":"2026-04-29T09:00:00Z","message":{"role":"user","content":[{"type":"text","text":"first"}]}}
+{"type":"message","id":"a1","timestamp":"2026-04-29T09:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"answer"}],"stopReason":"stop"}}
+`
+	if err := os.WriteFile(sourcePath, []byte(initial), 0o644); err != nil {
+		t.Fatalf("WriteFile(initial source) error = %v", err)
+	}
+	if err := catalog.ReplaceImportBundle(context.Background(), sqlitestore.ImportBundle{
+		Sessions: []sqlitestore.SessionSnapshotRow{{
+			Session: sqlitestore.SessionRow{
+				SessionID:  "imported-pi-cache",
+				Backend:    "pi",
+				CWD:        "/workspace/codoxear",
+				Title:      "Imported Pi Cache",
+				CreatedAt:  now,
+				UpdatedAt:  now,
+				ActivityAt: now,
+			},
+		}},
+		SessionSourceRefs: []sqlitestore.SessionSourceRefRow{{
+			SessionID:        "imported-pi-cache",
+			Backend:          "pi",
+			SourcePath:       sourcePath,
+			FirstUserMessage: "first",
+		}},
+		AppState: sqlitestore.AppStateRow{RecentCwds: []string{}, CwdGroups: []sqlitestore.CwdGroupRow{}},
+		Provenance: sqlitestore.ImportProvenanceRow{
+			Source:     "fixture",
+			SnapshotAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceImportBundle() error = %v", err)
+	}
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	sessionID := mustSessionID(t, "imported-pi-cache")
+	first, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages(first) error = %v", err)
+	}
+	if len(first.Items) != 2 || first.TailSeq != 2 {
+		t.Fatalf("SessionMessages(first) = %+v, want 2 items", first)
+	}
+
+	appended := `{"type":"message","id":"u2","timestamp":"2026-04-29T09:00:02Z","message":{"role":"user","content":[{"type":"text","text":"second"}]}}
+`
+	file, err := os.OpenFile(sourcePath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile(source append) error = %v", err)
+	}
+	if _, err := file.WriteString(appended); err != nil {
+		_ = file.Close()
+		t.Fatalf("WriteString(source append) error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close(source append) error = %v", err)
+	}
+	if err := os.Chtimes(sourcePath, now.Add(time.Second), now.Add(time.Second)); err != nil {
+		t.Fatalf("Chtimes(source) error = %v", err)
+	}
+
+	second, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages(second) error = %v", err)
+	}
+	if len(second.Items) != 3 || second.TailSeq != 3 || second.Items[2].Text != "second" {
+		t.Fatalf("SessionMessages(second) = %+v, want appended source row", second)
 	}
 }
 

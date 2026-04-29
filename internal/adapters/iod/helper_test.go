@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -88,6 +89,42 @@ func TestIodWalAppend(t *testing.T) {
 		if !ok {
 			t.Fatalf("wal record %d checksum mismatch", i)
 		}
+	}
+}
+
+func TestNewHelperUsesPipeIOForStdioChildMode(t *testing.T) {
+	sessionID := mustSessionID(t, "s_stdio")
+	generationID := mustGenerationID(t, "g_stdio")
+	paths, err := NewGenerationPaths(t.TempDir(), sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	command, err := process.NewCommand("/bin/pi", "--mode", "rpc")
+	if err != nil {
+		t.Fatalf("NewCommand() error = %v", err)
+	}
+	env, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("InheritEnv() error = %v", err)
+	}
+	helper, err := NewHelper(HelperOptions{
+		SessionID:       sessionID,
+		GenerationID:    generationID,
+		Paths:           paths,
+		Command:         command,
+		CWD:             mustAbsDir(t, paths.RuntimeDir),
+		Environment:     env,
+		ChildIOMode:     ChildIOModeStdio,
+		ProtocolVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewHelper() error = %v", err)
+	}
+	if helper.childIOMode != ChildIOModeStdio {
+		t.Fatalf("helper.childIOMode = %q, want %q", helper.childIOMode, ChildIOModeStdio)
+	}
+	if helper.launchSpec.IO().Mode() != process.IOModePipes {
+		t.Fatalf("helper launch io mode = %q, want %q", helper.launchSpec.IO().Mode(), process.IOModePipes)
 	}
 }
 
@@ -719,6 +756,23 @@ func mustAbsDir(t *testing.T, path string) string {
 
 func intPtr(v int) *int { return &v }
 
+func TestUTF8ChunkDecoderPreservesSplitRunes(t *testing.T) {
+	var decoder utf8ChunkDecoder
+	input := []byte("审计结果写入完成")
+	var out string
+	out += decoder.Append(input[:1])
+	out += decoder.Append(input[1:5])
+	out += decoder.Append(input[5:8])
+	out += decoder.Append(input[8:])
+	out += decoder.Flush()
+	if out != string(input) {
+		t.Fatalf("decoded output = %q, want %q", out, string(input))
+	}
+	if strings.ContainsRune(out, '\uFFFD') {
+		t.Fatalf("decoded output contains replacement rune: %q", out)
+	}
+}
+
 type testPTY struct {
 	reader   *io.PipeReader
 	writer   *io.PipeWriter
@@ -785,6 +839,7 @@ func newTestHandle(pid int, pty process.PTY) *testHandle {
 func (h *testHandle) PID() int                 { return h.pid }
 func (h *testHandle) Spec() process.LaunchSpec { return h.spec }
 func (h *testHandle) Logs() process.LogPaths   { return process.LogPaths{} }
+func (h *testHandle) Stdin() io.WriteCloser    { return nil }
 func (h *testHandle) Stdout() io.ReadCloser    { return nil }
 func (h *testHandle) Stderr() io.ReadCloser    { return nil }
 func (h *testHandle) PTY() process.PTY         { return h.pty }

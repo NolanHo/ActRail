@@ -10,6 +10,7 @@ import type { RealtimeStreamSubscription } from "../../domains/realtime/client";
 import type { LiveSessionStore } from "../../domains/live-session/store";
 import type { SessionUiStore } from "../../domains/session-ui/store";
 import type { SessionsStore } from "../../domains/sessions/store";
+import type { WaitsStore } from "../../domains/waits/store";
 import type { RealtimeEnvelope, SessionSummary } from "../../lib/types";
 
 interface UseAppShellEventsOptions {
@@ -25,7 +26,9 @@ interface UseAppShellEventsOptions {
   refreshNotificationsFeed: () => Promise<void>;
   sessionUiStoreApi: SessionUiStore;
   sessionsStoreApi: SessionsStore;
+  waitsStoreApi: WaitsStore;
   workspaceOpen: boolean;
+  bufferAssistantOutput?: boolean;
 }
 
 interface LatestAppShellEventContext {
@@ -79,7 +82,9 @@ export function useAppShellEvents({
   refreshNotificationsFeed,
   sessionUiStoreApi,
   sessionsStoreApi,
+  waitsStoreApi,
   workspaceOpen,
+  bufferAssistantOutput = true,
 }: UseAppShellEventsOptions) {
   const [connected, setConnected] = useState(false);
   const latestRef = useRef<LatestAppShellEventContext>({
@@ -163,6 +168,11 @@ export function useAppShellEvents({
         void refreshActiveWorkspace();
         return;
       }
+      if (type === "waits.updated" || type.startsWith("wait.")) {
+        waitsStoreApi.applyFrame(frame);
+        void refreshSessions();
+        return;
+      }
       if (type === "stream.resync") {
         void refreshSessions();
         void latestRef.current.refreshNotificationsFeed();
@@ -177,11 +187,21 @@ export function useAppShellEvents({
         type === "session.state"
         || type === "session.generation.broken"
         || type === "message.delta"
+        || type === "message.generating"
         || type === "message.commit"
         || type === "ui.request"
         || type === "ui.resolved"
       ) {
         liveSessionStoreApi.applyFrame(frame);
+        waitsStoreApi.applyFrame(frame);
+        if (type === "message.generating") {
+          const payload = frame.payload && typeof frame.payload === "object" ? frame.payload as Record<string, unknown> : null;
+          const sessionId = resolveSessionId(frame);
+          if (payload?.active === false && sessionId) {
+            const session = latestRef.current.items.find((item) => item.session_id === sessionId) ?? null;
+            void refreshLiveSessionSnapshot(sessionId, session?.runtime_id ?? null);
+          }
+        }
         return;
       }
 
@@ -223,14 +243,14 @@ export function useAppShellEvents({
       unsubscribeState();
       disconnect();
     };
-  }, [bootstrapLoaded, liveSessionStoreApi, sessionUiStoreApi, sessionsStoreApi]);
+  }, [bootstrapLoaded, liveSessionStoreApi, sessionUiStoreApi, sessionsStoreApi, waitsStoreApi]);
 
   useEffect(() => {
     if (!bootstrapLoaded) {
       return;
     }
     const liveState = liveSessionStoreApi.getState();
-    const subscriptions: RealtimeStreamSubscription[] = [{ name: "sessions" }];
+    const subscriptions: RealtimeStreamSubscription[] = [{ name: "sessions" }, { name: "waits" }];
     const trackedSessionIds = new Set<string>();
     const subscribeSession = (sessionId: string) => {
       if (!sessionId || trackedSessionIds.has(sessionId)) {
@@ -240,6 +260,7 @@ export function useAppShellEvents({
       subscriptions.push({
         name: sessionStreamName(sessionId),
         resumeFrom: liveState.streamCursorsBySessionId[sessionId],
+        suppressMessageDeltas: bufferAssistantOutput,
       });
       subscriptions.push({
         name: sessionUiStreamName(sessionId),
@@ -256,7 +277,7 @@ export function useAppShellEvents({
       }
     }
     setRealtimeSubscriptions(subscriptions);
-  }, [activeSessionId, bootstrapLoaded, items, liveSessionStoreApi]);
+  }, [activeSessionId, bootstrapLoaded, bufferAssistantOutput, items, liveSessionStoreApi]);
 
   return { connected };
 }

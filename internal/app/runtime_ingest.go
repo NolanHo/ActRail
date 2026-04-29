@@ -35,6 +35,10 @@ type runtimeProjection struct {
 	codexTurnID      string
 	clearCodexTurn   bool
 	codexInitialized bool
+	model            string
+	provider         string
+	contextUsage     *SessionContextUsageSnapshot
+	turnTiming       *SessionTurnTimingSnapshot
 }
 
 type runtimeLineBuffer struct {
@@ -62,6 +66,18 @@ func mergeRuntimeProjection(dst, src runtimeProjection) runtimeProjection {
 	if src.codexInitialized {
 		dst.codexInitialized = true
 	}
+	if strings.TrimSpace(src.model) != "" {
+		dst.model = strings.TrimSpace(src.model)
+	}
+	if strings.TrimSpace(src.provider) != "" {
+		dst.provider = strings.TrimSpace(src.provider)
+	}
+	if src.contextUsage != nil {
+		dst.contextUsage = copyContextUsage(src.contextUsage)
+	}
+	if src.turnTiming != nil {
+		dst.turnTiming = mergeTurnTiming(dst.turnTiming, src.turnTiming)
+	}
 	return dst
 }
 
@@ -77,6 +93,11 @@ func runtimeProjectionSupported(backend session.Backend) bool {
 func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.Backend, runtime sessionRuntime) {
 	if s == nil || !runtimeProjectionSupported(backend) {
 		return
+	}
+	if backend == session.BackendPI {
+		if record, ok := s.registry.Lookup(sessionID); ok && record.state.Busy() {
+			_ = s.setRuntimeAgentRunning(sessionID, true)
+		}
 	}
 	if runtime.helper != nil {
 		go s.readRuntimeHelper(sessionID, backend, runtime.helper)
@@ -177,7 +198,7 @@ func (d *runtimeEventDecoder) decodeHelperFact(fact iod.HelperFact) (runtimeProj
 }
 
 func (d *runtimeEventDecoder) decodeHelperOutput(payload iodTerminalOutputPayload) runtimeProjection {
-	if payload.Data == "" {
+	if payload.Data == "" || payload.Stream == "stderr" {
 		return runtimeProjection{}
 	}
 	d.helperLines.append(payload.Data)
@@ -203,11 +224,95 @@ func (d *runtimeEventDecoder) decodeRuntimeLine(raw []byte) runtimeProjection {
 			return projection
 		}
 	}
+	metadata := decodePIRuntimeMetadata(line)
 	material, err := pi.ParseObjectJSON(line)
 	if err != nil {
+		return metadata
+	}
+	metadata.events = material.Events
+	return metadata
+}
+
+func decodePIRuntimeMetadata(line []byte) runtimeProjection {
+	var raw map[string]any
+	if err := json.Unmarshal(line, &raw); err != nil {
 		return runtimeProjection{}
 	}
-	return runtimeProjection{events: material.Events}
+	message, _ := raw["message"].(map[string]any)
+	if message == nil {
+		return runtimeProjection{}
+	}
+	projection := runtimeProjection{}
+	if model, ok := message["model"].(string); ok {
+		projection.model = strings.TrimSpace(model)
+	}
+	if provider, ok := message["provider"].(string); ok {
+		projection.provider = strings.TrimSpace(provider)
+	}
+	if ts := numericValue(message["timestamp"]); ts > 0 {
+		typeName := strings.TrimSpace(stringValue(raw["type"]))
+		seconds := normalizeRuntimeTimestampSeconds(ts)
+		switch typeName {
+		case "message_start":
+			if role := strings.TrimSpace(stringValue(message["role"])); role == "user" {
+				projection.turnTiming = &SessionTurnTimingSnapshot{StartedTS: seconds}
+			}
+		case "message_update", "message_end", "turn_end":
+			projection.turnTiming = &SessionTurnTimingSnapshot{LastEventTS: &seconds}
+		}
+	}
+	usage, _ := message["usage"].(map[string]any)
+	if usage == nil {
+		return projection
+	}
+	used := intValueFromAny(usage["totalTokens"])
+	if used <= 0 {
+		input := intValueFromAny(usage["input"])
+		output := intValueFromAny(usage["output"])
+		used = input + output
+	}
+	if used > 0 {
+		projection.contextUsage = &SessionContextUsageSnapshot{UsedTokens: &used}
+	}
+	return projection
+}
+
+func stringValue(value any) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func numericValue(value any) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case json.Number:
+		f, _ := v.Float64()
+		return f
+	default:
+		return 0
+	}
+}
+
+func intValueFromAny(value any) int {
+	v := numericValue(value)
+	if v <= 0 {
+		return 0
+	}
+	return int(v + 0.5)
+}
+
+func normalizeRuntimeTimestampSeconds(value float64) float64 {
+	if value > 9_999_999_999 {
+		return value / 1000
+	}
+	return value
 }
 
 type codexAppServerLine struct {
@@ -342,6 +447,13 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 	if projection.clearCodexTurn {
 		s.clearCodexTurnID(sessionID, projection.codexTurnID)
 	}
+	if strings.TrimSpace(projection.model) != "" || strings.TrimSpace(projection.provider) != "" || projection.contextUsage != nil || projection.turnTiming != nil {
+		if record, ok, err := s.registry.UpdateRuntimeMetadata(sessionID, projection.model, projection.provider, projection.contextUsage, projection.turnTiming); err == nil && ok {
+			if strings.TrimSpace(projection.model) != "" || strings.TrimSpace(projection.provider) != "" {
+				s.emitSessionState(record.identity.SessionID())
+			}
+		}
+	}
 	return s.applyPIEvents(sessionID, projection.events)
 }
 
@@ -407,20 +519,31 @@ func (b *runtimeLineBuffer) nextLine() ([]byte, bool) {
 	}
 	data := b.pending.Bytes()
 	idx := bytes.IndexByte(data, '\n')
-	if idx < 0 {
-		return nil, false
+	if idx >= 0 {
+		line := append([]byte(nil), data[:idx]...)
+		b.pending.Next(idx + 1)
+		return line, true
 	}
-	line := append([]byte(nil), data[:idx]...)
-	b.pending.Next(idx + 1)
-	return line, true
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed) {
+		line := append([]byte(nil), trimmed...)
+		b.pending.Reset()
+		return line, true
+	}
+	return nil, false
 }
 
 func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
+	s.messageCache.Invalidate(sessionID)
 	switch event.Kind {
 	case pi.EventKindMessageDelta:
 		return s.applyPIDelta(sessionID, event)
 	case pi.EventKindMessage:
 		return s.applyPIMessage(sessionID, event)
+	case pi.EventKindTool:
+		return s.applyPITool(sessionID, event)
+	case pi.EventKindError:
+		return s.applyPIError(sessionID, event)
 	case pi.EventKindUIRequest:
 		return s.applyPIUIRequest(sessionID, event)
 	case pi.EventKindUIResolved:
@@ -452,7 +575,18 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 		return nil
 	}
 	role := strings.TrimSpace(string(event.Message.Role))
-	if role == "" || event.Message.Role == pi.MessageRoleUser {
+	if role == "" {
+		return nil
+	}
+	if event.Message.Role == pi.MessageRoleUser {
+		committed, err := s.AppendSessionMessage(sessionID, role, "message", event.Message.Text)
+		if err != nil {
+			return err
+		}
+		committed.EventID = piMessageEventID(event)
+		committed.ParentEventID = piParentEventID(event)
+		s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
+		s.emitSessionState(sessionID)
 		return nil
 	}
 	if !event.Message.CommitLike {
@@ -476,6 +610,13 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	if err != nil {
 		return err
 	}
+	if event.Message.Role == pi.MessageRoleAssistant && event.Message.CommitLike && strings.TrimSpace(event.Message.StopReason) != "status" {
+		if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+			return err
+		}
+	}
+	committed.EventID = piMessageEventID(event)
+	committed.ParentEventID = piParentEventID(event)
 	s.emitMessageCommit(sessionID, turnID, committed)
 	s.emitSessionState(sessionID)
 	return nil
@@ -496,6 +637,67 @@ func (s *Stub) commitRuntimeMessage(sessionID session.SessionID, turnID, role, t
 		}
 	}
 	return s.AppendSessionMessage(sessionID, role, "message", text)
+}
+
+func (s *Stub) applyPITool(sessionID session.SessionID, event pi.Event) error {
+	if event.Tool == nil {
+		return nil
+	}
+	kind := "tool"
+	if event.Tool.Result {
+		kind = "tool_result"
+	}
+	text := strings.TrimSpace(event.Tool.Text)
+	if text == "" {
+		text = strings.TrimSpace(event.Tool.Name)
+	}
+	if text == "" {
+		text = kind
+	}
+	committed, err := s.AppendSessionMessage(sessionID, "system", kind, text)
+	if err != nil {
+		return err
+	}
+	committed.Role = ""
+	committed.Type = kind
+	committed.EventID = piToolEventID(event)
+	committed.ParentEventID = piParentEventID(event)
+	committed.Name = strings.TrimSpace(event.Tool.Name)
+	committed.Summary = strings.TrimSpace(event.Tool.Name)
+	committed.ToolCallID = strings.TrimSpace(event.Tool.CallID)
+	committed.IsError = event.Tool.IsError
+	committed.Details = map[string]any{}
+	if committed.Name != "" {
+		committed.Details["name"] = committed.Name
+	}
+	if committed.ToolCallID != "" {
+		committed.Details["tool_call_id"] = committed.ToolCallID
+	}
+	if len(event.Tool.Arguments) > 0 {
+		committed.Details["arguments"] = event.Tool.Arguments
+	}
+	s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
+	s.emitSessionState(sessionID)
+	return nil
+}
+
+func (s *Stub) applyPIError(sessionID session.SessionID, event pi.Event) error {
+	if event.Error == nil || strings.TrimSpace(event.Error.Message) == "" {
+		return nil
+	}
+	committed, err := s.AppendSessionMessage(sessionID, "system", "error", event.Error.Message)
+	if err != nil {
+		return err
+	}
+	committed.Type = "error"
+	committed.IsError = true
+	committed.Details = map[string]any{
+		"source":      strings.TrimSpace(event.Error.Source),
+		"stop_reason": strings.TrimSpace(event.Error.StopReason),
+	}
+	s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
+	s.emitSessionState(sessionID)
+	return nil
 }
 
 func (s *Stub) applyPIUIRequest(sessionID session.SessionID, event pi.Event) error {
@@ -547,12 +749,41 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 		return nil
 	}
 	switch event.Boundary.Kind {
+	case pi.BoundaryKindAgentStarted:
+		if err := s.setRuntimeAgentRunning(sessionID, true); err != nil {
+			return err
+		}
+		if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
+			return err
+		}
+		s.emitSessionState(sessionID)
+	case pi.BoundaryKindAgentCompleted:
+		if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+			return err
+		}
+		state, ok, err := s.registry.SetBusy(sessionID, false)
+		if err != nil {
+			return err
+		}
+		if ok {
+			s.emitSessionState(sessionID)
+			if !state.Busy() {
+				s.scheduleQueuedDispatch(sessionID)
+			}
+		}
 	case pi.BoundaryKindTurnStarted:
 		if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
 			return err
 		}
 		s.emitSessionState(sessionID)
 	case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
+		if s.isRuntimeAgentRunning(sessionID) {
+			if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
+				return err
+			}
+			s.emitSessionState(sessionID)
+			return nil
+		}
 		state, ok, err := s.registry.SetBusy(sessionID, false)
 		if err != nil {
 			return err

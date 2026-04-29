@@ -61,6 +61,7 @@ type runtimeLaunchRequest struct {
 	Provider        string
 	Model           string
 	ReasoningEffort string
+	SessionPath     string
 }
 
 type processRuntimeLauncher struct {
@@ -89,12 +90,14 @@ const (
 	helperReadyTimeout      = 30 * time.Second
 	helperStopTimeout       = 3 * time.Second
 
-	helperFlagSessionID    = "-session-id"
-	helperFlagGenerationID = "-generation-id"
-	helperFlagRuntimeRoot  = "-runtime-root"
-	helperFlagChildCWD     = "-child-cwd"
-	helperFlagChildEnvMode = "-child-env-mode"
-	helperFlagChildEnv     = "-child-env"
+	helperFlagSessionID          = "-session-id"
+	helperFlagGenerationID       = "-generation-id"
+	helperFlagRuntimeRoot        = "-runtime-root"
+	helperFlagChildCWD           = "-child-cwd"
+	helperFlagChildEnvMode       = "-child-env-mode"
+	helperFlagChildEnv           = "-child-env"
+	helperFlagChildIOMode        = "-child-io-mode"
+	helperFlagSessionHistoryPath = "-session-history-path"
 )
 
 type sessionRuntime struct {
@@ -480,7 +483,7 @@ func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (proce
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
-	options, err := agent.NewOptions(req.Provider, req.Model, req.ReasoningEffort)
+	options, err := agent.NewOptionsWithSessionPath(req.Provider, req.Model, req.ReasoningEffort, req.SessionPath)
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
@@ -506,6 +509,12 @@ func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helpe
 		helperFlagChildCWD, childLaunchSpec.CWD().String(),
 		helperFlagChildEnvMode, string(childLaunchSpec.Environment().Mode()),
 	}
+	if req.Backend == session.BackendPI {
+		commandArgs = append(commandArgs, helperFlagChildIOMode, string(iod.ChildIOModeStdio))
+	}
+	if sessionPath := strings.TrimSpace(req.SessionPath); sessionPath != "" {
+		commandArgs = append(commandArgs, helperFlagSessionHistoryPath, sessionPath)
+	}
 	for _, item := range childLaunchSpec.Environment().Vars() {
 		commandArgs = append(commandArgs, helperFlagChildEnv, item.String())
 	}
@@ -519,7 +528,7 @@ func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helpe
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
-	return process.NewLaunchSpec(command, req.CWD, l.env, ioSpec)
+	return process.NewLaunchSpec(command, req.CWD, l.env, ioSpec, process.Detached())
 }
 
 func (l processRuntimeLauncher) waitForHelperReady(ctx context.Context, handle process.Handle, paths iod.GenerationPaths) (iod.GenerationManifest, iod.HelloPacket, *iodclient.Client, error) {
@@ -867,6 +876,25 @@ func helperRejectedCommandError(packet iod.CommandRejectedPacket) error {
 		message += ": " + strings.TrimSpace(payload.Reason)
 	}
 	return errors.New(message)
+}
+
+func (h *runtimeIODHelper) sessionHistory(ctx context.Context) (iod.SessionHistoryResponsePacket, error) {
+	if h == nil {
+		return iod.SessionHistoryResponsePacket{}, errRuntimeInputUnavailable
+	}
+	client, err := iodclient.DialContext(ctx, h.manifest.ControlSocketPath, h.dialer)
+	if err != nil {
+		return iod.SessionHistoryResponsePacket{}, err
+	}
+	defer client.Close()
+	if _, err := client.Hello(ctx); err != nil {
+		return iod.SessionHistoryResponsePacket{}, err
+	}
+	request, err := iod.NewSessionHistoryRequestPacket(h.sessionID, h.generationID)
+	if err != nil {
+		return iod.SessionHistoryResponsePacket{}, err
+	}
+	return client.SessionHistory(ctx, request)
 }
 
 func (h *runtimeIODHelper) shutdown(ctx context.Context) error {

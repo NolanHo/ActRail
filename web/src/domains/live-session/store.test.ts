@@ -157,15 +157,19 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(2);
   });
 
-  it("does not start overlapping state polls for the same session", async () => {
+  it("queues a trailing poll when a non-replace poll arrives during an in-flight snapshot", async () => {
     let resolveMessages!: (value: unknown) => void;
     let resolveState!: (value: unknown) => void;
-    vi.mocked(api.listMessages).mockReturnValueOnce(new Promise((resolve) => {
-      resolveMessages = resolve;
-    }) as never);
-    vi.mocked(api.getSessionState).mockReturnValueOnce(new Promise((resolve) => {
-      resolveState = resolve;
-    }) as never);
+    vi.mocked(api.listMessages)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveMessages = resolve;
+      }) as never)
+      .mockResolvedValueOnce({ items: [{ seq: 2, role: "assistant", text: "new" }], tail_seq: 2 } as never);
+    vi.mocked(api.getSessionState)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveState = resolve;
+      }) as never)
+      .mockResolvedValueOnce({ busy: false, tail_seq: 2, resume_cursors: { session: "2", ui: "2" } } as never);
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
 
@@ -174,11 +178,16 @@ describe("createLiveSessionStore", () => {
 
     expect(api.listMessages).toHaveBeenCalledTimes(1);
     expect(api.getSessionState).toHaveBeenCalledTimes(1);
-    resolveMessages({ items: [{ seq: 1, role: "assistant", text: "durable" }], tail_seq: 1 });
-    resolveState({ busy: false, tail_seq: 1, resume_cursors: { session: "1", ui: "1" } });
+    resolveMessages({ items: [{ seq: 1, role: "assistant", text: "old" }], tail_seq: 1 });
+    resolveState({ busy: true, tail_seq: 1, resume_cursors: { session: "1", ui: "1" } });
     await Promise.all([first, second]);
 
-    expect(messagesStore.getState().bySessionId.s1).toEqual([{ seq: 1, role: "assistant", text: "durable" }]);
+    expect(api.listMessages).toHaveBeenCalledTimes(2);
+    expect(api.getSessionState).toHaveBeenCalledTimes(2);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { seq: 1, role: "assistant", text: "old" },
+      { seq: 2, role: "assistant", text: "new" },
+    ]);
     expect(liveStore.getState().loadingBySessionId.s1).toBe(false);
   });
 
@@ -218,6 +227,42 @@ describe("createLiveSessionStore", () => {
 
     expect(liveStore.getState().busyBySessionId.s1).toBe(false);
     expect(liveStore.getState().errorBySessionId.s1).toBe("write_failed");
+  });
+
+  it("buffers assistant deltas and tracks generating state when assistant buffering is enabled", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+    liveStore.setBufferAssistantOutput(true);
+
+    liveStore.applyFrame({
+      type: "message.generating",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", active: true },
+    });
+    liveStore.applyFrame({
+      type: "message.delta",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", delta: "partial" },
+    });
+
+    expect(liveStore.getState().busyBySessionId.s1).toBe(true);
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(true);
+    expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+
+    liveStore.applyFrame({
+      type: "message.commit",
+      stream: "session:s1",
+      payload: {
+        session_id: "s1",
+        stream_seq: 3,
+        turn_id: "turn-1",
+        message: { seq: 1, role: "assistant", text: "final" },
+      },
+    });
+
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+    expect(messagesStore.getState().bySessionId.s1).toHaveLength(1);
+    expect(messagesStore.getState().bySessionId.s1[0]).toMatchObject({ seq: 1, role: "assistant", text: "final", turn_id: "turn-1" });
   });
 
   it("applies generation broken and transport reset frames", () => {

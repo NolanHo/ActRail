@@ -380,6 +380,7 @@ func buildImportBundle(source legacySnapshot, opts Options, sideAudit []SideJSON
 			SessionID:               key.SessionID,
 			Backend:                 key.Backend,
 			SourcePath:              strings.TrimSpace(sessionRow.SourcePath),
+			SourceConfidence:        "legacy",
 			FirstUserMessage:        strings.TrimSpace(sessionRow.FirstUserMessage),
 			HasLegacySessionUIState: hasUI,
 		})

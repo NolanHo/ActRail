@@ -1,16 +1,19 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	stdErrors "errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"actrail/internal/domain/message"
+	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
 
@@ -159,7 +162,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 	items := s.registry.List()
 	candidates := make([]sessionRecord, 0, len(items))
 	for _, record := range items {
-		if normalizeSessionCWD(record.cwd) != cwd {
+		if !sameSessionCWD(record.cwd, cwd) {
 			continue
 		}
 		if backend != "" && record.identity.Backend().String() != backend {
@@ -168,7 +171,32 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		candidates = append(candidates, record)
 	}
 	ordered := sortSessionsForDisplay(candidates, s.registry.now())
-	start, end := paginate(len(ordered), req.Offset, req.Limit)
+	resumeItems := make([]SessionResumeCandidate, 0, len(ordered))
+	seen := make(map[string]struct{}, len(ordered))
+	for _, item := range ordered {
+		if item.record.identity.Backend() != session.BackendPI || strings.TrimSpace(item.record.importedSourcePath) == "" {
+			continue
+		}
+		candidate := sessionResumeCandidateFromRecord(item.record, item.updatedAt)
+		resumeItems = append(resumeItems, candidate)
+		seen[candidate.SessionID] = struct{}{}
+	}
+	if backend == "" || backend == session.BackendPI.String() {
+		for _, candidate := range scanPIResumeCandidates(cwd) {
+			if _, ok := seen[candidate.SessionID]; ok {
+				continue
+			}
+			seen[candidate.SessionID] = struct{}{}
+			resumeItems = append(resumeItems, candidate)
+		}
+	}
+	sort.SliceStable(resumeItems, func(i, j int) bool {
+		if resumeItems[i].UpdatedTS != resumeItems[j].UpdatedTS {
+			return resumeItems[i].UpdatedTS > resumeItems[j].UpdatedTS
+		}
+		return resumeItems[i].SessionID < resumeItems[j].SessionID
+	})
+	start, end := paginate(len(resumeItems), req.Offset, req.Limit)
 	payload := SessionResumeCandidatesResponse{
 		OK:         true,
 		Exists:     exists,
@@ -176,11 +204,8 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		GitRepo:    false,
 		Offset:     req.Offset,
 		Limit:      req.Limit,
-		Remaining:  len(ordered) - end,
-		Sessions:   make([]SessionResumeCandidate, 0, end-start),
-	}
-	for _, item := range ordered[start:end] {
-		payload.Sessions = append(payload.Sessions, sessionResumeCandidateFromRecord(item.record, item.updatedAt))
+		Remaining:  len(resumeItems) - end,
+		Sessions:   append([]SessionResumeCandidate(nil), resumeItems[start:end]...),
 	}
 	return payload, nil
 }
@@ -341,6 +366,9 @@ func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (Del
 	if err != nil {
 		return DeleteSessionResponse{}, err
 	}
+	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
+		return DeleteSessionResponse{}, err
+	}
 	if !ok {
 		return DeleteSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
@@ -366,6 +394,14 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 	if !ok {
 		return RestartSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
+	sourcePath := strings.TrimSpace(record.importedSourcePath)
+	if record.identity.Backend() == session.BackendPI && sourcePath == "" {
+		var err error
+		sourcePath, err = newPISessionSourcePath(record.cwd, identity.SessionID(), s.registry.now())
+		if err != nil {
+			return RestartSessionResponse{}, err
+		}
+	}
 	newRuntime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
 		SessionID:       identity.SessionID(),
 		Backend:         record.identity.Backend(),
@@ -373,6 +409,7 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 		Provider:        record.provider,
 		Model:           record.model,
 		ReasoningEffort: record.reasoningEffort,
+		SessionPath:     sourcePath,
 	})
 	if err != nil {
 		_ = newRuntime.CleanupHelperArtifacts()
@@ -400,7 +437,13 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 		}
 		_ = s.helperBindings.Delete(record.identity.SessionID())
 	}
-	updated, ok, err := s.registry.SwapRuntime(req.SessionID, identity, newRuntime)
+	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
+		restoreBinding()
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return RestartSessionResponse{}, err
+	}
+	updated, ok, err := s.registry.SwapRuntime(req.SessionID, identity, newRuntime, sourcePath)
 	if err != nil {
 		restoreBinding()
 		_ = newRuntime.Kill(context.Background())
@@ -494,6 +537,154 @@ func normalizeSessionCWD(raw string) string {
 		return ""
 	}
 	return filepath.Clean(trimmed)
+}
+
+func canonicalSessionCWD(raw string) string {
+	cleaned := normalizeSessionCWD(raw)
+	if cleaned == "" {
+		return ""
+	}
+	if eval, err := filepath.EvalSymlinks(cleaned); err == nil && strings.TrimSpace(eval) != "" {
+		return filepath.Clean(eval)
+	}
+	return cleaned
+}
+
+func sameSessionCWD(a, b string) bool {
+	left := normalizeSessionCWD(a)
+	right := normalizeSessionCWD(b)
+	if left == "" || right == "" {
+		return false
+	}
+	return left == right || canonicalSessionCWD(left) == canonicalSessionCWD(right)
+}
+
+func scanPIResumeCandidates(cwd string) []SessionResumeCandidate {
+	roots := piSessionHistoryRoots(cwd)
+	if len(roots) == 0 {
+		return nil
+	}
+	seenPaths := make(map[string]struct{})
+	candidates := make([]SessionResumeCandidate, 0)
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || entry == nil || entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
+				return nil
+			}
+			cleaned := filepath.Clean(path)
+			if _, ok := seenPaths[cleaned]; ok {
+				return nil
+			}
+			seenPaths[cleaned] = struct{}{}
+			candidate, ok := piResumeCandidateFromSourcePath(cwd, cleaned)
+			if ok {
+				candidates = append(candidates, candidate)
+			}
+			return nil
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].UpdatedTS != candidates[j].UpdatedTS {
+			return candidates[i].UpdatedTS > candidates[j].UpdatedTS
+		}
+		return candidates[i].SessionID < candidates[j].SessionID
+	})
+	return candidates
+}
+
+func piResumeCandidateFromSourcePath(cwd, sourcePath string) (SessionResumeCandidate, bool) {
+	backendSessionID, sourceCWD, title, firstUser, ok := piResumeCandidateMetaFromSourcePath(sourcePath)
+	if !ok {
+		return SessionResumeCandidate{}, false
+	}
+	if sourceCWD != "" && !sameSessionCWD(sourceCWD, cwd) {
+		return SessionResumeCandidate{}, false
+	}
+	durableID, err := session.NewDurableID(backendSessionID)
+	if err != nil {
+		return SessionResumeCandidate{}, false
+	}
+	sessionID, err := session.NewHistoricalSessionID(session.BackendPI, durableID)
+	if err != nil {
+		return SessionResumeCandidate{}, false
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil || info.IsDir() {
+		return SessionResumeCandidate{}, false
+	}
+	if strings.TrimSpace(title) == "" {
+		title = truncateResumeTitle(firstUser)
+	}
+	if strings.TrimSpace(title) == "" {
+		title = backendSessionID
+	}
+	return SessionResumeCandidate{
+		SessionID:        sessionID.String(),
+		Title:            title,
+		Alias:            title,
+		DisplayName:      title,
+		CWD:              sourceCWD,
+		FirstUserMessage: firstUser,
+		UpdatedTS:        timestampSeconds(info.ModTime()),
+	}, true
+}
+
+func piResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string, cwd string, title string, firstUser string, ok bool) {
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return "", "", "", "", false
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		material, err := pi.ParseObjectJSON([]byte(line))
+		if err != nil {
+			return "", "", "", "", false
+		}
+		if material.Header != nil {
+			sessionID = strings.TrimSpace(material.Header.SessionID)
+			cwd = strings.TrimSpace(material.Header.CWD)
+			continue
+		}
+		for _, event := range material.Events {
+			if title == "" && event.RawType == "session_info" {
+				title = strings.TrimSpace(event.Message.Text)
+			}
+			if firstUser == "" && event.Message != nil && event.Message.Role == pi.MessageRoleUser {
+				firstUser = strings.TrimSpace(event.Message.Text)
+			}
+		}
+		if sessionID != "" && firstUser != "" {
+			return sessionID, cwd, title, firstUser, true
+		}
+	}
+	return sessionID, cwd, title, firstUser, sessionID != ""
+}
+
+func truncateResumeTitle(value string) string {
+	trimmed := strings.TrimSpace(value)
+	runes := []rune(trimmed)
+	if len(runes) <= 80 {
+		return trimmed
+	}
+	return string(runes[:80])
+}
+
+func piSourcePathForHistoricalSession(cwd string, sessionID session.SessionID) (string, string, bool) {
+	ref, err := session.ParseHistoricalSessionID(sessionID.String())
+	if err != nil || ref.Backend != session.BackendPI {
+		return "", "", false
+	}
+	paths := discoverPISessionSourcesByID(cwd, ref.Durable.String())
+	if len(paths) == 0 {
+		return "", "", false
+	}
+	return paths[0], ref.Durable.String(), true
 }
 
 func pathExists(path string) (bool, bool) {

@@ -1,7 +1,7 @@
 :root {
-  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-assistant-prose: "LXGW WenKai", "LXGW WenKai Screen", "PingFang SC", "Noto Serif CJK SC", "Source Han Serif SC", serif;
-  --font-code: "Fira Code", "LXGW WenKai Mono", "LXGW WenKai", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-ui: "Fira Code", "LXGW WenKai Screen", "LXGW WenKai", "霞鹜文楷", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", Inter, ui-sans-serif, system-ui, "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-assistant-prose: "Fira Code", "LXGW WenKai Screen", "LXGW WenKai", "霞鹜文楷", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+  --font-code: "Fira Code", "LXGW WenKai Mono Screen", "LXGW WenKai Mono", "LXGW WenKai Screen", "LXGW WenKai", "霞鹜文楷", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-family: var(--font-ui);
   line-height: 1.5;
   font-weight: 400;

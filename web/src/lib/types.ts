@@ -39,6 +39,67 @@ export interface AppBootstrapUi {
   deferred_features?: string[];
 }
 
+export type WaitState = "pending_unread" | "claimed" | "answered" | "timed_out_locked" | "cancelled" | "orphaned";
+
+export interface ActiveWaitSummary {
+  wait_id: string;
+  thread_id: string;
+  session_id?: string;
+  state: Extract<WaitState, "pending_unread" | "claimed"> | WaitState;
+  question: string;
+  blocking_reason?: string;
+  attempted?: string;
+  default_if_no_reply?: string;
+  claimed_at?: number | null;
+  timeout_at?: number | null;
+  created_at?: number | null;
+  updated_at?: number | null;
+}
+
+export interface WaitRecord extends ActiveWaitSummary {
+  context?: string;
+  answer?: string;
+  fallback_used?: string;
+  files?: string[];
+  answered_at?: number | null;
+  cancelled_at?: number | null;
+  timed_out_at?: number | null;
+  orphaned_at?: number | null;
+}
+
+export interface WaitThreadSummary {
+  thread_id: string;
+  session_id: string;
+  title?: string;
+  active_wait?: ActiveWaitSummary | null;
+  created_at?: number | null;
+  updated_at?: number | null;
+  closed_at?: number | null;
+  wait_count?: number;
+}
+
+export interface WaitThreadResponse {
+  ok?: boolean;
+  thread?: WaitThreadSummary | null;
+  waits?: WaitRecord[];
+}
+
+export interface WaitThreadsResponse {
+  ok?: boolean;
+  threads?: WaitThreadSummary[];
+}
+
+export interface WaitInboxResponse {
+  ok?: boolean;
+  waits?: ActiveWaitSummary[];
+}
+
+export interface WaitLifecycleResponse {
+  ok?: boolean;
+  wait?: WaitRecord | ActiveWaitSummary | null;
+  active_wait?: ActiveWaitSummary | null;
+}
+
 export interface SessionTransportSnapshot {
   generation_id?: string;
   state?: string;
@@ -81,12 +142,14 @@ export interface SessionSummary {
   blocked?: boolean;
   snoozed?: boolean;
   historical?: boolean;
+  active_wait?: ActiveWaitSummary | null;
 }
 
 export interface SessionsResponse {
   items?: SessionSummary[];
   sessions?: SessionSummary[];
   remaining_count?: number;
+  total_count?: number;
   remaining_by_group?: Record<string, number>;
   omitted_group_count?: number;
   group_key?: string | null;
@@ -468,6 +531,7 @@ export interface LiveSessionResponse {
   partial_assistant_turn?: PartialAssistantTurnSnapshot | null;
   events?: MessageEvent[];
   requests?: SessionUiRequest[];
+  active_wait?: ActiveWaitSummary | null;
 }
 
 export interface RealtimeEnvelope {

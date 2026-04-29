@@ -32,7 +32,7 @@ func TestOpenSessionCatalogAppliesSchemaMigration(t *testing.T) {
 	}
 }
 
-func TestOpenSessionCatalogMigratesSessionSourceRefProvenanceColumn(t *testing.T) {
+func TestOpenSessionCatalogMigratesSessionSourceRefIdentityColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "actrail.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -69,12 +69,14 @@ func TestOpenSessionCatalogMigratesSessionSourceRefProvenanceColumn(t *testing.T
 		t.Fatalf("sql.Open(reload) error = %v", err)
 	}
 	defer func() { _ = db.Close() }()
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('session_source_refs') WHERE name = 'has_legacy_session_ui_state'`).Scan(&count); err != nil {
-		t.Fatalf("query pragma_table_info() error = %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("has_legacy_session_ui_state column count = %d, want 1", count)
+	for _, name := range []string{"has_legacy_session_ui_state", "backend_session_id", "source_confidence"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('session_source_refs') WHERE name = ?`, name).Scan(&count); err != nil {
+			t.Fatalf("query pragma_table_info(%q) error = %v", name, err)
+		}
+		if count != 1 {
+			t.Fatalf("%s column count = %d, want 1", name, count)
+		}
 	}
 }
 
@@ -99,8 +101,8 @@ func TestSessionCatalogPersistsSessionSourceRefProvenanceAcrossReload(t *testing
 			},
 		},
 		SessionSourceRefs: []SessionSourceRefRow{
-			{SessionID: "imported-a", Backend: "pi", SourcePath: "/tmp/a.jsonl", HasLegacySessionUIState: true},
-			{SessionID: "imported-b", Backend: "pi", SourcePath: "/tmp/b.jsonl", HasLegacySessionUIState: false},
+			{SessionID: "imported-a", Backend: "pi", BackendSessionID: "pi-a", SourcePath: "/tmp/a.jsonl", SourceConfidence: "exact", HasLegacySessionUIState: true},
+			{SessionID: "imported-b", Backend: "pi", BackendSessionID: "pi-b", SourcePath: "/tmp/b.jsonl", SourceConfidence: "legacy", HasLegacySessionUIState: false},
 		},
 		AppState:          AppStateRow{RecentCwds: []string{}, CwdGroups: []CwdGroupRow{}},
 		HiddenSessionKeys: []HiddenSessionKeyRow{},
@@ -125,6 +127,9 @@ func TestSessionCatalogPersistsSessionSourceRefProvenanceAcrossReload(t *testing
 	}
 	if len(refs) != 2 {
 		t.Fatalf("len(ListSessionSourceRefs()) = %d, want 2", len(refs))
+	}
+	if refs[0].BackendSessionID != "pi-a" || refs[0].SourceConfidence != "exact" || refs[1].BackendSessionID != "pi-b" || refs[1].SourceConfidence != "legacy" {
+		t.Fatalf("session source ref identity fields = %+v", refs)
 	}
 	if !refs[0].HasLegacySessionUIState || refs[1].HasLegacySessionUIState {
 		t.Fatalf("session source ref provenance = %+v", refs)

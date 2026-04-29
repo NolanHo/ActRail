@@ -110,7 +110,7 @@ describe("NewSessionDialog", () => {
     }
   });
 
-  it("defaults the cwd field to /root/docs when opening the dialog", async () => {
+  it("defaults the cwd field to the active session cwd when opening the dialog", async () => {
     const { api } = await import("../../lib/api");
     vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
       exists: true,
@@ -148,7 +148,89 @@ describe("NewSessionDialog", () => {
     await flush();
 
     const cwdInput = root.querySelector('input[placeholder="/path/to/project"]') as HTMLInputElement;
-    expect(cwdInput.value).toBe("/root/docs");
+    expect(cwdInput.value).toBe("/tmp/other");
+  });
+
+  it("does not default launch controls from the active session when bootstrap defaults are empty", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
+      exists: true,
+      will_create: false,
+      git_repo: false,
+      sessions: [],
+    } as any);
+    const sessionsStore = createSessionsStore({
+      items: [{ session_id: "active-pi", cwd: "/root/docs", agent_backend: "pi", provider_choice: "openai", model: "gpt-5.5", reasoning_effort: "high" }],
+      activeSessionId: "active-pi",
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/root/docs"],
+      tmuxAvailable: true,
+      newSessionDefaults: {
+        default_backend: "pi",
+        backends: {
+          pi: {},
+          codex: {},
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await flush();
+
+    expect((root.querySelector('select[name="providerChoice"]') as HTMLSelectElement).value).toBe("");
+    expect((root.querySelector('input[name="model"]') as HTMLInputElement).value).toBe("");
+    expect((root.querySelector('select[name="reasoningEffort"]') as HTMLSelectElement).value).toBe("high");
+  });
+
+  it("does not load or select backend history while Start is active", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
+      exists: true,
+      will_create: false,
+      git_repo: false,
+      sessions: [{ session_id: "history:pi:old", title: "Old history" }],
+    } as any);
+    const sessionsStore = createSessionsStore({
+      items: [],
+      activeSessionId: null,
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/root/docs"],
+      tmuxAvailable: true,
+      newSessionDefaults: {
+        default_backend: "pi",
+        backends: {
+          pi: { provider_choice: "openai", model: "gpt-5.4" },
+          codex: {},
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await wait(220);
+    await flush();
+
+    expect(api.getSessionResumeCandidates).not.toHaveBeenCalled();
+    expect(root.textContent).not.toContain("Old history");
   });
 
   it("creates a session and selects the returned session id", async () => {
@@ -208,7 +290,6 @@ describe("NewSessionDialog", () => {
     expect(root.textContent).toContain("Model");
     expect(root.textContent).toContain("Provider");
     expect(root.textContent).toContain("Reasoning effort");
-    expect(root.textContent).toContain("Resume conversation");
     expect(root.textContent).toContain("Launch mode");
     expect(root.textContent).toContain("Git worktree branch");
     expect(root.textContent).toContain("Speed");
@@ -316,7 +397,7 @@ describe("NewSessionDialog", () => {
     expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
       session_id: "pi-pending",
       agent_backend: "pi",
-      cwd: "/root/docs",
+      cwd: "/tmp/project",
       pending_startup: true,
       busy: true,
     }), { prepend: true, select: true });
@@ -328,17 +409,16 @@ describe("NewSessionDialog", () => {
     });
   });
 
-  it("shows focused live sessions on the Focus tab and selects them directly", async () => {
+  it("does not render existing-session navigation inside NewSession", async () => {
     const sessionsStore = createSessionsStore({
       items: [
         { session_id: "sess-1", alias: "Inbox cleanup", cwd: "/tmp/project-a", agent_backend: "pi", focused: true },
-        { session_id: "sess-2", title: "Release checklist", cwd: "/tmp/project-b", agent_backend: "codex", focused: true },
-        { session_id: "sess-3", alias: "Hidden", cwd: "/tmp/project-c", agent_backend: "pi", focused: false },
+        { session_id: "pi-history-1", alias: "ForkKV notes", cwd: "/root/docs", agent_backend: "pi", runtime_id: "" },
       ],
-      activeSessionId: "sess-3",
+      activeSessionId: "sess-1",
       loading: false,
       bootstrapLoaded: true,
-      recentCwds: ["/tmp/project-c"],
+      recentCwds: ["/tmp/project-a"],
       tmuxAvailable: false,
       newSessionDefaults: {
         default_backend: "pi",
@@ -348,43 +428,27 @@ describe("NewSessionDialog", () => {
         },
       },
     });
-    const onClose = vi.fn();
 
     root = document.createElement("div");
     document.body.appendChild(root);
     await act(async () => {
       render(
         <AppProviders sessionsStore={sessionsStore as any}>
-          <NewSessionDialog open onClose={onClose} />
+          <NewSessionDialog open onClose={() => undefined} />
         </AppProviders>,
         root!,
       );
     });
     await flush();
 
-    const focusTab = Array.from(root.querySelectorAll("button")).find((button) => button.textContent?.includes("Focus"));
-    expect(focusTab).toBeDefined();
-    await act(async () => {
-      focusTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-
-    expect(root.textContent).toContain("Inbox cleanup");
-    expect(root.textContent).toContain("Release checklist");
-    expect(root.textContent).not.toContain("Hidden");
-
-    const focusItem = Array.from(root.querySelectorAll<HTMLButtonElement>(".focusSessionItem")).find((button) => button.textContent?.includes("Release checklist"));
-    expect(focusItem).toBeDefined();
-    await act(async () => {
-      focusItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-
-    expect(sessionsStore.select).toHaveBeenCalledWith("sess-2");
-    expect(onClose).toHaveBeenCalled();
+    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Focus")).toBe(false);
+    expect(Array.from(root.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Pi history")).toBe(false);
+    expect(root.textContent).not.toContain("Inbox cleanup");
+    expect(root.textContent).not.toContain("ForkKV notes");
+    expect(sessionsStore.select).not.toHaveBeenCalled();
   });
 
-  it("uses /root/docs instead of inheriting the active session cwd", async () => {
+  it("uses the active session cwd before recent cwds", async () => {
     const sessionsStore = createSessionsStore({
       items: [
         { session_id: "active", cwd: "/Users/demo/current-project" },
@@ -417,7 +481,7 @@ describe("NewSessionDialog", () => {
     await flush();
 
     const cwdInput = root.querySelector('input[name="cwd"]') as HTMLInputElement;
-    expect(cwdInput.value).toBe("/root/docs");
+    expect(cwdInput.value).toBe("/Users/demo/current-project");
   });
 
   it("selects and closes without a second rename request after launch", async () => {
@@ -1011,7 +1075,7 @@ describe("NewSessionDialog", () => {
           offset: 20,
           limit: 20,
           remaining: 0,
-          sessions: [{ session_id: "older-1", title: "older-title", first_user_message: "older prompt" }],
+          sessions: [{ session_id: "older-1", title: "older-title", first_user_message: "older prompt", updated_ts: 1_760_000_100 }],
         } as any;
       }
       return {
@@ -1021,7 +1085,7 @@ describe("NewSessionDialog", () => {
         offset: 0,
         limit: 20,
         remaining: 1,
-        sessions: [{ session_id: "recent-1", title: "named-pi-session", first_user_message: "recent prompt" }],
+        sessions: [{ session_id: "recent-1", title: "named-pi-session", first_user_message: "recent prompt", updated_ts: 1_760_000_200 }],
       } as any;
     });
 
@@ -1051,14 +1115,18 @@ describe("NewSessionDialog", () => {
         root!,
       );
     });
+    const resumeTab = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Resume") as HTMLButtonElement;
+    await act(async () => {
+      resumeTab.click();
+    });
     const cwdInput = root.querySelector('input[name="cwd"]') as HTMLInputElement;
     await setInputValue(cwdInput, "/tmp/pi-project");
     await wait(220);
     await flush();
 
-    const select = root.querySelector('select[name="resumeSessionId"]') as HTMLSelectElement;
-    expect(select.textContent).toContain("named-pi-session");
-    expect(select.textContent).not.toContain("recent prompt");
+    expect(root.textContent).toContain("named-pi-session");
+    expect(root.textContent).toContain("recent prompt");
+    expect(root.textContent).toContain(new Date(1_760_000_200 * 1000).toLocaleString());
     expect(root.textContent).toContain("1 older");
 
     const olderButton = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Older") as HTMLButtonElement;
@@ -1069,8 +1137,72 @@ describe("NewSessionDialog", () => {
     await flush();
 
     expect(vi.mocked(api.getSessionResumeCandidates)).toHaveBeenLastCalledWith("/tmp/pi-project", "pi", { offset: 20, limit: 20 });
-    expect(select.textContent).toContain("older-title");
+    expect(root.textContent).toContain("older-title");
     expect(root.textContent).toContain("Showing 21-21");
+  });
+
+  it("creates a new ActRail slot from a selected resume candidate", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.createSession).mockResolvedValue({ session_id: "resumed-pi", backend: "pi", ok: true } as any);
+    vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
+      exists: true,
+      will_create: false,
+      git_repo: false,
+      offset: 0,
+      limit: 20,
+      remaining: 0,
+      sessions: [{ session_id: "history:pi:abc", title: "ForkKV", first_user_message: "resume me" }],
+    } as any);
+    const sessionsStore = createSessionsStore({
+      items: [],
+      activeSessionId: null,
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/root/docs"],
+      tmuxAvailable: false,
+      newSessionDefaults: {
+        default_backend: "pi",
+        backends: {
+          pi: { provider_choice: "macaron", model: "gpt-5.4", reasoning_effort: "high" },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    const resumeTab = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Resume") as HTMLButtonElement;
+    await act(async () => {
+      resumeTab.click();
+    });
+    await wait(220);
+    await flush();
+
+    const candidate = Array.from(root.querySelectorAll<HTMLButtonElement>(".focusSessionItem")).find((node) => node.textContent?.includes("ForkKV"));
+    expect(candidate).toBeDefined();
+    await act(async () => {
+      candidate?.click();
+    });
+    const form = root.querySelector("form") as HTMLFormElement;
+    await submitForm(form);
+    await flush();
+
+    expect(api.createSession).toHaveBeenCalledWith({
+      cwd: "/root/docs",
+      title: undefined,
+      agent_backend: "pi",
+      provider: "macaron",
+      model: "gpt-5.4",
+      reasoning_effort: "high",
+      resume_session_id: "history:pi:abc",
+    });
   });
 
   it("clears stale resume selection immediately when the cwd changes", async () => {
@@ -1125,23 +1257,34 @@ describe("NewSessionDialog", () => {
         root!,
       );
     });
+    const resumeTab = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Resume") as HTMLButtonElement;
+    await act(async () => {
+      resumeTab.click();
+    });
     const cwdInput = root.querySelector('input[name="cwd"]') as HTMLInputElement;
     await setInputValue(cwdInput, "/tmp/old-project");
     await wait(220);
     await flush();
 
-    const select = root.querySelector('select[name="resumeSessionId"]') as HTMLSelectElement;
-    expect(select.textContent).toContain("actrail new 修复");
+    expect(root.textContent).toContain("actrail new 修复");
 
-    await setSelectValue(select, "stale-resume");
-    expect(select.value).toBe("stale-resume");
+    const candidate = Array.from(root.querySelectorAll<HTMLButtonElement>(".focusSessionItem")).find((node) => node.textContent?.includes("actrail new 修复"));
+    expect(candidate).toBeDefined();
+    await act(async () => {
+      candidate?.click();
+    });
+    expect(root.textContent).toContain("Selected: actrail new 修复");
 
     await setInputValue(cwdInput, "/tmp/new-project");
     await flush();
 
-    expect(select.value).toBe("");
-    expect(select.textContent).not.toContain("actrail new 修复");
+    expect(root.textContent).not.toContain("actrail new 修复");
+    expect(root.textContent).not.toContain("Selected: actrail new 修复");
 
+    const startTab = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Start") as HTMLButtonElement;
+    await act(async () => {
+      startTab.click();
+    });
     const form = root.querySelector("form") as HTMLFormElement;
     await submitForm(form);
     await flush();

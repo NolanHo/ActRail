@@ -160,6 +160,55 @@ describe("SessionsPane", () => {
     expect(root?.textContent).not.toContain("web");
   });
 
+  it("renders transport health on session cards", () => {
+    renderSessionsPane({
+      items: [
+        { session_id: "sess-1", alias: "Alive", agent_backend: "pi", transport_state: "attached" },
+        { session_id: "sess-2", alias: "Dead", agent_backend: "pi", transport_state: "ended" },
+      ],
+      activeSessionId: "sess-1",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: [],
+      cwdGroups: {},
+      tmuxAvailable: false,
+    });
+
+    const dots = Array.from(root?.querySelectorAll<HTMLElement>(".stateDot") || []);
+    expect(dots[0]?.classList.contains("healthy")).toBe(true);
+    expect(dots[0]?.getAttribute("title")).toBe("backend healthy");
+    expect(dots[1]?.classList.contains("unhealthy")).toBe(true);
+    expect(dots[1]?.getAttribute("title")).toBe("backend unavailable");
+    expect(root?.querySelector<HTMLButtonElement>('button[aria-label="More session actions"]')).not.toBeNull();
+    expect(root?.querySelector<HTMLButtonElement>('button[aria-label="Start Pi..."]')).toBeNull();
+  });
+
+  it("starts an unhealthy session from the menu action", async () => {
+    const sessionsStore = renderSessionsPane({
+      items: [{ session_id: "sess-1", alias: "Dead", agent_backend: "pi", transport_state: "ended" }],
+      activeSessionId: "sess-1",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: [],
+      cwdGroups: {},
+      tmuxAvailable: false,
+    });
+
+    await openSessionMenu();
+    const startAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Start Pi"));
+    expect(startAction).toBeDefined();
+    await click(startAction!);
+    await flush();
+
+    const confirmButton = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Start Pi"));
+    expect(confirmButton).toBeDefined();
+    await click(confirmButton!);
+    await flush();
+
+    expect(api.restartSession).toHaveBeenCalledWith("sess-1", null);
+    expect(sessionsStore.select).toHaveBeenCalledWith("sess-1");
+  });
+
   it("falls back to cwd when persisted alias and title are missing", () => {
     renderSessionsPane({
       items: [{ session_id: "sess-1", first_user_message: "我准备用 preact + vite 重构web端，请帮我出个规划", cwd: "/Users/huapeixuan/Documents/Code/ActRail", agent_backend: "pi" }],

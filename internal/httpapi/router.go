@@ -38,6 +38,16 @@ type focusSessionRequest struct {
 	Focused *bool `json:"focused"`
 }
 
+type executeSessionCommandRequest struct {
+	Command string `json:"command"`
+	Name    string `json:"name"`
+	Args    string `json:"args"`
+}
+
+type answerWaitRequest struct {
+	Answer string `json:"answer"`
+}
+
 func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handler {
 	r := Router{cfg: cfg, app: svc, ws: wsHandler}
 	mux := http.NewServeMux()
@@ -58,6 +68,15 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.Handle("GET /api/sessions/{session_id}/file/list", r.requireAuth(http.HandlerFunc(r.workspaceFileList)))
 	mux.Handle("GET /api/sessions/{session_id}/file/read", r.requireAuth(http.HandlerFunc(r.workspaceFileRead)))
 	mux.Handle("GET /api/sessions/{session_id}/git/file_versions", r.requireAuth(http.HandlerFunc(r.gitFileVersions)))
+	mux.Handle("GET /api/sessions/{session_id}/commands", r.requireAuth(http.HandlerFunc(r.sessionCommands)))
+	mux.Handle("POST /api/sessions/{session_id}/commands", r.requireAuth(http.HandlerFunc(r.executeSessionCommand)))
+	mux.Handle("GET /api/waits/inbox", r.requireAuth(http.HandlerFunc(r.waitInbox)))
+	mux.Handle("GET /api/sessions/{session_id}/waits/threads", r.requireAuth(http.HandlerFunc(r.waitThreads)))
+	mux.Handle("GET /api/sessions/{session_id}/waits/threads/{thread_id}", r.requireAuth(http.HandlerFunc(r.waitThread)))
+	mux.Handle("POST /api/sessions/{session_id}/waits", r.requireAuth(http.HandlerFunc(r.createWait)))
+	mux.Handle("POST /api/sessions/{session_id}/waits/{wait_id}/claim", r.requireAuth(http.HandlerFunc(r.claimWait)))
+	mux.Handle("POST /api/sessions/{session_id}/waits/{wait_id}/answer", r.requireAuth(http.HandlerFunc(r.answerWait)))
+	mux.Handle("POST /api/sessions/{session_id}/waits/{wait_id}/cancel", r.requireAuth(http.HandlerFunc(r.cancelWait)))
 	mux.Handle("POST /api/sessions/{session_id}/rename", r.requireAuth(http.HandlerFunc(r.renameSession)))
 	mux.Handle("POST /api/sessions/{session_id}/focus", r.requireAuth(http.HandlerFunc(r.focusSession)))
 	mux.Handle("POST /api/sessions/{session_id}/edit", r.requireAuth(http.HandlerFunc(r.editSession)))
@@ -129,7 +148,9 @@ func (r Router) logout(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (r Router) bootstrap(w http.ResponseWriter, req *http.Request) {
-	writeJSON(w, http.StatusOK, r.app.Bootstrap(req.Context()))
+	writeJSON(w, http.StatusOK, r.app.Bootstrap(req.Context(), app.BootstrapRequest{
+		RefreshPIModels: req.URL.Query().Get("refresh_pi_models") == "1",
+	}))
 }
 
 func (r Router) listSessions(w http.ResponseWriter, req *http.Request) {
@@ -154,11 +175,14 @@ func (r Router) listSessions(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	payload, err := r.app.ListSessions(req.Context(), app.ListSessionsRequest{
-		GroupKey:    strings.TrimSpace(req.URL.Query().Get("group_key")),
-		Offset:      offset,
-		Limit:       limit,
-		GroupOffset: groupOffset,
-		GroupLimit:  groupLimit,
+		GroupKey:     strings.TrimSpace(req.URL.Query().Get("group_key")),
+		Offset:       offset,
+		Limit:        limit,
+		GroupOffset:  groupOffset,
+		GroupLimit:   groupLimit,
+		AgentBackend: strings.TrimSpace(req.URL.Query().Get("agent_backend")),
+		CWD:          strings.TrimSpace(req.URL.Query().Get("cwd")),
+		Title:        strings.TrimSpace(req.URL.Query().Get("title")),
 	})
 	if err != nil {
 		writeAppError(w, err)
@@ -363,6 +387,139 @@ func (r Router) gitFileVersions(w http.ResponseWriter, req *http.Request) {
 		SessionID: sessionID,
 		Path:      pathValue,
 	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sessionCommands(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.SessionCommands(req.Context(), app.SessionCommandsRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) executeSessionCommand(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body executeSessionCommandRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		name = strings.TrimSpace(body.Command)
+	}
+	payload, err := r.app.ExecuteSessionCommand(req.Context(), app.ExecuteSessionCommandRequest{SessionID: sessionID, Name: name, Args: body.Args})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) waitInbox(w http.ResponseWriter, req *http.Request) {
+	payload, err := r.app.WaitInbox(req.Context())
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) waitThreads(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.WaitThreads(req.Context(), app.WaitThreadsRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) waitThread(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.WaitThread(req.Context(), app.WaitThreadRequest{SessionID: sessionID, ThreadID: strings.TrimSpace(req.PathValue("thread_id"))})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) createWait(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body app.CreateWaitRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.SessionID = sessionID
+	payload, err := r.app.CreateWait(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) claimWait(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.ClaimWait(req.Context(), app.WaitLifecycleRequest{SessionID: sessionID, WaitID: strings.TrimSpace(req.PathValue("wait_id"))})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) answerWait(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body answerWaitRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.AnswerWait(req.Context(), app.WaitLifecycleRequest{SessionID: sessionID, WaitID: strings.TrimSpace(req.PathValue("wait_id")), Answer: body.Answer})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) cancelWait(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.CancelWait(req.Context(), app.WaitLifecycleRequest{SessionID: sessionID, WaitID: strings.TrimSpace(req.PathValue("wait_id"))})
 	if err != nil {
 		writeAppError(w, err)
 		return

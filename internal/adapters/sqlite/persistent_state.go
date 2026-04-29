@@ -4,12 +4,36 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 type SessionSnapshotRow struct {
 	Session   SessionRow
 	Queue     []QueueItemRow
 	Workspace WorkspaceStateRow
+	Live      LiveStateRow
+}
+
+// LiveStateRow stores session state that otherwise exists only in memory while a runtime is attached.
+type LiveStateRow struct {
+	Busy                   bool
+	TailSeq                uint64
+	TailOwner              string
+	TailTurnID             string
+	PartialTurnID          string
+	PartialText            string
+	UIRequestJSON          string
+	TransportGenerationID  string
+	TransportState         string
+	TransportResetRequired bool
+	TransportReason        string
+	ResumeSessionCursor    string
+	ResumeUICursor         string
+	ResumeTransportCursor  string
+	ContextUsageJSON       string
+	TurnTimingJSON         string
+	RuntimeAgentRunning    bool
+	UpdatedAt              time.Time
 }
 
 type QueueItemRow struct {
@@ -62,6 +86,10 @@ func (c *SessionCatalog) UpsertSessionSnapshot(ctx context.Context, snapshot Ses
 		_ = tx.Rollback()
 		return err
 	}
+	if err := upsertLiveStateTx(ctx, tx, snapshot.Session.SessionID, snapshot.Live); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit session snapshot %q: %w", snapshot.Session.SessionID, err)
 	}
@@ -86,10 +114,15 @@ func (c *SessionCatalog) ListSessionSnapshots(ctx context.Context, includeArchiv
 		if err != nil {
 			return nil, err
 		}
+		liveState, err := c.lookupLiveState(ctx, row.SessionID)
+		if err != nil {
+			return nil, err
+		}
 		snapshots = append(snapshots, SessionSnapshotRow{
 			Session:   row,
 			Queue:     queue,
 			Workspace: workspaceState,
+			Live:      liveState,
 		})
 	}
 	return snapshots, nil
@@ -234,6 +267,108 @@ func replaceQueueTx(ctx context.Context, tx *sql.Tx, sessionID string, items []Q
 		}
 	}
 	return nil
+}
+
+func upsertLiveStateTx(ctx context.Context, tx *sql.Tx, sessionID string, row LiveStateRow) error {
+	updatedAt := row.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO session_live_state(
+		session_id, busy, tail_seq, tail_owner, tail_turn_id, partial_turn_id, partial_text,
+		ui_request_json, transport_generation_id, transport_state, transport_reset_required, transport_reason,
+		resume_session_cursor, resume_ui_cursor, resume_transport_cursor, context_usage_json, turn_timing_json,
+		runtime_agent_running, updated_at
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(session_id) DO UPDATE SET
+		busy = excluded.busy,
+		tail_seq = excluded.tail_seq,
+		tail_owner = excluded.tail_owner,
+		tail_turn_id = excluded.tail_turn_id,
+		partial_turn_id = excluded.partial_turn_id,
+		partial_text = excluded.partial_text,
+		ui_request_json = excluded.ui_request_json,
+		transport_generation_id = excluded.transport_generation_id,
+		transport_state = excluded.transport_state,
+		transport_reset_required = excluded.transport_reset_required,
+		transport_reason = excluded.transport_reason,
+		resume_session_cursor = excluded.resume_session_cursor,
+		resume_ui_cursor = excluded.resume_ui_cursor,
+		resume_transport_cursor = excluded.resume_transport_cursor,
+		context_usage_json = excluded.context_usage_json,
+		turn_timing_json = excluded.turn_timing_json,
+		runtime_agent_running = excluded.runtime_agent_running,
+		updated_at = excluded.updated_at`,
+		sessionID,
+		boolToInt(row.Busy),
+		row.TailSeq,
+		row.TailOwner,
+		row.TailTurnID,
+		row.PartialTurnID,
+		row.PartialText,
+		row.UIRequestJSON,
+		row.TransportGenerationID,
+		row.TransportState,
+		boolToInt(row.TransportResetRequired),
+		row.TransportReason,
+		row.ResumeSessionCursor,
+		row.ResumeUICursor,
+		row.ResumeTransportCursor,
+		row.ContextUsageJSON,
+		row.TurnTimingJSON,
+		boolToInt(row.RuntimeAgentRunning),
+		formatTime(updatedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert live state %q: %w", sessionID, err)
+	}
+	return nil
+}
+
+func (c *SessionCatalog) lookupLiveState(ctx context.Context, sessionID string) (LiveStateRow, error) {
+	var row LiveStateRow
+	var updatedAt string
+	var busy, resetRequired, runtimeAgentRunning int
+	err := c.db.QueryRowContext(ctx, `SELECT
+		busy, tail_seq, tail_owner, tail_turn_id, partial_turn_id, partial_text,
+		ui_request_json, transport_generation_id, transport_state, transport_reset_required, transport_reason,
+		resume_session_cursor, resume_ui_cursor, resume_transport_cursor, context_usage_json, turn_timing_json,
+		runtime_agent_running, updated_at
+		FROM session_live_state WHERE session_id = ?`, sessionID).Scan(
+		&busy,
+		&row.TailSeq,
+		&row.TailOwner,
+		&row.TailTurnID,
+		&row.PartialTurnID,
+		&row.PartialText,
+		&row.UIRequestJSON,
+		&row.TransportGenerationID,
+		&row.TransportState,
+		&resetRequired,
+		&row.TransportReason,
+		&row.ResumeSessionCursor,
+		&row.ResumeUICursor,
+		&row.ResumeTransportCursor,
+		&row.ContextUsageJSON,
+		&row.TurnTimingJSON,
+		&runtimeAgentRunning,
+		&updatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return LiveStateRow{}, nil
+	}
+	if err != nil {
+		return LiveStateRow{}, fmt.Errorf("lookup live state %q: %w", sessionID, err)
+	}
+	parsed, err := parseTime(updatedAt)
+	if err != nil {
+		return LiveStateRow{}, fmt.Errorf("parse live state updated_at %q: %w", sessionID, err)
+	}
+	row.Busy = busy != 0
+	row.TransportResetRequired = resetRequired != 0
+	row.RuntimeAgentRunning = runtimeAgentRunning != 0
+	row.UpdatedAt = parsed
+	return row, nil
 }
 
 func replaceWorkspaceTx(ctx context.Context, tx *sql.Tx, sessionID string, state WorkspaceStateRow) error {

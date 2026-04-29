@@ -41,6 +41,8 @@ interface RenderComposerOptions {
     historical?: boolean;
     pending_startup?: boolean;
     runtime_id?: string | null;
+    transport_state?: string | null;
+    reset_required?: boolean;
     model?: string | null;
     provider_choice?: string | null;
     reasoning_effort?: string | null;
@@ -236,172 +238,31 @@ describe("Composer", () => {
     }
   });
 
-  it("shows Pi context usage in the composer gutter", async () => {
+  it("does not duplicate session metadata inside the composer", async () => {
     renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: true, model: "gpt-5", reasoning_effort: "high" }],
+      liveBusyBySessionId: { "sess-1": true },
       liveContextUsageBySessionId: {
         "sess-1": { used_tokens: 82000, total_tokens: 200000, percent_used: 41 },
       },
     });
 
-    expect(getRoot().textContent).toContain("82K/200K 41%");
+    expect(getRoot().querySelector("[data-testid='composer-metadata-row']")).toBeNull();
+    expect(getRoot().querySelector("[data-testid='composer-model-current']")).toBeNull();
+    expect(getRoot().querySelector("[data-testid='composer-context-usage']")).toBeNull();
+    expect(getRoot().querySelector("[data-testid='composer-turn-timing']")).toBeNull();
+    expect(getRoot().textContent).not.toContain("gpt-5");
+    expect(getRoot().textContent).not.toContain("82K/200K 41%");
   });
 
-  it("shows native diagnostics model and effort for live pi sessions", () => {
+  it("keeps model switching out of the composer surface", () => {
     renderComposer({
-      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "stale-model", reasoning_effort: "stale" }],
-      diagnostics: { model: "gpt-5.4", reasoning_effort: "high" },
-      sessionUiSessionId: "sess-1",
-    });
-
-    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
-    expect(modelCurrent?.textContent).toContain("gpt-5.4");
-    expect(modelCurrent?.textContent).toContain("high");
-    expect(modelCurrent?.textContent).not.toContain("stale-model");
-  });
-
-  it("shows unknown when live pi native model fields are missing", () => {
-    renderComposer({
-      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5.4", reasoning_effort: "high" }],
-      diagnostics: null,
-      sessionUiSessionId: "sess-1",
-    });
-
-    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
-    expect(modelCurrent?.textContent).toContain("unknown");
-    expect(modelCurrent?.textContent).not.toContain("gpt-5.4");
-  });
-
-  it("hides model switch controls for historical pi sessions", () => {
-    renderComposer({
-      items: [{ session_id: "history:pi:sess-1", agent_backend: "pi", busy: false, historical: true, model: "gpt-5.4" }],
-      activeSessionId: "history:pi:sess-1",
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5.4" }],
+      activeSessionId: "sess-1",
     });
 
     expect(getRoot().querySelector("[data-testid='composer-model-switch']")).toBeNull();
     expect(getRoot().querySelector("[data-testid='composer-model-input']")).toBeNull();
-  });
-
-  it("switches model via backend model endpoint instead of chat message", async () => {
-    const switchSessionModel = vi.spyOn(api, "switchSessionModel").mockResolvedValue({ ok: true, model: "gpt-5.4" } as any);
-    const sendMessage = vi.spyOn(api, "sendMessage").mockResolvedValue({ ok: true, session_id: "sess-1" } as any);
-    renderComposer({
-      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5" }],
-      newSessionDefaults: {
-        backends: {
-          pi: {
-            models: ["gpt-5", "gpt-5.4"],
-          },
-        },
-      },
-    });
-
-    const modelInput = getRoot().querySelector("[data-testid='composer-model-input']") as HTMLInputElement;
-    const modelSwitch = getRoot().querySelector("[data-testid='composer-model-switch']") as HTMLButtonElement;
-
-    act(() => {
-      modelInput.value = "gpt-5.4";
-      modelInput.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-
-    act(() => {
-      modelSwitch.click();
-    });
-
-    await flushEffects();
-
-    expect(switchSessionModel).toHaveBeenCalledWith("sess-1", { model: "gpt-5.4" }, "rt-1");
-    expect(sendMessage).not.toHaveBeenCalledWith("sess-1", "/model gpt-5.4");
-  });
-
-  it("shows unknown when native context usage is partial", async () => {
-    renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
-      liveContextUsageBySessionId: {
-        "sess-1": { total_tokens: 200000 },
-      },
-    });
-
-    expect(getRoot().textContent).toContain("?");
-    expect(getRoot().textContent).not.toContain("0/200K 0%");
-  });
-
-  it("shows context usage above 100 percent when reported by Pi", async () => {
-    renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
-      liveContextUsageBySessionId: {
-        "sess-1": { used_tokens: 283891, total_tokens: 272000, percent_used: 104 },
-      },
-    });
-
-    expect(getRoot().textContent).toContain("284K/272K 104%");
-  });
-
-  it("shows unknown when live native context usage is missing", async () => {
-    renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
-      liveContextUsageBySessionId: {
-        "sess-1": null,
-      },
-      diagnostics: null,
-    });
-
-    expect(getRoot().textContent).toContain("?");
-  });
-
-  it("shows the active turn elapsed time in the composer gutter", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-19T10:00:12.000Z"));
-
-    renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
-      liveBusyBySessionId: { "sess-1": true },
-      messageEventsBySessionId: {
-        "sess-1": [
-          { role: "user", ts: Date.parse("2026-04-19T10:00:00.000Z") / 1000, text: "Run this" },
-          { type: "reasoning", ts: Date.parse("2026-04-19T10:00:05.000Z") / 1000, text: "thinking" },
-        ],
-      },
-    });
-
-    expect(getRoot().textContent).toContain("Turn 12s");
-
-    await act(async () => {
-      vi.advanceTimersByTime(3000);
-    });
-
-    expect(getRoot().textContent).toContain("Turn 15s");
-  });
-
-  it("freezes the latest turn duration after the round finishes", async () => {
-    renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
-      messageEventsBySessionId: {
-        "sess-1": [
-          { role: "user", ts: 100, text: "Run this" },
-          { type: "tool", ts: 104, text: "bash" },
-          { role: "assistant", ts: 109, text: "Finished" },
-        ],
-      },
-    });
-
-    expect(getRoot().textContent).toContain("Turn 9s");
-  });
-
-  it("keeps the latest turn duration after refresh from backend timing", async () => {
-    renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
-      liveTurnTimingBySessionId: {
-        "sess-1": { started_ts: 100, last_event_ts: 109 },
-      },
-      messageEventsBySessionId: {
-        "sess-1": [
-          { role: "assistant", ts: 109, text: "Finished" },
-        ],
-      },
-    });
-
-    expect(getRoot().textContent).toContain("Turn 9s");
   });
 
   it("keeps the textarea editable while a Pi session is still starting", () => {
@@ -418,6 +279,27 @@ describe("Composer", () => {
     expect(textarea.disabled).toBe(false);
     expect(queueButton.disabled).toBe(false);
     expect(sendButton.disabled).toBe(true);
+  });
+
+  it("blocks sends but allows queueing to ended session backends", async () => {
+    const { submit } = renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, transport_state: "ended" }],
+      draft: "queued draft",
+    });
+
+    const composerRoot = getRoot();
+    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Queue")) as HTMLButtonElement;
+    const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
+
+    expect(composerRoot.textContent).toContain("Session backend has ended");
+    expect(queueButton.disabled).toBe(false);
+    expect(sendButton.disabled).toBe(true);
+
+    await act(async () => {
+      sendButton.click();
+    });
+
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("keeps separate drafts for different sessions", async () => {
@@ -596,7 +478,7 @@ describe("Composer", () => {
       await Promise.resolve();
     });
 
-    expect(liveSessionStore.loadInitial).toHaveBeenCalledWith("sess-1");
+    expect(liveSessionStore.loadInitial).not.toHaveBeenCalled();
     expect(liveSessionStore.poll).not.toHaveBeenCalled();
     expect(sessionUiStore.refresh).toHaveBeenCalledTimes(1);
     expect(sessionsStore.refresh).toHaveBeenCalledTimes(1);
@@ -719,22 +601,23 @@ describe("Composer", () => {
     expect(getSessionCommands).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the input above a dedicated controls row for stacked mobile layout", () => {
+  it("renders attach, input, secondary controls, and send in one composer lane", () => {
     renderComposer({ items: [] });
     const composerRoot = getRoot();
 
     const form = composerRoot.querySelector("form.composerShell");
+    const attachButton = form?.querySelector(".composerAttachButton");
     const inputWrap = form?.querySelector(".composerInputWrap");
     const controlsRow = form?.querySelector(".composerControlsRow");
 
-    expect(form?.firstElementChild).toBe(inputWrap ?? null);
+    expect(form?.children[0]).toBe(attachButton ?? null);
+    expect(form?.children[2]).toBe(inputWrap ?? null);
     expect(controlsRow).not.toBeNull();
-    expect(controlsRow?.querySelector(".composerAttachButton")).not.toBeNull();
     expect(controlsRow?.querySelector(".composerQueueButton")).not.toBeNull();
     expect(controlsRow?.querySelector(".sendButton")).not.toBeNull();
   });
 
-  it("renders compact mobile controls with horizontal metadata and no queue or attach buttons", () => {
+  it("renders compact mobile controls without duplicate metadata, queue, or attach buttons", () => {
     renderComposer({
       compactMobile: true,
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
@@ -745,7 +628,8 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerControlsColumn.compactMobile")).not.toBeNull();
-    expect(composerRoot.querySelector(".composerMetaRow.compactMobile")).not.toBeNull();
+    expect(composerRoot.querySelector(".composerModelRow.compactMobile")).toBeNull();
+    expect(composerRoot.querySelector("[data-testid='composer-metadata-row']")).toBeNull();
     expect(composerRoot.querySelector(".composerAttachButton")).toBeNull();
     expect(composerRoot.querySelector(".composerQueueButton")).toBeNull();
     expect(composerRoot.querySelector(".composerInterruptButton")).not.toBeNull();

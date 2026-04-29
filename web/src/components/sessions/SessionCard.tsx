@@ -20,6 +20,43 @@ interface SessionCardProps {
   onDelete?: () => void;
 }
 
+type SessionHealth = "healthy" | "unhealthy" | "silent" | "stalled" | "unknown";
+
+function sessionTransportHealth(session: SessionSummary, historical: boolean): SessionHealth {
+  if (historical) {
+    return "unknown";
+  }
+  const state = String(session.transport_state || "").trim();
+  if (session.reset_required === true || state === "broken" || state === "ended") {
+    return "unhealthy";
+  }
+  if (state === "attached") {
+    return "healthy";
+  }
+  if (state === "stalled") {
+    return "stalled";
+  }
+  if (state === "silent") {
+    return "silent";
+  }
+  return "unknown";
+}
+
+function sessionHealthLabel(health: SessionHealth) {
+  switch (health) {
+    case "healthy":
+      return "backend healthy";
+    case "unhealthy":
+      return "backend unavailable";
+    case "silent":
+      return "backend silent";
+    case "stalled":
+      return "backend stalled";
+    default:
+      return "backend health unknown";
+  }
+}
+
 function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" | "handoff" | "restart" | "menu" }) {
   if (kind === "edit") {
     return (
@@ -99,16 +136,19 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
   const desktopActions = useDesktopSessionActions();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const idBase = `session-${session.session_id.replace(/[^a-z0-9_-]/gi, "-")}`;
+  const titleId = `${idBase}-title`;
+  const health = sessionTransportHealth(session, isHistorical);
+  const healthLabel = sessionHealthLabel(health);
   const hasInlineActions = Boolean(onToggleFocus || onEdit);
   const hasMenuActions = Boolean(onDuplicate || onRestart || onHandoff || onDelete);
   const hasActions = hasInlineActions || hasMenuActions;
   const showActions = hasActions && (active || desktopActions);
-  const idBase = `session-${session.session_id.replace(/[^a-z0-9_-]/gi, "-")}`;
-  const titleId = `${idBase}-title`;
   const accessibilityParts = [
     title,
     session.agent_backend || "codex",
     isHistorical ? "historical" : session.busy ? "busy" : "idle",
+    !isHistorical ? healthLabel : null,
     !isHistorical && session.focused ? "focused" : null,
     !isHistorical && session.queue_len ? `${session.queue_len} queued` : null,
   ].filter(Boolean);
@@ -174,7 +214,7 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
             <div className="sessionCardFooterRow">
               <div className="sessionCardHeaderAside">
                 <div className="sessionMetaBadges flex items-center justify-end gap-1">
-                  {!isHistorical ? <span className={cn("stateDot", session.busy && "busy")} /> : null}
+                  {!isHistorical ? <span className={cn("stateDot", health, session.busy && "busy")} title={healthLabel} aria-label={healthLabel} /> : null}
                   <Badge variant="secondary" className="backendBadge">{session.agent_backend || "codex"}</Badge>
                   {isHistorical ? <Badge variant="outline" className="ownerBadge">history</Badge> : null}
                   {!isHistorical && session.focused ? <Badge variant="outline" className="ownerBadge">Focus</Badge> : null}
@@ -237,7 +277,7 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
                           <div
                             role="menu"
                             aria-label="Session actions"
-                            className="sessionActionMenu absolute right-0 top-[calc(100%+0.3rem)] z-30 min-w-[12rem] rounded-xl border border-border bg-card p-1 shadow-2xl"
+                            className="sessionActionMenu absolute right-0 top-[calc(100%+0.3rem)] z-30 min-w-[12rem] rounded-xl p-1"
                             onClick={(event) => stopActionClick(event as MouseEvent)}
                           >
                             {onDuplicate ? (

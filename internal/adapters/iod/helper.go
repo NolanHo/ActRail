@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"actrail/internal/adapters/process"
 	"actrail/internal/domain/session"
@@ -21,18 +22,39 @@ import (
 
 const DefaultProtocolVersion = 1
 
+type ChildIOMode string
+
+const (
+	ChildIOModePTY   ChildIOMode = "pty"
+	ChildIOModeStdio ChildIOMode = "stdio"
+)
+
+func ParseChildIOMode(raw string) (ChildIOMode, error) {
+	mode := ChildIOMode(strings.ToLower(strings.TrimSpace(raw)))
+	switch mode {
+	case ChildIOModePTY, ChildIOModeStdio:
+		return mode, nil
+	case "":
+		return ChildIOModePTY, nil
+	default:
+		return "", fmt.Errorf("child io mode %q is not supported", raw)
+	}
+}
+
 type HelperOptions struct {
-	SessionID        session.SessionID
-	GenerationID     GenerationID
-	Paths            GenerationPaths
-	Command          process.Command
-	CWD              string
-	Environment      process.Environment
-	PTYSize          process.PTYSize
-	ProtocolVersion  int
-	Runner           process.Runner
-	Now              func() time.Time
-	OnChildExitStart func()
+	SessionID          session.SessionID
+	GenerationID       GenerationID
+	Paths              GenerationPaths
+	Command            process.Command
+	CWD                string
+	Environment        process.Environment
+	PTYSize            process.PTYSize
+	ChildIOMode        ChildIOMode
+	ProtocolVersion    int
+	SessionHistoryPath string
+	Runner             process.Runner
+	Now                func() time.Time
+	OnChildExitStart   func()
 }
 
 type Helper struct {
@@ -40,6 +62,7 @@ type Helper struct {
 	generationID    GenerationID
 	paths           GenerationPaths
 	launchSpec      process.LaunchSpec
+	childIOMode     ChildIOMode
 	protocolVersion int
 	runner          process.Runner
 	now             func() time.Time
@@ -49,6 +72,7 @@ type Helper struct {
 	handle   process.Handle
 	proof    HelloProof
 	manifest GenerationManifest
+	history  *sessionHistoryCache
 
 	mu                sync.Mutex
 	conns             map[*helperConn]struct{}
@@ -168,7 +192,20 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 	if err := size.Validate(); err != nil {
 		return nil, err
 	}
-	ioSpec, err := process.PTYIO(size, process.LogPaths{})
+	childIOMode := opts.ChildIOMode
+	if childIOMode == "" {
+		childIOMode = ChildIOModePTY
+	}
+	if _, err := ParseChildIOMode(string(childIOMode)); err != nil {
+		return nil, err
+	}
+	var ioSpec process.IO
+	var err error
+	if childIOMode == ChildIOModeStdio {
+		ioSpec, err = process.PipeIO(process.LogPaths{})
+	} else {
+		ioSpec, err = process.PTYIO(size, process.LogPaths{})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +230,9 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 		generationID:     opts.GenerationID,
 		paths:            opts.Paths,
 		launchSpec:       launchSpec,
+		childIOMode:      childIOMode,
 		protocolVersion:  protocolVersion,
+		history:          newSessionHistoryCache(opts.SessionHistoryPath),
 		runner:           runner,
 		now:              now,
 		conns:            make(map[*helperConn]struct{}),
@@ -230,6 +269,10 @@ func (h *Helper) Run(ctx context.Context) error {
 	}
 	h.wal = wal
 	defer wal.Close()
+	if h.history != nil {
+		h.history.Start(ctx)
+		defer h.history.Stop()
+	}
 	handle, err := h.runner.Start(ctx, h.launchSpec)
 	if err != nil {
 		return fmt.Errorf("start helper child: %w", err)
@@ -237,8 +280,11 @@ func (h *Helper) Run(ctx context.Context) error {
 	if handle == nil {
 		return fmt.Errorf("start helper child: nil process handle")
 	}
-	if handle.PTY() == nil {
+	if h.childIOMode == ChildIOModePTY && handle.PTY() == nil {
 		return fmt.Errorf("helper child must expose PTY transport")
+	}
+	if h.childIOMode == ChildIOModeStdio && (handle.Stdin() == nil || handle.Stdout() == nil) {
+		return fmt.Errorf("helper child must expose stdio transport")
 	}
 	h.handle = handle
 	start := h.now().UTC()
@@ -255,6 +301,9 @@ func (h *Helper) Run(ctx context.Context) error {
 	manifest, err := NewGenerationManifest(h.sessionID, h.generationID, proof)
 	if err != nil {
 		return err
+	}
+	if h.history != nil {
+		manifest.SessionHistoryPath = h.history.path
 	}
 	if err := WriteGenerationManifest(h.paths.ManifestPath, manifest); err != nil {
 		return err
@@ -275,7 +324,7 @@ func (h *Helper) Run(ctx context.Context) error {
 	if childPID != nil {
 		if _, err := h.wal.Append(WALRecordAttachEstablished, attachEstablishedPayload{
 			ChildPID: *childPID,
-			IO:       "pty",
+			IO:       string(h.childIOMode),
 			Argv:     h.launchSpec.Command().Argv(),
 			CWD:      h.launchSpec.CWD().String(),
 		}); err != nil {
@@ -286,10 +335,17 @@ func (h *Helper) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	h.wg.Add(3)
+	h.wg.Add(2)
 	go h.acceptLoop(runCtx)
 	go h.commandLoop(runCtx)
-	go h.readPTY(runCtx)
+	if h.childIOMode == ChildIOModeStdio {
+		h.wg.Add(2)
+		go h.readPipe(runCtx, "stdout", h.handle.Stdout())
+		go h.readPipe(runCtx, "stderr", h.handle.Stderr())
+	} else {
+		h.wg.Add(1)
+		go h.readPTY(runCtx)
+	}
 	childDone := make(chan struct{})
 	go func() {
 		defer close(childDone)
@@ -329,6 +385,15 @@ func (h *Helper) shutdown() error {
 		h.closeConn(conn)
 	}
 	if h.handle != nil {
+		if stdin := h.handle.Stdin(); stdin != nil {
+			_ = stdin.Close()
+		}
+		if stdout := h.handle.Stdout(); stdout != nil {
+			_ = stdout.Close()
+		}
+		if stderr := h.handle.Stderr(); stderr != nil {
+			_ = stderr.Close()
+		}
 		if pty := h.handle.PTY(); pty != nil {
 			_ = pty.Close()
 		}
@@ -402,6 +467,12 @@ func (h *Helper) dispatch(hc *helperConn, raw json.RawMessage) error {
 			return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
 		}
 		return h.handleReplay(hc, request)
+	case PacketSessionHistoryRequest:
+		var request SessionHistoryRequestPacket
+		if err := json.Unmarshal(raw, &request); err != nil {
+			return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
+		}
+		return h.handleSessionHistory(hc, request)
 	case PacketCommandSend, PacketCommandEnqueue, PacketCommandInterrupt, PacketCommandUIResponseSubmit:
 		var packet CommandPacket
 		if err := json.Unmarshal(raw, &packet); err != nil {
@@ -411,6 +482,25 @@ func (h *Helper) dispatch(hc *helperConn, raw json.RawMessage) error {
 	default:
 		return h.sendError(hc, true, ErrorUnsupportedCommandKind, fmt.Sprintf("packet kind %q is not supported by helper", env.Kind), nil)
 	}
+}
+
+func (h *Helper) handleSessionHistory(hc *helperConn, request SessionHistoryRequestPacket) error {
+	if err := request.Validate(); err != nil {
+		return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
+	}
+	var snapshot SessionHistorySnapshot
+	if h.history != nil {
+		var err error
+		snapshot, err = h.history.Snapshot(context.Background())
+		if err != nil {
+			return h.sendError(hc, true, ErrorHelperBroken, err.Error(), nil)
+		}
+	}
+	packet, err := NewSessionHistoryResponsePacket(h.sessionID, h.generationID, snapshot)
+	if err != nil {
+		return err
+	}
+	return h.writePacket(hc, packet)
 }
 
 func (h *Helper) handleReplay(hc *helperConn, request ReplayRequestPacket) error {
@@ -542,7 +632,12 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 	if cmd.kind == PacketCommandInterrupt {
 		return h.handle.Interrupt()
 	}
-	writer := h.handle.PTY()
+	var writer io.Writer
+	if h.childIOMode == ChildIOModeStdio {
+		writer = h.handle.Stdin()
+	} else {
+		writer = h.handle.PTY()
+	}
 	if writer == nil {
 		return fmt.Errorf("helper child input is unavailable")
 	}
@@ -573,6 +668,53 @@ func normalizeCommandInputPayload(payload json.RawMessage) ([]byte, error) {
 	return []byte(text), nil
 }
 
+type utf8ChunkDecoder struct {
+	pending []byte
+}
+
+func (d *utf8ChunkDecoder) Append(chunk []byte) string {
+	if len(chunk) == 0 {
+		return ""
+	}
+	data := make([]byte, 0, len(d.pending)+len(chunk))
+	data = append(data, d.pending...)
+	data = append(data, chunk...)
+	d.pending = d.pending[:0]
+
+	cut := len(data)
+	for back := 1; back <= minInt(utf8.UTFMax-1, len(data)); back++ {
+		idx := len(data) - back
+		if !utf8.RuneStart(data[idx]) {
+			continue
+		}
+		if !utf8.FullRune(data[idx:]) {
+			cut = idx
+		}
+		break
+	}
+	if cut < len(data) {
+		d.pending = append(d.pending, data[cut:]...)
+		data = data[:cut]
+	}
+	return string(data)
+}
+
+func (d *utf8ChunkDecoder) Flush() string {
+	if len(d.pending) == 0 {
+		return ""
+	}
+	out := string(d.pending)
+	d.pending = d.pending[:0]
+	return out
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (h *Helper) readPTY(ctx context.Context) {
 	defer h.wg.Done()
 	pty := h.handle.PTY()
@@ -580,18 +722,39 @@ func (h *Helper) readPTY(ctx context.Context) {
 		_ = h.emitGenerationBreak(GenerationBreakAttachLost)
 		return
 	}
+	h.readOutput(ctx, "pty", pty, true)
+}
+
+func (h *Helper) readPipe(ctx context.Context, stream string, reader io.Reader) {
+	defer h.wg.Done()
+	if reader == nil {
+		if stream == "stdout" {
+			_ = h.emitGenerationBreak(GenerationBreakAttachLost)
+		}
+		return
+	}
+	h.readOutput(ctx, stream, reader, false)
+}
+
+func (h *Helper) readOutput(ctx context.Context, stream string, reader io.Reader, pty bool) {
 	buf := make([]byte, 4096)
+	var decoder utf8ChunkDecoder
 	for {
-		n, err := pty.Read(buf)
+		n, err := reader.Read(buf)
 		if n > 0 {
-			chunk := string(buf[:n])
-			_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: "pty", Data: chunk})
+			chunk := decoder.Append(buf[:n])
+			if chunk != "" {
+				_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: stream, Data: chunk})
+			}
 		}
 		if err != nil {
+			if tail := decoder.Flush(); tail != "" {
+				_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: stream, Data: tail})
+			}
 			if err == io.EOF || errors.Is(err, os.ErrClosed) || ctx.Err() != nil {
 				return
 			}
-			if isPostExitPTYReadError(err) {
+			if pty && isPostExitPTYReadError(err) {
 				h.beginChildExit()
 				h.awaitChildResolution(ctx)
 				return
@@ -702,6 +865,8 @@ func (h *Helper) sendError(hc *helperConn, recoverable bool, code ErrorCode, mes
 func (h *Helper) writePacket(hc *helperConn, packet any) error {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
+	_ = hc.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	defer func() { _ = hc.conn.SetWriteDeadline(time.Time{}) }()
 	if err := hc.enc.Encode(packet); err != nil {
 		return err
 	}

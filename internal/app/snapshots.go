@@ -54,11 +54,20 @@ type SessionMessagesRequest struct {
 }
 
 type SessionMessage struct {
-	Seq  uint64  `json:"seq"`
-	Role string  `json:"role"`
-	Kind string  `json:"kind"`
-	Text string  `json:"text"`
-	TS   float64 `json:"ts"`
+	Seq           uint64         `json:"seq"`
+	Role          string         `json:"role,omitempty"`
+	Kind          string         `json:"kind"`
+	Type          string         `json:"type,omitempty"`
+	Text          string         `json:"text"`
+	TS            float64        `json:"ts"`
+	EventID       string         `json:"event_id,omitempty"`
+	ParentEventID string         `json:"parent_event_id,omitempty"`
+	SourceOrder   string         `json:"source_order,omitempty"`
+	Name          string         `json:"name,omitempty"`
+	Summary       string         `json:"summary,omitempty"`
+	ToolCallID    string         `json:"tool_call_id,omitempty"`
+	IsError       bool           `json:"is_error,omitempty"`
+	Details       map[string]any `json:"details,omitempty"`
 }
 
 type SessionMessagesResponse struct {
@@ -80,6 +89,20 @@ type SessionStateResponse struct {
 	PartialAssistantTurn *PartialAssistantTurnSnapshot `json:"partial_assistant_turn,omitempty"`
 	TailSeq              uint64                        `json:"tail_seq"`
 	ResumeCursors        SessionResumeCursors          `json:"resume_cursors"`
+	ContextUsage         *SessionContextUsageSnapshot  `json:"context_usage,omitempty"`
+	TurnTiming           *SessionTurnTimingSnapshot    `json:"turn_timing,omitempty"`
+	ActiveWait           *ActiveWaitSummary            `json:"active_wait,omitempty"`
+}
+
+type SessionContextUsageSnapshot struct {
+	UsedTokens  *int `json:"used_tokens,omitempty"`
+	TotalTokens *int `json:"total_tokens,omitempty"`
+	PercentUsed *int `json:"percent_used,omitempty"`
+}
+
+type SessionTurnTimingSnapshot struct {
+	StartedTS   float64  `json:"started_ts,omitempty"`
+	LastEventTS *float64 `json:"last_event_ts,omitempty"`
 }
 
 type SessionQueueSnapshot struct {
@@ -250,7 +273,10 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 	if err != nil {
 		return SessionMessagesResponse{}, err
 	}
-	if response, ok, err := loadDetachedImportedPIHistory(ctx, record, req); ok {
+	if response, ok, err := s.loadPIAuthoritativeHistory(ctx, record, s.cfg.Storage.DataDir, req); ok {
+		return response, err
+	}
+	if response, ok, err := s.loadDetachedImportedPIHistory(ctx, record, req); ok {
 		return response, err
 	}
 	page := record.transcript.History(messageBeforeSeq(req.BeforeSeq), req.Limit)
@@ -261,13 +287,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		TailSeq: record.transcript.TailSeq().Uint64(),
 	}
 	for _, item := range items {
-		response.Items = append(response.Items, SessionMessage{
-			Seq:  item.Seq().Uint64(),
-			Role: item.Role().String(),
-			Kind: item.Kind().String(),
-			Text: item.Text(),
-			TS:   timestampSeconds(item.TS()),
-		})
+		response.Items = append(response.Items, sessionMessageFromCommitted(item))
 	}
 	if nextBefore, ok := page.NextBefore(); ok {
 		value := nextBefore.Uint64()
@@ -281,14 +301,19 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 	if err != nil {
 		return SessionStateResponse{}, err
 	}
+	contextUsage := copyContextUsage(record.contextUsage)
+	turnTiming := copyTurnTiming(record.turnTiming)
 	return SessionStateResponse{
 		Busy:                 record.state.Busy(),
 		Queue:                queueSnapshotFromState(record.state),
-		Transport:            sessionTransportSnapshot(record),
+		Transport:            s.sessionTransportSnapshot(record),
 		UIRequest:            copySessionUIRequest(record.uiRequest),
 		PartialAssistantTurn: partialAssistantTurn(record.transcript),
 		TailSeq:              record.transcript.TailSeq().Uint64(),
 		ResumeCursors:        record.resumeCursors,
+		ContextUsage:         contextUsage,
+		TurnTiming:           turnTiming,
+		ActiveWait:           s.activeWaitForSession(record.identity.SessionID()),
 	}, nil
 }
 

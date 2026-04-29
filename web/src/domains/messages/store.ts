@@ -38,7 +38,7 @@ export interface MessagesStore {
   getState(): MessagesState;
   subscribe(listener: () => void): () => void;
   applyLive(sessionId: string, events: MessageEvent[], options: { replace: boolean; offset?: number; hasOlder?: boolean; nextBefore?: number }): void;
-  applySnapshot(sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number }): void;
+  applySnapshot(sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number; replace?: boolean }): void;
   loadInitial(sessionId: string): Promise<void>;
   poll(sessionId: string): Promise<void>;
   loadOlder(sessionId: string, limit?: number): Promise<void>;
@@ -61,6 +61,10 @@ function stableMessageKey(event: MessageEvent | undefined): string | null {
   if (typeof event.seq === "number" && Number.isFinite(event.seq)) {
     return `seq:${Math.floor(event.seq)}`;
   }
+  const streamId = typeof event.stream_id === "string" ? event.stream_id.trim() : "";
+  if (event.role === "assistant" && event.streaming === true && streamId) {
+    return `stream:${streamId}`;
+  }
   const eventId = typeof event.event_id === "string" ? event.event_id.trim() : "";
   if (eventId) {
     return `event_id:${eventId}`;
@@ -69,9 +73,6 @@ function stableMessageKey(event: MessageEvent | undefined): string | null {
   if (id) {
     return `id:${id}`;
   }
-  if (isStreamingAssistantEvent(event)) {
-    return `stream:${event.stream_id}`;
-  }
   return null;
 }
 
@@ -79,17 +80,54 @@ function canMergeSnapshotEvents(events: MessageEvent[]): boolean {
   return events.every((event) => stableMessageKey(event) !== null);
 }
 
+function mergePolledEvents(priorEvents: MessageEvent[], snapshotEvents: MessageEvent[]): MessageEvent[] {
+  if (!snapshotEvents.length) {
+    return [...priorEvents];
+  }
+  const durableAssistantArrived = snapshotEvents.some((event) => event.role === "assistant" && event.streaming !== true);
+  const priorBase = durableAssistantArrived ? priorEvents.filter((event) => !isStreamingAssistantEvent(event)) : priorEvents;
+  return canMergeSnapshotEvents(snapshotEvents) ? mergeLiveEvents(priorBase, snapshotEvents) : [...snapshotEvents];
+}
+
+function closeTimestamp(a: unknown, b: unknown): boolean {
+  return typeof a === "number" && Number.isFinite(a)
+    && typeof b === "number" && Number.isFinite(b)
+    && Math.abs(a - b) <= 120;
+}
+
+function snapshotSupersedesUserEcho(event: MessageEvent, snapshotEvents: MessageEvent[]): boolean {
+  if (event.role !== "user" || typeof event.text !== "string" || !event.text) {
+    return false;
+  }
+  const eventId = typeof event.event_id === "string" ? event.event_id : "";
+  if (eventId.startsWith("pi:")) {
+    return false;
+  }
+  return snapshotEvents.some((snapshotEvent) => snapshotEvent.role === "user"
+    && snapshotEvent.text === event.text
+    && closeTimestamp(snapshotEvent.ts, event.ts));
+}
+
 function mergeSnapshotEvents(priorEvents: MessageEvent[], snapshotEvents: MessageEvent[]): MessageEvent[] {
   if (!snapshotEvents.length) {
-    return [];
+    return [...priorEvents];
   }
   if (!canMergeSnapshotEvents(snapshotEvents)) {
     return [...snapshotEvents];
   }
-  return mergeLiveEvents(
-    priorEvents.filter((event) => stableMessageKey(event) !== null && !isStreamingAssistantEvent(event)),
-    snapshotEvents,
-  );
+  const snapshotKeys = new Set(snapshotEvents.map((event) => stableMessageKey(event)).filter((key): key is string => key !== null));
+  const snapshotBase = mergeLiveEvents([], snapshotEvents);
+  const priorExtras = priorEvents.filter((event) => {
+    if (isStreamingAssistantEvent(event) && snapshotBase.some((snapshotEvent) => streamedAssistantMatchesDurable(event, snapshotEvent))) {
+      return false;
+    }
+    if (snapshotSupersedesUserEcho(event, snapshotEvents)) {
+      return false;
+    }
+    const key = stableMessageKey(event);
+    return key !== null && !snapshotKeys.has(key);
+  });
+  return mergeLiveEvents(snapshotBase, priorExtras);
 }
 
 function streamedAssistantMatchesDurable(streamingEvent: MessageEvent, durableEvent: MessageEvent): boolean {
@@ -204,7 +242,7 @@ export function createMessagesStore(): MessagesStore {
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }
-        const priorEvents = init ? [] : state.bySessionId[sessionId] ?? [];
+        const priorEvents = state.bySessionId[sessionId] ?? [];
         const nextLoadingBySessionId = {
           ...state.loadingBySessionId,
           [sessionId]: false,
@@ -212,7 +250,7 @@ export function createMessagesStore(): MessagesStore {
         state = {
           bySessionId: {
             ...state.bySessionId,
-            [sessionId]: mergeSnapshotEvents(priorEvents, data.events),
+            [sessionId]: init ? mergeSnapshotEvents(priorEvents, data.events) : mergePolledEvents(priorEvents, data.events),
           },
           offsetsBySessionId: {
             ...state.offsetsBySessionId,
@@ -349,7 +387,7 @@ export function createMessagesStore(): MessagesStore {
     }
   };
 
-  const applySnapshot = (sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number }) => {
+  const applySnapshot = (sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number; replace?: boolean }) => {
     const priorEvents = state.bySessionId[sessionId] ?? [];
     const nextLoadingBySessionId = {
       ...state.loadingBySessionId,
@@ -359,7 +397,7 @@ export function createMessagesStore(): MessagesStore {
       ...state,
       bySessionId: {
         ...state.bySessionId,
-        [sessionId]: mergeSnapshotEvents(priorEvents, events),
+        [sessionId]: options.replace === false ? mergePolledEvents(priorEvents, events) : mergeSnapshotEvents(priorEvents, events),
       },
       offsetsBySessionId: {
         ...state.offsetsBySessionId,

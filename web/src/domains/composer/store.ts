@@ -8,6 +8,7 @@ export interface PendingComposerMessage {
   role: "user";
   text: string;
   pending: true;
+  ts: number;
   requestId?: string;
   [key: string]: unknown;
 }
@@ -70,6 +71,31 @@ function persistDrafts(draftBySessionId: Record<string, string>) {
   } catch {
     // localStorage persistence is best-effort only.
   }
+}
+
+function timestampSeconds(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1_000_000_000_000 ? value / 1000 : value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return parsed / 1000;
+    }
+  }
+  return null;
+}
+
+function persistedUserAcknowledgesPending(event: MessageEvent, pending: PendingComposerMessage): boolean {
+  if (event?.role !== "user" || typeof event?.text !== "string" || event.text !== pending.text) {
+    return false;
+  }
+  const pendingTS = timestampSeconds(pending.ts);
+  const eventTS = timestampSeconds(event.ts);
+  if (pendingTS !== null) {
+    return eventTS !== null && eventTS >= pendingTS - 2;
+  }
+  return true;
 }
 
 function nextDraftMap(draftBySessionId: Record<string, string>, sessionId: string | null | undefined, value: string) {
@@ -155,6 +181,8 @@ export function createComposerStore(): ComposerStore {
         role: "user",
         text,
         pending: true,
+        ts: Date.now() / 1000,
+        request_state: "sending",
       };
 
       state = {
@@ -207,9 +235,8 @@ export function createComposerStore(): ComposerStore {
       const pending = state.pendingBySessionId[sessionId] ?? [];
       if (!pending.length) return;
 
-      const persistedUserTexts = persistedEvents
-        .filter((event) => event?.role === "user" && typeof event?.text === "string")
-        .map((event) => String(event.text));
+      const persistedUsers = persistedEvents
+        .filter((event) => event?.role === "user" && typeof event?.text === "string");
       const failedRequestIds = new Set(
         persistedEvents
           .filter((event) => typeof event?.request_id === "string" && event?.request_state === "failed")
@@ -220,13 +247,13 @@ export function createComposerStore(): ComposerStore {
           .filter((event) => event?.request_state === "failed" && typeof event?.pending_text === "string")
           .map((event) => String(event.pending_text)),
       );
-      if (!persistedUserTexts.length && !failedRequestIds.size && !failedTexts.size) return;
+      if (!persistedUsers.length && !failedRequestIds.size && !failedTexts.size) return;
 
       const acknowledgedLocalIds = new Set<string>();
-      let persistedIdx = persistedUserTexts.length - 1;
+      let persistedIdx = persistedUsers.length - 1;
       let pendingIdx = pending.length - 1;
       while (persistedIdx >= 0 && pendingIdx >= 0) {
-        if (persistedUserTexts[persistedIdx] === pending[pendingIdx].text) {
+        if (persistedUserAcknowledgesPending(persistedUsers[persistedIdx], pending[pendingIdx])) {
           acknowledgedLocalIds.add(pending[pendingIdx].localId);
           pendingIdx -= 1;
         }

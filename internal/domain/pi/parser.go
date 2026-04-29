@@ -84,19 +84,24 @@ func parseObject(raw map[string]any) Material {
 
 	var events []Event
 	switch rawType {
+	case "agent_start":
+		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindAgentStarted, CommitLike: false, Reason: rawType}))
+	case "agent_end":
+		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindAgentCompleted, CommitLike: false, Reason: rawType}))
 	case "message_update":
 		events = append(events, parseMessageUpdate(raw, ts)...)
 	case "message_end":
 		if messagePayload != nil {
 			events = append(events, parseMessagePayload(raw, messagePayload, rawType, ts, messagePayloadOptions{
-				assistantClass:           MessageClassCommitted,
-				forceAssistantCommitLike: true,
+				assistantClass:            MessageClassCommitted,
+				forceAssistantCommitLike:  true,
 				suppressAssistantBoundary: true,
 			})...)
 		}
 	case "turn_start":
 		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnStarted, CommitLike: false, Reason: rawType}))
 	case "turn_end":
+		events = append(events, parseToolResults(raw, ts)...)
 		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnCompleted, CommitLike: false, Reason: rawType}))
 	default:
 		if messagePayload != nil {
@@ -132,10 +137,82 @@ func parseObject(raw map[string]any) Material {
 		events = append(events, parseRuntimeMessageEvent(raw, ts, MessageClassCommitted, true)...)
 		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnCompleted, CommitLike: true, Reason: rawType}))
 	case "turn.failed", "turn.aborted":
+		if event := genericErrorEvent(raw, rawType, ts); event != nil {
+			events = append(events, *event)
+		}
 		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindTurnAborted, CommitLike: false, Reason: rawType}))
 	}
 
+	if len(events) == 0 {
+		if event := genericErrorEvent(raw, rawType, ts); event != nil {
+			events = append(events, *event)
+		} else if event := genericContentMessageEvent(raw, rawType, ts); event != nil {
+			events = append(events, *event)
+		}
+	}
 	return Material{Events: events}
+}
+
+func genericContentMessageEvent(raw map[string]any, rawType string, ts float64) *Event {
+	message := firstNonEmpty(
+		cleanString(raw["message"]),
+		extractText(raw),
+	)
+	if message == "" {
+		return nil
+	}
+	if rawType != "" && !strings.Contains(message, rawType) {
+		message = rawType + ": " + message
+	}
+	return &Event{
+		Kind:      EventKindMessage,
+		Timestamp: ts,
+		RawType:   rawType,
+		RawID:     cleanString(raw["id"]),
+		ParentID:  cleanString(raw["parentId"]),
+		SessionID: extractSessionID(raw),
+		TurnID:    extractTurnID(raw),
+		Message: &Message{
+			Role:       MessageRoleAssistant,
+			Text:       message,
+			Class:      MessageClassCommitted,
+			StopReason: "status",
+			CommitLike: true,
+		},
+	}
+}
+
+func genericErrorEvent(raw map[string]any, rawType string, ts float64) *Event {
+	if raw == nil {
+		return nil
+	}
+	message := firstNonEmpty(
+		cleanString(raw["error"]),
+		cleanString(raw["errorMessage"]),
+	)
+	if message == "" && (rawType == "turn.failed" || rawType == "turn.aborted") {
+		message = firstNonEmpty(cleanString(raw["message"]), extractText(raw))
+	}
+	if message == "" {
+		return nil
+	}
+	if rawType != "" && !strings.Contains(message, rawType) {
+		message = rawType + ": " + message
+	}
+	return &Event{
+		Kind:      EventKindError,
+		Timestamp: ts,
+		RawType:   rawType,
+		RawID:     cleanString(raw["id"]),
+		ParentID:  cleanString(raw["parentId"]),
+		SessionID: extractSessionID(raw),
+		TurnID:    extractTurnID(raw),
+		Error: &ErrorMessage{
+			Message:    message,
+			Source:     "pi",
+			StopReason: rawType,
+		},
+	}
 }
 
 func parseHeader(raw map[string]any) *Header {
@@ -163,35 +240,49 @@ type messagePayloadOptions struct {
 
 func parseMessageUpdate(raw map[string]any, ts float64) []Event {
 	update := objectValue(raw["assistantMessageEvent"])
-	if update == nil || cleanString(update["type"]) != "text_delta" {
+	if update == nil {
 		return nil
 	}
-	delta := stringValue(update["delta"])
-	if delta == "" {
-		return nil
-	}
-	role := MessageRoleAssistant
-	if payload := primaryMessagePayload(raw); payload != nil {
-		if parsed := parseRole(cleanString(payload["role"])); parsed != "" {
-			role = parsed
+	base := func(kind EventKind) Event {
+		return Event{
+			Kind:      kind,
+			Timestamp: ts,
+			RawType:   cleanString(raw["type"]),
+			RawID:     cleanString(raw["id"]),
+			ParentID:  cleanString(raw["parentId"]),
+			SessionID: extractSessionID(raw),
+			TurnID:    extractTurnID(raw),
 		}
 	}
-	if role != MessageRoleAssistant {
+	switch cleanString(update["type"]) {
+	case "text_delta":
+		delta := stringValue(update["delta"])
+		if delta == "" {
+			return nil
+		}
+		role := MessageRoleAssistant
+		if payload := primaryMessagePayload(raw); payload != nil {
+			if parsed := parseRole(cleanString(payload["role"])); parsed != "" {
+				role = parsed
+			}
+		}
+		if role != MessageRoleAssistant {
+			return nil
+		}
+		event := base(EventKindMessageDelta)
+		event.Delta = &MessageDelta{Role: role, Text: delta}
+		return []Event{event}
+	case "toolcall_end":
+		tool := toolEventFromObject(objectValue(update["toolCall"]), false)
+		if tool == nil {
+			return nil
+		}
+		event := base(EventKindTool)
+		event.Tool = tool
+		return []Event{event}
+	default:
 		return nil
 	}
-	return []Event{{
-		Kind:      EventKindMessageDelta,
-		Timestamp: ts,
-		RawType:   cleanString(raw["type"]),
-		RawID:     cleanString(raw["id"]),
-		ParentID:  cleanString(raw["parentId"]),
-		SessionID: extractSessionID(raw),
-		TurnID:    extractTurnID(raw),
-		Delta: &MessageDelta{
-			Role: role,
-			Text: delta,
-		},
-	}}
 }
 
 func parseMessagePayload(raw, payload map[string]any, rawType string, ts float64, opts messagePayloadOptions) []Event {
@@ -227,9 +318,20 @@ func parseMessagePayload(raw, payload map[string]any, rawType string, ts float64
 			events = append(events, newBoundaryFromBase(event, Boundary{Kind: BoundaryKindTurnStarted, CommitLike: false, Inferred: true, Reason: "user_message"}))
 		}
 	case string(MessageRoleAssistant):
+		for _, tool := range toolEventsFromPayload(payload) {
+			event := base(EventKindTool)
+			event.Tool = tool
+			events = append(events, event)
+		}
 		toolCalls := askUserToolCalls(payload)
 		for _, request := range toolCalls {
 			events = append(events, newUIRequestEvent(raw, ts, request))
+		}
+		if errorMessage := assistantErrorMessage(payload); errorMessage != nil {
+			event := base(EventKindError)
+			event.Error = errorMessage
+			events = append(events, event)
+			return events
 		}
 		if text := extractText(payload); text != "" {
 			toolCount := assistantToolCallCount(payload)
@@ -262,6 +364,12 @@ func parseMessagePayload(raw, payload map[string]any, rawType string, ts float64
 		if resolution := parseAskUserResolution(payload); resolution != nil {
 			event := base(EventKindUIResolved)
 			event.UIResolved = resolution
+			events = append(events, event)
+			break
+		}
+		if tool := toolResultEventFromObject(payload); tool != nil {
+			event := base(EventKindTool)
+			event.Tool = tool
 			events = append(events, event)
 		}
 	}
@@ -521,6 +629,17 @@ func extractText(payload map[string]any) string {
 	return stringValue(payload["text"])
 }
 
+func assistantErrorMessage(payload map[string]any) *ErrorMessage {
+	if cleanString(payload["stopReason"]) != "error" {
+		return nil
+	}
+	message := cleanString(payload["errorMessage"])
+	if message == "" {
+		message = "assistant turn failed"
+	}
+	return &ErrorMessage{Message: message, Source: "pi", StopReason: "error"}
+}
+
 func assistantToolCallCount(payload map[string]any) int {
 	content, _ := payload["content"].([]any)
 	count := 0
@@ -531,6 +650,81 @@ func assistantToolCallCount(payload map[string]any) int {
 		}
 	}
 	return count
+}
+
+func toolEventsFromPayload(payload map[string]any) []*ToolEvent {
+	content, _ := payload["content"].([]any)
+	out := make([]*ToolEvent, 0)
+	for _, item := range content {
+		tool := toolEventFromObject(objectValue(item), false)
+		if tool == nil || tool.Name == "ask_user" || tool.Name == "AskUserQuestion" {
+			continue
+		}
+		out = append(out, tool)
+	}
+	return out
+}
+
+func toolEventFromObject(obj map[string]any, result bool) *ToolEvent {
+	if obj == nil || cleanString(obj["type"]) != "toolCall" {
+		return nil
+	}
+	name := cleanString(obj["name"])
+	callID := firstNonEmpty(cleanString(obj["id"]), cleanString(obj["toolCallId"]))
+	if name == "" && callID == "" {
+		return nil
+	}
+	return &ToolEvent{
+		CallID:    callID,
+		Name:      name,
+		Arguments: toolArguments(obj["arguments"]),
+		Result:    result,
+	}
+}
+
+func parseToolResults(raw map[string]any, ts float64) []Event {
+	items, _ := raw["toolResults"].([]any)
+	if len(items) == 0 {
+		return nil
+	}
+	events := make([]Event, 0, len(items))
+	for resultIndex, item := range items {
+		tool := toolResultEventFromObject(objectValue(item))
+		if tool == nil {
+			continue
+		}
+		tool.ResultIndex = resultIndex
+		events = append(events, Event{
+			Kind:      EventKindTool,
+			Timestamp: ts,
+			RawType:   cleanString(raw["type"]),
+			RawID:     cleanString(raw["id"]),
+			ParentID:  cleanString(raw["parentId"]),
+			SessionID: extractSessionID(raw),
+			TurnID:    extractTurnID(raw),
+			Tool:      tool,
+		})
+	}
+	return events
+}
+
+func toolResultEventFromObject(obj map[string]any) *ToolEvent {
+	if obj == nil {
+		return nil
+	}
+	name := firstNonEmpty(cleanString(obj["toolName"]), cleanString(obj["name"]))
+	callID := firstNonEmpty(cleanString(obj["toolCallId"]), cleanString(obj["id"]))
+	text := extractText(obj)
+	if name == "" && callID == "" && text == "" {
+		return nil
+	}
+	return &ToolEvent{
+		CallID:  callID,
+		Name:    name,
+		Text:    text,
+		Result:  true,
+		IsError: boolValue(obj["isError"]),
+	}
 }
 
 func assistantThinkingCount(payload map[string]any) int {
