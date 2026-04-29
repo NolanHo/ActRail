@@ -2171,9 +2171,14 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {
   const traceEvents = sortMachineTraceEvents(events);
   const runningIndex = machineTraceRunningIndex(traceEvents, isBusy);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000);
-  const selectedEvent = selectedIndex == null ? null : traceEvents[selectedIndex] ?? null;
+  const selectedEvent = selectedKey == null
+    ? null
+    : traceEvents.find((event, index) => {
+      const kind = compactTraceKind(event);
+      return kind && eventStableIdentity(event, kind, index) === selectedKey;
+    }) ?? null;
   const selectedKind = selectedEvent ? compactTraceKind(selectedEvent) : null;
   const selectedVariant = selectedEvent ? piEventCompactVariant(selectedEvent) : null;
 
@@ -2194,7 +2199,8 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             return null;
           }
           const piEventVariant = kind === "pi_event" ? piEventCompactVariant(event) : null;
-          const isSelected = selectedIndex === index;
+          const eventKey = eventStableIdentity(event, kind, index);
+          const isSelected = selectedKey === eventKey;
           const isRunning = index === runningIndex;
           const runtimeSeconds = kind === "tool" ? unresolvedToolRuntimeSeconds(traceEvents, index, nowSeconds) : null;
           const summary = machineTraceSummary(event, kind);
@@ -2214,7 +2220,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                 : isRunning ? "running" : kind;
           return (
             <button
-              key={`${kind}-${index}-${title}`}
+              key={`${kind}-${eventKey}`}
               type="button"
               data-kind={kind}
               data-status={statusLabel}
@@ -2235,7 +2241,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
               aria-expanded={isSelected ? "true" : "false"}
               title={accessibleLabel}
               aria-label={accessibleLabel}
-              onClick={() => setSelectedIndex((current) => (current === index ? null : index))}
+              onClick={() => setSelectedKey((current) => (current === eventKey ? null : eventKey))}
             >
               <span className="machineTraceTokenIcon" aria-hidden="true">
                 {machineTraceIcon(event, kind, piEventVariant)}
@@ -2456,25 +2462,39 @@ function WorkingIndicator({ label = "Working" }: { label?: string }) {
   );
 }
 
-const messageRowIds = new WeakMap<object, string>();
-let nextMessageRowId = 0;
+function stableHash(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function eventStableIdentity(event: MessageEvent, kind: string, index: number): string {
+  const row = event as Record<string, unknown>;
+  for (const field of ["message_id", "event_id", "stream_id", "tool_call_id", "request_id", "task_id"] as const) {
+    const value = row[field];
+    if (typeof value === "string" && value.trim()) {
+      return `${field}:${value.trim()}`;
+    }
+  }
+  const ts = eventTimestampSeconds(event);
+  const signature = JSON.stringify({
+    kind,
+    ts,
+    name: firstNonEmptyText(event.name, event.toolName),
+    role: event.role,
+    type: event.type,
+    text: typeof event.text === "string" ? event.text : "",
+    summary: typeof event.summary === "string" ? event.summary : "",
+    details: event.details ?? null,
+  });
+  return `signature:${stableHash(signature)}:${index}`;
+}
 
 function messageRowKey(event: MessageEvent, kind: string, index: number) {
-  const row = event as Record<string, unknown>;
-  const messageId = typeof row.message_id === "string" ? row.message_id.trim() : "";
-  if (messageId) {
-    return `${kind}:${messageId}`;
-  }
-  if (event && typeof event === "object") {
-    let objectKey = messageRowIds.get(event as object);
-    if (!objectKey) {
-      nextMessageRowId += 1;
-      objectKey = `row-${nextMessageRowId}`;
-      messageRowIds.set(event as object, objectKey);
-    }
-    return `${kind}:${objectKey}`;
-  }
-  return `${kind}:fallback-${index}`;
+  return `${kind}:${eventStableIdentity(event, kind, index)}`;
 }
 
 function scrollPaneToBottom(element: HTMLElement) {

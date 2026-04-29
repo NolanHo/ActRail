@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	stdErrors "errors"
 	"fmt"
 	"math"
@@ -593,7 +594,7 @@ func scanPIResumeCandidates(cwd string) []SessionResumeCandidate {
 }
 
 func piResumeCandidateFromSourcePath(cwd, sourcePath string) (SessionResumeCandidate, bool) {
-	backendSessionID, sourceCWD, title, firstUser, ok := piResumeCandidateMetaFromSourcePath(sourcePath)
+	backendSessionID, sourceCWD, sessionName, firstUser, ok := piResumeCandidateMetaFromSourcePath(sourcePath)
 	if !ok {
 		return SessionResumeCandidate{}, false
 	}
@@ -612,10 +613,11 @@ func piResumeCandidateFromSourcePath(cwd, sourcePath string) (SessionResumeCandi
 	if err != nil || info.IsDir() {
 		return SessionResumeCandidate{}, false
 	}
-	if strings.TrimSpace(title) == "" {
+	title := strings.TrimSpace(sessionName)
+	if title == "" {
 		title = truncateResumeTitle(firstUser)
 	}
-	if strings.TrimSpace(title) == "" {
+	if title == "" {
 		title = backendSessionID
 	}
 	return SessionResumeCandidate{
@@ -629,7 +631,7 @@ func piResumeCandidateFromSourcePath(cwd, sourcePath string) (SessionResumeCandi
 	}, true
 }
 
-func piResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string, cwd string, title string, firstUser string, ok bool) {
+func piResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string, cwd string, sessionName string, firstUser string, ok bool) {
 	file, err := os.Open(sourcePath)
 	if err != nil {
 		return "", "", "", "", false
@@ -642,6 +644,9 @@ func piResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string, c
 		if line == "" {
 			continue
 		}
+		if name := piSessionInfoNameFromLine(line); name != "" {
+			sessionName = name
+		}
 		material, err := pi.ParseObjectJSON([]byte(line))
 		if err != nil {
 			return "", "", "", "", false
@@ -652,18 +657,31 @@ func piResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string, c
 			continue
 		}
 		for _, event := range material.Events {
-			if title == "" && event.RawType == "session_info" {
-				title = strings.TrimSpace(event.Message.Text)
-			}
 			if firstUser == "" && event.Message != nil && event.Message.Role == pi.MessageRoleUser {
 				firstUser = strings.TrimSpace(event.Message.Text)
 			}
 		}
-		if sessionID != "" && firstUser != "" {
-			return sessionID, cwd, title, firstUser, true
-		}
 	}
-	return sessionID, cwd, title, firstUser, sessionID != ""
+	return sessionID, cwd, sessionName, firstUser, sessionID != ""
+}
+
+func piSessionInfoNameFromLine(line string) string {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(line), &raw); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(jsonStringValue(raw["type"])) != "session_info" {
+		return ""
+	}
+	return strings.TrimSpace(jsonStringValue(raw["name"]))
+}
+
+func jsonStringValue(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return text
 }
 
 func truncateResumeTitle(value string) string {

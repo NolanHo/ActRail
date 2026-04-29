@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -223,6 +226,27 @@ func TestStubSessionResumeCandidatesAndRuntimeRouteLookup(t *testing.T) {
 	candidate := resume.Sessions[0]
 	if candidate.SessionID != sessionID.String() || candidate.Alias != "Runtime route rename" || candidate.FirstUserMessage != "Investigate backlog" {
 		t.Fatalf("resume candidate = %+v", candidate)
+	}
+}
+
+func TestPIResumeCandidateFromSourcePathPrefersSessionInfoName(t *testing.T) {
+	cwd := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "pi-named.jsonl")
+	body := `{"type":"session","version":3,"id":"pi-named","cwd":` + fmt.Sprintf("%q", cwd) + `}
+{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"Investigate a long prompt that should not be the display label"}]}}
+{"type":"session_info","name":"ActRail draft"}
+{"type":"session_info","name":"ActRail"}
+`
+	if err := os.WriteFile(sourcePath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", sourcePath, err)
+	}
+
+	candidate, ok := piResumeCandidateFromSourcePath(cwd, sourcePath)
+	if !ok {
+		t.Fatal("piResumeCandidateFromSourcePath() ok = false, want true")
+	}
+	if candidate.DisplayName != "ActRail" || candidate.Title != "ActRail" || candidate.FirstUserMessage != "Investigate a long prompt that should not be the display label" {
+		t.Fatalf("resume candidate = %+v, want session_info name before first user text", candidate)
 	}
 }
 

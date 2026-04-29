@@ -161,6 +161,52 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("2/3 completed");
   });
 
+  it("keeps a selected tool detail open after refreshed message objects replace the trace", async () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-refresh", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const initialMessages = [
+      { role: "user", text: "Inspect package" },
+      { type: "tool", name: "bash", summary: "npm test", details: { arguments: { command: "npm test" } } },
+      { type: "tool_result", name: "bash", text: "31 passed" },
+    ];
+    const messagesStore = createMutableStore(
+      {
+        bySessionId: { "sess-refresh": initialMessages },
+        offsetsBySessionId: { "sess-refresh": 2 },
+        loading: false,
+      },
+      () => ({ loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() }),
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const toolToken = root.querySelector(".machineTraceToken.tool") as HTMLButtonElement | null;
+    expect(toolToken).not.toBeNull();
+    act(() => {
+      toolToken?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(root.querySelector("[data-testid='machine-trace-detail']")?.textContent).toContain("npm test");
+
+    await act(async () => {
+      messagesStore.setState({
+        bySessionId: { "sess-refresh": initialMessages.map((message) => ({ ...message })) },
+        offsetsBySessionId: { "sess-refresh": 2 },
+        loading: false,
+      });
+    });
+
+    expect(root.querySelector("[data-testid='machine-trace-detail']")?.textContent).toContain("npm test");
+  });
+
   it("renders Claude Todo V2 task-assignment custom messages as dedicated timeline events", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-custom", loading: false, newSessionDefaults: null },

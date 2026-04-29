@@ -1085,7 +1085,7 @@ describe("NewSessionDialog", () => {
         offset: 0,
         limit: 20,
         remaining: 1,
-        sessions: [{ session_id: "recent-1", title: "named-pi-session", first_user_message: "recent prompt", updated_ts: 1_760_000_200 }],
+        sessions: [{ session_id: "recent-1", display_name: "pi-slash-name", title: "first prompt title", first_user_message: "recent prompt", updated_ts: 1_760_000_200 }],
       } as any;
     });
 
@@ -1124,7 +1124,8 @@ describe("NewSessionDialog", () => {
     await wait(220);
     await flush();
 
-    expect(root.textContent).toContain("named-pi-session");
+    expect(root.textContent).toContain("pi-slash-name");
+    expect(root.textContent).not.toContain("first prompt title");
     expect(root.textContent).toContain("recent prompt");
     expect(root.textContent).toContain(new Date(1_760_000_200 * 1000).toLocaleString());
     expect(root.textContent).toContain("1 older");
