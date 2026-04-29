@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -15,6 +16,7 @@ import (
 )
 
 func main() {
+	runtime.GOMAXPROCS(1)
 	var (
 		sessionRaw            = flag.String("session-id", "", "live session id")
 		generationRaw         = flag.String("generation-id", "", "live generation id")
