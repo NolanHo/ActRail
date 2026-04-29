@@ -61,6 +61,9 @@ func sessionMessageFromCommitted(item message.CommittedMessage) SessionMessage {
 	case "error":
 		msg.Type = "error"
 		msg.IsError = true
+	case "pi_event":
+		msg.Role = ""
+		msg.Type = "pi_event"
 	case "tool", "tool_result":
 		msg.Role = ""
 		msg.Type = item.Kind().String()

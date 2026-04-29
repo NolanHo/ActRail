@@ -1087,6 +1087,51 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("Exit Code");
   });
 
+  it("renders assistant turn metadata and counts extension ui requests as operations", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-meta", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const liveSessionStore = createStaticStore(
+      { offsetsBySessionId: {}, liveOffsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: {}, loadingBySessionId: {} },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-meta": [
+            { role: "user", text: "start", ts: 1_777_000_000 },
+            { type: "tool", name: "bash", tool_call_id: "call-1", ts: 1_777_000_010 },
+            { type: "tool_result", tool_call_id: "call-1", text: "ok", ts: 1_777_000_075 },
+            { type: "pi_event", text: "extension_ui_request: Indexed tools", details: { raw_type: "extension_ui_request", status: true }, ts: 1_777_000_080 },
+            { type: "tool_result", tool_call_id: "call-2", text: "failed", is_error: true, ts: 1_777_000_090 },
+            { role: "assistant", text: "finished", ts: 1_777_000_125 },
+          ],
+        },
+        offsetsBySessionId: { "sess-meta": 6 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} liveSessionStore={liveSessionStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const meta = root.querySelector('[data-testid="assistant-turn-meta"]');
+    expect(meta?.textContent).toContain("operations: 4");
+    expect(meta?.textContent).toContain("errors: 1");
+    expect(meta?.textContent).toContain("max(tool call time): 1m5s");
+    expect(meta?.textContent).toContain("turn time: 2m5s");
+    expect(meta?.textContent).toContain("end time:");
+    expect(root.querySelectorAll(".machineTraceToken.isExtensionUI")).toHaveLength(1);
+  });
+
   it("groups consecutive assistant messages and avoids showing role labels as body text", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-3", loading: false, newSessionDefaults: null },

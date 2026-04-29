@@ -44,9 +44,17 @@ const PI_EVENT_COMPACT_VARIANTS = {
   empty_output: "empty_output",
   retry_error: "retry_error",
   compaction: "compaction",
+  extension_ui: "extension_ui",
 } as const;
 const CHAT_GROUPABLE_KINDS = new Set(["user", "assistant", "ask_user"]);
 type CompactTraceKind = "reasoning" | "tool" | "tool_result" | "todo_snapshot" | "custom_message" | "pi_event";
+interface AssistantTurnMeta {
+  operations: number;
+  errors: number;
+  maxToolCallSeconds: number | null;
+  turnSeconds: number | null;
+  endTs: number | null;
+}
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
 
@@ -679,6 +687,10 @@ function piEventCompactVariant(event: MessageEvent): (typeof PI_EVENT_COMPACT_VA
   if (eventKind(event) !== "pi_event") {
     return null;
   }
+  const details = asRecord(event.details);
+  if (details?.raw_type === "extension_ui_request") {
+    return PI_EVENT_COMPACT_VARIANTS.extension_ui;
+  }
   const summary = firstNonEmptyText(event.summary, event.text).toLowerCase();
   if (!summary) {
     return null;
@@ -813,6 +825,31 @@ function formatMessageTimestamp(ts: number): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(ts * 1000));
+}
+
+function formatTurnMetaTimestamp(ts: number): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(ts * 1000));
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
+    return "-";
+  }
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const parts: string[] = [];
+  if (h) parts.push(`${h}h`);
+  if (m || h) parts.push(`${m}m`);
+  parts.push(`${s}s`);
+  return parts.join("");
 }
 
 function messageDayKey(ts: number): string {
@@ -994,10 +1031,12 @@ function ChatMessageCard({
   event,
   kind,
   options,
+  turnMeta,
 }: {
   event: MessageEvent;
   kind: "user" | "assistant";
   options: MarkdownRenderOptions;
+  turnMeta?: AssistantTurnMeta;
 }) {
   const label = kind === "user" ? "You" : "Assistant";
   const text = contentTextFromMessage(event);
@@ -1029,6 +1068,7 @@ function ChatMessageCard({
     <MessageSurface kind={kind}>
       {renderCardHeader(kind, label, summary, event.ts)}
       {renderRichText(text, "messageBody", options)}
+      {kind === "assistant" && turnMeta ? <AssistantTurnMetaCard meta={turnMeta} /> : null}
       <div className="messageBubbleActions">
         <button
           type="button"
@@ -1042,6 +1082,18 @@ function ChatMessageCard({
         </button>
       </div>
     </MessageSurface>
+  );
+}
+
+function AssistantTurnMetaCard({ meta }: { meta: AssistantTurnMeta }) {
+  return (
+    <div className="assistantTurnMetaCard" data-testid="assistant-turn-meta">
+      <span>operations: {meta.operations}</span>
+      <span>errors: {meta.errors}</span>
+      <span>max(tool call time): {formatDuration(meta.maxToolCallSeconds)}</span>
+      <span>turn time: {formatDuration(meta.turnSeconds)}</span>
+      <span>end time: {meta.endTs !== null ? formatTurnMetaTimestamp(meta.endTs) : "-"}</span>
+    </div>
   );
 }
 
@@ -1088,8 +1140,8 @@ function MessageSurface({
   );
 }
 
-function renderChatCard(event: MessageEvent, kind: "user" | "assistant", options: MarkdownRenderOptions) {
-  return <ChatMessageCard event={event} kind={kind} options={options} />;
+function renderChatCard(event: MessageEvent, kind: "user" | "assistant", options: MarkdownRenderOptions, turnMeta?: AssistantTurnMeta) {
+  return <ChatMessageCard event={event} kind={kind} options={options} turnMeta={turnMeta} />;
 }
 
 function shouldAllowFuzzyAskUserMatch(messages: MessageEvent[], index: number) {
@@ -1228,6 +1280,17 @@ function CompactionIcon() {
   );
 }
 
+function ExtensionUIIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M8 9h8" />
+      <path d="M8 13h5" />
+      <path d="M16 15.5h.01" />
+    </svg>
+  );
+}
+
 function TerminalToolIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1338,11 +1401,13 @@ function machineTraceIcon(event: MessageEvent, kind: CompactTraceKind, piEventVa
     return <ProcessUpdateIcon />;
   }
   if (kind === "pi_event") {
-    return piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction
-      ? <CompactionIcon />
-      : piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal
-        ? <TurnTerminalIcon />
-        : <EmptyOutputIcon />;
+    return piEventVariant === PI_EVENT_COMPACT_VARIANTS.extension_ui
+      ? <ExtensionUIIcon />
+      : piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction
+        ? <CompactionIcon />
+        : piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal
+          ? <TurnTerminalIcon />
+          : <EmptyOutputIcon />;
   }
   return <ReasoningIcon />;
 }
@@ -1815,6 +1880,66 @@ function toolCallID(event: MessageEvent): string {
   return typeof details?.tool_call_id === "string" ? details.tool_call_id.trim() : "";
 }
 
+function isIntermediateOperation(event: MessageEvent): boolean {
+  const kind = eventKind(event);
+  return kind === "ask_user" || kind === "wait" || compactTraceKind(event) !== null;
+}
+
+function isTurnErrorOperation(event: MessageEvent): boolean {
+  const kind = eventKind(event);
+  return kind === "error" || (kind === "tool_result" && event.is_error === true);
+}
+
+function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, AssistantTurnMeta> {
+  const result = new Map<number, AssistantTurnMeta>();
+  let lastUserIndex = -1;
+  for (let index = 0; index < messages.length; index += 1) {
+    const event = messages[index];
+    if (event.role === "user") {
+      lastUserIndex = index;
+      continue;
+    }
+    if (event.role !== "assistant" || event.streaming === true) {
+      continue;
+    }
+    const start = lastUserIndex + 1;
+    const segment = messages.slice(start, index);
+    const assistantTs = eventTimestampSeconds(event);
+    const userTs = lastUserIndex >= 0 ? eventTimestampSeconds(messages[lastUserIndex]) : null;
+    const toolStarts = new Map<string, number>();
+    let fallbackToolStart: number | null = null;
+    let maxToolCallSeconds: number | null = null;
+    for (const item of segment) {
+      const kind = eventKind(item);
+      const ts = eventTimestampSeconds(item);
+      if (kind === "tool" && ts !== null) {
+        const id = toolCallID(item);
+        if (id) {
+          toolStarts.set(id, ts);
+        } else {
+          fallbackToolStart = ts;
+        }
+      }
+      if (kind === "tool_result" && ts !== null) {
+        const id = toolCallID(item);
+        const startTs = id ? toolStarts.get(id) : fallbackToolStart;
+        if (startTs !== undefined && startTs !== null) {
+          const elapsed = Math.max(0, ts - startTs);
+          maxToolCallSeconds = maxToolCallSeconds === null ? elapsed : Math.max(maxToolCallSeconds, elapsed);
+        }
+      }
+    }
+    result.set(index, {
+      operations: segment.filter(isIntermediateOperation).length,
+      errors: segment.filter(isTurnErrorOperation).length,
+      maxToolCallSeconds,
+      turnSeconds: assistantTs !== null && userTs !== null ? Math.max(0, assistantTs - userTs) : null,
+      endTs: assistantTs,
+    });
+  }
+  return result;
+}
+
 function hasToolResultAfter(events: MessageEvent[], tool: MessageEvent, startIndex: number): boolean {
   const callID = toolCallID(tool);
   for (let index = startIndex + 1; index < events.length; index += 1) {
@@ -2103,6 +2228,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                 event.is_error && "isError",
                 (kind === "tool" || kind === "tool_result") && event.name === "process" && "isProcessTool",
                 (piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+                piEventVariant === PI_EVENT_COMPACT_VARIANTS.extension_ui && "isExtensionUI",
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
               )}
@@ -2127,6 +2253,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             selectedEvent.is_error && "isError",
             (selectedKind === "tool" || selectedKind === "tool_result") && selectedEvent.name === "process" && "isProcessTool",
             (selectedVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || selectedVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+            selectedVariant === PI_EVENT_COMPACT_VARIANTS.extension_ui && "isExtensionUI",
             selectedVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
             selectedVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
           )}
@@ -2259,11 +2386,12 @@ function renderConversationEvent(
   options: MarkdownRenderOptions,
   allowFuzzyLiveMatch = true,
   allowLegacyFallback = false,
+  turnMeta?: AssistantTurnMeta,
 ) {
   switch (kind) {
     case "user":
     case "assistant":
-      return renderChatCard(event, kind, options);
+      return renderChatCard(event, kind, options, kind === "assistant" ? turnMeta : undefined);
     case "ask_user":
       return renderAskUserCard(event, sessionId, runtimeId, options, allowFuzzyLiveMatch, allowLegacyFallback);
     case "wait":
@@ -2476,6 +2604,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
   const rawMessages = [...persistedMessages, ...pendingMessages];
   const messages = sortEventsByTimestamp(filterLocalUserEchoes(filterResolvedBridgePseudoEvents(rawMessages, activeSessionIsPi)).filter(shouldRenderInMainConversation));
+  const assistantTurnMetaByIndex = buildAssistantTurnMeta(messages);
   const lastMessage = messages[messages.length - 1] ?? null;
   const latestMessageScrollKey = lastMessage
     ? [
@@ -2496,6 +2625,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     lastTs: number | null;
     allowFuzzyLiveMatch: boolean;
     allowLegacyFallback: boolean;
+    messageIndex: number;
+    turnMeta?: AssistantTurnMeta;
   }>>((out, message, index) => {
     const kind = eventKind(message);
     const traceKind = compactTraceKind(message);
@@ -2517,6 +2648,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
         lastTs: ts,
         allowFuzzyLiveMatch: true,
         allowLegacyFallback: false,
+        messageIndex: index,
       });
       return out;
     }
@@ -2533,6 +2665,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       lastTs: ts,
       allowFuzzyLiveMatch: kind === "ask_user" ? shouldAllowFuzzyAskUserMatch(messages, index) : true,
       allowLegacyFallback: kind === "ask_user" ? allowLegacyAskUserFallback : false,
+      messageIndex: index,
+      turnMeta: kind === "assistant" ? assistantTurnMetaByIndex.get(index) : undefined,
     });
     return out;
   }, []);
@@ -2783,6 +2917,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                           markdownOptions,
                           row.allowFuzzyLiveMatch,
                           row.allowLegacyFallback,
+                          row.turnMeta,
                         )}
                     </div>
                   </Fragment>

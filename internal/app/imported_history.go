@@ -143,6 +143,20 @@ func sessionMessageFromPIEvent(event pi.Event) (SessionMessage, bool) {
 		if event.Message == nil || strings.TrimSpace(event.Message.Text) == "" {
 			return SessionMessage{}, false
 		}
+		if strings.TrimSpace(event.Message.StopReason) == "status" {
+			return SessionMessage{
+				Kind:          "pi_event",
+				Type:          "pi_event",
+				Text:          event.Message.Text,
+				TS:            event.Timestamp,
+				EventID:       piMessageEventID(event),
+				ParentEventID: piParentEventID(event),
+				Details: map[string]any{
+					"raw_type": strings.TrimSpace(event.RawType),
+					"status":   true,
+				},
+			}, true
+		}
 		if event.Message.Role != pi.MessageRoleUser && event.Message.Role != pi.MessageRoleAssistant {
 			return SessionMessage{}, false
 		}

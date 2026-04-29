@@ -574,6 +574,23 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	if event.Message == nil || strings.TrimSpace(event.Message.Text) == "" {
 		return nil
 	}
+	if strings.TrimSpace(event.Message.StopReason) == "status" {
+		committed, err := s.AppendSessionMessage(sessionID, "system", "pi_event", event.Message.Text)
+		if err != nil {
+			return err
+		}
+		committed.Role = ""
+		committed.Type = "pi_event"
+		committed.EventID = piMessageEventID(event)
+		committed.ParentEventID = piParentEventID(event)
+		committed.Details = map[string]any{
+			"raw_type": strings.TrimSpace(event.RawType),
+			"status":   true,
+		}
+		s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
+		s.emitSessionState(sessionID)
+		return nil
+	}
 	role := strings.TrimSpace(string(event.Message.Role))
 	if role == "" {
 		return nil
