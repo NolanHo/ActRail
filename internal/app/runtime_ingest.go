@@ -21,6 +21,7 @@ const (
 	piRPCStatePollInterval = 10 * time.Second
 	piRPCStatePollTimeout  = 2 * time.Second
 	piRPCStateMaxFailures  = 3
+	piRPCBusyHoldDuration  = 3 * time.Second
 )
 
 var runtimeHelperProjectors sync.Map
@@ -72,6 +73,8 @@ type piRPCStateCache struct {
 	LastFailureTS        time.Time
 	LastState            *piRPCStateSnapshot
 	StalledResetRequired bool
+	BusyHoldUntil        time.Time
+	IdleHoldUntil        time.Time
 }
 
 func (s piRPCStateSnapshot) Busy() bool {
@@ -300,6 +303,69 @@ func (s *Stub) recordPIRPCStateSuccess(sessionID session.SessionID, state piRPCS
 	cache.LastSuccessTS = time.Now().UTC()
 	cache.LastState = &state
 	s.piRPCStates[sessionID] = cache
+}
+
+func (s *Stub) holdPIRPCBusy(sessionID session.SessionID, generationID iod.GenerationID) {
+	if s == nil || generationID == "" {
+		return
+	}
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	if s.piRPCStates == nil {
+		s.piRPCStates = map[session.SessionID]piRPCStateCache{}
+	}
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID != "" && cache.GenerationID != generationID {
+		cache = piRPCStateCache{GenerationID: generationID}
+	}
+	cache.GenerationID = generationID
+	until := time.Now().UTC().Add(piRPCBusyHoldDuration)
+	if cache.BusyHoldUntil.Before(until) {
+		cache.BusyHoldUntil = until
+	}
+	cache.IdleHoldUntil = time.Time{}
+	s.piRPCStates[sessionID] = cache
+}
+
+func (s *Stub) piRPCBusyHeld(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if s == nil || generationID == "" {
+		return false
+	}
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	return cache.GenerationID == generationID && time.Now().UTC().Before(cache.BusyHoldUntil)
+}
+
+func (s *Stub) holdPIRPCIdle(sessionID session.SessionID, generationID iod.GenerationID) {
+	if s == nil || generationID == "" {
+		return
+	}
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	if s.piRPCStates == nil {
+		s.piRPCStates = map[session.SessionID]piRPCStateCache{}
+	}
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID != "" && cache.GenerationID != generationID {
+		cache = piRPCStateCache{GenerationID: generationID}
+	}
+	cache.GenerationID = generationID
+	until := time.Now().UTC().Add(piRPCBusyHoldDuration)
+	if cache.IdleHoldUntil.Before(until) {
+		cache.IdleHoldUntil = until
+	}
+	s.piRPCStates[sessionID] = cache
+}
+
+func (s *Stub) piRPCIdleHeld(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if s == nil || generationID == "" {
+		return false
+	}
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	return cache.GenerationID == generationID && time.Now().UTC().Before(cache.IdleHoldUntil)
 }
 
 func runtimeOutputSources(runtime sessionRuntime) []io.Reader {
@@ -712,11 +778,23 @@ func (s *Stub) applyPIRPCState(sessionID session.SessionID, state piRPCStateSnap
 		return nil
 	}
 	record, ok := s.registry.Lookup(sessionID)
-	if ok && record.identity.Backend() == session.BackendPI && sessionTransportSnapshot(record).ResetRequired {
+	if !ok {
+		return nil
+	}
+	if record.identity.Backend() == session.BackendPI && sessionTransportSnapshot(record).ResetRequired {
 		return nil
 	}
 	s.recordPIRPCStateSuccess(sessionID, state)
 	busy := state.Busy()
+	if record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
+		generationID := record.runtime.helper.generationID
+		if !busy && s.piRPCBusyHeld(sessionID, generationID) {
+			return nil
+		}
+		if busy && !s.isRuntimeAgentRunning(sessionID) && s.piRPCIdleHeld(sessionID, generationID) {
+			return nil
+		}
+	}
 	if err := s.setRuntimeAgentRunning(sessionID, busy); err != nil {
 		return err
 	}
@@ -1080,7 +1158,12 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 	if event.Boundary == nil {
 		return nil
 	}
-	if s.isPISession(sessionID) {
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return nil
+	}
+	piRPCSession := record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC
+	if record.identity.Backend() == session.BackendPI && !piRPCSession {
 		return nil
 	}
 	switch event.Boundary.Kind {
@@ -1093,6 +1176,9 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 		}
 		s.emitSessionState(sessionID)
 	case pi.BoundaryKindAgentCompleted:
+		if piRPCSession && record.runtime.helper != nil {
+			s.holdPIRPCIdle(sessionID, record.runtime.helper.generationID)
+		}
 		if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
 			return err
 		}
@@ -1107,11 +1193,35 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 			}
 		}
 	case pi.BoundaryKindTurnStarted:
+		if piRPCSession {
+			if err := s.setRuntimeAgentRunning(sessionID, true); err != nil {
+				return err
+			}
+		}
 		if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
 			return err
 		}
 		s.emitSessionState(sessionID)
 	case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
+		if piRPCSession {
+			if record.runtime.helper != nil {
+				s.holdPIRPCIdle(sessionID, record.runtime.helper.generationID)
+			}
+			if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+				return err
+			}
+			state, ok, err := s.registry.SetBusy(sessionID, false)
+			if err != nil {
+				return err
+			}
+			if ok {
+				s.emitSessionState(sessionID)
+				if !state.Busy() {
+					s.scheduleQueuedDispatch(sessionID)
+				}
+			}
+			return nil
+		}
 		if s.isRuntimeAgentRunning(sessionID) {
 			if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
 				return err

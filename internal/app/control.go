@@ -101,6 +101,14 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 		if record.identity.Backend() == session.BackendPI {
 			pollRuntime = record.runtime
 			pollPIState = true
+			if record.runtime.protocol == runtimeProtocolPIRPC {
+				if record.runtime.helper != nil {
+					s.holdPIRPCBusy(req.SessionID, record.runtime.helper.generationID)
+				}
+				if err := s.setRuntimeAgentRunning(req.SessionID, true); err != nil {
+					return err
+				}
+			}
 		}
 		s.awaitRuntimeTurnStart(ctx, record.runtime)
 		item, state, uiRequest, ok, err := s.registry.ActivateSend(req.SessionID, text)

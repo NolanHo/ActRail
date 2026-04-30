@@ -36,6 +36,14 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		if record.identity.Backend() == session.BackendPI {
 			pollRuntime = record.runtime
 			pollPIState = true
+			if record.runtime.protocol == runtimeProtocolPIRPC {
+				if record.runtime.helper != nil {
+					s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
+				}
+				if err := s.setRuntimeAgentRunning(sessionID, true); err != nil {
+					return err
+				}
+			}
 		}
 		item, state, ok, err := s.registry.ActivateQueued(sessionID, queued.ID())
 		if err != nil || !ok {
