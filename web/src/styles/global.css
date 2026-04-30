@@ -1407,6 +1407,24 @@ select {
   max-width: 100%;
 }
 
+.subagentCardIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  min-width: 2.4rem;
+  border-radius: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--chrome-border) 70%, #64748b);
+  background: color-mix(in srgb, var(--message-card-base) 82%, #64748b);
+  color: color-mix(in srgb, var(--text) 80%, #475569);
+}
+
+.subagentCardIcon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
 .messageRow.user {
   justify-content: flex-end;
 }

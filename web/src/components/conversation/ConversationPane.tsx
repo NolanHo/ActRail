@@ -2298,13 +2298,33 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
   );
 }
 
+function SubagentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 4.5 17.5 8v6.5L12 18l-5.5-3.5V8L12 4.5Z" />
+      <path d="M12 11.5v6.5" />
+      <path d="M6.75 8.25 12 11.5l5.25-3.25" />
+      <circle cx="8" cy="19" r="1.5" />
+      <circle cx="16" cy="19" r="1.5" />
+      <path d="M9.5 19h5" />
+    </svg>
+  );
+}
+
 function renderSubagentCard(event: MessageEvent, options: MarkdownRenderOptions) {
   const output = firstNonEmptyText(event.output, event.text);
   const pending = !output;
 
   return (
     <MessageSurface kind="subagent">
-      {renderCardHeader("subagent", firstNonEmptyText(event.agent, "subagent"), firstNonEmptyText(event.task), event.ts)}
+      <div className="subagentCardHeading flex items-start gap-3">
+        <div className="subagentCardIcon" data-testid="subagent-icon" aria-label="Subagent">
+          <SubagentIcon />
+        </div>
+        <div className="min-w-0 flex-1">
+          {renderCardHeader("subagent", firstNonEmptyText(event.agent, "subagent"), firstNonEmptyText(event.task), event.ts)}
+        </div>
+      </div>
       <div className="messageMetaList flex flex-col gap-2">
         <div className="grid grid-cols-2 gap-2">
           {event.agent ? (
