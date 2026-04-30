@@ -65,9 +65,11 @@ export function useAppShellSessionEffects({
     : (hasBusySession ? BUSY_SESSIONS_REFRESH_MS : IDLE_SESSIONS_REFRESH_MS);
   const activeSessionBusy = activeSessionLiveBusy
     || items.some((session) => session.session_id === activeSessionId && session.busy);
-  const activeLiveRefreshIntervalMs = activeSessionBusy
-    ? ACTIVE_BUSY_LIVE_REFRESH_MS
-    : (realtimeConnected ? null : ACTIVE_IDLE_LIVE_REFRESH_MS);
+  const activeLiveRefreshIntervalMs = realtimeConnected
+    ? null
+    : activeSessionBusy
+      ? ACTIVE_BUSY_LIVE_REFRESH_MS
+      : ACTIVE_IDLE_LIVE_REFRESH_MS;
 
   useEffect(() => {
     const handleVisibilityChange = () => {

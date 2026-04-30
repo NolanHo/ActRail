@@ -266,7 +266,8 @@ export async function connect() {
       const frame = frameToRealtimeEnvelope(rawFrame);
       if (!frame) return;
       const id = Number(frame.id || 0);
-      if (Number.isFinite(id) && id > connectLastEventId) {
+      if (Number.isFinite(id) && id > 0) {
+        if (id <= connectLastEventId) return;
         connectLastEventId = id;
       }
       handleFrame(frame);
