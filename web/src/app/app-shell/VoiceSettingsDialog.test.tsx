@@ -38,6 +38,7 @@ describe("VoiceSettingsDialog", () => {
         onChangeVoiceBaseUrl={() => undefined}
         onClose={() => undefined}
         onSave={() => undefined}
+        onTestProvider={() => undefined}
         onTriggerTestPush={() => undefined}
       />,
       root,
@@ -65,6 +66,7 @@ describe("VoiceSettingsDialog", () => {
     const onClose = vi.fn();
     const onSave = vi.fn();
     const onTriggerTestPush = vi.fn();
+    const onTestProvider = vi.fn();
     const onChangeThemeMode = vi.fn();
 
     root = document.createElement("div");
@@ -89,12 +91,14 @@ describe("VoiceSettingsDialog", () => {
         onChangeVoiceBaseUrl={() => undefined}
         onClose={onClose}
         onSave={onSave}
+        onTestProvider={onTestProvider}
         onTriggerTestPush={onTriggerTestPush}
       />,
       root,
     );
 
     const buttons = Array.from(root.querySelectorAll("button"));
+    buttons.find((button) => button.textContent === "Test Provider")?.click();
     buttons.find((button) => button.textContent === "Test Push")?.click();
     buttons.find((button) => button.textContent === "Cancel")?.click();
     buttons.find((button) => button.textContent === "Save")?.click();
@@ -104,6 +108,7 @@ describe("VoiceSettingsDialog", () => {
     const darkRadio = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="radio"]')).find((input) => !input.checked);
     darkRadio?.click();
 
+    expect(onTestProvider).toHaveBeenCalledTimes(1);
     expect(onTriggerTestPush).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);

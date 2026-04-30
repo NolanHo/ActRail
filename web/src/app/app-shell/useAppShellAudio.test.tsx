@@ -8,6 +8,7 @@ vi.mock("../../lib/api", () => ({
   api: {
     getVoiceSettings: vi.fn().mockResolvedValue({ ok: true }),
     saveVoiceSettings: vi.fn().mockResolvedValue({ ok: true }),
+    testVoiceProvider: vi.fn().mockResolvedValue({ ok: true }),
     setAudioListener: vi.fn().mockResolvedValue({ ok: true }),
     triggerTestAnnouncement: vi.fn().mockResolvedValue({ ok: true }),
   },

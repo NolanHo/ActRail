@@ -34,6 +34,7 @@ import type {
   SupervisorProviderResponse,
   SupervisorRunsResponse,
   SupervisorRunOnceResponse,
+  VoiceProviderTestResponse,
   VoiceSettingsResponse,
   WaitInboxResponse,
   WaitLifecycleResponse,
@@ -383,6 +384,9 @@ export const api = {
   },
   saveVoiceSettings(payload: Record<string, unknown>) {
     return postJson<VoiceSettingsResponse>(`/api/settings/voice`, payload);
+  },
+  testVoiceProvider(payload: Record<string, unknown>) {
+    return postJson<VoiceProviderTestResponse>(`/api/settings/voice/test_provider`, payload);
   },
   setAudioListener(clientId: string, enabled: boolean) {
     return postJson<AudioListenerResponse>(`/api/audio/listener`, { client_id: clientId, enabled });

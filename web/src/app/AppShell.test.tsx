@@ -46,6 +46,7 @@ vi.mock("../lib/api", () => ({
       notifications: { enabled_devices: 0, total_devices: 0, vapid_public_key: "" },
     }),
     saveVoiceSettings: vi.fn().mockResolvedValue({ ok: true }),
+    testVoiceProvider: vi.fn().mockResolvedValue({ ok: true, status: "provider reachable", status_code: 200 }),
     setAudioListener: vi.fn().mockResolvedValue({ active_listener_count: 1 }),
     getNotificationsFeed: vi.fn().mockResolvedValue({ ok: true, items: [] }),
     getNotificationMessage: vi.fn().mockResolvedValue({ ok: true, notification_text: "" }),

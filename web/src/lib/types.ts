@@ -368,6 +368,12 @@ export interface VoiceSettingsResponse {
   };
 }
 
+export interface VoiceProviderTestResponse {
+  ok?: boolean;
+  status?: string;
+  status_code?: number;
+}
+
 export interface AudioListenerResponse {
   ok?: boolean;
   active_listener_count?: number;

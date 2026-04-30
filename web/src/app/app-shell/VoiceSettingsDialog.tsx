@@ -33,6 +33,7 @@ interface VoiceSettingsDialogProps {
   onChangeVoiceBaseUrl(value: string): void;
   onClose(): void;
   onSave(): void;
+  onTestProvider(): void;
   onTriggerTestPush(): void;
 }
 
@@ -60,6 +61,7 @@ export function VoiceSettingsDialog({
   onChangeVoiceBaseUrl,
   onClose,
   onSave,
+  onTestProvider,
   onTriggerTestPush,
 }: VoiceSettingsDialogProps) {
   if (!open) {
@@ -103,6 +105,9 @@ export function VoiceSettingsDialog({
                   type="password"
                 />
               </label>
+              <div className="formActions">
+                <Button type="button" variant="outline" onClick={onTestProvider}>Test Provider</Button>
+              </div>
             </TabsContent>
 
             <TabsContent value="behavior" className="space-y-4">

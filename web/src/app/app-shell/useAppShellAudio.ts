@@ -240,6 +240,13 @@ export function useAppShellAudio({ bootstrapLoaded = false, voiceSupported = tru
     setAnnouncementEnabled(next);
   };
 
+  const voiceSettingsPayload = () => ({
+    tts_enabled_for_narration: narrationEnabledDraft,
+    tts_enabled_for_final_response: true,
+    tts_base_url: voiceBaseUrlDraft.trim(),
+    tts_api_key: voiceApiKeyDraft.trim(),
+  });
+
   const saveVoiceSettings = async () => {
     if (!voiceSupported) {
       setVoiceSettingsStatus("Announcements are unavailable on this backend.");
@@ -247,20 +254,31 @@ export function useAppShellAudio({ bootstrapLoaded = false, voiceSupported = tru
     }
     setVoiceSettingsStatus("Saving...");
     try {
-      const payload = {
-        tts_enabled_for_narration: narrationEnabledDraft,
-        tts_enabled_for_final_response: true,
-        tts_base_url: voiceBaseUrlDraft.trim(),
-        tts_api_key: voiceApiKeyDraft.trim(),
-      };
-      const response = await api.saveVoiceSettings(payload);
+      const response = await api.saveVoiceSettings(voiceSettingsPayload());
       const nextSettings = mergeVoiceSettings(response);
       setVoiceSettings(nextSettings);
+      setVoiceBaseUrlDraft(String(nextSettings.tts_base_url || ""));
+      setVoiceApiKeyDraft(String(nextSettings.tts_api_key || ""));
+      setNarrationEnabledDraft(!!nextSettings.tts_enabled_for_narration);
       writeLocalToggle("actrail.enterToSend", enterToSendDraft);
-      setVoiceSettingsStatus("");
-      setVoiceSettingsOpen(false);
+      setVoiceSettingsStatus("Saved.");
     } catch (error) {
       setVoiceSettingsStatus(error instanceof Error ? `save error: ${error.message}` : "save error: unknown error");
+    }
+  };
+
+  const testVoiceProvider = async () => {
+    if (!voiceSupported) {
+      setVoiceSettingsStatus("Announcements are unavailable on this backend.");
+      return;
+    }
+    setVoiceSettingsStatus("Testing provider...");
+    try {
+      const response = await api.testVoiceProvider(voiceSettingsPayload());
+      const suffix = response.status_code ? ` (HTTP ${response.status_code})` : "";
+      setVoiceSettingsStatus(`${response.status || "Provider reachable"}${suffix}.`);
+    } catch (error) {
+      setVoiceSettingsStatus(error instanceof Error ? `provider test error: ${error.message}` : "provider test error: unknown error");
     }
   };
 
@@ -330,6 +348,7 @@ export function useAppShellAudio({ bootstrapLoaded = false, voiceSupported = tru
     openVoiceSettings,
     playTestSound,
     saveVoiceSettings,
+    testVoiceProvider,
     setAnnouncementEnabled,
     setEnterToSendDraft,
     setNarrationEnabledDraft,

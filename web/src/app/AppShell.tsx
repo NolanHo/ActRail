@@ -124,6 +124,7 @@ export function AppShell() {
     narrationEnabledDraft,
     openVoiceSettings,
     saveVoiceSettings,
+    testVoiceProvider,
     setEnterToSendDraft,
     setNarrationEnabledDraft,
     setVoiceSettingsStatus,
@@ -615,6 +616,9 @@ export function AppShell() {
               setDisplaySettings(displaySettingsDraft);
               writeUserDisplaySettings(displaySettingsDraft);
               void saveVoiceSettings();
+            }}
+            onTestProvider={() => {
+              void testVoiceProvider();
             }}
             onTriggerTestPush={() => {
               void triggerTestPushNotification();
