@@ -15,6 +15,11 @@ import (
 	"actrail/internal/domain/session"
 )
 
+var (
+	buildDate = "dev"
+	gitSHA    = "dev"
+)
+
 func main() {
 	runtime.GOMAXPROCS(1)
 	var (
@@ -29,10 +34,15 @@ func main() {
 		protocolVersion       = flag.Int("protocol-version", iod.DefaultProtocolVersion, "helper protocol version")
 		rows                  = flag.Uint("pty-rows", 24, "initial PTY rows")
 		cols                  = flag.Uint("pty-cols", 80, "initial PTY cols")
+		showVersion           = flag.Bool("version", false, "print iod version and exit")
 	)
 	var childEnvRaw multiStringFlag
 	flag.Var(&childEnvRaw, "child-env", "child environment entry in NAME=VALUE form; repeatable")
 	flag.Parse()
+	if *showVersion {
+		fmt.Printf("actrail-iod build_date=%s git_sha=%s\n", buildDate, gitSHA)
+		return
+	}
 	if flag.NArg() == 0 {
 		failf("actrail-iod: child command is required after flags")
 	}
@@ -81,6 +91,8 @@ func main() {
 		ChildIOMode:        childIOMode,
 		ProtocolVersion:    *protocolVersion,
 		SessionHistoryPath: *sessionHistoryPathRaw,
+		BuildDate:          buildDate,
+		GitSHA:             gitSHA,
 	}); err != nil {
 		failf("actrail-iod: %v", err)
 	}

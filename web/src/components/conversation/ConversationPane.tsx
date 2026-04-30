@@ -1,5 +1,5 @@
 import { Fragment, h, type ComponentChildren } from "preact";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -2646,11 +2646,13 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const persistedMessages = activeSessionId ? bySessionId[activeSessionId] ?? [] : [];
   const pendingMessages = activeSessionId ? pendingBySessionId[activeSessionId] ?? [] : [];
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
-  const rawMessages = [...persistedMessages, ...pendingMessages];
-  const messages = sortEventsByTimestamp(filterLocalUserEchoes(filterResolvedBridgePseudoEvents(rawMessages, activeSessionIsPi)).filter(shouldRenderInMainConversation));
-  const assistantTurnMetaByIndex = buildAssistantTurnMeta(messages);
+  const messages = useMemo(
+    () => sortEventsByTimestamp(filterLocalUserEchoes(filterResolvedBridgePseudoEvents([...persistedMessages, ...pendingMessages], activeSessionIsPi)).filter(shouldRenderInMainConversation)),
+    [activeSessionIsPi, pendingMessages, persistedMessages],
+  );
+  const assistantTurnMetaByIndex = useMemo(() => buildAssistantTurnMeta(messages), [messages]);
   const lastMessage = messages[messages.length - 1] ?? null;
-  const latestMessageScrollKey = lastMessage
+  const latestMessageScrollKey = useMemo(() => (lastMessage
     ? [
       messages.length,
       eventKind(lastMessage),
@@ -2659,8 +2661,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       typeof lastMessage.text === "string" ? lastMessage.text.length : 0,
       lastMessage.streaming === true ? "streaming" : "durable",
     ].join(":")
-    : "empty";
-  const rows = messages.reduce<Array<{
+    : "empty"), [lastMessage, messages.length]);
+  const rows = useMemo(() => messages.reduce<Array<{
     key: string;
     kind: string;
     grouped: boolean;
@@ -2713,7 +2715,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       turnMeta: kind === "assistant" ? assistantTurnMetaByIndex.get(index) : undefined,
     });
     return out;
-  }, []);
+  }, []), [allowLegacyAskUserFallback, assistantTurnMetaByIndex, messages]);
   const sectionRef = useRef<HTMLElement | null>(null);
   const historyAnchorRef = useRef<{ key: string; top: number } | null>(null);
   const scrollModeRef = useRef<"bottom" | "preserve" | null>(null);

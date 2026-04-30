@@ -351,7 +351,9 @@ func (m GenerationManifest) Validate() error {
 // HelloPacket is the initial helper handshake for one session generation.
 type HelloPacket struct {
 	Envelope
-	ProtocolVersion int `json:"protocol_version"`
+	ProtocolVersion int    `json:"protocol_version"`
+	IODBuildDate    string `json:"iod_build_date,omitempty"`
+	IODGitSHA       string `json:"iod_git_sha,omitempty"`
 	HelloProof
 }
 

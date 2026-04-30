@@ -129,6 +129,9 @@ type runtimeIODHelper struct {
 	generationID iod.GenerationID
 	helperPID    int
 	childPID     *int
+	buildDate    string
+	gitSHA       string
+	startTS      float64
 	runtimeDir   string
 	commandMu    sync.Mutex
 	commandSeq   uint64
@@ -461,6 +464,9 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 		generationID: generationID,
 		helperPID:    hello.HelperPID,
 		childPID:     copyIntPtr(hello.ChildPID),
+		buildDate:    hello.IODBuildDate,
+		gitSHA:       hello.IODGitSHA,
+		startTS:      hello.StartTS,
 		runtimeDir:   paths.RuntimeDir,
 	}
 	binding := &RuntimeHelperBinding{GenerationID: generationID}

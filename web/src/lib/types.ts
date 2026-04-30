@@ -170,11 +170,18 @@ export interface SessionSummary {
   busy?: boolean;
   pending_startup?: boolean;
   focused?: boolean;
+  has_unread_assistant?: boolean;
   queue_len?: number;
   transport_state?: string | null;
   reset_required?: boolean;
   transport_reason?: string | null;
   updated_ts?: number;
+  last_assistant_message_ts?: number;
+  iod?: {
+    build_date?: string;
+    git_sha?: string;
+    start_ts?: number;
+  } | null;
   git_branch?: string | null;
   model?: string | null;
   provider_choice?: string | null;

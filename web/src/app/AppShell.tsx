@@ -34,6 +34,18 @@ function formatTokenK(value: number) {
   return `${Math.round(normalized / 1000)}K`;
 }
 
+function formatIodStart(ts: number | undefined) {
+  if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(ts * 1000));
+}
+
 function contextUsageStatusLabel(usage: { used_tokens?: number; total_tokens?: number; percent_used?: number } | null | undefined) {
   if (!usage) {
     return "";
@@ -206,6 +218,16 @@ export function AppShell() {
     }
     if (activeContextUsageLabel) {
       items.push({ label: "Context", value: activeContextUsageLabel });
+    }
+    if (activeSession.iod) {
+      const version = [activeSession.iod.git_sha, activeSession.iod.build_date].filter(Boolean).join(" ");
+      if (version) {
+        items.push({ label: "iod", value: version });
+      }
+      const started = formatIodStart(activeSession.iod.start_ts);
+      if (started) {
+        items.push({ label: "Pi started", value: started });
+      }
     }
     const supervisor = activeSession.supervisor;
     if (supervisor?.enabled) {

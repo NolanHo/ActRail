@@ -93,15 +93,6 @@ function charsToTokens(chars: number) {
   return Math.ceil(Math.max(0, chars) / 4);
 }
 
-async function tokenizerForModel(model: string) {
-  const trimmed = model.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const { encodingForModel } = await import("js-tiktoken");
-  return encodingForModel(trimmed as never);
-}
-
 export async function calculateContextTokenUsage(messages: MessageEvent[], model: string | null | undefined): Promise<ContextTokenUsageResult> {
   const modelName = typeof model === "string" ? model.trim() : "";
   const textByBucket: Record<ContextTokenBucket, string[]> = {
@@ -122,29 +113,14 @@ export async function calculateContextTokenUsage(messages: MessageEvent[], model
     }
   }
 
-  let fallback = false;
-  let fallbackReason = "";
-  let encode: ((text: string) => number[]) | null = null;
-  try {
-    const tokenizer = await tokenizerForModel(modelName);
-    if (tokenizer) {
-      encode = (text: string) => tokenizer.encode(text);
-    } else {
-      fallback = true;
-      fallbackReason = "model unknown; using chars/4";
-    }
-  } catch (error) {
-    fallback = true;
-    fallbackReason = error instanceof Error && error.message.trim()
-      ? `tokenizer failed; using chars/4: ${error.message}`
-      : "tokenizer failed; using chars/4";
-  }
+  const fallback = true;
+  const fallbackReason = "using chars/4 estimate";
 
   const buckets = { ...EMPTY_BUCKETS };
   for (const key of Object.keys(textByBucket) as ContextTokenBucket[]) {
     const text = textByBucket[key].join("\n");
     const chars = text.length;
-    const tokens = encode ? encode(text).length : charsToTokens(chars);
+    const tokens = charsToTokens(chars);
     buckets[key] = { tokens, chars, percent: 0 };
   }
   const totalTokens = Object.values(buckets).reduce((sum, bucket) => sum + bucket.tokens, 0);

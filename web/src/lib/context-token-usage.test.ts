@@ -10,10 +10,11 @@ const messages = [
 ];
 
 describe("calculateContextTokenUsage", () => {
-  it("uses model tokenizer counts when the model is known", async () => {
+  it("uses chars/4 estimates without loading a tokenizer chunk", async () => {
     const usage = await calculateContextTokenUsage(messages, "gpt-4o-mini");
 
-    expect(usage.fallback).toBe(false);
+    expect(usage.fallback).toBe(true);
+    expect(usage.fallbackReason).toContain("chars/4");
     expect(usage.buckets.systemPrompt.tokens).toBeGreaterThan(0);
     expect(usage.buckets.tool.tokens).toBeGreaterThan(0);
     expect(usage.buckets.user.tokens).toBeGreaterThan(0);

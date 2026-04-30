@@ -245,4 +245,25 @@ describe("createSessionsStore", () => {
     ]);
     expect(store.getState().activeSessionId).toBe("s3");
   });
+  it("marks inactive sessions with unread assistant messages and clears on select", async () => {
+    vi.mocked(api.listSessions)
+      .mockResolvedValueOnce({ sessions: [
+        { session_id: "s1", last_assistant_message_ts: 100 },
+        { session_id: "s2", last_assistant_message_ts: 200 },
+      ] } as never)
+      .mockResolvedValueOnce({ sessions: [
+        { session_id: "s1", last_assistant_message_ts: 100 },
+        { session_id: "s2", last_assistant_message_ts: 250, busy: false },
+      ] } as never);
+
+    const store = createSessionsStore();
+    await store.refresh();
+    await store.refresh();
+
+    expect(store.getState().items.find((item) => item.session_id === "s2")?.has_unread_assistant).toBe(true);
+
+    store.select("s2");
+
+    expect(store.getState().items.find((item) => item.session_id === "s2")?.has_unread_assistant).toBeUndefined();
+  });
 });

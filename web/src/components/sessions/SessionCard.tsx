@@ -20,7 +20,7 @@ interface SessionCardProps {
   onDelete?: () => void;
 }
 
-type SessionHealth = "healthy" | "working" | "unhealthy" | "unknown";
+type SessionHealth = "healthy" | "working" | "unhealthy" | "unread" | "unknown";
 
 function sessionTransportHealth(session: SessionSummary, historical: boolean): SessionHealth {
   if (historical) {
@@ -32,6 +32,9 @@ function sessionTransportHealth(session: SessionSummary, historical: boolean): S
   }
   if (session.busy === true) {
     return "working";
+  }
+  if (session.has_unread_assistant === true) {
+    return "unread";
   }
   if (state === "attached" || state === "") {
     return "healthy";
@@ -47,6 +50,8 @@ function sessionHealthLabel(health: SessionHealth) {
       return "working";
     case "unhealthy":
       return "restart session required";
+    case "unread":
+      return "assistant message unread";
     default:
       return "backend health unknown";
   }

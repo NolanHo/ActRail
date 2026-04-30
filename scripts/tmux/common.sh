@@ -49,7 +49,11 @@ require_bin() {
 
 ensure_iod_helper_bin() {
   mkdir -p "${SUPPORT_BIN_DIR}"
-  "${GO_BIN}" build -o "${IOD_HELPER_BIN}" ./cmd/actrail-iod
+  local build_date
+  local git_sha
+  build_date=$(date -u +%Y-%m-%d)
+  git_sha=$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')
+  "${GO_BIN}" build -ldflags "-X main.buildDate=${build_date} -X main.gitSHA=${git_sha}" -o "${IOD_HELPER_BIN}" ./cmd/actrail-iod
 }
 
 ensure_frontend_build() {

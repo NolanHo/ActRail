@@ -41,6 +41,7 @@ export interface SessionsStore {
 
 const PAGE_SIZE = 50;
 const NEW_SESSION_DEFAULTS_CACHE_KEY = "actrail.newSessionDefaults.v1";
+const SESSION_READ_CACHE_KEY = "actrail.sessionReadAssistantTs.v1";
 
 function normalizeSessionsResponse(data: SessionsResponse) {
   return Array.isArray(data.items)
@@ -175,6 +176,60 @@ function dedupeSessions(items: SessionSummary[]) {
   return { sessions: unique, representativeBySessionId };
 }
 
+function readSessionReadMap(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SESSION_READ_CACHE_KEY) || "{}");
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(Object.entries(parsed).flatMap(([key, value]) => {
+      const ts = Number(value);
+      return key && Number.isFinite(ts) ? [[key, ts]] : [];
+    }));
+  } catch {
+    return {};
+  }
+}
+
+function writeSessionReadMap(values: Record<string, number>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SESSION_READ_CACHE_KEY, JSON.stringify(values));
+  } catch {
+  }
+}
+
+function withAssistantUnreadState(items: SessionSummary[], activeSessionId: string | null) {
+  const readMap = readSessionReadMap();
+  let changed = false;
+  const next = items.map((session) => {
+    const sessionId = String(session.session_id || "").trim();
+    const lastAssistantTS = Number(session.last_assistant_message_ts || 0);
+    if (!sessionId || !Number.isFinite(lastAssistantTS) || lastAssistantTS <= 0) {
+      if (session.has_unread_assistant === undefined) return session;
+      const { has_unread_assistant: _unused, ...rest } = session;
+      return rest;
+    }
+    if (readMap[sessionId] == null || sessionId === activeSessionId) {
+      if (readMap[sessionId] !== lastAssistantTS) {
+        readMap[sessionId] = lastAssistantTS;
+        changed = true;
+      }
+    }
+    const readTS = Number(readMap[sessionId] || 0);
+    const unread = sessionId !== activeSessionId && session.busy !== true && lastAssistantTS > readTS;
+    if (unread) {
+      return { ...session, has_unread_assistant: true };
+    }
+    if (session.has_unread_assistant === undefined) return session;
+    const { has_unread_assistant: _unused, ...rest } = session;
+    return rest;
+  });
+  if (changed) {
+    writeSessionReadMap(readMap);
+  }
+  return next;
+}
+
 function upsertSessionList(items: SessionSummary[], session: SessionSummary, prepend: boolean) {
   const sessionId = String(session.session_id || "").trim();
   if (!sessionId) {
@@ -250,7 +305,7 @@ export function createSessionsStore(): SessionsStore {
         }
         state = {
           ...state,
-          items: sessions,
+          items: withAssistantUnreadState(sessions, nextActiveSessionId),
           activeSessionId: nextActiveSessionId,
           loading: false,
           remainingCount: Math.max(0, Number(data.remaining_count || 0)),
@@ -322,7 +377,7 @@ export function createSessionsStore(): SessionsStore {
     },
     select(sessionId: string | null) {
       hasResolvedInitialSelection = sessionId !== null;
-      state = { ...state, activeSessionId: sessionId };
+      state = { ...state, activeSessionId: sessionId, items: withAssistantUnreadState(state.items, sessionId) };
       emit();
     },
     upsertSession(session: SessionSummary, options?: UpsertSessionOptions) {
@@ -334,7 +389,7 @@ export function createSessionsStore(): SessionsStore {
       hasResolvedInitialSelection = nextActiveSessionId !== null;
       state = {
         ...state,
-        items: upsertSessionList(state.items, session, options?.prepend !== false),
+        items: withAssistantUnreadState(upsertSessionList(state.items, session, options?.prepend !== false), nextActiveSessionId),
         activeSessionId: nextActiveSessionId,
       };
       emit();

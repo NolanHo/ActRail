@@ -193,6 +193,7 @@ type SessionSummary struct {
 	TransportReason     string                     `json:"transport_reason,omitempty"`
 	LastUpdatedTS       float64                    `json:"last_updated_ts"`
 	UpdatedTS           float64                    `json:"updated_ts,omitempty"`
+	LastAssistantTS     float64                    `json:"last_assistant_message_ts,omitempty"`
 	Historical          bool                       `json:"historical"`
 	Model               string                     `json:"model,omitempty"`
 	ProviderChoice      string                     `json:"provider_choice,omitempty"`
@@ -202,6 +203,13 @@ type SessionSummary struct {
 	DependencySessionID string                     `json:"dependency_session_id,omitempty"`
 	ActiveWait          *ActiveWaitSummary         `json:"active_wait,omitempty"`
 	Supervisor          *SessionSupervisorResponse `json:"supervisor,omitempty"`
+	IOD                 *IODRuntimeSummary         `json:"iod,omitempty"`
+}
+
+type IODRuntimeSummary struct {
+	BuildDate string  `json:"build_date,omitempty"`
+	GitSHA    string  `json:"git_sha,omitempty"`
+	StartTS   float64 `json:"start_ts,omitempty"`
 }
 
 type ListSessionsRequest struct {
@@ -532,6 +540,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		TransportReason:     transport.Reason,
 		LastUpdatedTS:       timestampSeconds(updatedAt),
 		UpdatedTS:           timestampSeconds(updatedAt),
+		LastAssistantTS:     lastAssistantMessageTimestamp(record),
 		Historical:          record.identity.Historical(),
 		Model:               record.model,
 		ProviderChoice:      record.provider,
@@ -541,7 +550,35 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		DependencySessionID: sessionIDString(record.dependencySessionID),
 		ActiveWait:          s.activeWaitForSession(record.identity.SessionID()),
 		Supervisor:          supervisor,
+		IOD:                 s.iodRuntimeSummary(record),
 	}
+}
+
+func lastAssistantMessageTimestamp(record sessionRecord) float64 {
+	items := record.transcript.Items()
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item.Role().String() != "assistant" {
+			continue
+		}
+		return timestampSeconds(item.TS())
+	}
+	return 0
+}
+
+func (s *Stub) iodRuntimeSummary(record sessionRecord) *IODRuntimeSummary {
+	if record.identity.Backend() != session.BackendPI || record.identity.Historical() {
+		return nil
+	}
+	if helper := record.runtime.helper; helper != nil {
+		return helper.iodSummary()
+	}
+	if s != nil && s.helpers != nil {
+		if attachment, ok := s.helpers.Attachment(record.identity.SessionID()); ok {
+			return iodSummaryFromHello(attachment.Hello)
+		}
+	}
+	return nil
 }
 
 func createdSessionFromRecord(record sessionRecord) *CreatedSession {

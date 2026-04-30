@@ -52,6 +52,8 @@ type HelperOptions struct {
 	ChildIOMode        ChildIOMode
 	ProtocolVersion    int
 	SessionHistoryPath string
+	BuildDate          string
+	GitSHA             string
 	Runner             process.Runner
 	Now                func() time.Time
 	OnChildExitStart   func()
@@ -64,6 +66,8 @@ type Helper struct {
 	launchSpec      process.LaunchSpec
 	childIOMode     ChildIOMode
 	protocolVersion int
+	buildDate       string
+	gitSHA          string
 	runner          process.Runner
 	now             func() time.Time
 
@@ -232,6 +236,8 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 		launchSpec:       launchSpec,
 		childIOMode:      childIOMode,
 		protocolVersion:  protocolVersion,
+		buildDate:        strings.TrimSpace(opts.BuildDate),
+		gitSHA:           strings.TrimSpace(opts.GitSHA),
 		history:          newSessionHistoryCache(opts.SessionHistoryPath),
 		runner:           runner,
 		now:              now,
@@ -851,6 +857,8 @@ func (h *Helper) sendHello(hc *helperConn) error {
 	if err != nil {
 		return err
 	}
+	packet.IODBuildDate = h.buildDate
+	packet.IODGitSHA = h.gitSHA
 	return h.writePacket(hc, packet)
 }
 

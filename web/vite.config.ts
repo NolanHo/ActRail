@@ -52,6 +52,7 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       manifest: true,
       sourcemap: true,
+      chunkSizeWarningLimit: 3000,
     },
     test: {
       environment: "jsdom",
