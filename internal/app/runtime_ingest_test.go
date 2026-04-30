@@ -337,7 +337,7 @@ func TestPIRPCGetStateControlsBusyWithoutAgentEvents(t *testing.T) {
 	apply(`{"id":"actrail-state-1","type":"response","command":"get_state","success":true,"data":{"isStreaming":true,"isCompacting":false,"pendingMessageCount":0}}`)
 	assertBusy(true)
 	apply(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"final"}],"stopReason":"stop","timestamp":1774708716099}}`)
-	assertBusy(true)
+	assertBusy(false)
 	apply(`{"id":"actrail-state-2","type":"response","command":"get_state","success":true,"data":{"isStreaming":false,"isCompacting":false,"pendingMessageCount":0}}`)
 	assertBusy(false)
 

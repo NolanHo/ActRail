@@ -1015,11 +1015,15 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 		return err
 	}
 	if event.Message.Role == pi.MessageRoleAssistant && event.Message.CommitLike && strings.TrimSpace(event.Message.StopReason) != "status" {
-		if s.isPISession(sessionID) {
-			if s.isRuntimeAgentRunning(sessionID) {
-				if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
-					return err
-				}
+		if record, ok := s.registry.Lookup(sessionID); ok && record.identity.Backend() == session.BackendPI {
+			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
+				s.holdPIRPCIdle(sessionID, record.runtime.helper.generationID)
+			}
+			if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+				return err
+			}
+			if _, _, err := s.registry.SetBusy(sessionID, false); err != nil {
+				return err
 			}
 		} else if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
 			return err
