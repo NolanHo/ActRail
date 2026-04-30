@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../lib/api";
+import { configureRealtimeClient } from "../realtime/client";
 import { createSessionsStore } from "./store";
+
+vi.mock("../realtime/client", () => ({
+  configureRealtimeClient: vi.fn(),
+}));
 
 vi.mock("../../lib/api", () => ({
   api: {
@@ -77,6 +82,47 @@ describe("createSessionsStore", () => {
       cwdGroups: { "/tmp/project": { label: "Project", collapsed: true } },
       tmuxAvailable: true,
     });
+  });
+
+  it("uses Connect transport only for desktop opt-in with server capability", async () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
+    window.localStorage.setItem("actrail.expTransport", "connect");
+    vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
+      protocol_version: 1,
+      capabilities: { ws_realtime: true, exp_connect_transport: true },
+      ws: { url: "/api/ws", heartbeat_interval_ms: 15000 },
+      transport: { default: "ws", experimental: ["connect"], connect_path: "/api/connect" },
+    } as never);
+
+    const store = createSessionsStore();
+    await store.refreshBootstrap();
+
+    expect(configureRealtimeClient).toHaveBeenCalledWith({
+      protocolVersion: 1,
+      url: "/api/ws",
+      heartbeatIntervalMs: 15000,
+      transport: "connect",
+      connectBasePath: "/api/connect",
+    });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
+  });
+
+  it("keeps WebSocket transport for mobile even when Connect is opted in", async () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 480 });
+    window.localStorage.setItem("actrail.expTransport", "connect");
+    vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
+      capabilities: { ws_realtime: true, exp_connect_transport: true },
+      ws: { url: "/api/ws" },
+      transport: { connect_path: "/api/connect" },
+    } as never);
+
+    const store = createSessionsStore();
+    await store.refreshBootstrap();
+
+    expect(configureRealtimeClient).toHaveBeenCalledWith(expect.objectContaining({ transport: "ws" }));
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
   });
 
   it("persists fetched new-session model defaults across bootstrap refreshes", async () => {

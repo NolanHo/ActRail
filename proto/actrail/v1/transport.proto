@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package actrail.v1;
+
+option go_package = "actrail/proto/actrail/v1;actrailv1";
+
+service SessionCommandService {
+  rpc Send(SendRequest) returns (CommandResponse);
+  rpc Enqueue(EnqueueRequest) returns (CommandResponse);
+  rpc CancelQueue(CancelQueueRequest) returns (CommandResponse);
+  rpc Interrupt(InterruptRequest) returns (CommandResponse);
+  rpc RespondUI(RespondUIRequest) returns (CommandResponse);
+}
+
+service EventService {
+  rpc Subscribe(SubscribeRequest) returns (stream EventEnvelope);
+}
+
+message SessionIdentity {
+  string session_id = 1;
+  string runtime_id = 2;
+}
+
+message SendRequest {
+  SessionIdentity session = 1;
+  string text = 2;
+}
+
+message EnqueueRequest {
+  SessionIdentity session = 1;
+  string text = 2;
+}
+
+message CancelQueueRequest {
+  SessionIdentity session = 1;
+}
+
+message InterruptRequest {
+  SessionIdentity session = 1;
+}
+
+message RespondUIRequest {
+  SessionIdentity session = 1;
+  string response_to = 2;
+  string value = 3;
+}
+
+message CommandResponse {
+  bytes payload_json = 1;
+}
+
+message SubscribeRequest {
+  uint64 after_event_id = 1;
+}
+
+message EventEnvelope {
+  uint64 id = 1;
+  string type = 2;
+  string stream = 3;
+  int64 unix_millis = 4;
+  bytes payload_json = 5;
+}

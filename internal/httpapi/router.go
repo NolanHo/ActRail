@@ -17,9 +17,10 @@ import (
 )
 
 type Router struct {
-	cfg config.Config
-	app app.Service
-	ws  http.Handler
+	cfg     config.Config
+	app     app.Service
+	ws      http.Handler
+	connect http.Handler
 }
 
 type authStatus struct {
@@ -68,8 +69,15 @@ type supervisorRunOnceRequest struct {
 	DryRun bool `json:"dry_run"`
 }
 
-func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handler {
-	r := Router{cfg: cfg, app: svc, ws: wsHandler}
+func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHandlers ...http.Handler) http.Handler {
+	var connectHandler http.Handler
+	if len(connectHandlers) > 0 {
+		connectHandler = connectHandlers[0]
+	}
+	if connectHandler == nil {
+		connectHandler = http.NotFoundHandler()
+	}
+	r := Router{cfg: cfg, app: svc, ws: wsHandler, connect: connectHandler}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", r.healthz)
@@ -115,6 +123,7 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.Handle("POST /api/sessions/{session_id}/restart", r.requireAuth(http.HandlerFunc(r.restartSession)))
 	mux.Handle("POST /api/sessions/{session_id}/handoff", r.requireAuth(http.HandlerFunc(r.handoffSession)))
 	mux.Handle("GET /api/ws", r.requireAuth(r.ws))
+	mux.Handle("/api/connect/", r.requireAuth(r.connect))
 
 	return mux
 }

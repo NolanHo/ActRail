@@ -12,12 +12,17 @@ type PublishResult struct {
 	Delivered int
 }
 
+type FrameObserver interface {
+	ObserveFrame(Frame)
+}
+
 type PublisherOption func(*Publisher)
 
 type Publisher struct {
 	registry *Registry
 	replay   *ReplayBuffer
 	now      func() time.Time
+	observer FrameObserver
 }
 
 func NewPublisher(registry *Registry, replay *ReplayBuffer, opts ...PublisherOption) *Publisher {
@@ -45,6 +50,12 @@ func WithPublisherNow(now func() time.Time) PublisherOption {
 	}
 }
 
+func WithFrameObserver(observer FrameObserver) PublisherOption {
+	return func(p *Publisher) {
+		p.observer = observer
+	}
+}
+
 func (p *Publisher) Publish(cursor int64, frame Frame) (PublishResult, error) {
 	stream, err := ParseStreamName(frame.Stream)
 	if err != nil {
@@ -62,6 +73,7 @@ func (p *Publisher) Publish(cursor int64, frame Frame) (PublishResult, error) {
 	if err := p.replay.Append(stream, cursor, frame); err != nil {
 		return PublishResult{}, err
 	}
+	p.observe(frame)
 	delivered, err := p.broadcastAt(p.now(), stream, frame)
 	return PublishResult{Stream: stream, Stored: true, Delivered: delivered}, err
 }
@@ -75,6 +87,7 @@ func (p *Publisher) Broadcast(frame Frame) (PublishResult, error) {
 	if err != nil {
 		return PublishResult{}, err
 	}
+	p.observe(frame)
 	delivered, err := p.broadcastAt(p.now(), stream, frame)
 	return PublishResult{Stream: stream, Delivered: delivered}, err
 }
@@ -88,6 +101,12 @@ func (p *Publisher) BroadcastSessions(frame Frame) (PublishResult, error) {
 		return PublishResult{}, fmt.Errorf("sessions broadcast requires %q stream", SessionsStream)
 	}
 	return p.Broadcast(frame)
+}
+
+func (p *Publisher) observe(frame Frame) {
+	if p != nil && p.observer != nil {
+		p.observer.ObserveFrame(frame)
+	}
 }
 
 func (p *Publisher) broadcastAt(now time.Time, stream StreamName, frame Frame) (int, error) {

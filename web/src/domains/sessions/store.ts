@@ -42,6 +42,23 @@ export interface SessionsStore {
 const PAGE_SIZE = 50;
 const NEW_SESSION_DEFAULTS_CACHE_KEY = "actrail.newSessionDefaults.v1";
 const SESSION_READ_CACHE_KEY = "actrail.sessionReadAssistantTs.v1";
+const EXP_TRANSPORT_KEY = "actrail.expTransport";
+
+function isDesktopViewport() {
+  if (typeof window === "undefined") return false;
+  return window.innerWidth >= 768;
+}
+
+function shouldUseConnectTransport(data: SessionBootstrapResponse) {
+  if (!data.capabilities?.exp_connect_transport || !isDesktopViewport()) {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem(EXP_TRANSPORT_KEY) === "connect";
+  } catch {
+    return false;
+  }
+}
 
 function normalizeSessionsResponse(data: SessionsResponse) {
   return Array.isArray(data.items)
@@ -345,10 +362,13 @@ export function createSessionsStore(): SessionsStore {
       if (refreshId !== currentBootstrapRefreshId) {
         return;
       }
+      const useConnect = shouldUseConnectTransport(data);
       configureRealtimeClient({
         protocolVersion: data.protocol_version,
         url: data.capabilities?.ws_realtime === false ? null : data.ws?.url,
         heartbeatIntervalMs: data.ws?.heartbeat_interval_ms,
+        transport: useConnect ? "connect" : "ws",
+        connectBasePath: data.transport?.connect_path,
       });
       const newSessionDefaults = normalizeNewSessionDefaults(data) ?? state.newSessionDefaults;
       writeCachedNewSessionDefaults(newSessionDefaults);
