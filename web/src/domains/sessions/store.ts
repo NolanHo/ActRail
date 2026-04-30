@@ -1,4 +1,5 @@
 import { configureRealtimeClient } from "../realtime/client";
+import type { ConnectWireFormat } from "../realtime/connect";
 import { api } from "../../lib/api";
 import type { BootstrapCapabilities, CwdGroupMeta, NewSessionDefaults, SessionBootstrapResponse, SessionSummary, SessionsResponse } from "../../lib/types";
 
@@ -13,6 +14,7 @@ export interface RealtimeTransportStatus {
   connectOptIn: boolean;
   desktopEligible: boolean;
   connectPath: string;
+  wireFormat: ConnectWireFormat;
 }
 
 export interface SessionsState {
@@ -52,12 +54,14 @@ const PAGE_SIZE = 50;
 const NEW_SESSION_DEFAULTS_CACHE_KEY = "actrail.newSessionDefaults.v1";
 const SESSION_READ_CACHE_KEY = "actrail.sessionReadAssistantTs.v1";
 export const EXP_TRANSPORT_KEY = "actrail.expTransport";
+export const EXP_CONNECT_WIRE_FORMAT_KEY = "actrail.expConnectWireFormat";
 const DEFAULT_REALTIME_TRANSPORT: RealtimeTransportStatus = {
   active: "ws",
   connectAvailable: false,
   connectOptIn: false,
   desktopEligible: false,
   connectPath: "/api/connect",
+  wireFormat: "json",
 };
 
 function isDesktopViewport() {
@@ -87,17 +91,41 @@ export function setConnectTransportOptIn(enabled: boolean) {
   }
 }
 
+function readConnectWireFormat(): ConnectWireFormat {
+  if (typeof window === "undefined") return "json";
+  try {
+    return window.localStorage.getItem(EXP_CONNECT_WIRE_FORMAT_KEY) === "proto" ? "proto" : "json";
+  } catch {
+    return "json";
+  }
+}
+
+export function setConnectWireFormat(value: ConnectWireFormat) {
+  if (typeof window === "undefined") return;
+  try {
+    if (value === "proto") {
+      window.localStorage.setItem(EXP_CONNECT_WIRE_FORMAT_KEY, "proto");
+    } else {
+      window.localStorage.removeItem(EXP_CONNECT_WIRE_FORMAT_KEY);
+    }
+  } catch {
+    // Browser storage policy blocked the setting; bootstrap will use JSON.
+  }
+}
+
 function getRealtimeTransportStatus(data: SessionBootstrapResponse): RealtimeTransportStatus {
   const connectAvailable = data.capabilities?.exp_connect_transport === true;
   const desktopEligible = isDesktopViewport();
   const connectOptIn = readConnectOptIn();
   const connectPath = String(data.transport?.connect_path || DEFAULT_REALTIME_TRANSPORT.connectPath).trim() || DEFAULT_REALTIME_TRANSPORT.connectPath;
+  const wireFormat = readConnectWireFormat();
   return {
     active: connectAvailable && desktopEligible && connectOptIn ? "connect" : "ws",
     connectAvailable,
     connectOptIn,
     desktopEligible,
     connectPath,
+    wireFormat,
   };
 }
 
@@ -411,6 +439,7 @@ export function createSessionsStore(): SessionsStore {
         heartbeatIntervalMs: data.ws?.heartbeat_interval_ms,
         transport: realtimeTransport.active,
         connectBasePath: realtimeTransport.connectPath,
+        connectWireFormat: realtimeTransport.wireFormat,
       });
       const newSessionDefaults = normalizeNewSessionDefaults(data) ?? state.newSessionDefaults;
       writeCachedNewSessionDefaults(newSessionDefaults);

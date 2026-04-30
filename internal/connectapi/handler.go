@@ -91,8 +91,20 @@ func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method
 		writeConnectError(w, http.StatusServiceUnavailable, "unavailable", "session controller unavailable")
 		return
 	}
+	proto := requestWantsProto(req.Header.Get("Content-Type"))
 	var body commandRequest
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+	if proto {
+		data, err := readProtoBody(req.Body)
+		if err != nil {
+			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
+			return
+		}
+		body, err = decodeCommandRequestProto(method, data)
+		if err != nil {
+			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
+			return
+		}
+	} else if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid json")
 		return
 	}
@@ -109,6 +121,10 @@ func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method
 		return
 	}
 	slog.Info("connect command", "method", method, "status", http.StatusOK, "latency_ms", time.Since(started).Milliseconds())
+	if proto {
+		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(payload))
+		return
+	}
 	writeConnectJSON(w, http.StatusOK, commandResponse{PayloadJSON: base64.StdEncoding.EncodeToString(payload)})
 }
 
@@ -143,8 +159,20 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 		writeConnectError(w, http.StatusNotFound, "unimplemented", "unknown event method")
 		return
 	}
+	proto := requestWantsProto(req.Header.Get("Content-Type"))
 	var body subscribeRequest
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+	if proto {
+		data, err := readProtoBody(req.Body)
+		if err != nil {
+			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
+			return
+		}
+		body, err = decodeSubscribeRequestProto(data)
+		if err != nil {
+			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
+			return
+		}
+	} else if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid json")
 		return
 	}
@@ -152,12 +180,22 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 	if after == 0 {
 		after = body.AfterEventIDRaw
 	}
-	w.Header().Set("Content-Type", "application/connect+json")
+	if proto {
+		w.Header().Set("Content-Type", "application/connect+proto")
+	} else {
+		w.Header().Set("Content-Type", "application/connect+json")
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 	writeEvent := func(event EventEnvelope) bool {
-		if err := writeConnectEnvelope(w, event); err != nil {
+		var err error
+		if proto {
+			err = writeConnectProtoEnvelope(w, event)
+		} else {
+			err = writeConnectEnvelope(w, event)
+		}
+		if err != nil {
 			return false
 		}
 		if flusher != nil {
@@ -234,12 +272,20 @@ func writeConnectEnvelope(w http.ResponseWriter, event EventEnvelope) error {
 	if err != nil {
 		return err
 	}
+	return writeConnectFramedPayload(w, payload)
+}
+
+func writeConnectProtoEnvelope(w http.ResponseWriter, event EventEnvelope) error {
+	return writeConnectFramedPayload(w, encodeEventEnvelopeProto(event))
+}
+
+func writeConnectFramedPayload(w http.ResponseWriter, payload []byte) error {
 	var header [5]byte
 	binary.BigEndian.PutUint32(header[1:], uint32(len(payload)))
 	if _, err := w.Write(header[:]); err != nil {
 		return err
 	}
-	_, err = w.Write(payload)
+	_, err := w.Write(payload)
 	return err
 }
 
@@ -247,6 +293,12 @@ func writeConnectJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeConnectProto(w http.ResponseWriter, status int, payload []byte) {
+	w.Header().Set("Content-Type", "application/connect+proto")
+	w.WriteHeader(status)
+	_, _ = w.Write(payload)
 }
 
 func writeConnectError(w http.ResponseWriter, status int, code, message string) {

@@ -53,6 +53,7 @@ describe("createSessionsStore", () => {
         connectOptIn: false,
         desktopEligible: false,
         connectPath: "/api/connect",
+        wireFormat: "json",
       },
     });
     expect(api.listSessions).toHaveBeenCalledWith({ limit: 50 });
@@ -94,6 +95,7 @@ describe("createSessionsStore", () => {
         connectOptIn: false,
         desktopEligible: true,
         connectPath: "/api/connect",
+        wireFormat: "json",
       },
     });
   });
@@ -102,6 +104,7 @@ describe("createSessionsStore", () => {
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
     window.localStorage.setItem("actrail.expTransport", "connect");
+    window.localStorage.setItem("actrail.expConnectWireFormat", "proto");
     vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
       protocol_version: 1,
       capabilities: { ws_realtime: true, exp_connect_transport: true },
@@ -118,6 +121,7 @@ describe("createSessionsStore", () => {
       heartbeatIntervalMs: 15000,
       transport: "connect",
       connectBasePath: "/api/connect",
+      connectWireFormat: "proto",
     });
     expect(store.getState().realtimeTransport).toEqual({
       active: "connect",
@@ -125,6 +129,7 @@ describe("createSessionsStore", () => {
       connectOptIn: true,
       desktopEligible: true,
       connectPath: "/api/connect",
+      wireFormat: "proto",
     });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
   });
@@ -149,6 +154,7 @@ describe("createSessionsStore", () => {
       connectOptIn: true,
       desktopEligible: false,
       connectPath: "/api/connect",
+      wireFormat: "json",
     });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
   });

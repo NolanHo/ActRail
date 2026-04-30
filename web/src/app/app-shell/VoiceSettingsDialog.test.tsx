@@ -64,6 +64,7 @@ describe("VoiceSettingsDialog", () => {
 
   it("shows and toggles experimental transport state in the status tab", async () => {
     const onChangeTransportOptIn = vi.fn();
+    const onChangeConnectWireFormat = vi.fn();
     root = document.createElement("div");
     document.body.appendChild(root);
 
@@ -82,6 +83,7 @@ describe("VoiceSettingsDialog", () => {
           connectOptIn: true,
           desktopEligible: true,
           connectPath: "/api/connect",
+          wireFormat: "json",
         }}
         voiceApiKeyDraft=""
         voiceBaseUrlDraft=""
@@ -90,6 +92,7 @@ describe("VoiceSettingsDialog", () => {
         onChangeReplySoundEnabled={() => undefined}
         onChangeThemeMode={() => undefined}
         onChangeTransportOptIn={onChangeTransportOptIn}
+        onChangeConnectWireFormat={onChangeConnectWireFormat}
         onChangeVoiceApiKey={() => undefined}
         onChangeVoiceBaseUrl={() => undefined}
         onClose={() => undefined}
@@ -106,6 +109,7 @@ describe("VoiceSettingsDialog", () => {
 
     expect(root.textContent).toContain("Realtime transport: ConnectRPC experimental");
     expect(root.textContent).toContain("Connect opt-in: on");
+    expect(root.textContent).toContain("Connect wire format: json");
     expect(root.textContent).toContain("Connect capability: available");
     expect(root.textContent).toContain("Desktop eligible: yes");
     expect(root.textContent).toContain("Connect path: /api/connect");
@@ -115,6 +119,12 @@ describe("VoiceSettingsDialog", () => {
     transportToggle!.checked = false;
     transportToggle!.dispatchEvent(new Event("change", { bubbles: true }));
     expect(onChangeTransportOptIn).toHaveBeenCalledWith(false);
+    const protoToggle = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+      .find((input) => input.parentElement?.textContent?.includes("Use protobuf envelopes"));
+    expect(protoToggle?.checked).toBe(false);
+    protoToggle!.checked = true;
+    protoToggle!.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(onChangeConnectWireFormat).toHaveBeenCalledWith("proto");
   });
 
   it("wires action callbacks through the footer controls", async () => {

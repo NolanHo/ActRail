@@ -1,6 +1,6 @@
 import { HttpError } from "../../lib/http";
 import type { RealtimeEnvelope } from "../../lib/types";
-import { frameToRealtimeEnvelope, sendConnectCommand, subscribeConnectEvents } from "./connect";
+import { frameToRealtimeEnvelope, sendConnectCommand, subscribeConnectEvents, type ConnectWireFormat } from "./connect";
 
 export type RealtimeConnectionState = "idle" | "connecting" | "open" | "error" | "closed";
 
@@ -10,6 +10,7 @@ export interface RealtimeClientConfig {
   heartbeatIntervalMs?: number;
   transport?: "ws" | "connect";
   connectBasePath?: string | null;
+  connectWireFormat?: ConnectWireFormat;
 }
 
 export interface RealtimeStreamSubscription {
@@ -92,7 +93,7 @@ function scheduleReconnect() {
 }
 
 function connectConfig() {
-  return { basePath: config.connectBasePath || "/api/connect" };
+  return { basePath: config.connectBasePath || "/api/connect", wireFormat: (config.connectWireFormat || "json") as ConnectWireFormat };
 }
 
 function resolveSocketUrl(rawUrl?: string | null) {
@@ -198,16 +199,19 @@ export function configureRealtimeClient(next: RealtimeClientConfig) {
   const nextUrl = String(next.url || "").trim() || null;
   const nextTransport = next.transport || "ws";
   const nextConnectBasePath = String(next.connectBasePath || "").trim() || null;
+  const nextConnectWireFormat = next.connectWireFormat || "json";
   const changed = nextUrl !== config.url
     || next.protocolVersion !== config.protocolVersion
     || nextTransport !== config.transport
-    || nextConnectBasePath !== config.connectBasePath;
+    || nextConnectBasePath !== config.connectBasePath
+    || nextConnectWireFormat !== (config.connectWireFormat || "json");
   config = {
     protocolVersion: next.protocolVersion ?? config.protocolVersion ?? DEFAULT_PROTOCOL_VERSION,
     url: nextUrl,
     heartbeatIntervalMs: next.heartbeatIntervalMs ?? config.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
     transport: nextTransport,
     connectBasePath: nextConnectBasePath,
+    connectWireFormat: nextConnectWireFormat,
   };
   if (changed && (socket || connectAbortController)) {
     const reconnect = shouldReconnect;

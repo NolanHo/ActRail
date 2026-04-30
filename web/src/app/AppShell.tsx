@@ -14,7 +14,7 @@ import { useAppShellAudio } from "./app-shell/useAppShellAudio";
 import { useAppShellEvents } from "./app-shell/useAppShellEvents";
 import { useAppShellNotifications } from "./app-shell/useAppShellNotifications";
 import { useAppShellSessionEffects } from "./app-shell/useAppShellSessionEffects";
-import { setConnectTransportOptIn } from "../domains/sessions/store";
+import { setConnectTransportOptIn, setConnectWireFormat } from "../domains/sessions/store";
 import { useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useSessionUiStore, useSessionUiStoreApi, useSessionsStore, useSessionsStoreApi, useWaitsStore, useWaitsStoreApi } from "./providers";
 import {
   applyThemeMode,
@@ -643,6 +643,10 @@ export function AppShell() {
             onChangeThemeMode={setThemeMode}
             onChangeTransportOptIn={(enabled) => {
               setConnectTransportOptIn(enabled);
+              void sessionsStoreApi.refreshBootstrap();
+            }}
+            onChangeConnectWireFormat={(value) => {
+              setConnectWireFormat(value);
               void sessionsStoreApi.refreshBootstrap();
             }}
             onChangeConversationFontSizePx={(value) => setDisplaySettingsDraft((current) => ({ ...current, conversationFontSizePx: value }))}
