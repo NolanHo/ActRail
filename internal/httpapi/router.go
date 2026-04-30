@@ -316,6 +316,11 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
+	afterSeq, err := queryUint64(req, "after_seq")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
 	beforeSeq, err := queryUint64(req, "before_seq")
 	if err != nil {
 		writeAppError(w, err)
@@ -333,6 +338,7 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 	}
 	payload, err := r.app.SessionMessages(req.Context(), app.SessionMessagesRequest{
 		SessionID: sessionID,
+		AfterSeq:  afterSeq,
 		BeforeSeq: beforeSeq,
 		Limit:     limit,
 		Init:      init,

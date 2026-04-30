@@ -46,7 +46,7 @@ describe("createLiveSessionStore", () => {
 
     await liveStore.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 300);
     expect(api.getSessionState).toHaveBeenCalledWith("s1");
     expect(messagesStore.getState().bySessionId.s1).toEqual([
       { seq: 1, role: "assistant", text: "durable" },
@@ -113,7 +113,7 @@ describe("createLiveSessionStore", () => {
     await liveStore.loadInitial("s1");
     await liveStore.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1);
     expect(messagesStore.getState().bySessionId.s1).toEqual([
       { seq: 1, role: "assistant", text: "durable" },
       { seq: 2, role: "assistant", text: "committed" },

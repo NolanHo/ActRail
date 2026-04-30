@@ -197,10 +197,13 @@ export const api = {
     const response = await getJson<SessionDetailsResponse & { session?: Record<string, unknown> | null }>(`/api/sessions/${routeId}/details`, signal);
     return normalizeSessionDetailsResponse(response);
   },
-  listMessages(sessionId: string, init = false, signal?: AbortSignal, _offset?: number, before?: number, limit?: number, runtimeId?: string | null) {
+  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null) {
     const query = new URLSearchParams();
     if (init) {
       query.set("init", "1");
+    }
+    if (typeof after === "number" && Number.isFinite(after) && after > 0) {
+      query.set("after_seq", String(Math.floor(after)));
     }
     if (typeof before === "number" && Number.isFinite(before) && before > 0) {
       query.set("before", String(before));

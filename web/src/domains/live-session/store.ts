@@ -394,16 +394,16 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             return;
           }
           const messagePayload = runtimeId
-            ? await api.listMessages(sessionId, false, undefined, undefined, undefined, undefined, runtimeId)
-            : await api.listMessages(sessionId, false);
+            ? await api.listMessages(sessionId, false, undefined, state.offsetsBySessionId[sessionId], undefined, undefined, runtimeId)
+            : await api.listMessages(sessionId, false, undefined, state.offsetsBySessionId[sessionId]);
           applySnapshot(sessionId, messagePayload, statePayload, false);
           return;
         }
 
         const [messagePayload, statePayload] = await Promise.all([
           runtimeId
-            ? api.listMessages(sessionId, replace, undefined, undefined, undefined, undefined, runtimeId)
-            : api.listMessages(sessionId, replace),
+            ? api.listMessages(sessionId, replace, undefined, undefined, undefined, 300, runtimeId)
+            : api.listMessages(sessionId, replace, undefined, undefined, undefined, 300),
           loadState(),
         ]);
         applySnapshot(sessionId, messagePayload, statePayload, replace);

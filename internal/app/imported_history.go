@@ -78,7 +78,7 @@ func (s *Stub) loadDetachedImportedPIHistory(ctx context.Context, record session
 		return SessionMessagesResponse{}, false, nil
 	}
 	if items, ok := s.messageCache.GetSession(record.identity.SessionID()); ok {
-		return paginateSessionMessages(items, req.BeforeSeq, req.Limit), true, nil
+		return paginateSessionMessages(items, req.AfterSeq, req.BeforeSeq, req.Limit), true, nil
 	}
 	signature, ok := piSourceSignature(sourcePath)
 	if !ok {
@@ -86,7 +86,7 @@ func (s *Stub) loadDetachedImportedPIHistory(ctx context.Context, record session
 	}
 	cacheKey := "detached:" + signature
 	if items, ok := s.messageCache.Get(record.identity.SessionID(), cacheKey); ok {
-		return paginateSessionMessages(items, req.BeforeSeq, req.Limit), true, nil
+		return paginateSessionMessages(items, req.AfterSeq, req.BeforeSeq, req.Limit), true, nil
 	}
 	items, err := importedSessionMessagesFromSourcePath(sourcePath)
 	if err != nil {
@@ -94,7 +94,7 @@ func (s *Stub) loadDetachedImportedPIHistory(ctx context.Context, record session
 	}
 	s.rememberPISourceBinding(record, sourcePath, sourceConfidenceExact)
 	s.messageCache.Put(record.identity.SessionID(), cacheKey, items)
-	return paginateSessionMessages(items, req.BeforeSeq, req.Limit), true, nil
+	return paginateSessionMessages(items, req.AfterSeq, req.BeforeSeq, req.Limit), true, nil
 }
 
 func importedSessionMessagesFromSourcePath(sourcePath string) ([]SessionMessage, error) {
@@ -265,7 +265,20 @@ func piParentEventID(event pi.Event) string {
 	return ""
 }
 
-func paginateSessionMessages(items []SessionMessage, before *uint64, limit int) SessionMessagesResponse {
+func paginateSessionMessages(items []SessionMessage, after *uint64, before *uint64, limit int) SessionMessagesResponse {
+	if after != nil {
+		page := make([]SessionMessage, 0, len(items))
+		for _, item := range items {
+			if item.Seq > *after {
+				page = append(page, item)
+			}
+		}
+		response := SessionMessagesResponse{Items: page}
+		if len(items) > 0 {
+			response.TailSeq = items[len(items)-1].Seq
+		}
+		return response
+	}
 	upper := len(items)
 	if before != nil {
 		upper = 0
@@ -295,6 +308,7 @@ func paginateSessionMessages(items []SessionMessage, before *uint64, limit int) 
 	}
 	return response
 }
+
 func (s *Stub) loadPIAuthoritativeHistory(ctx context.Context, record sessionRecord, dataDir string, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
 	if record.identity.Backend().String() != "pi" {
 		return SessionMessagesResponse{}, false, nil
@@ -329,7 +343,7 @@ func (s *Stub) loadPIAuthoritativeHistory(ctx context.Context, record sessionRec
 	}
 	cacheKey := "pi-authoritative:" + strings.Join(signatureParts, "|")
 	if cached, ok := s.messageCache.Get(record.identity.SessionID(), cacheKey); ok {
-		return paginateSessionMessages(cached, req.BeforeSeq, req.Limit), true, nil
+		return paginateSessionMessages(cached, req.AfterSeq, req.BeforeSeq, req.Limit), true, nil
 	}
 
 	items := make([]SessionMessage, 0)
@@ -353,7 +367,7 @@ func (s *Stub) loadPIAuthoritativeHistory(ctx context.Context, record sessionRec
 		items[i].Seq = uint64(i + 1)
 	}
 	s.messageCache.Put(record.identity.SessionID(), cacheKey, items)
-	return paginateSessionMessages(items, req.BeforeSeq, req.Limit), true, nil
+	return paginateSessionMessages(items, req.AfterSeq, req.BeforeSeq, req.Limit), true, nil
 }
 
 func (s *Stub) rememberPISourceBinding(record sessionRecord, sourcePath, confidence string) {

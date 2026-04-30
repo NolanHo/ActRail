@@ -238,7 +238,8 @@ export function createMessagesStore(): MessagesStore {
       emit();
 
       try {
-        const data = normalizeMessagePage(await api.listMessages(sessionId, init));
+        const after = init ? undefined : state.offsetsBySessionId[sessionId];
+        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, after, undefined, HISTORY_PAGE_SIZE));
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }

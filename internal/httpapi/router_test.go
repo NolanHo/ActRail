@@ -768,7 +768,7 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 	})
 
 	t.Run("session messages", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/sessions/s_123/messages?before_seq=120&limit=20&init=true", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/sessions/s_123/messages?after_seq=100&before_seq=120&limit=20&init=true", nil)
 		res := httptest.NewRecorder()
 		h.ServeHTTP(res, req)
 
@@ -777,7 +777,7 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		if len(payload.Items) != 1 || payload.Items[0].Seq != 101 || payload.TailSeq != 180 {
 			t.Fatalf("unexpected messages payload: %+v", payload)
 		}
-		if svc.messagesReq.BeforeSeq == nil || *svc.messagesReq.BeforeSeq != 120 || svc.messagesReq.Limit != 20 || !svc.messagesReq.Init {
+		if svc.messagesReq.AfterSeq == nil || *svc.messagesReq.AfterSeq != 100 || svc.messagesReq.BeforeSeq == nil || *svc.messagesReq.BeforeSeq != 120 || svc.messagesReq.Limit != 20 || !svc.messagesReq.Init {
 			t.Fatalf("unexpected messages request: %+v", svc.messagesReq)
 		}
 	})
@@ -888,6 +888,7 @@ func TestRouteValidationReturnsErrorEnvelope(t *testing.T) {
 		{name: "list sessions group limit negative", method: http.MethodGet, target: "/api/sessions?group_limit=-2", status: http.StatusBadRequest, code: "invalid_request", field: "group_limit"},
 		{name: "create session missing cwd", method: http.MethodPost, target: "/api/sessions", body: `{"agent_backend":"pi"}`, status: http.StatusBadRequest, code: "invalid_request", field: "cwd"},
 		{name: "details invalid session id", method: http.MethodGet, target: "/api/sessions/%20/details", status: http.StatusBadRequest, code: "invalid_request", field: "session_id"},
+		{name: "messages invalid after seq", method: http.MethodGet, target: "/api/sessions/s_123/messages?after_seq=nope", status: http.StatusBadRequest, code: "invalid_request", field: "after_seq"},
 		{name: "messages invalid before seq", method: http.MethodGet, target: "/api/sessions/s_123/messages?before_seq=nope", status: http.StatusBadRequest, code: "invalid_request", field: "before_seq"},
 		{name: "messages invalid init", method: http.MethodGet, target: "/api/sessions/s_123/messages?init=nope", status: http.StatusBadRequest, code: "invalid_request", field: "init"},
 		{name: "file read missing path", method: http.MethodGet, target: "/api/sessions/s_123/file/read", status: http.StatusBadRequest, code: "invalid_request", field: "path"},

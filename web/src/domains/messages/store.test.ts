@@ -31,7 +31,7 @@ describe("createMessagesStore", () => {
 
     await store.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 300);
     expect(snapshots).toEqual([
       { loading: true, messages: [] },
       { loading: false, messages: [{ id: "m1" }, { id: "m2" }] },
@@ -82,9 +82,9 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s2");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true);
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false);
+    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true, undefined, undefined, undefined, 300);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true, undefined, undefined, undefined, 300);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 1, undefined, 300);
     expect(store.getState()).toEqual({
       bySessionId: {
         s1: [{ id: "m1" }, { id: "m2" }],
@@ -168,7 +168,7 @@ describe("createMessagesStore", () => {
     const pollPromise = store.poll("s1");
 
     expect(api.listMessages).toHaveBeenCalledTimes(1);
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 300);
 
     resolveFirst!({ events: [{ id: "m1" }], offset: 1 });
     await Promise.all([initialPromise, pollPromise]);
@@ -188,8 +188,8 @@ describe("createMessagesStore", () => {
     await store.poll("s1");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1, undefined, 300);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 2, undefined, 300);
     expect(store.getState().bySessionId.s1).toEqual([{ id: "m1" }, { id: "m2" }]);
   });
 

@@ -48,6 +48,7 @@ type SessionCapabilitySnapshot struct {
 
 type SessionMessagesRequest struct {
 	SessionID session.SessionID
+	AfterSeq  *uint64
 	BeforeSeq *uint64
 	Limit     int
 	Init      bool
@@ -279,6 +280,20 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 	}
 	if response, ok, err := s.loadDetachedImportedPIHistory(ctx, record, req); ok {
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
+	}
+	if req.AfterSeq != nil {
+		page := record.transcript.History(nil, 0)
+		items := page.Items()
+		response := SessionMessagesResponse{
+			Items:   make([]SessionMessage, 0, len(items)),
+			TailSeq: record.transcript.TailSeq().Uint64(),
+		}
+		for _, item := range items {
+			if item.Seq().Uint64() > *req.AfterSeq {
+				response.Items = append(response.Items, sessionMessageFromCommitted(item))
+			}
+		}
+		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
 	}
 	page := record.transcript.History(messageBeforeSeq(req.BeforeSeq), req.Limit)
 	items := page.Items()
