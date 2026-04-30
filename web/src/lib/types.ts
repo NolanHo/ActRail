@@ -107,6 +107,51 @@ export interface SessionTransportSnapshot {
   reason?: string | null;
 }
 
+export interface SupervisorRunSummary {
+  run_id: string;
+  anchor_assistant_event_id: string;
+  anchor_assistant_ts?: number;
+  status: "stop" | "injected" | "error" | string;
+  action?: "stop" | "inject" | string;
+  injected_text?: string;
+  reason?: string;
+  error?: string;
+  model?: string;
+  base_url?: string;
+  created_ts?: number;
+}
+
+export interface SessionSupervisorSnapshot {
+  ok?: boolean;
+  supported: boolean;
+  enabled: boolean;
+  status: "idle" | "checking" | "cooldown" | "limit_reached" | "error" | string;
+  idle_after_minutes: number;
+  max_consecutive_injections: number;
+  consecutive_injections: number;
+  goal?: string;
+  acceptance_criteria?: string;
+  context_files?: string[];
+}
+
+export interface SupervisorProviderResponse {
+  ok?: boolean;
+  base_url: string;
+  model: string;
+  api_key_configured: boolean;
+  complete: boolean;
+}
+
+export interface SupervisorRunsResponse {
+  ok?: boolean;
+  runs: SupervisorRunSummary[];
+}
+
+export interface SupervisorRunOnceResponse {
+  ok?: boolean;
+  run: SupervisorRunSummary;
+}
+
 export interface SessionSummary {
   session_id: string;
   runtime_id?: string | null;
@@ -143,6 +188,7 @@ export interface SessionSummary {
   snoozed?: boolean;
   historical?: boolean;
   active_wait?: ActiveWaitSummary | null;
+  supervisor?: SessionSupervisorSnapshot | null;
 }
 
 export interface SessionsResponse {
@@ -204,6 +250,7 @@ export interface SessionDetailsResponse {
   last_activity_ts?: number;
   historical?: boolean;
   capabilities?: SessionCapabilitySnapshot;
+  supervisor?: SessionSupervisorSnapshot | null;
 }
 
 export interface CreateSessionResponse {
@@ -411,6 +458,7 @@ export interface MessageEvent {
   request_id?: string;
   request_state?: string;
   pending_text?: string;
+  supervisor_runs?: SupervisorRunSummary[];
   [key: string]: unknown;
 }
 

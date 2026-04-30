@@ -135,6 +135,12 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
   const titleId = `${idBase}-title`;
   const health = sessionTransportHealth(session, isHistorical);
   const healthLabel = sessionHealthLabel(health);
+  const supervisor = session.supervisor;
+  const supervisorLabel = supervisor?.status === "limit_reached"
+    ? `Supervisor limit ${supervisor.consecutive_injections}/${supervisor.max_consecutive_injections}`
+    : supervisor?.enabled
+      ? `Supervisor on ${supervisor.consecutive_injections}/${supervisor.max_consecutive_injections}`
+      : "";
   const hasInlineActions = Boolean(onToggleFocus || onEdit);
   const hasMenuActions = Boolean(onDuplicate || onRestart || onHandoff || onDelete);
   const hasActions = hasInlineActions || hasMenuActions;
@@ -214,6 +220,7 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
                   {isHistorical ? <Badge variant="outline" className="ownerBadge">history</Badge> : null}
                   {!isHistorical && session.focused ? <Badge variant="outline" className="ownerBadge">Focus</Badge> : null}
                   {!isHistorical && session.queue_len ? <Badge className="queueBadge">{session.queue_len}</Badge> : null}
+                  {!isHistorical && supervisorLabel ? <Badge variant="outline" className="ownerBadge supervisorBadge">{supervisorLabel}</Badge> : null}
                 </div>
               </div>
               <div className="sessionCardFooterAside">

@@ -332,8 +332,10 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const activeSessionPending = activeSession?.pending_startup === true;
   const activeWait = activeSessionId ? waitsState.activeBySessionId[activeSessionId] ?? activeSession?.active_wait ?? null : null;
   const activeSessionBackendUnavailable = sessionBackendUnavailable(activeSession);
-  const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(activeWait);
-  const activeSessionSendBlockReason = activeWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : "";
+  const supervisorEnabled = activeSession?.supervisor?.enabled === true;
+  const supervisorBlockReason = "Supervisor is controlling this session. Disable Supervisor to send manually.";
+  const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(activeWait) || supervisorEnabled;
+  const activeSessionSendBlockReason = supervisorEnabled ? supervisorBlockReason : activeWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : "";
   const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
   const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
     ? Math.max(0, Math.round(activeSession.queue_len))
@@ -341,7 +343,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
   const activeAttachmentCount = activeSessionId ? attachedFilesBySessionId[activeSessionId] ?? 0 : 0;
-  const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi");
+  const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi" && !supervisorEnabled);
   const slashQuery = getSlashDraftQuery(draft);
   const todoSnapshot = useMemo(() => {
     if (!activeSessionId || activeSession?.agent_backend !== "pi") {
@@ -656,7 +658,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   };
 
   const queueCurrentDraft = () => {
-    if (!activeSessionId || !draft.trim() || sending || activeWait) {
+    if (!activeSessionId || !draft.trim() || sending || activeWait || supervisorEnabled) {
       return;
     }
 
@@ -703,7 +705,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   };
 
   const handleAttachClick = () => {
-    if (!attachmentsSupported || attachmentUploading || sending) {
+    if (!attachmentsSupported || attachmentUploading || sending || supervisorEnabled) {
       return;
     }
 
@@ -717,7 +719,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   };
 
   const handleAttachChange = async (event: Event) => {
-    if (!attachmentsSupported || !activeSessionId || attachmentUploading || sending) {
+    if (!attachmentsSupported || !activeSessionId || attachmentUploading || sending || supervisorEnabled) {
       return;
     }
 
@@ -809,11 +811,13 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
 
   const attachButtonTitle = !activeSessionId
     ? "Select a session first"
-    : activeSessionIsPi
-      ? "Attachments are not available for Pi sessions"
-      : attachmentUploading
-        ? "Uploading attachment..."
-        : "Attach file";
+    : supervisorEnabled
+      ? supervisorBlockReason
+      : activeSessionIsPi
+        ? "Attachments are not available for Pi sessions"
+        : attachmentUploading
+          ? "Uploading attachment..."
+          : "Attach file";
 
   return (
     <div className="composerStack space-y-3">
@@ -975,8 +979,8 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                     size="sm"
                     className="composerQueueButton"
                     aria-label="Queue message"
-                    disabled={sending || Boolean(activeWait) || !draft.trim()}
-                    title={activeSessionBackendUnavailable ? "Queue this draft until the session backend is restarted." : undefined}
+                    disabled={sending || Boolean(activeWait) || supervisorEnabled || !draft.trim()}
+                    title={supervisorEnabled ? supervisorBlockReason : activeSessionBackendUnavailable ? "Queue this draft until the session backend is restarted." : undefined}
                     onClick={queueCurrentDraft}
                   >
                     {activeQueueCount > 0 ? `Queue ${activeQueueCount}` : "Queue"}

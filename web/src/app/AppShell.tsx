@@ -206,6 +206,13 @@ export function AppShell() {
     if (activeContextUsageLabel) {
       items.push({ label: "Context", value: activeContextUsageLabel });
     }
+    const supervisor = activeSession.supervisor;
+    if (supervisor?.enabled) {
+      const value = supervisor.status === "limit_reached"
+        ? `limit ${supervisor.consecutive_injections}/${supervisor.max_consecutive_injections}`
+        : `on ${supervisor.consecutive_injections}/${supervisor.max_consecutive_injections}`;
+      items.push({ label: "Supervisor", value, tone: supervisor.status === "limit_reached" ? "error" : "attention" });
+    }
     if (activeQueueCount > 0) {
       items.push({ label: "Queue", value: String(activeQueueCount), tone: "attention" });
     }

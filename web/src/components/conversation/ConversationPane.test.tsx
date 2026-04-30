@@ -207,6 +207,50 @@ describe("ConversationPane", () => {
     expect(root.querySelector("[data-testid='machine-trace-detail']")?.textContent).toContain("npm test");
   });
 
+  it("renders supervisor runs after anchored assistant messages", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-supervisor", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-supervisor": [
+            {
+              role: "assistant",
+              text: "I stopped early.",
+              event_id: "pi:message:a1",
+              supervisor_runs: [{
+                run_id: "supervisor_1",
+                anchor_assistant_event_id: "pi:message:a1",
+                status: "injected",
+                action: "inject",
+                injected_text: "继续",
+                reason: "assistant stopped before verification",
+              }],
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-supervisor": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.querySelector("[data-testid='supervisor-run-card']")).not.toBeNull();
+    expect(root.textContent).toContain("Supervisor injected: 继续");
+    expect(root.textContent).toContain("Reason: assistant stopped before verification");
+  });
+
   it("renders Claude Todo V2 task-assignment custom messages as dedicated timeline events", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-custom", loading: false, newSessionDefaults: null },

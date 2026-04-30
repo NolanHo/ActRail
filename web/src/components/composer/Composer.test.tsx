@@ -46,6 +46,14 @@ interface RenderComposerOptions {
     model?: string | null;
     provider_choice?: string | null;
     reasoning_effort?: string | null;
+    supervisor?: {
+      supported: boolean;
+      enabled: boolean;
+      status: string;
+      idle_after_minutes: number;
+      max_consecutive_injections: number;
+      consecutive_injections: number;
+    } | null;
   }>;
   liveBusyBySessionId?: Record<string, boolean>;
   liveContextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
@@ -279,6 +287,35 @@ describe("Composer", () => {
     expect(textarea.disabled).toBe(false);
     expect(queueButton.disabled).toBe(false);
     expect(sendButton.disabled).toBe(true);
+  });
+
+  it("keeps supervisor-enabled drafts editable while disabling manual send and queue", async () => {
+    const { submit } = renderComposer({
+      items: [{
+        session_id: "sess-1",
+        agent_backend: "pi",
+        busy: false,
+        supervisor: { supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 3 },
+      }],
+      draft: "manual draft",
+    });
+
+    const composerRoot = getRoot();
+    const textarea = composerRoot.querySelector("textarea") as HTMLTextAreaElement;
+    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Queue")) as HTMLButtonElement;
+    const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
+
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe("manual draft");
+    expect(queueButton.disabled).toBe(true);
+    expect(sendButton.disabled).toBe(true);
+    expect(composerRoot.textContent).toContain("Supervisor is controlling this session. Disable Supervisor to send manually.");
+
+    await act(async () => {
+      sendButton.click();
+    });
+
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("blocks sends but allows queueing to ended session backends", async () => {

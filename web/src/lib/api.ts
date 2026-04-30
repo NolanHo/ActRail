@@ -30,6 +30,10 @@ import type {
   SessionDetailsResponse,
   SessionUiStateResponse,
   SessionsResponse,
+  SessionSupervisorSnapshot,
+  SupervisorProviderResponse,
+  SupervisorRunsResponse,
+  SupervisorRunOnceResponse,
   VoiceSettingsResponse,
   WaitInboxResponse,
   WaitLifecycleResponse,
@@ -344,6 +348,29 @@ export const api = {
   },
   editSession(sessionId: string, payload: Record<string, unknown>) {
     return postJson<EditSessionResponse>(`/api/sessions/${sessionId}/edit`, payload);
+  },
+  getSupervisorProvider() {
+    return getJson<SupervisorProviderResponse>(`/api/supervisor/provider`);
+  },
+  saveSupervisorProvider(payload: { base_url: string; api_key?: string; model: string }) {
+    return postJson<SupervisorProviderResponse>(`/api/supervisor/provider`, payload);
+  },
+  getSessionSupervisor(sessionId: string) {
+    return getJson<SessionSupervisorSnapshot>(`/api/sessions/${sessionId}/supervisor`);
+  },
+  saveSessionSupervisor(sessionId: string, payload: Record<string, unknown>) {
+    return postJson<SessionSupervisorSnapshot>(`/api/sessions/${sessionId}/supervisor`, payload);
+  },
+  getSupervisorRuns(sessionId: string, limit?: number) {
+    const query = new URLSearchParams();
+    if (typeof limit === "number") {
+      query.set("limit", String(limit));
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return getJson<SupervisorRunsResponse>(`/api/sessions/${sessionId}/supervisor/runs${suffix}`);
+  },
+  runSupervisorOnce(sessionId: string, dryRun = true) {
+    return postJson<SupervisorRunOnceResponse>(`/api/sessions/${sessionId}/supervisor/run-once`, { dry_run: dryRun });
   },
   logout() {
     return postJson<LogoutResponse>(`/api/logout`, {});

@@ -1069,6 +1069,11 @@ function ChatMessageCard({
       {renderCardHeader(kind, label, summary, event.ts)}
       {renderRichText(text, "messageBody", options)}
       {kind === "assistant" && turnMeta ? <AssistantTurnMetaCard meta={turnMeta} /> : null}
+      {kind === "assistant" && Array.isArray(event.supervisor_runs) && event.supervisor_runs.length ? (
+        <div className="supervisorRunStack" data-testid="supervisor-run-stack">
+          {event.supervisor_runs.map((run, index) => <SupervisorRunCard key={run.run_id || `${run.anchor_assistant_event_id}-${index}`} run={run} />)}
+        </div>
+      ) : null}
       <div className="messageBubbleActions">
         <button
           type="button"
@@ -1082,6 +1087,25 @@ function ChatMessageCard({
         </button>
       </div>
     </MessageSurface>
+  );
+}
+
+function SupervisorRunCard({ run }: { run: NonNullable<MessageEvent["supervisor_runs"]>[number] }) {
+  const status = String(run.status || "").trim();
+  const injectedText = firstNonEmptyText(run.injected_text);
+  const reason = firstNonEmptyText(run.reason);
+  const error = firstNonEmptyText(run.error);
+  const title = status === "injected"
+    ? `Supervisor injected: ${injectedText}`
+    : status === "error"
+      ? "Supervisor error"
+      : "Supervisor stopped";
+  return (
+    <div className={cn("supervisorRunCard rounded-xl border border-border/60 bg-background/70 p-3 text-sm", status === "error" && "isError")} data-testid="supervisor-run-card">
+      <div className="font-semibold text-foreground">{title}</div>
+      {reason ? <div className="text-muted-foreground">Reason: {reason}</div> : null}
+      {error ? <div className="text-destructive">Error: {error}</div> : null}
+    </div>
   );
 }
 

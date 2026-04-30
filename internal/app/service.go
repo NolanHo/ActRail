@@ -175,32 +175,33 @@ type CwdGroupMeta struct {
 }
 
 type SessionSummary struct {
-	SessionID           string             `json:"session_id"`
-	RuntimeID           string             `json:"runtime_id,omitempty"`
-	ThreadID            string             `json:"thread_id,omitempty"`
-	GenerationID        string             `json:"generation_id,omitempty"`
-	AgentBackend        string             `json:"agent_backend"`
-	Title               string             `json:"title"`
-	Alias               string             `json:"alias,omitempty"`
-	DisplayName         string             `json:"display_name,omitempty"`
-	FirstUserMessage    string             `json:"first_user_message,omitempty"`
-	CWD                 string             `json:"cwd"`
-	Busy                bool               `json:"busy"`
-	Focused             bool               `json:"focused,omitempty"`
-	QueueLen            int                `json:"queue_len,omitempty"`
-	TransportState      string             `json:"transport_state,omitempty"`
-	ResetRequired       bool               `json:"reset_required,omitempty"`
-	TransportReason     string             `json:"transport_reason,omitempty"`
-	LastUpdatedTS       float64            `json:"last_updated_ts"`
-	UpdatedTS           float64            `json:"updated_ts,omitempty"`
-	Historical          bool               `json:"historical"`
-	Model               string             `json:"model,omitempty"`
-	ProviderChoice      string             `json:"provider_choice,omitempty"`
-	ReasoningEffort     string             `json:"reasoning_effort,omitempty"`
-	PriorityOffset      float64            `json:"priority_offset,omitempty"`
-	SnoozeUntil         *int64             `json:"snooze_until,omitempty"`
-	DependencySessionID string             `json:"dependency_session_id,omitempty"`
-	ActiveWait          *ActiveWaitSummary `json:"active_wait,omitempty"`
+	SessionID           string                     `json:"session_id"`
+	RuntimeID           string                     `json:"runtime_id,omitempty"`
+	ThreadID            string                     `json:"thread_id,omitempty"`
+	GenerationID        string                     `json:"generation_id,omitempty"`
+	AgentBackend        string                     `json:"agent_backend"`
+	Title               string                     `json:"title"`
+	Alias               string                     `json:"alias,omitempty"`
+	DisplayName         string                     `json:"display_name,omitempty"`
+	FirstUserMessage    string                     `json:"first_user_message,omitempty"`
+	CWD                 string                     `json:"cwd"`
+	Busy                bool                       `json:"busy"`
+	Focused             bool                       `json:"focused,omitempty"`
+	QueueLen            int                        `json:"queue_len,omitempty"`
+	TransportState      string                     `json:"transport_state,omitempty"`
+	ResetRequired       bool                       `json:"reset_required,omitempty"`
+	TransportReason     string                     `json:"transport_reason,omitempty"`
+	LastUpdatedTS       float64                    `json:"last_updated_ts"`
+	UpdatedTS           float64                    `json:"updated_ts,omitempty"`
+	Historical          bool                       `json:"historical"`
+	Model               string                     `json:"model,omitempty"`
+	ProviderChoice      string                     `json:"provider_choice,omitempty"`
+	ReasoningEffort     string                     `json:"reasoning_effort,omitempty"`
+	PriorityOffset      float64                    `json:"priority_offset,omitempty"`
+	SnoozeUntil         *int64                     `json:"snooze_until,omitempty"`
+	DependencySessionID string                     `json:"dependency_session_id,omitempty"`
+	ActiveWait          *ActiveWaitSummary         `json:"active_wait,omitempty"`
+	Supervisor          *SessionSupervisorResponse `json:"supervisor,omitempty"`
 }
 
 type ListSessionsRequest struct {
@@ -505,6 +506,13 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
 	transport := s.sessionTransportSnapshot(record)
+	var supervisor *SessionSupervisorResponse
+	if record.identity.Backend() == session.BackendPI {
+		if config, err := s.sessionSupervisorConfig(context.Background(), record.identity.SessionID()); err == nil {
+			response := sessionSupervisorResponse(config)
+			supervisor = &response
+		}
+	}
 	return SessionSummary{
 		SessionID:           record.identity.SessionID().String(),
 		RuntimeID:           runtimeID.String(),
@@ -532,6 +540,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		SnoozeUntil:         unixSecondsPtr(record.snoozeUntil),
 		DependencySessionID: sessionIDString(record.dependencySessionID),
 		ActiveWait:          s.activeWaitForSession(record.identity.SessionID()),
+		Supervisor:          supervisor,
 	}
 }
 
