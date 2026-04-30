@@ -642,16 +642,27 @@ describe("SessionsPane", () => {
     await click(editButton!);
     await flush();
 
+    const schedulingTab = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="tab"]') || []).find((button) => button.textContent === "Scheduling");
+    expect(schedulingTab).toBeDefined();
+    await click(schedulingTab!);
     const dependencySelect = root?.querySelector('select[name="dependencySessionId"]') as HTMLSelectElement;
     await act(async () => {
       dependencySelect.value = "sess-2";
       dependencySelect.dispatchEvent(new Event("change", { bubbles: true }));
     });
+
+    const supervisorTab = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="tab"]') || []).find((button) => button.textContent === "Supervisor");
+    expect(supervisorTab).toBeDefined();
+    await click(supervisorTab!);
     const contextFiles = root?.querySelector('textarea[name="supervisorContextFiles"]') as HTMLTextAreaElement;
     await act(async () => {
       contextFiles.value = "README.md\ndocs/spec.md";
       contextFiles.dispatchEvent(new Event("input", { bubbles: true }));
     });
+
+    const providerTab = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="tab"]') || []).find((button) => button.textContent === "Provider");
+    expect(providerTab).toBeDefined();
+    await click(providerTab!);
     const providerModel = root?.querySelector('input[name="supervisorProviderModel"]') as HTMLInputElement;
     await act(async () => {
       providerModel.value = "model-b";

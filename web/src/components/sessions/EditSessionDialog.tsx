@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { api } from "../../lib/api";
 import { getSessionDisplayName } from "../../lib/session-display";
@@ -137,159 +138,177 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
 
         <Separator className="bg-border/70" />
 
-        <div className="space-y-5 px-6 py-5">
-          <label className="block space-y-2">
-            <span className="text-sm font-medium text-foreground">Conversation name</span>
-            <Input
-              name="sessionName"
-              value={sessionName}
-              maxLength={80}
-              placeholder={sessionLabel(session)}
-              onInput={(event) => setSessionName(event.currentTarget.value)}
-              onChange={(event) => setSessionName(event.currentTarget.value)}
-            />
-          </label>
+        <div className="px-6 py-5">
+          <Tabs defaultValue="conversation" className="gap-5">
+            <TabsList className={`grid h-auto w-full grid-cols-2 gap-1 ${supervisorSupported ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+              <TabsTrigger value="conversation">Conversation</TabsTrigger>
+              <TabsTrigger value="scheduling">Scheduling</TabsTrigger>
+              <TabsTrigger value="supervisor">Supervisor</TabsTrigger>
+              {supervisorSupported ? <TabsTrigger value="provider">Provider</TabsTrigger> : null}
+            </TabsList>
 
-          <label className="block space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-foreground">Priority offset</span>
-              <span className="text-sm font-medium text-muted-foreground">{formatPriorityOffset(priorityOffset)}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <input
-                name="priorityOffset"
-                type="range"
-                min="-1"
-                max="1"
-                step="0.05"
-                value={String(priorityOffset)}
-                className="w-full"
-                onInput={(event) => setPriorityOffset(Number(event.currentTarget.value || 0))}
-                onChange={(event) => setPriorityOffset(Number(event.currentTarget.value || 0))}
-              />
-              <Button type="button" variant="ghost" size="sm" onClick={() => setPriorityOffset(0)}>Reset</Button>
-            </div>
-          </label>
+            <TabsContent value="conversation" className="space-y-5">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-foreground">Conversation name</span>
+                <Input
+                  name="sessionName"
+                  value={sessionName}
+                  maxLength={80}
+                  placeholder={sessionLabel(session)}
+                  onInput={(event) => setSessionName(event.currentTarget.value)}
+                  onChange={(event) => setSessionName(event.currentTarget.value)}
+                />
+              </label>
 
-          <label className="block space-y-2">
-            <span className="text-sm font-medium text-foreground">Snooze</span>
-            <select
-              name="snoozeMode"
-              value={snoozeMode}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              onChange={(event) => {
-                const nextMode = event.currentTarget.value as SnoozeMode;
-                setSnoozeMode(nextMode);
-                if (nextMode === "tomorrow") {
-                  const next = fillCustomSnoozeFields(tomorrowSnoozeSeconds());
-                  setCustomDate(next.customDate);
-                  setCustomTime(next.customTime);
-                }
-                if (nextMode === "4h") {
-                  const next = fillCustomSnoozeFields(Math.floor(Date.now() / 1000) + 4 * 3600);
-                  setCustomDate(next.customDate);
-                  setCustomTime(next.customTime);
-                }
-              }}
-            >
-              <option value="none">No snooze</option>
-              <option value="4h">4 hours</option>
-              <option value="tomorrow">Tomorrow 09:00</option>
-              <option value="custom">Custom</option>
-            </select>
-            {snoozeMode === "custom" ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Input name="customSnoozeDate" type="date" value={customDate} onInput={(event) => setCustomDate(event.currentTarget.value)} onChange={(event) => setCustomDate(event.currentTarget.value)} />
-                <Input name="customSnoozeTime" type="time" step={60} value={customTime} onInput={(event) => setCustomTime(event.currentTarget.value)} onChange={(event) => setCustomTime(event.currentTarget.value)} />
+              <label className="block space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-foreground">Priority offset</span>
+                  <span className="text-sm font-medium text-muted-foreground">{formatPriorityOffset(priorityOffset)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    name="priorityOffset"
+                    type="range"
+                    min="-1"
+                    max="1"
+                    step="0.05"
+                    value={String(priorityOffset)}
+                    className="w-full"
+                    onInput={(event) => setPriorityOffset(Number(event.currentTarget.value || 0))}
+                    onChange={(event) => setPriorityOffset(Number(event.currentTarget.value || 0))}
+                  />
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setPriorityOffset(0)}>Reset</Button>
+                </div>
+              </label>
+            </TabsContent>
+
+            <TabsContent value="scheduling" className="space-y-5">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-foreground">Snooze</span>
+                <select
+                  name="snoozeMode"
+                  value={snoozeMode}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onChange={(event) => {
+                    const nextMode = event.currentTarget.value as SnoozeMode;
+                    setSnoozeMode(nextMode);
+                    if (nextMode === "tomorrow") {
+                      const next = fillCustomSnoozeFields(tomorrowSnoozeSeconds());
+                      setCustomDate(next.customDate);
+                      setCustomTime(next.customTime);
+                    }
+                    if (nextMode === "4h") {
+                      const next = fillCustomSnoozeFields(Math.floor(Date.now() / 1000) + 4 * 3600);
+                      setCustomDate(next.customDate);
+                      setCustomTime(next.customTime);
+                    }
+                  }}
+                >
+                  <option value="none">No snooze</option>
+                  <option value="4h">4 hours</option>
+                  <option value="tomorrow">Tomorrow 09:00</option>
+                  <option value="custom">Custom</option>
+                </select>
+                {snoozeMode === "custom" ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Input name="customSnoozeDate" type="date" value={customDate} onInput={(event) => setCustomDate(event.currentTarget.value)} onChange={(event) => setCustomDate(event.currentTarget.value)} />
+                    <Input name="customSnoozeTime" type="time" step={60} value={customTime} onInput={(event) => setCustomTime(event.currentTarget.value)} onChange={(event) => setCustomTime(event.currentTarget.value)} />
+                  </div>
+                ) : null}
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-foreground">Depends on</span>
+                <select
+                  name="dependencySessionId"
+                  value={dependencySessionId}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onChange={(event) => setDependencySessionId(event.currentTarget.value)}
+                >
+                  <option value="">No dependency</option>
+                  {dependencyOptions.map((item) => (
+                    <option key={item.session_id} value={item.session_id}>{sessionLabel(item)}</option>
+                  ))}
+                </select>
+              </label>
+            </TabsContent>
+
+            <TabsContent value="supervisor" className="space-y-5">
+              <div className="space-y-3 rounded-2xl border border-border/70 bg-background/60 p-4">
+                <label className="flex items-start gap-3 text-sm">
+                  <input
+                    name="supervisorEnabled"
+                    type="checkbox"
+                    checked={supervisorEnabled}
+                    disabled={!supervisorSupported}
+                    onChange={(event) => setSupervisorEnabled(event.currentTarget.checked)}
+                  />
+                  <span>
+                    <span className="block font-medium text-foreground">Supervisor mode</span>
+                    <span className="block text-muted-foreground">Pi-only automatic continuation. Manual send, queue, and attach are disabled while enabled.</span>
+                  </span>
+                </label>
+                {!supervisorSupported ? <p className="text-sm text-muted-foreground">Supervisor mode is only supported for Pi sessions.</p> : null}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-foreground">Idle minutes</span>
+                    <Input name="supervisorIdleAfterMinutes" type="number" min={1} value={String(supervisorIdleAfterMinutes)} disabled={!supervisorSupported} onInput={(event) => setSupervisorIdleAfterMinutes(Number(event.currentTarget.value || 1))} />
+                  </label>
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-foreground">Max injections</span>
+                    <Input name="supervisorMaxConsecutiveInjections" type="number" min={1} value={String(supervisorMaxConsecutiveInjections)} disabled={!supervisorSupported} onInput={(event) => setSupervisorMaxConsecutiveInjections(Number(event.currentTarget.value || 1))} />
+                  </label>
+                </div>
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium text-foreground">Goal</span>
+                  <Input name="supervisorGoal" value={supervisorGoal} disabled={!supervisorSupported} onInput={(event) => setSupervisorGoal(event.currentTarget.value)} />
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium text-foreground">Acceptance criteria</span>
+                  <Input name="supervisorAcceptanceCriteria" value={supervisorAcceptanceCriteria} disabled={!supervisorSupported} onInput={(event) => setSupervisorAcceptanceCriteria(event.currentTarget.value)} />
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium text-foreground">Context files</span>
+                  <textarea
+                    name="supervisorContextFiles"
+                    value={supervisorContextFilesText}
+                    disabled={!supervisorSupported}
+                    rows={3}
+                    className="flex min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="README.md
+docs/spec.md"
+                    onInput={(event) => setSupervisorContextFilesText(event.currentTarget.value)}
+                  />
+                  <span className="block text-xs text-muted-foreground">One path per line. Relative paths resolve against the session cwd.</span>
+                </label>
               </div>
+            </TabsContent>
+
+            {supervisorSupported ? (
+              <TabsContent value="provider" className="space-y-5">
+                <div className="space-y-3 rounded-2xl border border-border/70 bg-background/60 p-4">
+                  <div>
+                    <span className="block text-sm font-medium text-foreground">Global supervisor provider</span>
+                    {providerStatus ? <span className="block text-sm text-muted-foreground">{providerStatus}</span> : null}
+                  </div>
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-foreground">Base URL</span>
+                    <Input name="supervisorProviderBaseUrl" value={providerBaseUrl} placeholder="https://api.openai.com/v1" onInput={(event) => setProviderBaseUrl(event.currentTarget.value)} />
+                  </label>
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-foreground">Model</span>
+                    <Input name="supervisorProviderModel" value={providerModel} placeholder="gpt-4.1-mini" onInput={(event) => setProviderModel(event.currentTarget.value)} />
+                  </label>
+                  <label className="block space-y-2">
+                    <span className="text-sm font-medium text-foreground">API key</span>
+                    <Input name="supervisorProviderApiKey" type="password" value={providerApiKey} placeholder="Leave blank to keep existing key" onInput={(event) => setProviderApiKey(event.currentTarget.value)} />
+                  </label>
+                </div>
+              </TabsContent>
             ) : null}
-          </label>
+          </Tabs>
 
-          <label className="block space-y-2">
-            <span className="text-sm font-medium text-foreground">Depends on</span>
-            <select
-              name="dependencySessionId"
-              value={dependencySessionId}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              onChange={(event) => setDependencySessionId(event.currentTarget.value)}
-            >
-              <option value="">No dependency</option>
-              {dependencyOptions.map((item) => (
-                <option key={item.session_id} value={item.session_id}>{sessionLabel(item)}</option>
-              ))}
-            </select>
-          </label>
-
-          <div className="space-y-3 rounded-2xl border border-border/70 bg-background/60 p-4">
-            <label className="flex items-start gap-3 text-sm">
-              <input
-                name="supervisorEnabled"
-                type="checkbox"
-                checked={supervisorEnabled}
-                disabled={!supervisorSupported}
-                onChange={(event) => setSupervisorEnabled(event.currentTarget.checked)}
-              />
-              <span>
-                <span className="block font-medium text-foreground">Supervisor mode</span>
-                <span className="block text-muted-foreground">Pi-only automatic continuation. Manual send, queue, and attach are disabled while enabled.</span>
-              </span>
-            </label>
-            {!supervisorSupported ? <p className="text-sm text-muted-foreground">Supervisor mode is only supported for Pi sessions.</p> : null}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-foreground">Idle minutes</span>
-                <Input name="supervisorIdleAfterMinutes" type="number" min={1} value={String(supervisorIdleAfterMinutes)} disabled={!supervisorSupported} onInput={(event) => setSupervisorIdleAfterMinutes(Number(event.currentTarget.value || 1))} />
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-foreground">Max injections</span>
-                <Input name="supervisorMaxConsecutiveInjections" type="number" min={1} value={String(supervisorMaxConsecutiveInjections)} disabled={!supervisorSupported} onInput={(event) => setSupervisorMaxConsecutiveInjections(Number(event.currentTarget.value || 1))} />
-              </label>
-            </div>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-foreground">Goal</span>
-              <Input name="supervisorGoal" value={supervisorGoal} disabled={!supervisorSupported} onInput={(event) => setSupervisorGoal(event.currentTarget.value)} />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-foreground">Acceptance criteria</span>
-              <Input name="supervisorAcceptanceCriteria" value={supervisorAcceptanceCriteria} disabled={!supervisorSupported} onInput={(event) => setSupervisorAcceptanceCriteria(event.currentTarget.value)} />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-foreground">Context files</span>
-              <textarea
-                name="supervisorContextFiles"
-                value={supervisorContextFilesText}
-                disabled={!supervisorSupported}
-                rows={3}
-                className="flex min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                placeholder="README.md\ndocs/spec.md"
-                onInput={(event) => setSupervisorContextFilesText(event.currentTarget.value)}
-              />
-              <span className="block text-xs text-muted-foreground">One path per line. Relative paths resolve against the session cwd.</span>
-            </label>
-          </div>
-
-          {supervisorSupported ? (
-            <div className="space-y-3 rounded-2xl border border-border/70 bg-background/60 p-4">
-              <div>
-                <span className="block text-sm font-medium text-foreground">Global supervisor provider</span>
-                {providerStatus ? <span className="block text-sm text-muted-foreground">{providerStatus}</span> : null}
-              </div>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-foreground">Base URL</span>
-                <Input name="supervisorProviderBaseUrl" value={providerBaseUrl} placeholder="https://api.openai.com/v1" onInput={(event) => setProviderBaseUrl(event.currentTarget.value)} />
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-foreground">Model</span>
-                <Input name="supervisorProviderModel" value={providerModel} placeholder="gpt-4.1-mini" onInput={(event) => setProviderModel(event.currentTarget.value)} />
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-foreground">API key</span>
-                <Input name="supervisorProviderApiKey" type="password" value={providerApiKey} placeholder="Leave blank to keep existing key" onInput={(event) => setProviderApiKey(event.currentTarget.value)} />
-              </label>
-            </div>
-          ) : null}
-
-          {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
+          {error ? <p className="mt-4 text-sm font-medium text-red-600">{error}</p> : null}
         </div>
 
         <Separator className="bg-border/70" />
