@@ -529,6 +529,8 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
 
       if (type === "message.generating") {
         const active = payload?.active === true;
+        const role = typeof payload?.role === "string" ? payload.role.trim() : "";
+        const assistantGeneration = role === "assistant";
         state = {
           ...state,
           streamCursorsBySessionId: {
@@ -541,7 +543,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
           generatingBySessionId: {
             ...state.generatingBySessionId,
-            [sessionId]: active,
+            [sessionId]: assistantGeneration ? active : state.generatingBySessionId[sessionId] === true,
           },
         };
         emit();
@@ -556,11 +558,12 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           streamingTextBySessionId.get(sessionId)?.delete(turnId);
         }
         const message = toObjectRecord(payload?.message);
+        const role = typeof message?.role === "string" ? message.role : typeof payload?.role === "string" ? payload.role : undefined;
         appendRealtimeEvent(sessionId, {
           ...message,
           event_id: typeof message?.event_id === "string" ? message.event_id : undefined,
           turn_id: turnId || (typeof message?.turn_id === "string" ? message.turn_id : undefined),
-          role: typeof message?.role === "string" ? message.role : typeof payload?.role === "string" ? payload.role : undefined,
+          role,
           text: typeof message?.text === "string" ? message.text : undefined,
           ts: typeof message?.ts === "number" ? message.ts : typeof frame.ts === "number" ? frame.ts : undefined,
         } as MessageEvent);
@@ -572,7 +575,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
           generatingBySessionId: {
             ...state.generatingBySessionId,
-            [sessionId]: false,
+            [sessionId]: role === "assistant" ? false : state.generatingBySessionId[sessionId] === true,
           },
         };
         emit();

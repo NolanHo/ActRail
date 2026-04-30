@@ -291,6 +291,37 @@ describe("createLiveSessionStore", () => {
     expect(messagesStore.getState().bySessionId.s1[0]).toMatchObject({ seq: 1, role: "assistant", text: "final", turn_id: "turn-1" });
   });
 
+  it("does not stop assistant generation on non-assistant commits", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "message.delta",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", delta: "partial" },
+    });
+    liveStore.applyFrame({
+      type: "message.commit",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", message: { seq: 1, type: "tool", text: "bash" } },
+    });
+    liveStore.applyFrame({
+      type: "message.generating",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-1", role: "", active: false },
+    });
+
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(true);
+
+    liveStore.applyFrame({
+      type: "message.commit",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 4, turn_id: "turn-1", message: { seq: 2, role: "assistant", text: "final" } },
+    });
+
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+  });
+
   it("applies generation broken and transport reset frames", () => {
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
