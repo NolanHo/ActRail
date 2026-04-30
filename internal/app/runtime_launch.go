@@ -142,6 +142,11 @@ type piRPCPromptCommand struct {
 	Message string `json:"message"`
 }
 
+type piRPCGetStateCommand struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
 type piRPCExtensionUIResponseCommand struct {
 	Type  string `json:"type"`
 	ID    string `json:"id"`
@@ -616,6 +621,25 @@ func (r sessionRuntime) CurrentHelperBinding(sessionID session.SessionID) (*Runt
 		return nil, err
 	}
 	return binding, nil
+}
+
+func (r sessionRuntime) RequestPIRPCState(ctx context.Context, id string) error {
+	if r.protocol != runtimeProtocolPIRPC {
+		return nil
+	}
+	commandID := strings.TrimSpace(id)
+	if commandID == "" {
+		return fmt.Errorf("pi rpc state request id is required")
+	}
+	command := piRPCGetStateCommand{ID: commandID, Type: "get_state"}
+	if r.helper != nil {
+		encoded, err := json.Marshal(command)
+		if err != nil {
+			return fmt.Errorf("marshal runtime command: %w", err)
+		}
+		return r.helper.command(ctx, iod.CommandSend, encoded)
+	}
+	return r.writeRPCCommand(ctx, command)
 }
 
 func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {

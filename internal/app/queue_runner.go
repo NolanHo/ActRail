@@ -15,9 +15,11 @@ func (s *Stub) scheduleQueuedDispatch(sessionID session.SessionID) {
 
 func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 	var (
-		committed SessionMessage
-		queue     SessionQueueSnapshot
-		activated bool
+		committed   SessionMessage
+		queue       SessionQueueSnapshot
+		activated   bool
+		pollRuntime sessionRuntime
+		pollPIState bool
 	)
 	if err := s.withSessionInputLock(sessionID, func(record sessionRecord) error {
 		if record.state.Busy() || record.uiRequest != nil {
@@ -30,6 +32,10 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		queued := items[0]
 		if err := record.runtime.SendPrompt(context.Background(), queued.Text()); err != nil {
 			return nil
+		}
+		if record.identity.Backend() == session.BackendPI {
+			pollRuntime = record.runtime
+			pollPIState = true
 		}
 		item, state, ok, err := s.registry.ActivateQueued(sessionID, queued.ID())
 		if err != nil || !ok {
@@ -46,6 +52,9 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 	s.emitMessageCommit(sessionID, "", committed)
 	s.emitQueueState(sessionID, queue)
 	s.emitSessionState(sessionID)
+	if pollPIState {
+		s.startPIRPCStatePolling(sessionID, pollRuntime)
+	}
 }
 
 func (s *Stub) withSessionInputLock(sessionID session.SessionID, fn func(sessionRecord) error) error {

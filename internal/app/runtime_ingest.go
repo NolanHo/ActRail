@@ -9,13 +9,19 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"actrail/internal/adapters/iod"
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
 
-const maxRuntimeLineBytes = 1 << 20
+const (
+	maxRuntimeLineBytes    = 1 << 20
+	piRPCStatePollInterval = 10 * time.Second
+	piRPCStatePollTimeout  = 2 * time.Second
+	piRPCStateMaxFailures  = 3
+)
 
 var runtimeHelperProjectors sync.Map
 
@@ -30,15 +36,46 @@ type runtimeEventDecoder struct {
 }
 
 type runtimeProjection struct {
-	events           []pi.Event
-	codexThreadID    string
-	codexTurnID      string
-	clearCodexTurn   bool
-	codexInitialized bool
-	model            string
-	provider         string
-	contextUsage     *SessionContextUsageSnapshot
-	turnTiming       *SessionTurnTimingSnapshot
+	events            []pi.Event
+	codexThreadID     string
+	codexTurnID       string
+	clearCodexTurn    bool
+	codexInitialized  bool
+	model             string
+	provider          string
+	contextUsage      *SessionContextUsageSnapshot
+	turnTiming        *SessionTurnTimingSnapshot
+	piRPCState        *piRPCStateSnapshot
+	piRPCStateFailure *piRPCStateFailure
+}
+
+// piRPCStateSnapshot is the authoritative busy signal for Pi RPC sessions.
+type piRPCStateSnapshot struct {
+	ProbeID             string
+	IsStreaming         bool
+	IsCompacting        bool
+	PendingMessageCount int
+}
+
+type piRPCStateFailure struct {
+	ProbeID string
+	Reason  string
+}
+
+type piRPCStateCache struct {
+	GenerationID         iod.GenerationID
+	Polling              bool
+	PendingProbeID       string
+	LastAckProbeID       string
+	ConsecutiveFailures  int
+	LastSuccessTS        time.Time
+	LastFailureTS        time.Time
+	LastState            *piRPCStateSnapshot
+	StalledResetRequired bool
+}
+
+func (s piRPCStateSnapshot) Busy() bool {
+	return s.IsStreaming || s.IsCompacting || s.PendingMessageCount > 0
 }
 
 type runtimeLineBuffer struct {
@@ -78,6 +115,14 @@ func mergeRuntimeProjection(dst, src runtimeProjection) runtimeProjection {
 	if src.turnTiming != nil {
 		dst.turnTiming = mergeTurnTiming(dst.turnTiming, src.turnTiming)
 	}
+	if src.piRPCState != nil {
+		state := *src.piRPCState
+		dst.piRPCState = &state
+	}
+	if src.piRPCStateFailure != nil {
+		failure := *src.piRPCStateFailure
+		dst.piRPCStateFailure = &failure
+	}
 	return dst
 }
 
@@ -98,6 +143,7 @@ func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.B
 		if record, ok := s.registry.Lookup(sessionID); ok && record.state.Busy() {
 			_ = s.setRuntimeAgentRunning(sessionID, true)
 		}
+		s.startPIRPCStatePolling(sessionID, runtime)
 	}
 	if runtime.helper != nil {
 		go s.readRuntimeHelper(sessionID, backend, runtime.helper)
@@ -112,6 +158,148 @@ func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.B
 		}
 		go s.readRuntimeOutput(sessionID, backend, src)
 	}
+}
+
+func (s *Stub) startPIRPCStatePolling(sessionID session.SessionID, runtime sessionRuntime) {
+	if s == nil || runtime.protocol != runtimeProtocolPIRPC || runtime.helper == nil {
+		return
+	}
+	generationID := runtime.helper.generationID
+	if !s.activatePIRPCStatePoller(sessionID, generationID) {
+		return
+	}
+	go func() {
+		defer s.deactivatePIRPCStatePoller(sessionID, generationID)
+		s.pollPIRPCState(sessionID, runtime, generationID)
+	}()
+}
+
+func (s *Stub) pollPIRPCState(sessionID session.SessionID, runtime sessionRuntime, generationID iod.GenerationID) {
+	for s.shouldPollPIRPCState(sessionID, runtime, generationID) {
+		probeID := fmt.Sprintf("actrail-state-%d", time.Now().UTC().UnixNano())
+		s.notePIRPCStateProbeSent(sessionID, generationID, probeID)
+		ctx, cancel := context.WithTimeout(context.Background(), piRPCStatePollTimeout)
+		err := runtime.RequestPIRPCState(ctx, probeID)
+		cancel()
+		if err != nil {
+			if s.recordPIRPCStateProbeFailure(sessionID, generationID, probeID, err.Error()) {
+				return
+			}
+		} else {
+			timer := time.NewTimer(piRPCStatePollInterval)
+			<-timer.C
+			if !s.piRPCStateProbeAcked(sessionID, generationID, probeID) {
+				if s.recordPIRPCStateProbeFailure(sessionID, generationID, probeID, "get_state timeout") {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (s *Stub) shouldPollPIRPCState(sessionID session.SessionID, runtime sessionRuntime, generationID iod.GenerationID) bool {
+	if s == nil || runtime.protocol != runtimeProtocolPIRPC || runtime.helper == nil || runtime.helper.generationID != generationID {
+		return false
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendPI || record.runtime.helper == nil || record.runtime.helper.generationID != generationID {
+		return false
+	}
+	transport := sessionTransportSnapshot(record)
+	return !transport.ResetRequired && transport.State != SessionTransportStateBroken && transport.State != SessionTransportStateEnded
+}
+
+func (s *Stub) activatePIRPCStatePoller(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	if s.piRPCStates == nil {
+		s.piRPCStates = map[session.SessionID]piRPCStateCache{}
+	}
+	cache := s.piRPCStates[sessionID]
+	if cache.Polling && cache.GenerationID == generationID && !cache.StalledResetRequired {
+		return false
+	}
+	if cache.GenerationID != generationID {
+		cache = piRPCStateCache{GenerationID: generationID}
+	}
+	cache.Polling = true
+	cache.PendingProbeID = ""
+	cache.StalledResetRequired = false
+	s.piRPCStates[sessionID] = cache
+	return true
+}
+
+func (s *Stub) deactivatePIRPCStatePoller(sessionID session.SessionID, generationID iod.GenerationID) {
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID != generationID {
+		return
+	}
+	cache.Polling = false
+	s.piRPCStates[sessionID] = cache
+}
+
+func (s *Stub) notePIRPCStateProbeSent(sessionID session.SessionID, generationID iod.GenerationID, probeID string) {
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID != generationID {
+		cache = piRPCStateCache{GenerationID: generationID, Polling: true}
+	}
+	cache.PendingProbeID = probeID
+	s.piRPCStates[sessionID] = cache
+}
+
+func (s *Stub) piRPCStateProbeAcked(sessionID session.SessionID, generationID iod.GenerationID, probeID string) bool {
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	return cache.GenerationID == generationID && cache.LastAckProbeID == probeID && cache.PendingProbeID == ""
+}
+
+func (s *Stub) recordPIRPCStateProbeFailure(sessionID session.SessionID, generationID iod.GenerationID, probeID, reason string) bool {
+	s.piRPCStateMu.Lock()
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID == "" {
+		cache.GenerationID = generationID
+	}
+	if cache.GenerationID != generationID || cache.StalledResetRequired {
+		s.piRPCStateMu.Unlock()
+		return cache.StalledResetRequired
+	}
+	if probeID != "" && cache.LastAckProbeID == probeID {
+		s.piRPCStateMu.Unlock()
+		return false
+	}
+	cache.PendingProbeID = ""
+	cache.ConsecutiveFailures++
+	cache.LastFailureTS = time.Now().UTC()
+	stalled := cache.ConsecutiveFailures >= piRPCStateMaxFailures
+	if stalled {
+		cache.StalledResetRequired = true
+	}
+	s.piRPCStates[sessionID] = cache
+	s.piRPCStateMu.Unlock()
+	if stalled {
+		_ = s.markPIRPCStateStalled(sessionID, generationID, reason)
+	}
+	return stalled
+}
+
+func (s *Stub) recordPIRPCStateSuccess(sessionID session.SessionID, state piRPCStateSnapshot) {
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	if cache.StalledResetRequired {
+		return
+	}
+	cache.PendingProbeID = ""
+	cache.LastAckProbeID = state.ProbeID
+	cache.ConsecutiveFailures = 0
+	cache.LastSuccessTS = time.Now().UTC()
+	cache.LastState = &state
+	s.piRPCStates[sessionID] = cache
 }
 
 func runtimeOutputSources(runtime sessionRuntime) []io.Reader {
@@ -225,6 +413,9 @@ func (d *runtimeEventDecoder) decodeRuntimeLine(raw []byte) runtimeProjection {
 		}
 	}
 	metadata := decodePIRuntimeMetadata(line)
+	if metadata.piRPCState != nil || metadata.piRPCStateFailure != nil {
+		return metadata
+	}
 	material, err := pi.ParseObjectJSON(line)
 	if err != nil {
 		return metadata
@@ -237,6 +428,9 @@ func decodePIRuntimeMetadata(line []byte) runtimeProjection {
 	var raw map[string]any
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return runtimeProjection{}
+	}
+	if projection, ok := decodePIRPCStateResponse(raw); ok {
+		return projection
 	}
 	message, _ := raw["message"].(map[string]any)
 	if message == nil {
@@ -277,11 +471,46 @@ func decodePIRuntimeMetadata(line []byte) runtimeProjection {
 	return projection
 }
 
+func decodePIRPCStateResponse(raw map[string]any) (runtimeProjection, bool) {
+	if strings.TrimSpace(stringValue(raw["type"])) != "response" || strings.TrimSpace(stringValue(raw["command"])) != "get_state" {
+		return runtimeProjection{}, false
+	}
+	probeID := strings.TrimSpace(stringValue(raw["id"]))
+	success, ok := raw["success"].(bool)
+	if !ok || !success {
+		return runtimeProjection{piRPCStateFailure: &piRPCStateFailure{ProbeID: probeID, Reason: firstNonEmptyString(stringValue(raw["error"]), "get_state failed")}}, true
+	}
+	data, _ := raw["data"].(map[string]any)
+	if data == nil {
+		return runtimeProjection{piRPCStateFailure: &piRPCStateFailure{ProbeID: probeID, Reason: "get_state missing data"}}, true
+	}
+	return runtimeProjection{piRPCState: &piRPCStateSnapshot{
+		ProbeID:             probeID,
+		IsStreaming:         boolValue(data["isStreaming"]),
+		IsCompacting:        boolValue(data["isCompacting"]),
+		PendingMessageCount: intValueFromAny(data["pendingMessageCount"]),
+	}}, true
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func stringValue(value any) string {
 	if s, ok := value.(string); ok {
 		return s
 	}
 	return ""
+}
+
+func boolValue(value any) bool {
+	v, _ := value.(bool)
+	return v
 }
 
 func numericValue(value any) float64 {
@@ -454,7 +683,87 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 			}
 		}
 	}
+	if projection.piRPCStateFailure != nil {
+		if s.applyPIRPCStateFailure(sessionID, *projection.piRPCStateFailure) {
+			return nil
+		}
+	}
+	if projection.piRPCState != nil {
+		if err := s.applyPIRPCState(sessionID, *projection.piRPCState); err != nil {
+			return err
+		}
+	}
 	return s.applyPIEvents(sessionID, projection.events)
+}
+
+func (s *Stub) applyPIRPCStateFailure(sessionID session.SessionID, failure piRPCStateFailure) bool {
+	if s == nil {
+		return false
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendPI || record.runtime.helper == nil {
+		return false
+	}
+	return s.recordPIRPCStateProbeFailure(sessionID, record.runtime.helper.generationID, failure.ProbeID, failure.Reason)
+}
+
+func (s *Stub) applyPIRPCState(sessionID session.SessionID, state piRPCStateSnapshot) error {
+	if s == nil {
+		return nil
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if ok && record.identity.Backend() == session.BackendPI && sessionTransportSnapshot(record).ResetRequired {
+		return nil
+	}
+	s.recordPIRPCStateSuccess(sessionID, state)
+	busy := state.Busy()
+	if err := s.setRuntimeAgentRunning(sessionID, busy); err != nil {
+		return err
+	}
+	record, ok = s.registry.Lookup(sessionID)
+	if !ok {
+		return nil
+	}
+	if record.state.Busy() == busy {
+		return nil
+	}
+	updated, ok, err := s.registry.SetBusy(sessionID, busy)
+	if err != nil || !ok {
+		return err
+	}
+	s.emitSessionState(sessionID)
+	if !updated.Busy() {
+		s.scheduleQueuedDispatch(sessionID)
+	}
+	return nil
+}
+
+func (s *Stub) markPIRPCStateStalled(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
+	if s == nil {
+		return nil
+	}
+	resolvedReason := firstNonEmptyString(reason, "get_state failed")
+	updated, err := s.setSessionTransport(sessionID, SessionTransportSnapshot{
+		GenerationID:  strings.TrimSpace(generationID.String()),
+		State:         SessionTransportStateStalled,
+		ResetRequired: true,
+		Reason:        resolvedReason,
+	})
+	if err != nil {
+		return err
+	}
+	if updated.GenerationID != "" {
+		s.emitTransportResetRequired(sessionID, updated.GenerationID, updated.Reason)
+	}
+	if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+		return err
+	}
+	if state, ok, err := s.registry.SetBusy(sessionID, false); err != nil {
+		return err
+	} else if ok && !state.Busy() {
+		s.emitSessionState(sessionID)
+	}
+	return nil
 }
 
 func (s *Stub) withCodexRuntimeState(sessionID session.SessionID, apply func(*codexRuntimeState)) {
@@ -628,7 +937,13 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 		return err
 	}
 	if event.Message.Role == pi.MessageRoleAssistant && event.Message.CommitLike && strings.TrimSpace(event.Message.StopReason) != "status" {
-		if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+		if s.isPISession(sessionID) {
+			if s.isRuntimeAgentRunning(sessionID) {
+				if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
+					return err
+				}
+			}
+		} else if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
 			return err
 		}
 	}
@@ -765,6 +1080,9 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 	if event.Boundary == nil {
 		return nil
 	}
+	if s.isPISession(sessionID) {
+		return nil
+	}
 	switch event.Boundary.Kind {
 	case pi.BoundaryKindAgentStarted:
 		if err := s.setRuntimeAgentRunning(sessionID, true); err != nil {
@@ -813,6 +1131,14 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 		}
 	}
 	return nil
+}
+
+func (s *Stub) isPISession(sessionID session.SessionID) bool {
+	if s == nil {
+		return false
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	return ok && record.identity.Backend() == session.BackendPI
 }
 
 func runtimeTurnID(event pi.Event) string {

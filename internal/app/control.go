@@ -83,6 +83,8 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 		return SendResponse{}, Invalid("text", "text required")
 	}
 	var response SendResponse
+	var pollRuntime sessionRuntime
+	var pollPIState bool
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
 		if s.activeWaitForSession(req.SessionID) != nil {
 			return Conflict("session is waiting on user")
@@ -95,6 +97,10 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 		}
 		if err := record.runtime.SendPrompt(ctx, text); err != nil {
 			return mapRuntimeControlError(err)
+		}
+		if record.identity.Backend() == session.BackendPI {
+			pollRuntime = record.runtime
+			pollPIState = true
 		}
 		s.awaitRuntimeTurnStart(ctx, record.runtime)
 		item, state, uiRequest, ok, err := s.registry.ActivateSend(req.SessionID, text)
@@ -118,6 +124,9 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 	s.emitMessageCommit(req.SessionID, "", response.Message)
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
+	if pollPIState {
+		s.startPIRPCStatePolling(req.SessionID, pollRuntime)
+	}
 	return response, nil
 }
 

@@ -298,7 +298,7 @@ func TestCreateSessionConsumesPIRPCRuntimeOutputIntoStateTranscriptAndEvents(t *
 	}
 }
 
-func TestPIRPCFinalAssistantMessageClearsBusyWithoutAgentEnd(t *testing.T) {
+func TestPIRPCGetStateControlsBusyWithoutAgentEvents(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
@@ -333,22 +333,117 @@ func TestPIRPCFinalAssistantMessageClearsBusyWithoutAgentEnd(t *testing.T) {
 	}
 
 	apply(`{"type":"agent_start"}`)
-	assertBusy(true)
-	apply(`{"type":"turn_start"}`)
-	assertBusy(true)
-	apply(`{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"final"}],"timestamp":1774708716099},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"final","partial":{"role":"assistant","content":[{"type":"text","text":"final"}],"timestamp":1774708716099}}}`)
+	assertBusy(false)
+	apply(`{"id":"actrail-state-1","type":"response","command":"get_state","success":true,"data":{"isStreaming":true,"isCompacting":false,"pendingMessageCount":0}}`)
 	assertBusy(true)
 	apply(`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"final"}],"stopReason":"stop","timestamp":1774708716099}}`)
-	assertBusy(false)
-	apply(`{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"final"}],"stopReason":"stop","timestamp":1774708716099},"toolResults":[]}`)
+	assertBusy(true)
+	apply(`{"id":"actrail-state-2","type":"response","command":"get_state","success":true,"data":{"isStreaming":false,"isCompacting":false,"pendingMessageCount":0}}`)
 	assertBusy(false)
 
 	snapshot := sink.snapshot()
 	if len(snapshot.states) == 0 {
-		t.Fatal("runtime session state events = 0, want lifecycle states")
+		t.Fatal("runtime session state events = 0, want get_state-derived states")
 	}
 	if snapshot.states[len(snapshot.states)-1].Busy {
 		t.Fatalf("last state Busy = true, want false: %#v", snapshot.states)
+	}
+}
+
+func TestPIRPCGetStateFailuresMarkTransportStalledAfterThreeConsecutiveFailures(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_rpc_state_fail")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime.helper = &runtimeIODHelper{generationID: generationID}
+		record.runtime.protocol = runtimeProtocolPIRPC
+		record.transport = SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached}
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	apply := func(raw string) {
+		t.Helper()
+		if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(raw))); err != nil {
+			t.Fatalf("applyRuntimeProjection(%s) error = %v", raw, err)
+		}
+	}
+
+	apply(`{"id":"fail-1","type":"response","command":"get_state","success":false,"error":"rpc unavailable"}`)
+	apply(`{"id":"fail-2","type":"response","command":"get_state","success":false,"error":"rpc unavailable"}`)
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() before threshold error = %v", err)
+	}
+	if !state.Busy || state.Transport.ResetRequired || state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState() before threshold = %+v, want busy attached without reset", state)
+	}
+
+	apply(`{"id":"fail-3","type":"response","command":"get_state","success":false,"error":"rpc unavailable"}`)
+	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() after threshold error = %v", err)
+	}
+	if state.Busy || state.Transport.State != SessionTransportStateStalled || !state.Transport.ResetRequired || state.Transport.Reason != "rpc unavailable" {
+		t.Fatalf("SessionState() after threshold = %+v, want idle stalled reset_required rpc unavailable", state)
+	}
+}
+
+func TestPIRPCStatePollerResetsFailureBudgetForNewGeneration(t *testing.T) {
+	sessionID, err := session.ParseSessionID("s_rpc_state_reset")
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	oldGenerationID, err := iod.NewGenerationID("g_rpc_state_old")
+	if err != nil {
+		t.Fatalf("NewGenerationID(old) error = %v", err)
+	}
+	newGenerationID, err := iod.NewGenerationID("g_rpc_state_new")
+	if err != nil {
+		t.Fatalf("NewGenerationID(new) error = %v", err)
+	}
+	svc := &Stub{piRPCStates: map[session.SessionID]piRPCStateCache{
+		sessionID: {
+			GenerationID:        oldGenerationID,
+			ConsecutiveFailures: piRPCStateMaxFailures - 1,
+			LastAckProbeID:      "old-ack",
+			PendingProbeID:      "old-pending",
+			LastSuccessTS:       time.Unix(10, 0),
+			LastFailureTS:       time.Unix(20, 0),
+			LastState:           &piRPCStateSnapshot{ProbeID: "old-state", IsStreaming: true},
+		},
+	}}
+
+	if !svc.activatePIRPCStatePoller(sessionID, newGenerationID) {
+		t.Fatal("activatePIRPCStatePoller() = false, want true for new generation")
+	}
+	cache := svc.piRPCStates[sessionID]
+	if cache.GenerationID != newGenerationID || !cache.Polling {
+		t.Fatalf("cache generation/polling = (%q, %v), want (%q, true)", cache.GenerationID, cache.Polling, newGenerationID)
+	}
+	if cache.ConsecutiveFailures != 0 || cache.LastAckProbeID != "" || cache.PendingProbeID != "" || !cache.LastSuccessTS.IsZero() || !cache.LastFailureTS.IsZero() || cache.LastState != nil || cache.StalledResetRequired {
+		t.Fatalf("cache after generation switch = %+v, want reset failure state", cache)
 	}
 }
 

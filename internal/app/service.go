@@ -64,6 +64,8 @@ type Stub struct {
 	supervisorStore     supervisorStore
 	runtimeAgentMu      sync.RWMutex
 	runtimeAgentRunning map[session.SessionID]bool
+	piRPCStateMu        sync.Mutex
+	piRPCStates         map[session.SessionID]piRPCStateCache
 	piModels            piModelCache
 	appStateMu          sync.RWMutex
 	recentCwds          []string
@@ -101,6 +103,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		waitStore:           newMemoryWaitStore(),
 		supervisorStore:     newMemorySupervisorStore(),
 		runtimeAgentRunning: map[session.SessionID]bool{},
+		piRPCStates:         map[session.SessionID]piRPCStateCache{},
 		piModels:            piModelCache{},
 		recentCwds:          []string{},
 		cwdGroups:           map[string]CwdGroupMeta{},

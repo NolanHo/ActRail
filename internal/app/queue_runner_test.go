@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"actrail/internal/domain/pi"
+	"actrail/internal/domain/session"
 )
 
 func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
@@ -49,7 +49,7 @@ func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
 	}
 }
 
-func TestTurnCompletionDispatchesQueuedPromptWithoutManualResend(t *testing.T) {
+func TestPIRPCIdleStateDispatchesQueuedPromptWithoutManualResend(t *testing.T) {
 	svc, sessionID, _, pty := newControlFixture(t)
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
@@ -73,7 +73,10 @@ func TestTurnCompletionDispatchesQueuedPromptWithoutManualResend(t *testing.T) {
 	}
 	before := sink.snapshot()
 
-	svc.applyPIBoundary(sessionID, pi.Event{Boundary: &pi.Boundary{Kind: pi.BoundaryKindTurnCompleted}})
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"id":"actrail-state-idle","type":"response","command":"get_state","success":true,"data":{"isStreaming":false,"isCompacting":false,"pendingMessageCount":0}}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(get_state idle) error = %v", err)
+	}
 
 	waitForAppCondition(t, func() bool {
 		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
