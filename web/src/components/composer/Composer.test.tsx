@@ -696,7 +696,7 @@ describe("Composer", () => {
       });
       await flushEffects();
 
-      expect(textarea.style.height).toBe("176px");
+      expect(textarea.style.height).toBe("112px");
       expect(textarea.style.overflowY).toBe("auto");
     } finally {
       restoreMatchMedia();

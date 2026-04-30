@@ -185,14 +185,17 @@ describe("conversation layout scroll guards", () => {
     const mobileStackRule = ruleBody(mobileRules, ".composerStack");
     const mobilePanelRule = ruleBody(mobileRules, ".composerTodoPanel");
     const mobileShellComposerRule = ruleBody(mobileRules, ".composerShell");
+    const mobileChatStackRule = ruleBody(mobileRules, ".mobileChatPane .composerStack");
     const mobileTextareaRule = ruleBody(mobileRules, ".composerTextarea");
 
     expect(mobileShellRule).toContain("grid-template-columns: 1fr;");
     expect(mobileStackRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));");
     expect(mobilePanelRule).toContain("max-height: min(28dvh, 220px);");
-    expect(mobileShellComposerRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom));");
+    expect(mobileShellComposerRule).toContain("padding: 7px 9px calc(7px + env(safe-area-inset-bottom));");
+    expect(mobileChatStackRule).toContain("max-height: min(42dvh, 260px);");
+    expect(mobileChatStackRule).toContain("padding-bottom: calc(7px + env(safe-area-inset-bottom));");
     expect(mobileTextareaRule).toContain("min-height: 56px;");
-    expect(mobileTextareaRule).toContain("max-height: 176px;");
+    expect(mobileTextareaRule).toContain("max-height: 112px;");
   });
 
   it("keeps the new session footer visible on mobile with a sticky safe-area action bar", () => {

@@ -3,15 +3,12 @@ import { Button } from "@/components/ui/button";
 import { SessionsPane } from "@/components/sessions/SessionsPane";
 import { Composer } from "@/components/composer/Composer";
 import { ConversationPane } from "@/components/conversation/ConversationPane";
-import { SessionWorkspace } from "@/components/workspace/SessionWorkspace";
-import { useComposerStoreApi } from "../providers";
-import { FileIcon, HarnessIcon, InsightIcon, StopIcon, WorkspaceIcon } from "./icons";
+import { FileIcon, HarnessIcon, InsightIcon, StopIcon } from "./icons";
 
 export type MobileRoute =
   | { screen: "sessions" }
-  | { screen: "conversation"; sessionId: string }
-  | { screen: "workspace"; sessionId: string }
-  | { screen: "waits"; sessionId?: string }
+  | { screen: "read"; sessionId: string }
+  | { screen: "chat"; sessionId: string }
   | { screen: "settings" };
 
 interface MobileShellProps {
@@ -44,65 +41,47 @@ function blurActiveInteractiveElement() {
   }
 }
 
-function sessionRoute(screen: "conversation" | "workspace", sessionId: string | null): MobileRoute {
+function sessionRoute(screen: "read" | "chat", sessionId: string | null): MobileRoute {
   return sessionId ? { screen, sessionId } : { screen: "sessions" };
-}
-
-function routeSessionId(route: MobileRoute) {
-  return "sessionId" in route ? route.sessionId || null : null;
 }
 
 function routeLabel(route: MobileRoute) {
   switch (route.screen) {
     case "sessions":
       return "Sessions";
-    case "conversation":
-      return "Conversation";
-    case "workspace":
-      return "Workspace";
-    case "waits":
-      return "Waits";
+    case "read":
+      return "Read";
+    case "chat":
+      return "Chat";
     case "settings":
       return "Settings";
   }
 }
 
 interface MobileTopBarProps {
-  activeSessionId: string | null;
   activeTitle: string;
   canInterrupt: boolean;
+  compact?: boolean;
   route: MobileRoute;
   onBack(): void;
-  onCommand(): void;
   onInterrupt(): void;
-  onRoute(route: MobileRoute): void;
 }
 
-function MobileTopBar({ activeSessionId, activeTitle, canInterrupt, route, onBack, onCommand, onInterrupt, onRoute }: MobileTopBarProps) {
-  const showSessionActions = route.screen === "conversation" && Boolean(activeSessionId);
+function MobileTopBar({ activeTitle, canInterrupt, compact = false, route, onBack, onInterrupt }: MobileTopBarProps) {
   return (
-    <header className="mobileRouteHeader">
-      <div className="mobileRouteHeaderTop">
-        {route.screen !== "sessions" ? (
-          <Button type="button" variant="outline" size="sm" className="mobileBackButton" onClick={onBack}>Back</Button>
-        ) : null}
-        <div className="mobileChatHeading">
-          <p className="mobileSectionEyebrow">{routeLabel(route)}</p>
-          <h1 className="mobileChatTitle">{route.screen === "sessions" ? "Sessions" : activeSessionId ? activeTitle : "No session selected"}</h1>
-        </div>
-        {canInterrupt ? (
-          <Button type="button" variant="outline" size="sm" className="mobileInterruptButton" onClick={onInterrupt}>
-            <StopIcon />
-            <span>Interrupt</span>
-          </Button>
-        ) : null}
+    <header className={compact ? "mobileRouteHeader compact" : "mobileRouteHeader"}>
+      {route.screen !== "sessions" ? (
+        <Button type="button" variant="outline" size="sm" className="mobileBackButton" onClick={onBack}>Back</Button>
+      ) : null}
+      <div className="mobileChatHeading">
+        <p className="mobileSectionEyebrow">{routeLabel(route)}</p>
+        <h1 className="mobileChatTitle">{route.screen === "sessions" ? "Sessions" : activeTitle}</h1>
       </div>
-      {showSessionActions ? (
-        <div className="mobileRouteActions" aria-label="Conversation actions">
-          <Button type="button" variant="outline" size="sm" onClick={() => onRoute(sessionRoute("workspace", activeSessionId))}>Files</Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => onRoute({ screen: "waits", sessionId: activeSessionId || undefined })}>Waits</Button>
-          <Button type="button" variant="outline" size="sm" onClick={onCommand}>Command</Button>
-        </div>
+      {canInterrupt ? (
+        <Button type="button" variant="outline" size="sm" className="mobileInterruptButton" onClick={onInterrupt}>
+          <StopIcon />
+          <span>Interrupt</span>
+        </Button>
       ) : null}
     </header>
   );
@@ -129,44 +108,37 @@ function MobileSettingsSection({
           <span className="mobileToolCardIcon" aria-hidden="true">+</span>
           <span className="mobileToolCardText">
             <strong>New session</strong>
-            <span>Start a new browser-owned session.</span>
+            <span>Start a browser-owned session.</span>
           </span>
         </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenFiles}>
           <FileIcon />
           <span className="mobileToolCardText">
             <strong>File viewer</strong>
-            <span>Open direct file lookup.</span>
+            <span>Direct file lookup.</span>
           </span>
         </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenInsight}>
           <InsightIcon />
           <span className="mobileToolCardText">
             <strong>Insight</strong>
-            <span>Open context and usage diagnostics.</span>
+            <span>Session diagnostics.</span>
           </span>
         </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenHarness}>
           <HarnessIcon />
           <span className="mobileToolCardText">
             <strong>Harness</strong>
-            <span>Inspect or adjust automation controls.</span>
+            <span>Automation controls.</span>
           </span>
         </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenSettings}>
           <span className="mobileToolCardIcon" aria-hidden="true">S</span>
           <span className="mobileToolCardText">
             <strong>Display and voice</strong>
-            <span>Theme, audio, and composer preferences.</span>
+            <span>Theme, audio, composer.</span>
           </span>
         </Button>
-        <div className="mobileToolCard mobileToolCardStatic">
-          <WorkspaceIcon />
-          <span className="mobileToolCardText">
-            <strong>Workspace</strong>
-            <span>Use the Workspace route for session details.</span>
-          </span>
-        </div>
       </div>
       <div className="mobileToggleStack">
         <Button type="button" variant="outline" className="mobileToggleButton" onClick={onToggleNotifications}>
@@ -207,20 +179,18 @@ export function MobileShell({
   onToggleAnnouncements,
   onToggleNotifications,
 }: MobileShellProps) {
-  const composerStore = useComposerStoreApi();
-  const [commandSheetRequestKey, setCommandSheetRequestKey] = useState(0);
-  const [route, setRoute] = useState<MobileRoute>(activeSessionId ? { screen: "conversation", sessionId: activeSessionId } : { screen: "sessions" });
+  const [route, setRoute] = useState<MobileRoute>(activeSessionId ? { screen: "read", sessionId: activeSessionId } : { screen: "sessions" });
 
   useEffect(() => {
     setRoute((current) => {
       if (!activeSessionId) {
         return { screen: "sessions" };
       }
-      if (current.screen === "sessions") {
-        return current;
+      if (current.screen === "read" && current.sessionId !== activeSessionId) {
+        return { screen: "read", sessionId: activeSessionId };
       }
-      if ((current.screen === "conversation" || current.screen === "workspace") && current.sessionId !== activeSessionId) {
-        return { screen: current.screen, sessionId: activeSessionId };
+      if (current.screen === "chat" && current.sessionId !== activeSessionId) {
+        return { screen: "chat", sessionId: activeSessionId };
       }
       return current;
     });
@@ -235,35 +205,11 @@ export function MobileShell({
   };
 
   const back = () => {
-    setRoute((current) => {
-      if (current.screen === "conversation") {
-        return { screen: "sessions" };
-      }
-      if (current.screen === "workspace") {
-        return sessionRoute("conversation", current.sessionId || activeSessionId);
-      }
-      if (current.screen === "waits") {
-        return activeSessionId ? { screen: "conversation", sessionId: activeSessionId } : { screen: "sessions" };
-      }
-      if (current.screen === "settings") {
-        return activeSessionId ? { screen: "conversation", sessionId: activeSessionId } : { screen: "sessions" };
-      }
-      return current;
-    });
+    setRoute({ screen: "sessions" });
   };
 
-  const openCommandSheet = () => {
-    if (!activeSessionId) {
-      return;
-    }
-    const currentDraft = composerStore.getState().draftBySessionId?.[activeSessionId] ?? "";
-    if (!currentDraft.startsWith("/")) {
-      composerStore.setDraft(activeSessionId, "/");
-    }
-    setCommandSheetRequestKey((value) => value + 1);
-  };
-
-  const currentSessionId = routeSessionId(route) || activeSessionId;
+  const readRoute = sessionRoute("read", activeSessionId);
+  const chatRoute = sessionRoute("chat", activeSessionId);
 
   return (
     <div className="mobileShell" data-testid="mobile-shell">
@@ -272,71 +218,33 @@ export function MobileShell({
           <div className="mobilePane mobileSessionsPane">
             <SessionsPane
               onNewSession={onNewSession}
-              onSessionSelect={(session) => routeTo({ screen: "conversation", sessionId: session.session_id })}
+              onOpenSettings={() => routeTo({ screen: "settings" })}
+              onSessionSelect={(session) => routeTo({ screen: "read", sessionId: session.session_id })}
             />
           </div>
         ) : null}
-        {route.screen === "conversation" ? (
-          <section className="mobilePane mobileConversationPane">
-            <MobileTopBar
-              activeSessionId={activeSessionId}
-              activeTitle={activeTitle}
-              canInterrupt={canInterrupt}
-              route={route}
-              onBack={back}
-              onCommand={openCommandSheet}
-              onInterrupt={onInterrupt}
-              onRoute={routeTo}
-            />
+        {route.screen === "read" ? (
+          <section className="mobilePane mobileReadPane">
+            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} compact route={route} onBack={back} onInterrupt={onInterrupt} />
             <ConversationPane
               key={route.sessionId || "no-session"}
               onOpenFilePath={(path, line) => onOpenFilePath(path, line ?? null)}
             />
-            <Composer compactMobile commandSheetRequestKey={commandSheetRequestKey} />
           </section>
         ) : null}
-        {route.screen === "workspace" ? (
-          <section className="mobilePane mobileWorkspacePane">
-            <MobileTopBar
-              activeSessionId={activeSessionId}
-              activeTitle={activeTitle}
-              canInterrupt={canInterrupt}
-              route={route}
-              onBack={back}
-              onCommand={openCommandSheet}
-              onInterrupt={onInterrupt}
-              onRoute={routeTo}
+        {route.screen === "chat" ? (
+          <section className="mobilePane mobileChatPane">
+            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} route={route} onBack={back} onInterrupt={onInterrupt} />
+            <ConversationPane
+              key={route.sessionId || "no-session"}
+              onOpenFilePath={(path, line) => onOpenFilePath(path, line ?? null)}
             />
-            <SessionWorkspace mode="details" initialTab="overview" />
-          </section>
-        ) : null}
-        {route.screen === "waits" ? (
-          <section className="mobilePane mobileWaitsPane">
-            <MobileTopBar
-              activeSessionId={activeSessionId}
-              activeTitle={activeTitle}
-              canInterrupt={canInterrupt}
-              route={route}
-              onBack={back}
-              onCommand={openCommandSheet}
-              onInterrupt={onInterrupt}
-              onRoute={routeTo}
-            />
-            <SessionWorkspace mode="details" initialTab={currentSessionId ? "wait" : "waiting-inbox"} />
+            <Composer compactMobile />
           </section>
         ) : null}
         {route.screen === "settings" ? (
           <div className="mobilePane mobileSettingsPane">
-            <MobileTopBar
-              activeSessionId={activeSessionId}
-              activeTitle={activeTitle}
-              canInterrupt={canInterrupt}
-              route={route}
-              onBack={back}
-              onCommand={openCommandSheet}
-              onInterrupt={onInterrupt}
-              onRoute={routeTo}
-            />
+            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} route={route} onBack={back} onInterrupt={onInterrupt} />
             <MobileSettingsSection
               announcementEnabled={announcementEnabled}
               announcementLabel={announcementLabel}
@@ -356,10 +264,8 @@ export function MobileShell({
       </section>
       <nav className="mobileBottomNav" aria-label="Primary">
         <Button type="button" variant={route.screen === "sessions" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo({ screen: "sessions" })}>Sessions</Button>
-        <Button type="button" variant={route.screen === "conversation" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(sessionRoute("conversation", activeSessionId))}>Conversation</Button>
-        <Button type="button" variant={route.screen === "workspace" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(sessionRoute("workspace", activeSessionId))}>Workspace</Button>
-        <Button type="button" variant={route.screen === "waits" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo({ screen: "waits", sessionId: activeSessionId || undefined })}>Waits</Button>
-        <Button type="button" variant={route.screen === "settings" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo({ screen: "settings" })}>Settings</Button>
+        <Button type="button" variant={route.screen === "read" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(readRoute)}>Read</Button>
+        <Button type="button" variant={route.screen === "chat" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(chatRoute)}>Chat</Button>
       </nav>
     </div>
   );
