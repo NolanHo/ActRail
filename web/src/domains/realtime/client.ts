@@ -210,7 +210,11 @@ export function configureRealtimeClient(next: RealtimeClientConfig) {
     connectBasePath: nextConnectBasePath,
   };
   if (changed && (socket || connectAbortController)) {
+    const reconnect = shouldReconnect;
     disconnect();
+    if (reconnect) {
+      void connect().catch(() => undefined);
+    }
   }
 }
 

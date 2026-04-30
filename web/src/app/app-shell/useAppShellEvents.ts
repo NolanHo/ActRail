@@ -194,14 +194,6 @@ export function useAppShellEvents({
       ) {
         liveSessionStoreApi.applyFrame(frame);
         waitsStoreApi.applyFrame(frame);
-        if (type === "message.generating") {
-          const payload = frame.payload && typeof frame.payload === "object" ? frame.payload as Record<string, unknown> : null;
-          const sessionId = resolveSessionId(frame);
-          if (payload?.active === false && sessionId) {
-            const session = latestRef.current.items.find((item) => item.session_id === sessionId) ?? null;
-            void refreshLiveSessionSnapshot(sessionId, session?.runtime_id ?? null);
-          }
-        }
         return;
       }
 
