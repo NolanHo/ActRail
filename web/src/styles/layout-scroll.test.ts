@@ -183,13 +183,18 @@ describe("conversation layout scroll guards", () => {
     const mobileRules = mediaBody(css, "(max-width: 880px)");
     const mobileShellRule = ruleBody(mobileRules, ".appShell.editorialShell");
     const mobileStackRule = ruleBody(mobileRules, ".composerStack");
+    const mobileNavRule = ruleBody(css, ".mobileBottomNav");
     const mobilePanelRule = ruleBody(mobileRules, ".composerTodoPanel");
     const mobileShellComposerRule = ruleBody(mobileRules, ".composerShell");
     const mobileChatStackRule = ruleBody(mobileRules, ".mobileChatPane .composerStack");
     const mobileTextareaRule = ruleBody(mobileRules, ".composerTextarea");
 
     expect(mobileShellRule).toContain("grid-template-columns: 1fr;");
-    expect(mobileStackRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));");
+    expect(mobileShellRule).toContain("top: var(--visualViewportOffsetTop, 0px);");
+    expect(mobileStackRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom));");
+    expect(mobileStackRule).not.toContain("--keyboardBottom");
+    expect(mobileNavRule).toContain("padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom));");
+    expect(mobileNavRule).not.toContain("--keyboardBottom");
     expect(mobilePanelRule).toContain("max-height: min(28dvh, 220px);");
     expect(mobileShellComposerRule).toContain("padding: 7px 9px calc(7px + env(safe-area-inset-bottom));");
     expect(mobileChatStackRule).toContain("max-height: min(42dvh, 260px);");
