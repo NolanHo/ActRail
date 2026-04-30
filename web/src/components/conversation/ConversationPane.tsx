@@ -448,10 +448,16 @@ function renderMarkdownNode(node: MarkdownNode, options: MarkdownRenderOptions, 
 }
 
 function MarkdownContent({ value, options = {} }: { value: string; options?: MarkdownRenderOptions }) {
-  const normalized = rewriteOaiMemCitations(value).replace(/\r\n?/g, "\n");
-  const root = markdownProcessor.runSync(markdownProcessor.parse(normalized)) as MarkdownNode;
-  const definitions = collectMarkdownDefinitions(root);
-  return <>{renderMarkdownNode(root, options, definitions, "md")}</>;
+  const parsed = useMemo(() => {
+    const normalized = rewriteOaiMemCitations(value).replace(/\r\n?/g, "\n");
+    const root = markdownProcessor.runSync(markdownProcessor.parse(normalized)) as MarkdownNode;
+    return { root, definitions: collectMarkdownDefinitions(root) };
+  }, [value]);
+  const rendered = useMemo(
+    () => renderMarkdownNode(parsed.root, options, parsed.definitions, "md"),
+    [parsed, options.sessionId, options.cwd, options.onOpenLocalFile],
+  );
+  return <>{rendered}</>;
 }
 
 function messageContentParts(event: MessageEvent): string[] {
@@ -2766,11 +2772,11 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       || sessionSwitchLoadingId === activeSessionId
     )
   );
-  const markdownOptions: MarkdownRenderOptions = {
+  const markdownOptions: MarkdownRenderOptions = useMemo(() => ({
     sessionId: activeSessionId || undefined,
     cwd: activeSession?.cwd,
     onOpenLocalFile: onOpenFilePath,
-  };
+  }), [activeSessionId, activeSession?.cwd, onOpenFilePath]);
 
   useEffect(() => {
     setAttemptedLoadOlder(false);
