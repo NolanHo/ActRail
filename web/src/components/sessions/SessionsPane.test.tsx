@@ -12,6 +12,7 @@ vi.mock("../../lib/api", () => ({
     handoffSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", runtime_id: "rt-2", broker_pid: 42 }),
     restartSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-1", runtime_id: "rt-2", previous_runtime_id: "rt-1", broker_pid: 42 }),
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
+    saveSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: false, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0 }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     setSessionFocus: vi.fn().mockResolvedValue({ ok: true, focused: true }),
     getSessionDetails: vi.fn().mockResolvedValue({ session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi", priority_offset: 0 }),

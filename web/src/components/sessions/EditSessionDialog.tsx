@@ -59,6 +59,11 @@ function initialFormState(session: SessionSummary | null) {
     customDate: nextCustom.customDate,
     customTime: nextCustom.customTime,
     dependencySessionId: String(session?.dependency_session_id || ""),
+    supervisorEnabled: session?.supervisor?.enabled === true,
+    supervisorIdleAfterMinutes: Number(session?.supervisor?.idle_after_minutes || 5),
+    supervisorMaxConsecutiveInjections: Number(session?.supervisor?.max_consecutive_injections || 10),
+    supervisorGoal: String(session?.supervisor?.goal || ""),
+    supervisorAcceptanceCriteria: String(session?.supervisor?.acceptance_criteria || ""),
   };
 }
 
@@ -69,6 +74,11 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
   const [customDate, setCustomDate] = useState(() => initialFormState(session).customDate);
   const [customTime, setCustomTime] = useState(() => initialFormState(session).customTime);
   const [dependencySessionId, setDependencySessionId] = useState(() => initialFormState(session).dependencySessionId);
+  const [supervisorEnabled, setSupervisorEnabled] = useState(() => initialFormState(session).supervisorEnabled);
+  const [supervisorIdleAfterMinutes, setSupervisorIdleAfterMinutes] = useState(() => initialFormState(session).supervisorIdleAfterMinutes);
+  const [supervisorMaxConsecutiveInjections, setSupervisorMaxConsecutiveInjections] = useState(() => initialFormState(session).supervisorMaxConsecutiveInjections);
+  const [supervisorGoal, setSupervisorGoal] = useState(() => initialFormState(session).supervisorGoal);
+  const [supervisorAcceptanceCriteria, setSupervisorAcceptanceCriteria] = useState(() => initialFormState(session).supervisorAcceptanceCriteria);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -76,6 +86,7 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
     () => sessions.filter((item) => item.session_id !== session?.session_id),
     [session?.session_id, sessions],
   );
+  const supervisorSupported = session?.agent_backend === "pi";
 
   if (!open || !session) {
     return null;
@@ -180,6 +191,41 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
             </select>
           </label>
 
+          <div className="space-y-3 rounded-2xl border border-border/70 bg-background/60 p-4">
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                name="supervisorEnabled"
+                type="checkbox"
+                checked={supervisorEnabled}
+                disabled={!supervisorSupported}
+                onChange={(event) => setSupervisorEnabled(event.currentTarget.checked)}
+              />
+              <span>
+                <span className="block font-medium text-foreground">Supervisor mode</span>
+                <span className="block text-muted-foreground">Pi-only automatic continuation. Manual send, queue, and attach are disabled while enabled.</span>
+              </span>
+            </label>
+            {!supervisorSupported ? <p className="text-sm text-muted-foreground">Supervisor mode is only supported for Pi sessions.</p> : null}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-foreground">Idle minutes</span>
+                <Input name="supervisorIdleAfterMinutes" type="number" min={1} value={String(supervisorIdleAfterMinutes)} disabled={!supervisorSupported} onInput={(event) => setSupervisorIdleAfterMinutes(Number(event.currentTarget.value || 1))} />
+              </label>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-foreground">Max injections</span>
+                <Input name="supervisorMaxConsecutiveInjections" type="number" min={1} value={String(supervisorMaxConsecutiveInjections)} disabled={!supervisorSupported} onInput={(event) => setSupervisorMaxConsecutiveInjections(Number(event.currentTarget.value || 1))} />
+              </label>
+            </div>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-foreground">Goal</span>
+              <Input name="supervisorGoal" value={supervisorGoal} disabled={!supervisorSupported} onInput={(event) => setSupervisorGoal(event.currentTarget.value)} />
+            </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-foreground">Acceptance criteria</span>
+              <Input name="supervisorAcceptanceCriteria" value={supervisorAcceptanceCriteria} disabled={!supervisorSupported} onInput={(event) => setSupervisorAcceptanceCriteria(event.currentTarget.value)} />
+            </label>
+          </div>
+
           {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
         </div>
 
@@ -218,6 +264,15 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
                   snooze_until: snoozeUntil,
                   dependency_session_id: dependencySessionId || null,
                 });
+                if (supervisorSupported) {
+                  await api.saveSessionSupervisor(session.session_id, {
+                    enabled: supervisorEnabled,
+                    idle_after_minutes: Math.max(1, Math.round(supervisorIdleAfterMinutes || 1)),
+                    max_consecutive_injections: Math.max(1, Math.round(supervisorMaxConsecutiveInjections || 1)),
+                    goal: supervisorGoal,
+                    acceptance_criteria: supervisorAcceptanceCriteria,
+                  });
+                }
                 await onSaved();
                 onClose();
               } catch (saveError) {
