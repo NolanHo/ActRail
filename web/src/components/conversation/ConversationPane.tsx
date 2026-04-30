@@ -2659,10 +2659,11 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const activeSessionIsHistoricalPi = activeSession?.historical === true && activeSessionIsPi;
   const allowLegacyAskUserFallback = Boolean(activeSessionIsPi && activeSession?.transport !== "pi-rpc");
   const isGenerating = Boolean(activeSessionId && generatingBySessionId[activeSessionId] === true);
+  const hasLiveBusy = Boolean(activeSessionId && Object.prototype.hasOwnProperty.call(busyBySessionId, activeSessionId));
+  const liveBusy = Boolean(activeSessionId && busyBySessionId[activeSessionId] === true);
   const isBusy = Boolean(
     isGenerating
-    || (activeSessionId && busyBySessionId[activeSessionId] === true)
-    || activeSession?.busy === true,
+    || (hasLiveBusy ? liveBusy : activeSession?.busy === true),
   );
   const persistedMessages = activeSessionId ? bySessionId[activeSessionId] ?? [] : [];
   const pendingMessages = activeSessionId ? pendingBySessionId[activeSessionId] ?? [] : [];

@@ -2253,6 +2253,45 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("Working");
   });
 
+  it("treats live busy false as authoritative over stale session list busy", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-live-idle", agent_backend: "pi", busy: true }], activeSessionId: "sess-live-idle", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: { "sess-live-idle": [{ role: "assistant", text: "Finished" }] },
+        offsetsBySessionId: { "sess-live-idle": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+    const liveSessionStore = createStaticStore(
+      {
+        offsetsBySessionId: { "sess-live-idle": 1 },
+        liveOffsetsBySessionId: { "sess-live-idle": 1 },
+        requestsBySessionId: {},
+        requestVersionsBySessionId: {},
+        busyBySessionId: { "sess-live-idle": false },
+        loadingBySessionId: {},
+        errorBySessionId: {},
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any} liveSessionStore={liveSessionStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.textContent).toContain("Finished");
+    expect(root.textContent).not.toContain("Working");
+  });
+
   it("shows a visible warning when live pi-rpc polling fails", () => {
     const sessionsStore = createStaticStore(
       { items: [{ session_id: "sess-rpc-error", agent_backend: "pi", busy: false }], activeSessionId: "sess-rpc-error", loading: false, newSessionDefaults: null },

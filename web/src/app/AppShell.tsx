@@ -186,11 +186,12 @@ export function AppShell() {
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
   const activeSessionPending = activeSession?.pending_startup === true;
   const activeSessionGenerating = Boolean(activeSessionId && generatingBySessionId?.[activeSessionId] === true);
+  const activeSessionHasLiveBusy = Boolean(activeSessionId && Object.prototype.hasOwnProperty.call(busyBySessionId, activeSessionId));
+  const activeSessionLiveBusy = Boolean(activeSessionId && busyBySessionId[activeSessionId] === true);
   const activeWait = activeSessionId ? waitsState.activeBySessionId[activeSessionId] ?? activeSession?.active_wait ?? null : null;
   const activeSessionBusy = Boolean(
     activeSessionGenerating
-    || (activeSessionId && busyBySessionId[activeSessionId] === true)
-    || activeSession?.busy === true,
+    || (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true),
   );
   const activeTitle = activeSession
     ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
@@ -335,7 +336,7 @@ export function AppShell() {
     activeSessionPending,
     activeSessionId,
     activeSessionRuntimeId,
-    activeSessionLiveBusy: activeSessionId ? busyBySessionId[activeSessionId] === true : false,
+    activeSessionLiveBusy,
     backgroundReplySoundPrimedSessionIdsRef,
     items,
     liveSessionStoreApi,
