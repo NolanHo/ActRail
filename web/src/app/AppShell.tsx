@@ -1,9 +1,9 @@
+import { lazy, Suspense } from "preact/compat";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api";
 import { ConversationPane } from "../components/conversation/ConversationPane";
 import { ConversationStateTray } from "../components/conversation/ConversationStateTray";
 import { Composer } from "../components/composer/Composer";
-import { SessionWorkspace } from "../components/workspace/SessionWorkspace";
 import type { FileViewMode } from "../components/workspace/FileViewerDialog";
 import { AppShellSidebar } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
@@ -66,6 +66,12 @@ function contextUsageStatusLabel(usage: { used_tokens?: number; total_tokens?: n
     return `${formatTokenK(usedTokens)} used`;
   }
   return `${formatTokenK(usedTokens)}/${formatTokenK(totalTokens)} ${percentUsed}%`;
+}
+
+const LazySessionWorkspace = lazy(() => import("../components/workspace/SessionWorkspace").then((module) => ({ default: module.SessionWorkspace })));
+
+function WorkspaceLoadingFallback() {
+  return <div className="rounded-2xl border border-border/60 bg-muted/20 p-5 text-sm text-muted-foreground">Loading details...</div>;
 }
 
 function EmptyDetailsWorkspace() {
@@ -417,7 +423,11 @@ export function AppShell() {
   const shellClassName = useMemo(() => ["appShell", "editorialShell"].join(" "), []);
 
   const renderWorkspaceDetails = () => (
-    sessionUiMatchesActiveSession || activeWait ? <SessionWorkspace mode="details" initialTab={workspaceInitialTab} /> : <EmptyDetailsWorkspace />
+    sessionUiMatchesActiveSession || activeWait ? (
+      <Suspense fallback={<WorkspaceLoadingFallback />}>
+        <LazySessionWorkspace mode="details" initialTab={workspaceInitialTab} />
+      </Suspense>
+    ) : <EmptyDetailsWorkspace />
   );
 
   const openWorkspace = (initialTab: "insight" | "overview" = "overview") => {

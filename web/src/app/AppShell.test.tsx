@@ -127,6 +127,14 @@ async function flush() {
   await Promise.resolve();
 }
 
+async function flushLazy() {
+  for (let i = 0; i < 6; i += 1) {
+    await flush();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  }
+  await flush();
+}
+
 function setDocumentVisibility(state: "visible" | "hidden") {
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
@@ -553,6 +561,7 @@ describe("AppShell", () => {
   });
 
   it("opens workspace details in a dialog from the toolbar", async () => {
+    await import("../components/workspace/SessionWorkspace");
     renderAppShell({ diagnostics: { status: "ok" } });
     await flush();
 
@@ -562,7 +571,7 @@ describe("AppShell", () => {
     act(() => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    await flush();
+    await flushLazy();
 
     const dialog = getRoot().querySelector("[data-testid='workspace-dialog']");
     expect(dialog).not.toBeNull();
@@ -678,6 +687,7 @@ describe("AppShell", () => {
   });
 
   it("opens the insight workspace from the toolbar", async () => {
+    await import("../components/workspace/SessionWorkspace");
     renderAppShell({ diagnostics: { status: "ok" } });
     await flush();
 
@@ -687,7 +697,7 @@ describe("AppShell", () => {
     act(() => {
       button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    await flush();
+    await flushLazy();
 
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Insight");
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Context Usage");
@@ -704,8 +714,7 @@ describe("AppShell", () => {
     act(() => {
       button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    await flush();
-    await flush();
+    await flushLazy();
 
     expect(api.getFiles).toHaveBeenCalledWith("sess-1", undefined, expect.any(AbortSignal));
     expect(getRoot().textContent).toContain("File viewer");
@@ -723,7 +732,7 @@ describe("AppShell", () => {
     act(() => {
       button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    await flush();
+    await flushLazy();
 
     expect(api.getHarness).toHaveBeenCalledWith("sess-1");
     expect(getRoot().textContent).toContain("Harness mode");
@@ -1711,7 +1720,7 @@ describe("AppShell", () => {
     act(() => {
       findButtonByAriaLabel("Details")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    await flush();
+    await flushLazy();
 
     expect(getRoot().querySelector("[data-testid='workspace-rail']")).toBeNull();
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Diagnostics");
@@ -1727,7 +1736,7 @@ describe("AppShell", () => {
     act(() => {
       workspaceButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    await flush();
+    await flushLazy();
 
     expect(getRoot().textContent).toContain("Details");
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Diagnostics");
@@ -1774,7 +1783,7 @@ describe("AppShell", () => {
     act(() => {
       findButtonByAriaLabel("Details")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    await flush();
+    await flushLazy();
 
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")).not.toBeNull();
     expect(getToolbarTodoAnchor()).toBeNull();
