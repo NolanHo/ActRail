@@ -435,6 +435,21 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 	if !config.Enabled {
 		return SupervisorRunOnceResponse{}, Conflict("supervisor mode is disabled")
 	}
+	if config.ConsecutiveInjections >= config.MaxConsecutiveInjections {
+		return SupervisorRunOnceResponse{}, Conflict("supervisor consecutive injection limit reached")
+	}
+	if record.state.Busy() {
+		return SupervisorRunOnceResponse{}, Conflict("session is busy")
+	}
+	if record.state.Queue().Len() > 0 {
+		return SupervisorRunOnceResponse{}, Conflict("session has queued prompts")
+	}
+	if record.uiRequest != nil {
+		return SupervisorRunOnceResponse{}, Conflict("session has unresolved UI request")
+	}
+	if s.activeWaitForSession(record.identity.SessionID()) != nil {
+		return SupervisorRunOnceResponse{}, Conflict("session has active wait")
+	}
 	providerRow, ok, err := s.supervisorStore.LookupSupervisorProviderSettings(ctx)
 	if err != nil {
 		return SupervisorRunOnceResponse{}, err
@@ -446,6 +461,9 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 	messages, anchor, err := s.supervisorMessagesAndAnchor(ctx, record)
 	if err != nil {
 		return SupervisorRunOnceResponse{}, err
+	}
+	if anchor.TS > 0 && s.registry.now().Sub(time.Unix(int64(anchor.TS), 0)) < time.Duration(config.IdleAfterMinutes)*time.Minute {
+		return SupervisorRunOnceResponse{}, Conflict("assistant message has not been idle long enough")
 	}
 	if existing, ok, err := s.supervisorStore.LookupSupervisorRunByAnchor(ctx, record.identity.SessionID().String(), anchor.EventID); err != nil {
 		return SupervisorRunOnceResponse{}, err
@@ -698,4 +716,29 @@ func parseSupervisorDecision(raw string) (supervisorDecision, error) {
 		return supervisorDecision{}, fmt.Errorf("unknown supervisor action %q", decision.Action)
 	}
 	return decision, nil
+}
+func (s *Stub) RunSupervisorScheduler(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runSupervisorSweep(ctx)
+		}
+	}
+}
+
+func (s *Stub) runSupervisorSweep(ctx context.Context) {
+	for _, record := range s.registry.List() {
+		if record.identity.Backend() != session.BackendPI {
+			continue
+		}
+		config, err := s.sessionSupervisorConfig(ctx, record.identity.SessionID())
+		if err != nil || !config.Enabled {
+			continue
+		}
+		_, _ = s.RunSupervisorOnce(ctx, SupervisorRunOnceRequest{SessionID: record.identity.SessionID(), DryRun: false})
+	}
 }
