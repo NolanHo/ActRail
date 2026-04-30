@@ -14,6 +14,16 @@ class SpaStaticHandler(SimpleHTTPRequestHandler):
         self._root = Path(directory).resolve()
         super().__init__(*args, directory=directory, **kwargs)
 
+    def end_headers(self) -> None:
+        path = unquote(urlparse(self.path).path or "/")
+        if path in {"/", "/index.html"}:
+            self.send_header("Cache-Control", "no-store")
+        elif path == "/service-worker.js":
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
+        elif path.startswith("/assets/"):
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        super().end_headers()
+
     def do_GET(self) -> None:  # noqa: N802
         self._serve_request(head_only=False)
 
