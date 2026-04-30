@@ -98,8 +98,9 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 		if err := record.runtime.SendPrompt(ctx, text); err != nil {
 			return mapRuntimeControlError(err)
 		}
-		busyOnSend := record.identity.Backend() != session.BackendPI
+		busyOnSend := true
 		if record.identity.Backend() == session.BackendPI {
+			busyOnSend = record.state.Busy()
 			pollRuntime = record.runtime
 			pollPIState = true
 		}
