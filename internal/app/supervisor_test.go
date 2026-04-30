@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -87,8 +89,15 @@ func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
 	if err := os.WriteFile(record.importedSourcePath, []byte(body), 0o644); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", record.importedSourcePath, err)
 	}
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/chat/completions" {
+			t.Fatalf("model path = %q, want /chat/completions", req.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"action\":\"stop\",\"reason\":\"assistant appears complete\"}"}}]}`))
+	}))
+	defer modelServer.Close()
 	apiKey := "secret"
-	if _, err := svc.UpdateSupervisorProvider(context.Background(), UpdateSupervisorProviderRequest{BaseURL: "https://llm.invalid/v1", APIKey: &apiKey, Model: "model-a"}); err != nil {
+	if _, err := svc.UpdateSupervisorProvider(context.Background(), UpdateSupervisorProviderRequest{BaseURL: modelServer.URL, APIKey: &apiKey, Model: "model-a"}); err != nil {
 		t.Fatalf("UpdateSupervisorProvider() error = %v", err)
 	}
 	enabled := true

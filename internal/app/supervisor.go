@@ -1,10 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +20,19 @@ import (
 const (
 	defaultSupervisorIdleMinutes        = 5
 	defaultSupervisorMaxConsecutiveRuns = 10
+	supervisorSystemPrompt              = `You supervise a coding-agent session for the human operator.
+
+Decide whether the agent should receive one more user message.
+
+Return only JSON in one of these forms:
+{"action":"stop","reason":"short reason"}
+{"action":"inject","message":"user-facing instruction","reason":"short reason"}
+
+Use stop when the assistant appears done, asks no actionable next step, or further prompting would be speculative.
+Use inject only when the assistant stopped prematurely and a human operator would likely send a short continuation message.
+The injected message must be phrased exactly as a user instruction to the coding agent.
+Do not mention supervisor, policy, JSON, evaluation, or hidden context in the injected message.
+When uncertain, choose stop.`
 )
 
 type supervisorStore interface {
@@ -80,6 +97,23 @@ type SupervisorRunOnceRequest struct {
 type SupervisorRunOnceResponse struct {
 	OK  bool                 `json:"ok"`
 	Run SupervisorRunSummary `json:"run"`
+}
+
+type supervisorPair struct {
+	User      string `json:"user"`
+	Assistant string `json:"assistant"`
+}
+
+type supervisorSnapshot struct {
+	RecentPairs        []supervisorPair `json:"recent_pairs"`
+	Goal               string           `json:"goal,omitempty"`
+	AcceptanceCriteria string           `json:"acceptance_criteria,omitempty"`
+}
+
+type supervisorDecision struct {
+	Action  string `json:"action"`
+	Message string `json:"message,omitempty"`
+	Reason  string `json:"reason"`
 }
 
 type SessionSupervisorResponse struct {
@@ -401,14 +435,15 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 	if !config.Enabled {
 		return SupervisorRunOnceResponse{}, Conflict("supervisor mode is disabled")
 	}
-	provider, err := s.SupervisorProvider(ctx, SupervisorProviderRequest{})
+	providerRow, ok, err := s.supervisorStore.LookupSupervisorProviderSettings(ctx)
 	if err != nil {
 		return SupervisorRunOnceResponse{}, err
 	}
-	if !provider.Complete {
+	provider := supervisorProviderResponse(providerRow)
+	if !ok || !provider.Complete {
 		return SupervisorRunOnceResponse{}, Conflict("supervisor provider settings are incomplete")
 	}
-	anchor, err := s.lastStablePIAssistantAnchor(ctx, record)
+	messages, anchor, err := s.supervisorMessagesAndAnchor(ctx, record)
 	if err != nil {
 		return SupervisorRunOnceResponse{}, err
 	}
@@ -417,25 +452,45 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 	} else if ok {
 		return SupervisorRunOnceResponse{OK: true, Run: supervisorRunSummary(existing)}, nil
 	}
+	snapshot := buildSupervisorSnapshot(messages, anchor.EventID, config)
+	snapshotJSON, _ := json.Marshal(snapshot)
 	run := sqlitestore.SupervisorRunRow{
 		RunID:                   newID("supervisor"),
 		SessionID:               record.identity.SessionID().String(),
 		AnchorAssistantEventID:  anchor.EventID,
 		AnchorAssistantTS:       anchor.TS,
 		AnchorAssistantTextHash: textHash(anchor.Text),
-		Status:                  "stop",
-		Action:                  "stop",
-		Reason:                  "dry run placeholder: model evaluation not executed",
 		Model:                   provider.Model,
 		BaseURL:                 provider.BaseURL,
-		SnapshotJSON:            "{}",
+		SnapshotJSON:            string(snapshotJSON),
 		CreatedAt:               s.registry.now(),
 	}
-	if !req.DryRun {
+	decision, rawOutput, evalErr := evaluateSupervisorModel(ctx, providerRow, snapshot)
+	run.RawOutput = rawOutput
+	if evalErr != nil {
 		run.Status = "error"
-		run.Action = ""
-		run.Reason = ""
-		run.Error = "non-dry-run supervisor execution is not implemented"
+		run.Error = evalErr.Error()
+	} else {
+		run.Action = decision.Action
+		run.Reason = decision.Reason
+		if decision.Action == "inject" {
+			run.InjectedText = decision.Message
+			if req.DryRun {
+				run.Status = "stop"
+			} else {
+				if _, err := s.Send(ctx, SendRequest{SessionID: record.identity.SessionID(), Text: decision.Message}); err != nil {
+					run.Status = "error"
+					run.Error = err.Error()
+				} else {
+					run.Status = "injected"
+					config.ConsecutiveInjections++
+					config.UpdatedAt = s.registry.now()
+					_ = s.supervisorStore.UpsertSessionSupervisorConfig(ctx, config)
+				}
+			}
+		} else {
+			run.Status = "stop"
+		}
 	}
 	if err := s.supervisorStore.InsertSupervisorRun(ctx, run); err != nil {
 		if existing, ok, lookupErr := s.supervisorStore.LookupSupervisorRunByAnchor(ctx, record.identity.SessionID().String(), anchor.EventID); lookupErr == nil && ok {
@@ -511,4 +566,136 @@ func supervisorRunSummary(row sqlitestore.SupervisorRunRow) SupervisorRunSummary
 func textHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+func (s *Stub) supervisorMessagesAndAnchor(ctx context.Context, record sessionRecord) ([]SessionMessage, SessionMessage, error) {
+	response, err := s.SessionMessages(ctx, SessionMessagesRequest{SessionID: record.identity.SessionID(), Limit: 200})
+	if err != nil {
+		return nil, SessionMessage{}, err
+	}
+	for i := len(response.Items) - 1; i >= 0; i-- {
+		item := response.Items[i]
+		if item.Role != "assistant" || strings.TrimSpace(item.Text) == "" {
+			continue
+		}
+		if !strings.HasPrefix(item.EventID, "pi:message:") {
+			return nil, SessionMessage{}, Invalid("anchor_assistant_event_id", "last stable assistant message has no pi:message event id")
+		}
+		return response.Items, item, nil
+	}
+	return nil, SessionMessage{}, Conflict("no stable assistant message found")
+}
+
+func buildSupervisorSnapshot(messages []SessionMessage, anchorEventID string, config sqlitestore.SessionSupervisorConfigRow) supervisorSnapshot {
+	pairs := make([]supervisorPair, 0, 2)
+	pendingUser := ""
+	for _, item := range messages {
+		if item.Kind != "message" {
+			continue
+		}
+		if item.Role == "user" {
+			pendingUser = strings.TrimSpace(item.Text)
+			continue
+		}
+		if item.Role == "assistant" && pendingUser != "" {
+			pairs = append(pairs, supervisorPair{User: pendingUser, Assistant: strings.TrimSpace(item.Text)})
+			if item.EventID == anchorEventID {
+				break
+			}
+			pendingUser = ""
+		}
+	}
+	if len(pairs) > 2 {
+		pairs = pairs[len(pairs)-2:]
+	}
+	return supervisorSnapshot{
+		RecentPairs:        pairs,
+		Goal:               strings.TrimSpace(config.Goal),
+		AcceptanceCriteria: strings.TrimSpace(config.AcceptanceCriteria),
+	}
+}
+
+func evaluateSupervisorModel(ctx context.Context, provider sqlitestore.SupervisorProviderSettingsRow, snapshot supervisorSnapshot) (supervisorDecision, string, error) {
+	body, err := json.Marshal(map[string]any{
+		"model": strings.TrimSpace(provider.Model),
+		"messages": []map[string]string{
+			{"role": "system", "content": supervisorSystemPrompt},
+			{"role": "user", "content": supervisorSnapshotPrompt(snapshot)},
+		},
+		"temperature": 0,
+	})
+	if err != nil {
+		return supervisorDecision{}, "", err
+	}
+	url := strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/") + "/chat/completions"
+	requestCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return supervisorDecision{}, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := strings.TrimSpace(provider.APIKey); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return supervisorDecision{}, "", err
+	}
+	defer res.Body.Close()
+	resBody, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return supervisorDecision{}, "", err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return supervisorDecision{}, string(resBody), fmt.Errorf("supervisor model http %d", res.StatusCode)
+	}
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(resBody, &parsed); err != nil {
+		return supervisorDecision{}, string(resBody), fmt.Errorf("parse supervisor model response: %w", err)
+	}
+	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+		return supervisorDecision{}, string(resBody), fmt.Errorf("supervisor model returned no content")
+	}
+	raw := strings.TrimSpace(parsed.Choices[0].Message.Content)
+	decision, err := parseSupervisorDecision(raw)
+	return decision, raw, err
+}
+
+func supervisorSnapshotPrompt(snapshot supervisorSnapshot) string {
+	body, _ := json.MarshalIndent(snapshot, "", "  ")
+	return "Evaluate this ActRail supervisor snapshot. Return strict JSON only.\n" + string(body)
+}
+
+func parseSupervisorDecision(raw string) (supervisorDecision, error) {
+	var decision supervisorDecision
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decision); err != nil {
+		return supervisorDecision{}, fmt.Errorf("invalid supervisor JSON: %w", err)
+	}
+	decision.Action = strings.TrimSpace(decision.Action)
+	decision.Message = strings.TrimSpace(decision.Message)
+	decision.Reason = strings.TrimSpace(decision.Reason)
+	if decision.Reason == "" {
+		return supervisorDecision{}, fmt.Errorf("supervisor reason required")
+	}
+	switch decision.Action {
+	case "stop":
+		if decision.Message != "" {
+			return supervisorDecision{}, fmt.Errorf("stop action must not include message")
+		}
+	case "inject":
+		if decision.Message == "" {
+			return supervisorDecision{}, fmt.Errorf("inject action requires message")
+		}
+	default:
+		return supervisorDecision{}, fmt.Errorf("unknown supervisor action %q", decision.Action)
+	}
+	return decision, nil
 }
