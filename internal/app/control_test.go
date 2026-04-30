@@ -113,8 +113,8 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	if sent.Message.Seq != 1 || sent.Message.Role != "user" || sent.Message.Text != "Implement runtime control" {
 		t.Fatalf("Send() = %+v, want seq 1 user message", sent)
 	}
-	if !sent.Busy {
-		t.Fatal("Send().Busy = false, want true")
+	if sent.Busy {
+		t.Fatal("Send().Busy = true, want false before Pi reports runtime state")
 	}
 	if len(sent.Queue.Items) != 0 {
 		t.Fatalf("Send().Queue.Items = %+v, want empty", sent.Queue.Items)
@@ -127,8 +127,12 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() after Send() error = %v", err)
 	}
-	if !state.Busy || state.TailSeq != 1 {
-		t.Fatalf("SessionState() after Send() = %+v, want busy tail_seq 1", state)
+	if state.Busy || state.TailSeq != 1 {
+		t.Fatalf("SessionState() after Send() = %+v, want idle tail_seq 1 before Pi reports runtime state", state)
+	}
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"id":"actrail-state-busy","type":"response","command":"get_state","success":true,"data":{"isStreaming":true,"isCompacting":false,"pendingMessageCount":0}}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(get_state busy) error = %v", err)
 	}
 
 	queued, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "first queued"})

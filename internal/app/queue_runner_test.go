@@ -26,7 +26,7 @@ func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		return state.Busy && len(state.Queue.Items) == 0
+		return !state.Busy && len(state.Queue.Items) == 0 && len(pty.Writes()) == 1
 	})
 
 	writes := pty.Writes()
@@ -44,12 +44,12 @@ func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if !state.Busy || len(state.Queue.Items) != 0 || state.TailSeq != 1 {
-		t.Fatalf("SessionState() after idle dispatch = %+v, want busy true empty queue tail_seq 1", state)
+	if state.Busy || len(state.Queue.Items) != 0 || state.TailSeq != 1 {
+		t.Fatalf("SessionState() after idle dispatch = %+v, want idle empty queue tail_seq 1 before Pi reports runtime state", state)
 	}
 }
 
-func TestPIRPCIdleStateDispatchesQueuedPromptWithoutManualResend(t *testing.T) {
+func TestPIRPCQueuedPromptDoesNotSetBusyBeforeRuntimeState(t *testing.T) {
 	svc, sessionID, _, pty := newControlFixture(t)
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
@@ -61,21 +61,8 @@ func TestPIRPCIdleStateDispatchesQueuedPromptWithoutManualResend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
-	if !queued.Busy || len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "second prompt" {
-		t.Fatalf("Enqueue() = %+v, want retained queued second prompt while busy", queued)
-	}
-	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
-	if err != nil {
-		t.Fatalf("SessionMessages() before completion error = %v", err)
-	}
-	if len(messages.Items) != 1 || messages.Items[0].Text != "first prompt" {
-		t.Fatalf("SessionMessages() before completion = %+v, want only first prompt", messages)
-	}
-	before := sink.snapshot()
-
-	decoder := runtimeEventDecoder{backend: session.BackendPI}
-	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"id":"actrail-state-idle","type":"response","command":"get_state","success":true,"data":{"isStreaming":false,"isCompacting":false,"pendingMessageCount":0}}`))); err != nil {
-		t.Fatalf("applyRuntimeProjection(get_state idle) error = %v", err)
+	if queued.Busy || len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "second prompt" {
+		t.Fatalf("Enqueue() = %+v, want queued second prompt with idle session state", queued)
 	}
 
 	waitForAppCondition(t, func() bool {
@@ -83,31 +70,36 @@ func TestPIRPCIdleStateDispatchesQueuedPromptWithoutManualResend(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		return state.Busy && len(state.Queue.Items) == 0 && len(pty.Writes()) == 2
+		return !state.Busy && len(state.Queue.Items) == 0 && state.TailSeq == 2 && len(pty.Writes()) == 2
 	})
 
 	writes := pty.Writes()
 	if len(writes) != 2 || writes[1] != "{\"type\":\"prompt\",\"message\":\"second prompt\"}\n" {
-		t.Fatalf("pty writes after turn completion = %#v, want queued second prompt RPC command", writes)
+		t.Fatalf("pty writes after queued dispatch = %#v, want queued second prompt RPC command", writes)
 	}
-	messages, err = svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
 	if err != nil {
-		t.Fatalf("SessionMessages() after completion error = %v", err)
+		t.Fatalf("SessionMessages() after dispatch error = %v", err)
 	}
 	if len(messages.Items) != 2 || messages.Items[1].Role != "user" || messages.Items[1].Text != "second prompt" {
-		t.Fatalf("SessionMessages() after completion = %+v, want queued second prompt committed", messages)
+		t.Fatalf("SessionMessages() after dispatch = %+v, want queued second prompt committed", messages)
+	}
+
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"id":"actrail-state-busy","type":"response","command":"get_state","success":true,"data":{"isStreaming":true,"isCompacting":false,"pendingMessageCount":0}}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(get_state busy) error = %v", err)
 	}
 	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
-		t.Fatalf("SessionState() after completion error = %v", err)
+		t.Fatalf("SessionState() after busy state error = %v", err)
 	}
 	if !state.Busy || len(state.Queue.Items) != 0 || state.TailSeq != 2 {
-		t.Fatalf("SessionState() after completion = %+v, want busy true empty queue tail_seq 2", state)
+		t.Fatalf("SessionState() after busy state = %+v, want busy empty queue tail_seq 2", state)
 	}
 
 	after := sink.snapshot()
-	if len(after.commits) <= len(before.commits) {
-		t.Fatalf("commit events count = %d, want > %d", len(after.commits), len(before.commits))
+	if len(after.commits) != 2 {
+		t.Fatalf("commit events count = %d, want 2", len(after.commits))
 	}
 	if got := after.commits[len(after.commits)-1].Message.Text; got != "second prompt" {
 		t.Fatalf("last commit event text = %q, want %q", got, "second prompt")
@@ -116,6 +108,6 @@ func TestPIRPCIdleStateDispatchesQueuedPromptWithoutManualResend(t *testing.T) {
 		t.Fatalf("last queue event = %+v, want empty queue", after.queueStates)
 	}
 	if len(after.states) == 0 || !after.states[len(after.states)-1].Busy || after.states[len(after.states)-1].QueueLen != 0 {
-		t.Fatalf("last state event = %+v, want busy true queue_len 0", after.states)
+		t.Fatalf("last state event = %+v, want busy true queue_len 0 from Pi runtime state", after.states)
 	}
 }

@@ -464,6 +464,10 @@ var (
 )
 
 func (r *sessionRegistry) ActivateSend(sessionID session.SessionID, text string) (message.CommittedMessage, session.State, *SessionUIRequestSnapshot, bool, error) {
+	return r.ActivateSendWithBusy(sessionID, text, true)
+}
+
+func (r *sessionRegistry) ActivateSendWithBusy(sessionID session.SessionID, text string, busy bool) (message.CommittedMessage, session.State, *SessionUIRequestSnapshot, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	record, ok := r.sessions[sessionID]
@@ -477,7 +481,7 @@ func (r *sessionRegistry) ActivateSend(sessionID session.SessionID, text string)
 	}
 	record.updatedAt = now
 	record.activityAt = now
-	if err := syncSessionRecordStateWithQueue(&record, true, session.EmptyQueueSnapshot()); err != nil {
+	if err := syncSessionRecordStateWithQueue(&record, busy, session.EmptyQueueSnapshot()); err != nil {
 		return message.CommittedMessage{}, session.State{}, nil, true, err
 	}
 	cp := copySessionRecord(record)
@@ -574,6 +578,10 @@ func (r *sessionRegistry) ClearQueue(sessionID session.SessionID) (session.State
 }
 
 func (r *sessionRegistry) ActivateQueued(sessionID session.SessionID, itemID session.QueueItemID) (message.CommittedMessage, session.State, bool, error) {
+	return r.ActivateQueuedWithBusy(sessionID, itemID, true)
+}
+
+func (r *sessionRegistry) ActivateQueuedWithBusy(sessionID session.SessionID, itemID session.QueueItemID, busy bool) (message.CommittedMessage, session.State, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	record, ok := r.sessions[sessionID]
@@ -602,7 +610,7 @@ func (r *sessionRegistry) ActivateQueued(sessionID session.SessionID, itemID ses
 	}
 	record.updatedAt = now
 	record.activityAt = now
-	if err := syncSessionRecordStateWithQueue(&record, true, queue); err != nil {
+	if err := syncSessionRecordStateWithQueue(&record, busy, queue); err != nil {
 		return message.CommittedMessage{}, session.State{}, true, err
 	}
 	cp := copySessionRecord(record)
