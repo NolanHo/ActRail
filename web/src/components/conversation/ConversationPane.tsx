@@ -14,9 +14,11 @@ import { cn } from "@/lib/utils";
 
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
 import { WaitCard } from "../waits/WaitCard";
-import { useComposerStore, useComposerStoreApi, useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
+import { useComposerStoreApi, useComposerStoreSelector, useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import type { MessageEvent, TodoSnapshotItem } from "../../lib/types";
+
+const EMPTY_PENDING_BY_SESSION_ID: Record<string, never[]> = {};
 
 const MAIN_TIMELINE_KINDS = new Set([
   "user",
@@ -2620,9 +2622,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const busyBySessionId = liveSessionState.busyBySessionId ?? {};
   const generatingBySessionId = liveSessionState.generatingBySessionId ?? {};
   const errorBySessionId = liveSessionState.errorBySessionId ?? {};
-  const composerState = useComposerStore();
   const composerStoreApi = useComposerStoreApi();
-  const pendingBySessionId = composerState.pendingBySessionId ?? {};
+  const pendingBySessionId = useComposerStoreSelector((state) => state.pendingBySessionId ?? EMPTY_PENDING_BY_SESSION_ID);
   const messagesState = useMessagesStore();
   const bySessionId = messagesState.bySessionId;
   const hasOlderBySessionId = messagesState.hasOlderBySessionId ?? {};
