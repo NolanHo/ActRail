@@ -42,6 +42,10 @@ type Service interface {
 	DeleteSession(context.Context, DeleteSessionRequest) (DeleteSessionResponse, error)
 	RestartSession(context.Context, RestartSessionRequest) (RestartSessionResponse, error)
 	HandoffSession(context.Context, HandoffSessionRequest) (HandoffSessionResponse, error)
+	SupervisorProvider(context.Context, SupervisorProviderRequest) (SupervisorProviderResponse, error)
+	UpdateSupervisorProvider(context.Context, UpdateSupervisorProviderRequest) (SupervisorProviderResponse, error)
+	SessionSupervisor(context.Context, SessionSupervisorRequest) (SessionSupervisorResponse, error)
+	UpdateSessionSupervisor(context.Context, UpdateSessionSupervisorRequest) (SessionSupervisorResponse, error)
 }
 
 type Stub struct {
@@ -55,6 +59,7 @@ type Stub struct {
 	helpers             *helperRegistry
 	messageCache        *sessionMessageCache
 	waitStore           waitStore
+	supervisorStore     supervisorStore
 	runtimeAgentMu      sync.RWMutex
 	runtimeAgentRunning map[session.SessionID]bool
 	piModels            piModelCache
@@ -92,6 +97,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
 		waitStore:           newMemoryWaitStore(),
+		supervisorStore:     newMemorySupervisorStore(),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		piModels:            piModelCache{},
 		recentCwds:          []string{},
@@ -274,6 +280,10 @@ func (e *Error) Error() string {
 
 func Unsupported(message string) *Error {
 	return &Error{Code: "unsupported", Message: message}
+}
+
+func UnsupportedBackend(message string) *Error {
+	return &Error{Code: "unsupported_backend", Message: message}
 }
 
 func Invalid(field, message string) *Error {

@@ -218,26 +218,44 @@ func (s serviceStub) HandoffSession(ctx context.Context, req app.HandoffSessionR
 	return s.base.HandoffSession(ctx, req)
 }
 
+func (s serviceStub) SupervisorProvider(ctx context.Context, req app.SupervisorProviderRequest) (app.SupervisorProviderResponse, error) {
+	return s.base.SupervisorProvider(ctx, req)
+}
+
+func (s serviceStub) UpdateSupervisorProvider(ctx context.Context, req app.UpdateSupervisorProviderRequest) (app.SupervisorProviderResponse, error) {
+	return s.base.UpdateSupervisorProvider(ctx, req)
+}
+
+func (s serviceStub) SessionSupervisor(ctx context.Context, req app.SessionSupervisorRequest) (app.SessionSupervisorResponse, error) {
+	return s.base.SessionSupervisor(ctx, req)
+}
+
+func (s serviceStub) UpdateSessionSupervisor(ctx context.Context, req app.UpdateSessionSupervisorRequest) (app.SessionSupervisorResponse, error) {
+	return s.base.UpdateSessionSupervisor(ctx, req)
+}
+
 type fixtureService struct {
-	listReq         app.ListSessionsRequest
-	createReq       app.CreateSessionRequest
-	resumeReq       app.SessionResumeCandidatesRequest
-	detailsReq      app.SessionDetailsRequest
-	messagesReq     app.SessionMessagesRequest
-	stateReq        app.SessionStateRequest
-	workspaceReq    app.SessionWorkspaceRequest
-	workspaceSetReq app.UpdateSessionWorkspaceRequest
-	fileListReq     app.WorkspaceFileListRequest
-	fileReadReq     app.WorkspaceFileReadRequest
-	gitReq          app.GitFileVersionsRequest
-	renameReq       app.RenameSessionRequest
-	focusReq        app.FocusSessionRequest
-	editReq         app.EditSessionRequest
-	editCwdGroupReq app.EditCwdGroupRequest
-	modelReq        app.SwitchSessionModelRequest
-	deleteReq       app.DeleteSessionRequest
-	restartReq      app.RestartSessionRequest
-	handoffReq      app.HandoffSessionRequest
+	listReq           app.ListSessionsRequest
+	createReq         app.CreateSessionRequest
+	resumeReq         app.SessionResumeCandidatesRequest
+	detailsReq        app.SessionDetailsRequest
+	messagesReq       app.SessionMessagesRequest
+	stateReq          app.SessionStateRequest
+	workspaceReq      app.SessionWorkspaceRequest
+	workspaceSetReq   app.UpdateSessionWorkspaceRequest
+	fileListReq       app.WorkspaceFileListRequest
+	fileReadReq       app.WorkspaceFileReadRequest
+	gitReq            app.GitFileVersionsRequest
+	renameReq         app.RenameSessionRequest
+	focusReq          app.FocusSessionRequest
+	editReq           app.EditSessionRequest
+	editCwdGroupReq   app.EditCwdGroupRequest
+	modelReq          app.SwitchSessionModelRequest
+	deleteReq         app.DeleteSessionRequest
+	restartReq        app.RestartSessionRequest
+	handoffReq        app.HandoffSessionRequest
+	supervisorReq     app.SessionSupervisorRequest
+	supervisorEditReq app.UpdateSessionSupervisorRequest
 }
 
 func (s *fixtureService) Bootstrap(_ context.Context, _ app.BootstrapRequest) app.BootstrapSnapshot {
@@ -564,8 +582,64 @@ func (s *fixtureService) HandoffSession(_ context.Context, req app.HandoffSessio
 	return app.HandoffSessionResponse{}, app.Unsupported("session handoff not implemented")
 }
 
+func (s *fixtureService) SupervisorProvider(context.Context, app.SupervisorProviderRequest) (app.SupervisorProviderResponse, error) {
+	return app.SupervisorProviderResponse{OK: true, BaseURL: "https://llm.invalid/v1", Model: "test-model", APIKeyConfigured: true, Complete: true}, nil
+}
+
+func (s *fixtureService) UpdateSupervisorProvider(_ context.Context, req app.UpdateSupervisorProviderRequest) (app.SupervisorProviderResponse, error) {
+	return app.SupervisorProviderResponse{OK: true, BaseURL: req.BaseURL, Model: req.Model, APIKeyConfigured: req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "", Complete: true}, nil
+}
+
+func (s *fixtureService) SessionSupervisor(_ context.Context, req app.SessionSupervisorRequest) (app.SessionSupervisorResponse, error) {
+	s.supervisorReq = req
+	return app.SessionSupervisorResponse{OK: true, Supported: true, Enabled: false, Status: "idle", IdleAfterMinutes: 5, MaxConsecutiveInjections: 10, ContextFiles: []string{}}, nil
+}
+
+func (s *fixtureService) UpdateSessionSupervisor(_ context.Context, req app.UpdateSessionSupervisorRequest) (app.SessionSupervisorResponse, error) {
+	s.supervisorEditReq = req
+	enabled := false
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	return app.SessionSupervisorResponse{OK: true, Supported: true, Enabled: enabled, Status: "idle", IdleAfterMinutes: 5, MaxConsecutiveInjections: 10, ContextFiles: []string{}}, nil
+}
+
 func newTestRouter(cfg config.Config, svc app.Service) http.Handler {
 	return New(cfg, svc, ws.NewHandler(cfg))
+}
+
+func TestSupervisorRoutesReturnProviderAndSessionConfig(t *testing.T) {
+	svc := &fixtureService{}
+	h := newTestRouter(config.Load(), svc)
+
+	providerReq := httptest.NewRequest(http.MethodGet, "/api/supervisor/provider", nil)
+	providerRes := httptest.NewRecorder()
+	h.ServeHTTP(providerRes, providerReq)
+	if providerRes.Code != http.StatusOK {
+		t.Fatalf("GET provider status = %d, want %d", providerRes.Code, http.StatusOK)
+	}
+	var providerBody map[string]any
+	if err := json.Unmarshal(providerRes.Body.Bytes(), &providerBody); err != nil {
+		t.Fatalf("decode provider response: %v", err)
+	}
+	if _, ok := providerBody["api_key"]; ok {
+		t.Fatalf("provider response leaked api_key: %s", providerRes.Body.String())
+	}
+	if providerBody["api_key_configured"] != true || providerBody["model"] != "test-model" {
+		t.Fatalf("provider response = %v", providerBody)
+	}
+
+	body := strings.NewReader(`{"enabled":true,"idle_after_minutes":2,"max_consecutive_injections":12,"goal":"finish","acceptance_criteria":"tests","context_files":["README.md"]}`)
+	configReq := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/supervisor", body)
+	configReq.Header.Set("Content-Type", "application/json")
+	configRes := httptest.NewRecorder()
+	h.ServeHTTP(configRes, configReq)
+	if configRes.Code != http.StatusOK {
+		t.Fatalf("POST session supervisor status = %d, want %d body=%s", configRes.Code, http.StatusOK, configRes.Body.String())
+	}
+	if svc.supervisorEditReq.SessionID.String() != "s_123" || svc.supervisorEditReq.Enabled == nil || *svc.supervisorEditReq.Enabled != true || svc.supervisorEditReq.IdleAfterMinutes == nil || *svc.supervisorEditReq.IdleAfterMinutes != 2 {
+		t.Fatalf("supervisor edit req = %+v", svc.supervisorEditReq)
+	}
 }
 
 func TestBootstrapRoute(t *testing.T) {

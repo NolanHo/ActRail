@@ -48,6 +48,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
 		waitStore:           catalog,
+		supervisorStore:     catalog,
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		recentCwds:          recentCwds,
 		cwdGroups:           cwdGroups,

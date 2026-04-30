@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 const tsLayout = time.RFC3339Nano
 
@@ -292,6 +292,59 @@ var migrations = []migration{
 				}
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 7, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 8,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS supervisor_provider_settings (
+					id INTEGER PRIMARY KEY CHECK (id = 1),
+					base_url TEXT NOT NULL DEFAULT '',
+					api_key TEXT NOT NULL DEFAULT '',
+					model TEXT NOT NULL DEFAULT '',
+					updated_at TEXT NOT NULL
+				)`,
+				`CREATE TABLE IF NOT EXISTS session_supervisor_config (
+					session_id TEXT PRIMARY KEY,
+					enabled INTEGER NOT NULL DEFAULT 0,
+					idle_after_minutes INTEGER NOT NULL DEFAULT 5,
+					max_consecutive_injections INTEGER NOT NULL DEFAULT 10,
+					consecutive_injections INTEGER NOT NULL DEFAULT 0,
+					goal TEXT NOT NULL DEFAULT '',
+					acceptance_criteria TEXT NOT NULL DEFAULT '',
+					context_files_json TEXT NOT NULL DEFAULT '[]',
+					updated_at TEXT NOT NULL,
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE TABLE IF NOT EXISTS supervisor_runs (
+					run_id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					anchor_assistant_event_id TEXT NOT NULL,
+					anchor_assistant_ts REAL NOT NULL DEFAULT 0,
+					anchor_assistant_text_hash TEXT NOT NULL DEFAULT '',
+					status TEXT NOT NULL,
+					action TEXT NOT NULL DEFAULT '',
+					injected_text TEXT NOT NULL DEFAULT '',
+					reason TEXT NOT NULL DEFAULT '',
+					error TEXT NOT NULL DEFAULT '',
+					model TEXT NOT NULL DEFAULT '',
+					base_url TEXT NOT NULL DEFAULT '',
+					snapshot_json TEXT NOT NULL DEFAULT '{}',
+					raw_output TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE UNIQUE INDEX IF NOT EXISTS supervisor_runs_anchor_idx ON supervisor_runs(session_id, anchor_assistant_event_id)`,
+				`CREATE INDEX IF NOT EXISTS supervisor_runs_session_created_idx ON supervisor_runs(session_id, created_at DESC)`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 8, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},

@@ -48,6 +48,22 @@ type answerWaitRequest struct {
 	Answer string `json:"answer"`
 }
 
+type supervisorProviderRequest struct {
+	BaseURL string  `json:"base_url"`
+	APIKey  *string `json:"api_key"`
+	Model   string  `json:"model"`
+}
+
+type sessionSupervisorRequest struct {
+	Enabled                  *bool     `json:"enabled"`
+	IdleAfterMinutes         *int      `json:"idle_after_minutes"`
+	MaxConsecutiveInjections *int      `json:"max_consecutive_injections"`
+	ConsecutiveInjections    *int      `json:"consecutive_injections"`
+	Goal                     *string   `json:"goal"`
+	AcceptanceCriteria       *string   `json:"acceptance_criteria"`
+	ContextFiles             *[]string `json:"context_files"`
+}
+
 func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handler {
 	r := Router{cfg: cfg, app: svc, ws: wsHandler}
 	mux := http.NewServeMux()
@@ -60,8 +76,12 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.Handle("GET /api/sessions", r.requireAuth(http.HandlerFunc(r.listSessions)))
 	mux.Handle("POST /api/sessions", r.requireAuth(http.HandlerFunc(r.createSession)))
 	mux.Handle("GET /api/session_resume_candidates", r.requireAuth(http.HandlerFunc(r.sessionResumeCandidates)))
+	mux.Handle("GET /api/supervisor/provider", r.requireAuth(http.HandlerFunc(r.supervisorProvider)))
+	mux.Handle("POST /api/supervisor/provider", r.requireAuth(http.HandlerFunc(r.updateSupervisorProvider)))
 	mux.Handle("GET /api/sessions/{session_id}/details", r.requireAuth(http.HandlerFunc(r.sessionDetails)))
 	mux.Handle("GET /api/sessions/{session_id}/messages", r.requireAuth(http.HandlerFunc(r.sessionMessages)))
+	mux.Handle("GET /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.sessionSupervisor)))
+	mux.Handle("POST /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.updateSessionSupervisor)))
 	mux.Handle("GET /api/sessions/{session_id}/state", r.requireAuth(http.HandlerFunc(r.sessionState)))
 	mux.Handle("GET /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.sessionWorkspace)))
 	mux.Handle("POST /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.updateSessionWorkspace)))
@@ -233,6 +253,33 @@ func (r Router) sessionResumeCandidates(w http.ResponseWriter, req *http.Request
 	writeJSON(w, http.StatusOK, payload)
 }
 
+func (r Router) supervisorProvider(w http.ResponseWriter, req *http.Request) {
+	payload, err := r.app.SupervisorProvider(req.Context(), app.SupervisorProviderRequest{})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) updateSupervisorProvider(w http.ResponseWriter, req *http.Request) {
+	var body supervisorProviderRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.UpdateSupervisorProvider(req.Context(), app.UpdateSupervisorProviderRequest{
+		BaseURL: body.BaseURL,
+		APIKey:  body.APIKey,
+		Model:   body.Model,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (r Router) sessionDetails(w http.ResponseWriter, req *http.Request) {
 	sessionID, ok := routeSessionID(w, req)
 	if !ok {
@@ -271,6 +318,46 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 		BeforeSeq: beforeSeq,
 		Limit:     limit,
 		Init:      init,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sessionSupervisor(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.SessionSupervisor(req.Context(), app.SessionSupervisorRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) updateSessionSupervisor(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body sessionSupervisorRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.UpdateSessionSupervisor(req.Context(), app.UpdateSessionSupervisorRequest{
+		SessionID:                sessionID,
+		Enabled:                  body.Enabled,
+		IdleAfterMinutes:         body.IdleAfterMinutes,
+		MaxConsecutiveInjections: body.MaxConsecutiveInjections,
+		ConsecutiveInjections:    body.ConsecutiveInjections,
+		Goal:                     body.Goal,
+		AcceptanceCriteria:       body.AcceptanceCriteria,
+		ContextFiles:             body.ContextFiles,
 	})
 	if err != nil {
 		writeAppError(w, err)
@@ -717,7 +804,7 @@ func writeAppError(w http.ResponseWriter, err error) {
 			status = http.StatusNotFound
 		case "conflict", "transport_reset_required":
 			status = http.StatusConflict
-		case "unsupported":
+		case "unsupported", "unsupported_backend":
 			status = http.StatusNotImplemented
 		}
 		writeError(w, status, appErr.Code, appErr.Message, appErr.Field)
