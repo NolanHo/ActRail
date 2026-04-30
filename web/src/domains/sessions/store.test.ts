@@ -47,6 +47,13 @@ describe("createSessionsStore", () => {
       recentCwds: [],
       cwdGroups: {},
       tmuxAvailable: false,
+      realtimeTransport: {
+        active: "ws",
+        connectAvailable: false,
+        connectOptIn: false,
+        desktopEligible: false,
+        connectPath: "/api/connect",
+      },
     });
     expect(api.listSessions).toHaveBeenCalledWith({ limit: 50 });
   });
@@ -81,6 +88,13 @@ describe("createSessionsStore", () => {
       recentCwds: ["/tmp/project"],
       cwdGroups: { "/tmp/project": { label: "Project", collapsed: true } },
       tmuxAvailable: true,
+      realtimeTransport: {
+        active: "ws",
+        connectAvailable: false,
+        connectOptIn: false,
+        desktopEligible: true,
+        connectPath: "/api/connect",
+      },
     });
   });
 
@@ -105,6 +119,13 @@ describe("createSessionsStore", () => {
       transport: "connect",
       connectBasePath: "/api/connect",
     });
+    expect(store.getState().realtimeTransport).toEqual({
+      active: "connect",
+      connectAvailable: true,
+      connectOptIn: true,
+      desktopEligible: true,
+      connectPath: "/api/connect",
+    });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
   });
 
@@ -122,6 +143,13 @@ describe("createSessionsStore", () => {
     await store.refreshBootstrap();
 
     expect(configureRealtimeClient).toHaveBeenCalledWith(expect.objectContaining({ transport: "ws" }));
+    expect(store.getState().realtimeTransport).toEqual({
+      active: "ws",
+      connectAvailable: true,
+      connectOptIn: true,
+      desktopEligible: false,
+      connectPath: "/api/connect",
+    });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
   });
 

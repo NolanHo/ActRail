@@ -103,7 +103,7 @@ function EmptyDetailsWorkspace() {
 
 export function AppShell() {
   const { bySessionId } = useMessagesStore();
-  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items } = useSessionsStore();
+  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items, realtimeTransport } = useSessionsStore();
   const { busyBySessionId, contextUsageBySessionId, generatingBySessionId } = useLiveSessionStore() as {
     busyBySessionId: Record<string, boolean>;
     generatingBySessionId?: Record<string, boolean>;
@@ -629,6 +629,7 @@ export function AppShell() {
             replySoundEnabled={replySoundEnabled}
             status={voiceSettingsStatus}
             themeMode={themeMode}
+            transportStatus={realtimeTransport}
             conversationFontSizePxDraft={displaySettingsDraft.conversationFontSizePx}
             composerFontSizePxDraft={displaySettingsDraft.composerFontSizePx}
             bufferAssistantOutputDraft={displaySettingsDraft.bufferAssistantOutput}

@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { RealtimeTransportStatus } from "../../domains/sessions/store";
 import type { ThemeMode } from "./utils";
 
 interface VoiceSettingsDialogProps {
@@ -20,6 +21,7 @@ interface VoiceSettingsDialogProps {
   replySoundEnabled: boolean;
   status: string;
   themeMode: ThemeMode;
+  transportStatus?: RealtimeTransportStatus;
   voiceApiKeyDraft: string;
   voiceBaseUrlDraft: string;
   onChangeEnterToSend(value: boolean): void;
@@ -48,6 +50,7 @@ export function VoiceSettingsDialog({
   replySoundEnabled,
   status,
   themeMode,
+  transportStatus,
   voiceApiKeyDraft,
   voiceBaseUrlDraft,
   onChangeEnterToSend,
@@ -220,6 +223,11 @@ export function VoiceSettingsDialog({
 
             <TabsContent value="status" className="space-y-4">
               <div className="voiceSettingsMeta fieldHint">
+                <span>Realtime transport: {transportStatus?.active === "connect" ? "ConnectRPC experimental" : "WebSocket"}</span>
+                <span>Connect opt-in: {transportStatus?.connectOptIn ? "on" : "off"}</span>
+                <span>Connect capability: {transportStatus?.connectAvailable ? "available" : "unavailable"}</span>
+                <span>Desktop eligible: {transportStatus?.desktopEligible ? "yes" : "no"}</span>
+                <span>Connect path: {transportStatus?.connectPath || "/api/connect"}</span>
                 <span>Listeners: {audioMeta.listeners}</span>
                 <span>Queue: {audioMeta.queue}</span>
                 <span>Segments: {audioMeta.segments}</span>

@@ -62,6 +62,53 @@ describe("VoiceSettingsDialog", () => {
     expect(saveButton?.className).not.toContain("primaryButton");
   });
 
+  it("shows experimental transport state in the status tab", async () => {
+    root = document.createElement("div");
+    document.body.appendChild(root);
+
+    render(
+      <VoiceSettingsDialog
+        audioMeta={{ enabledDevices: 0, lastError: "", listeners: 0, queue: 0, segments: 0, totalDevices: 0 }}
+        enterToSendDraft={false}
+        narrationEnabledDraft={false}
+        open
+        replySoundEnabled={false}
+        status=""
+        themeMode="light"
+        transportStatus={{
+          active: "connect",
+          connectAvailable: true,
+          connectOptIn: true,
+          desktopEligible: true,
+          connectPath: "/api/connect",
+        }}
+        voiceApiKeyDraft=""
+        voiceBaseUrlDraft=""
+        onChangeEnterToSend={() => undefined}
+        onChangeNarrationEnabled={() => undefined}
+        onChangeReplySoundEnabled={() => undefined}
+        onChangeThemeMode={() => undefined}
+        onChangeVoiceApiKey={() => undefined}
+        onChangeVoiceBaseUrl={() => undefined}
+        onClose={() => undefined}
+        onSave={() => undefined}
+        onTestProvider={() => undefined}
+        onTriggerTestPush={() => undefined}
+      />,
+      root,
+    );
+
+    await act(async () => {
+      Array.from(root!.querySelectorAll("button")).find((button) => button.textContent === "Status")?.click();
+    });
+
+    expect(root.textContent).toContain("Realtime transport: ConnectRPC experimental");
+    expect(root.textContent).toContain("Connect opt-in: on");
+    expect(root.textContent).toContain("Connect capability: available");
+    expect(root.textContent).toContain("Desktop eligible: yes");
+    expect(root.textContent).toContain("Connect path: /api/connect");
+  });
+
   it("wires action callbacks through the footer controls", async () => {
     const onClose = vi.fn();
     const onSave = vi.fn();
