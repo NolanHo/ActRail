@@ -7,6 +7,14 @@ export interface UpsertSessionOptions {
   select?: boolean;
 }
 
+export interface RealtimeTransportStatus {
+  active: "ws" | "connect";
+  connectAvailable: boolean;
+  connectOptIn: boolean;
+  desktopEligible: boolean;
+  connectPath: string;
+}
+
 export interface SessionsState {
   items: SessionSummary[];
   activeSessionId: string | null;
@@ -19,6 +27,7 @@ export interface SessionsState {
   recentCwds: string[];
   cwdGroups: Record<string, CwdGroupMeta>;
   tmuxAvailable: boolean;
+  realtimeTransport: RealtimeTransportStatus;
 }
 
 export interface RefreshSessionsOptions {
@@ -43,21 +52,40 @@ const PAGE_SIZE = 50;
 const NEW_SESSION_DEFAULTS_CACHE_KEY = "actrail.newSessionDefaults.v1";
 const SESSION_READ_CACHE_KEY = "actrail.sessionReadAssistantTs.v1";
 const EXP_TRANSPORT_KEY = "actrail.expTransport";
+const DEFAULT_REALTIME_TRANSPORT: RealtimeTransportStatus = {
+  active: "ws",
+  connectAvailable: false,
+  connectOptIn: false,
+  desktopEligible: false,
+  connectPath: "/api/connect",
+};
 
 function isDesktopViewport() {
   if (typeof window === "undefined") return false;
   return window.innerWidth >= 768;
 }
 
-function shouldUseConnectTransport(data: SessionBootstrapResponse) {
-  if (!data.capabilities?.exp_connect_transport || !isDesktopViewport()) {
-    return false;
-  }
+function readConnectOptIn() {
+  if (typeof window === "undefined") return false;
   try {
     return window.localStorage.getItem(EXP_TRANSPORT_KEY) === "connect";
   } catch {
     return false;
   }
+}
+
+function getRealtimeTransportStatus(data: SessionBootstrapResponse): RealtimeTransportStatus {
+  const connectAvailable = data.capabilities?.exp_connect_transport === true;
+  const desktopEligible = isDesktopViewport();
+  const connectOptIn = readConnectOptIn();
+  const connectPath = String(data.transport?.connect_path || DEFAULT_REALTIME_TRANSPORT.connectPath).trim() || DEFAULT_REALTIME_TRANSPORT.connectPath;
+  return {
+    active: connectAvailable && desktopEligible && connectOptIn ? "connect" : "ws",
+    connectAvailable,
+    connectOptIn,
+    desktopEligible,
+    connectPath,
+  };
 }
 
 function normalizeSessionsResponse(data: SessionsResponse) {
@@ -272,6 +300,7 @@ export function createSessionsStore(): SessionsStore {
     recentCwds: [],
     cwdGroups: {},
     tmuxAvailable: false,
+    realtimeTransport: DEFAULT_REALTIME_TRANSPORT,
   };
   const listeners = new Set<() => void>();
   let currentRefreshId = 0;
@@ -362,13 +391,13 @@ export function createSessionsStore(): SessionsStore {
       if (refreshId !== currentBootstrapRefreshId) {
         return;
       }
-      const useConnect = shouldUseConnectTransport(data);
+      const realtimeTransport = getRealtimeTransportStatus(data);
       configureRealtimeClient({
         protocolVersion: data.protocol_version,
         url: data.capabilities?.ws_realtime === false ? null : data.ws?.url,
         heartbeatIntervalMs: data.ws?.heartbeat_interval_ms,
-        transport: useConnect ? "connect" : "ws",
-        connectBasePath: data.transport?.connect_path,
+        transport: realtimeTransport.active,
+        connectBasePath: realtimeTransport.connectPath,
       });
       const newSessionDefaults = normalizeNewSessionDefaults(data) ?? state.newSessionDefaults;
       writeCachedNewSessionDefaults(newSessionDefaults);
@@ -385,6 +414,7 @@ export function createSessionsStore(): SessionsStore {
           : state.recentCwds,
         cwdGroups: data.cwd_groups ?? state.cwdGroups,
         tmuxAvailable: typeof data.tmux_available === "boolean" ? data.tmux_available : state.tmuxAvailable,
+        realtimeTransport,
       };
       emit();
     },
