@@ -1,5 +1,5 @@
 import { createContext } from "preact";
-import { useContext } from "preact/hooks";
+import { useContext, useRef } from "preact/hooks";
 import { useSyncExternalStore } from "preact/compat";
 import { createMessagesStore, type MessagesStore } from "../domains/messages/store";
 import { createLiveSessionStore, type LiveSessionStore } from "../domains/live-session/store";
@@ -56,9 +56,31 @@ export function AppProviders({
   );
 }
 
+function useStoreSelector<TState, TSelected>(
+  store: { subscribe(listener: () => void): () => void; getState(): TState },
+  selector: (state: TState) => TSelected,
+  isEqual: (left: TSelected, right: TSelected) => boolean = Object.is,
+) {
+  const snapshotRef = useRef<{ selected: TSelected } | null>(null);
+  const getSnapshot = () => {
+    const selected = selector(store.getState());
+    const prior = snapshotRef.current;
+    if (prior && isEqual(prior.selected, selected)) {
+      return prior.selected;
+    }
+    snapshotRef.current = { selected };
+    return selected;
+  };
+  return useSyncExternalStore(store.subscribe, getSnapshot);
+}
+
 export function useSessionsStore() {
   const store = useContext(SessionsStoreContext);
   return useSyncExternalStore(store.subscribe, store.getState);
+}
+
+export function useSessionsStoreSelector<TSelected>(selector: (state: ReturnType<SessionsStore["getState"]>) => TSelected, isEqual?: (left: TSelected, right: TSelected) => boolean) {
+  return useStoreSelector(useContext(SessionsStoreContext), selector, isEqual);
 }
 
 export function useMessagesStore() {
@@ -66,9 +88,17 @@ export function useMessagesStore() {
   return useSyncExternalStore(store.subscribe, store.getState);
 }
 
+export function useMessagesStoreSelector<TSelected>(selector: (state: ReturnType<MessagesStore["getState"]>) => TSelected, isEqual?: (left: TSelected, right: TSelected) => boolean) {
+  return useStoreSelector(useContext(MessagesStoreContext), selector, isEqual);
+}
+
 export function useLiveSessionStore() {
   const store = useContext(LiveSessionStoreContext);
   return useSyncExternalStore(store.subscribe, store.getState);
+}
+
+export function useLiveSessionStoreSelector<TSelected>(selector: (state: ReturnType<LiveSessionStore["getState"]>) => TSelected, isEqual?: (left: TSelected, right: TSelected) => boolean) {
+  return useStoreSelector(useContext(LiveSessionStoreContext), selector, isEqual);
 }
 
 export function useComposerStore() {
@@ -76,14 +106,26 @@ export function useComposerStore() {
   return useSyncExternalStore(store.subscribe, store.getState);
 }
 
+export function useComposerStoreSelector<TSelected>(selector: (state: ReturnType<ComposerStore["getState"]>) => TSelected, isEqual?: (left: TSelected, right: TSelected) => boolean) {
+  return useStoreSelector(useContext(ComposerStoreContext), selector, isEqual);
+}
+
 export function useSessionUiStore() {
   const store = useContext(SessionUiStoreContext);
   return useSyncExternalStore(store.subscribe, store.getState);
 }
 
+export function useSessionUiStoreSelector<TSelected>(selector: (state: ReturnType<SessionUiStore["getState"]>) => TSelected, isEqual?: (left: TSelected, right: TSelected) => boolean) {
+  return useStoreSelector(useContext(SessionUiStoreContext), selector, isEqual);
+}
+
 export function useWaitsStore() {
   const store = useContext(WaitsStoreContext);
   return useSyncExternalStore(store.subscribe, store.getState);
+}
+
+export function useWaitsStoreSelector<TSelected>(selector: (state: ReturnType<WaitsStore["getState"]>) => TSelected, isEqual?: (left: TSelected, right: TSelected) => boolean) {
+  return useStoreSelector(useContext(WaitsStoreContext), selector, isEqual);
 }
 
 export function useSessionsStoreApi() {
