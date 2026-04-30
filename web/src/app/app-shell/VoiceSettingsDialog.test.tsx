@@ -1,4 +1,5 @@
 import { render } from "preact";
+import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { VoiceSettingsDialog } from "./VoiceSettingsDialog";
@@ -42,8 +43,8 @@ describe("VoiceSettingsDialog", () => {
       root,
     );
 
-    const testPushButton = root.querySelector('button[type="button"]');
     const buttons = Array.from(root.querySelectorAll("button"));
+    const testPushButton = buttons.find((button) => button.textContent === "Test Push");
     const cancelButton = buttons.find((button) => button.textContent === "Cancel");
     const saveButton = buttons.find((button) => button.textContent === "Save");
 
@@ -60,7 +61,7 @@ describe("VoiceSettingsDialog", () => {
     expect(saveButton?.className).not.toContain("primaryButton");
   });
 
-  it("wires action callbacks through the footer controls", () => {
+  it("wires action callbacks through the footer controls", async () => {
     const onClose = vi.fn();
     const onSave = vi.fn();
     const onTriggerTestPush = vi.fn();
@@ -97,6 +98,9 @@ describe("VoiceSettingsDialog", () => {
     buttons.find((button) => button.textContent === "Test Push")?.click();
     buttons.find((button) => button.textContent === "Cancel")?.click();
     buttons.find((button) => button.textContent === "Save")?.click();
+    await act(async () => {
+      buttons.find((button) => button.textContent === "Display")?.click();
+    });
     const darkRadio = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="radio"]')).find((input) => !input.checked);
     darkRadio?.click();
 

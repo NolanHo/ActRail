@@ -807,9 +807,19 @@ describe("AppShell", () => {
 
     expect(getRoot().textContent).toContain("OpenAI-compatible API base URL");
     expect(getRoot().textContent).toContain("OpenAI-compatible API key");
+
+    act(() => {
+      Array.from(getRoot().querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((item) => item.textContent === "Behavior")?.click();
+    });
+    await flush();
     expect(getRoot().textContent).toContain("Announce narration messages");
     expect(getRoot().textContent).toContain("Press Enter to send");
     expect(getRoot().textContent).toContain("Play a short beep when the assistant finishes a reply");
+
+    act(() => {
+      Array.from(getRoot().querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((item) => item.textContent === "Display")?.click();
+    });
+    await flush();
     expect(getRoot().textContent).toContain("Theme");
     expect(getRoot().textContent).toContain("Paper-like surfaces with cobalt markdown accents.");
     expect(getRoot().textContent).toContain("Ink surfaces with brighter markdown contrast for long sessions.");
@@ -824,6 +834,11 @@ describe("AppShell", () => {
 
     act(() => {
       button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    act(() => {
+      Array.from(getRoot().querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((item) => item.textContent === "Display")?.click();
     });
     await flush();
 
@@ -851,6 +866,11 @@ describe("AppShell", () => {
 
     act(() => {
       button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    act(() => {
+      Array.from(getRoot().querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((item) => item.textContent === "Behavior")?.click();
     });
     await flush();
 
