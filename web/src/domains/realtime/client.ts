@@ -1,5 +1,6 @@
 import { HttpError } from "../../lib/http";
 import type { RealtimeEnvelope } from "../../lib/types";
+import { frameToRealtimeEnvelope, sendConnectCommand, subscribeConnectEvents } from "./connect";
 
 export type RealtimeConnectionState = "idle" | "connecting" | "open" | "error" | "closed";
 
@@ -7,6 +8,8 @@ export interface RealtimeClientConfig {
   protocolVersion?: number;
   url?: string | null;
   heartbeatIntervalMs?: number;
+  transport?: "ws" | "connect";
+  connectBasePath?: string | null;
 }
 
 export interface RealtimeStreamSubscription {
@@ -43,6 +46,8 @@ let reconnectTimer: number | null = null;
 let heartbeatTimer: number | null = null;
 let shouldReconnect = false;
 let nextRequestId = 0;
+let connectAbortController: AbortController | null = null;
+let connectLastEventId = 0;
 
 const frameListeners = new Set<(frame: RealtimeEnvelope) => void>();
 const stateListeners = new Set<(next: RealtimeConnectionState) => void>();
@@ -84,6 +89,10 @@ function scheduleReconnect() {
     reconnectTimer = null;
     void connect();
   }, DEFAULT_RECONNECT_DELAY_MS);
+}
+
+function connectConfig() {
+  return { basePath: config.connectBasePath || "/api/connect" };
 }
 
 function resolveSocketUrl(rawUrl?: string | null) {
@@ -187,13 +196,20 @@ function handleFrame(frame: RealtimeEnvelope) {
 
 export function configureRealtimeClient(next: RealtimeClientConfig) {
   const nextUrl = String(next.url || "").trim() || null;
-  const changed = nextUrl !== config.url || next.protocolVersion !== config.protocolVersion;
+  const nextTransport = next.transport || "ws";
+  const nextConnectBasePath = String(next.connectBasePath || "").trim() || null;
+  const changed = nextUrl !== config.url
+    || next.protocolVersion !== config.protocolVersion
+    || nextTransport !== config.transport
+    || nextConnectBasePath !== config.connectBasePath;
   config = {
     protocolVersion: next.protocolVersion ?? config.protocolVersion ?? DEFAULT_PROTOCOL_VERSION,
     url: nextUrl,
     heartbeatIntervalMs: next.heartbeatIntervalMs ?? config.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+    transport: nextTransport,
+    connectBasePath: nextConnectBasePath,
   };
-  if (changed && socket) {
+  if (changed && (socket || connectAbortController)) {
     disconnect();
   }
 }
@@ -234,6 +250,40 @@ export async function connect() {
   if (connectPromise) {
     return connectPromise;
   }
+  if (config.transport === "connect") {
+    if (typeof window === "undefined") {
+      return;
+    }
+    shouldReconnect = true;
+    emitState("connecting");
+    const controller = new AbortController();
+    connectAbortController = controller;
+    connectPromise = subscribeConnectEvents(connectConfig(), connectLastEventId, (rawFrame) => {
+      const frame = frameToRealtimeEnvelope(rawFrame);
+      if (!frame) return;
+      const id = Number(frame.id || 0);
+      if (Number.isFinite(id) && id > connectLastEventId) {
+        connectLastEventId = id;
+      }
+      handleFrame(frame);
+    }, controller.signal).then(() => {
+      connectPromise = null;
+      connectAbortController = null;
+      emitState("closed");
+      if (shouldReconnect) scheduleReconnect();
+    }).catch((error) => {
+      connectPromise = null;
+      connectAbortController = null;
+      if (!controller.signal.aborted) {
+        emitState("error");
+        scheduleReconnect();
+        throw error;
+      }
+    });
+    emitState("open");
+    return;
+  }
+
   const url = resolveSocketUrl(config.url);
   if (!url || typeof window === "undefined" || typeof WebSocket === "undefined") {
     return;
@@ -293,6 +343,10 @@ export function disconnect() {
   clearReconnectTimer();
   clearHeartbeatTimer();
   rejectPendingCommands(new Error("Realtime socket disconnected"));
+  if (connectAbortController) {
+    connectAbortController.abort();
+    connectAbortController = null;
+  }
   if (socket) {
     socket.close();
     socket = null;
@@ -307,6 +361,10 @@ export async function sendRealtimeCommand(command: RealtimeCommand) {
   }
   if (!command.stream.trim()) {
     throw new Error("Realtime command stream required");
+  }
+
+  if (config.transport === "connect") {
+    return sendConnectCommand(connectConfig(), command);
   }
 
   await connect();

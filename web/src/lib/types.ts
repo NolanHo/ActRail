@@ -27,6 +27,13 @@ export interface BootstrapCapabilities {
   pi_ui?: boolean;
   workspace_read?: boolean;
   workspace_write?: boolean;
+  exp_connect_transport?: boolean;
+}
+
+export interface BootstrapTransportConfig {
+  default?: string;
+  experimental?: string[];
+  connect_path?: string;
 }
 
 export interface BootstrapWebSocketConfig {
@@ -212,6 +219,7 @@ export interface SessionBootstrapResponse {
   protocol_version?: number;
   capabilities?: BootstrapCapabilities;
   ws?: BootstrapWebSocketConfig;
+  transport?: BootstrapTransportConfig;
   launch_defaults?: {
     default_backend?: string;
     available_backends?: string[];

@@ -10,6 +10,7 @@ import (
 
 	"actrail/internal/app"
 	"actrail/internal/config"
+	"actrail/internal/connectapi"
 	"actrail/internal/httpapi"
 	"actrail/internal/ws"
 )
@@ -38,14 +39,15 @@ func main() {
 		os.Exit(1)
 	}
 	registry := ws.NewRegistry()
-	publisher := ws.NewPublisher(registry, replay)
+	connectBroker := connectapi.NewBroker(5000)
+	publisher := ws.NewPublisher(registry, replay, ws.WithFrameObserver(connectBroker))
 	bridge := ws.NewAppBridge(service, service, publisher)
 	service.SetRuntimeEventSink(bridge)
 	handler := httpapi.New(cfg, service, ws.NewHandler(cfg,
 		ws.WithRegistry(registry),
 		ws.WithReplayBuffer(replay),
 		ws.WithCommandTarget(bridge),
-	))
+	), connectapi.NewHandler(service, connectBroker))
 	server := &http.Server{
 		Addr:         cfg.Addr(),
 		Handler:      handler,

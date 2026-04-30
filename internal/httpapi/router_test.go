@@ -272,13 +272,14 @@ func (s *fixtureService) Bootstrap(_ context.Context, _ app.BootstrapRequest) ap
 	return app.BootstrapSnapshot{
 		ProtocolVersion: 1,
 		Capabilities: app.Capabilities{
-			WSRealtime:     true,
-			Voice:          false,
-			Harness:        false,
-			Notifications:  false,
-			PIUI:           true,
-			WorkspaceRead:  true,
-			WorkspaceWrite: false,
+			WSRealtime:          true,
+			Voice:               false,
+			Harness:             false,
+			Notifications:       false,
+			PIUI:                true,
+			WorkspaceRead:       true,
+			WorkspaceWrite:      false,
+			ExpConnectTransport: true,
 		},
 		WS: app.WSConfig{
 			URL:                 "/api/ws",

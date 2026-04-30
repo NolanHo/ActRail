@@ -115,6 +115,7 @@ type BootstrapSnapshot struct {
 	ProtocolVersion    int                     `json:"protocol_version"`
 	Capabilities       Capabilities            `json:"capabilities"`
 	WS                 WSConfig                `json:"ws"`
+	Transport          TransportConfig         `json:"transport"`
 	LaunchDefaults     LaunchConfig            `json:"launch_defaults"`
 	NewSessionDefaults NewSessionDefaults      `json:"new_session_defaults,omitempty"`
 	UI                 UIConfig                `json:"ui"`
@@ -123,13 +124,20 @@ type BootstrapSnapshot struct {
 }
 
 type Capabilities struct {
-	WSRealtime     bool `json:"ws_realtime"`
-	Voice          bool `json:"voice"`
-	Harness        bool `json:"harness"`
-	Notifications  bool `json:"notifications"`
-	PIUI           bool `json:"pi_ui"`
-	WorkspaceRead  bool `json:"workspace_read"`
-	WorkspaceWrite bool `json:"workspace_write"`
+	WSRealtime          bool `json:"ws_realtime"`
+	Voice               bool `json:"voice"`
+	Harness             bool `json:"harness"`
+	Notifications       bool `json:"notifications"`
+	PIUI                bool `json:"pi_ui"`
+	WorkspaceRead       bool `json:"workspace_read"`
+	WorkspaceWrite      bool `json:"workspace_write"`
+	ExpConnectTransport bool `json:"exp_connect_transport"`
+}
+
+type TransportConfig struct {
+	Default      string   `json:"default"`
+	Experimental []string `json:"experimental,omitempty"`
+	ConnectPath  string   `json:"connect_path,omitempty"`
 }
 
 type WSConfig struct {
@@ -314,18 +322,24 @@ func (s *Stub) Bootstrap(ctx context.Context, req BootstrapRequest) BootstrapSna
 	return BootstrapSnapshot{
 		ProtocolVersion: s.cfg.Protocol.Version,
 		Capabilities: Capabilities{
-			WSRealtime:     s.cfg.Features.WebSocketRealtime,
-			Voice:          s.cfg.Features.Voice,
-			Harness:        s.cfg.Features.Harness,
-			Notifications:  s.cfg.Features.Notifications,
-			PIUI:           s.cfg.Features.PIUI,
-			WorkspaceRead:  s.cfg.Features.WorkspaceRead,
-			WorkspaceWrite: s.cfg.Features.WorkspaceWrite,
+			WSRealtime:          s.cfg.Features.WebSocketRealtime,
+			Voice:               s.cfg.Features.Voice,
+			Harness:             s.cfg.Features.Harness,
+			Notifications:       s.cfg.Features.Notifications,
+			PIUI:                s.cfg.Features.PIUI,
+			WorkspaceRead:       s.cfg.Features.WorkspaceRead,
+			WorkspaceWrite:      s.cfg.Features.WorkspaceWrite,
+			ExpConnectTransport: true,
 		},
 		WS: WSConfig{
 			URL:                 s.cfg.Protocol.WebSocketPath,
 			HeartbeatIntervalMS: s.cfg.HeartbeatIntervalMillis(),
 			ResumeBufferEvents:  s.cfg.Protocol.ResumeBuffer,
+		},
+		Transport: TransportConfig{
+			Default:      "ws",
+			Experimental: []string{"connect"},
+			ConnectPath:  "/api/connect",
 		},
 		LaunchDefaults: LaunchConfig{
 			DefaultBackend:    s.cfg.Launch.DefaultBackend,
