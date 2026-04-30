@@ -51,6 +51,36 @@ func TestSupervisorProviderSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSupervisorRunRoundTripAndAnchorLookup(t *testing.T) {
+	catalog, err := OpenSessionCatalog(filepath.Join(t.TempDir(), "actrail.db"))
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+	now := time.Unix(1760000000, 0).UTC()
+	if err := catalog.UpsertSessionSnapshot(context.Background(), SessionSnapshotRow{Session: SessionRow{SessionID: "s_1", Backend: "pi", CWD: "/tmp/project", CreatedAt: now, UpdatedAt: now, ActivityAt: now}}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot() error = %v", err)
+	}
+	run := SupervisorRunRow{RunID: "supervisor_1", SessionID: "s_1", AnchorAssistantEventID: "pi:message:a1", AnchorAssistantTS: 1760000000, AnchorAssistantTextHash: "hash", Status: "stop", Action: "stop", Reason: "complete", Model: "model-a", BaseURL: "https://llm.invalid/v1", SnapshotJSON: "{}", RawOutput: `{"action":"stop","reason":"complete"}`, CreatedAt: now}
+	if err := catalog.InsertSupervisorRun(context.Background(), run); err != nil {
+		t.Fatalf("InsertSupervisorRun() error = %v", err)
+	}
+	found, ok, err := catalog.LookupSupervisorRunByAnchor(context.Background(), "s_1", "pi:message:a1")
+	if err != nil {
+		t.Fatalf("LookupSupervisorRunByAnchor() error = %v", err)
+	}
+	if !ok || found.RunID != "supervisor_1" || found.Status != "stop" || found.Reason != "complete" {
+		t.Fatalf("LookupSupervisorRunByAnchor() = %+v, %v", found, ok)
+	}
+	runs, err := catalog.ListSupervisorRuns(context.Background(), "s_1", 10)
+	if err != nil {
+		t.Fatalf("ListSupervisorRuns() error = %v", err)
+	}
+	if len(runs) != 1 || runs[0].RunID != "supervisor_1" {
+		t.Fatalf("ListSupervisorRuns() = %+v", runs)
+	}
+}
+
 func TestSessionSupervisorConfigRoundTrip(t *testing.T) {
 	catalog, err := OpenSessionCatalog(filepath.Join(t.TempDir(), "actrail.db"))
 	if err != nil {

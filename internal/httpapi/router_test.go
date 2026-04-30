@@ -234,6 +234,14 @@ func (s serviceStub) UpdateSessionSupervisor(ctx context.Context, req app.Update
 	return s.base.UpdateSessionSupervisor(ctx, req)
 }
 
+func (s serviceStub) SupervisorRuns(ctx context.Context, req app.SupervisorRunsRequest) (app.SupervisorRunsResponse, error) {
+	return s.base.SupervisorRuns(ctx, req)
+}
+
+func (s serviceStub) RunSupervisorOnce(ctx context.Context, req app.SupervisorRunOnceRequest) (app.SupervisorRunOnceResponse, error) {
+	return s.base.RunSupervisorOnce(ctx, req)
+}
+
 type fixtureService struct {
 	listReq           app.ListSessionsRequest
 	createReq         app.CreateSessionRequest
@@ -256,6 +264,8 @@ type fixtureService struct {
 	handoffReq        app.HandoffSessionRequest
 	supervisorReq     app.SessionSupervisorRequest
 	supervisorEditReq app.UpdateSessionSupervisorRequest
+	supervisorRunsReq app.SupervisorRunsRequest
+	supervisorOnceReq app.SupervisorRunOnceRequest
 }
 
 func (s *fixtureService) Bootstrap(_ context.Context, _ app.BootstrapRequest) app.BootstrapSnapshot {
@@ -604,6 +614,16 @@ func (s *fixtureService) UpdateSessionSupervisor(_ context.Context, req app.Upda
 	return app.SessionSupervisorResponse{OK: true, Supported: true, Enabled: enabled, Status: "idle", IdleAfterMinutes: 5, MaxConsecutiveInjections: 10, ContextFiles: []string{}}, nil
 }
 
+func (s *fixtureService) SupervisorRuns(_ context.Context, req app.SupervisorRunsRequest) (app.SupervisorRunsResponse, error) {
+	s.supervisorRunsReq = req
+	return app.SupervisorRunsResponse{OK: true, Runs: []app.SupervisorRunSummary{{RunID: "supervisor_1", AnchorAssistantEventID: "pi:message:a1", Status: "stop", Reason: "complete"}}}, nil
+}
+
+func (s *fixtureService) RunSupervisorOnce(_ context.Context, req app.SupervisorRunOnceRequest) (app.SupervisorRunOnceResponse, error) {
+	s.supervisorOnceReq = req
+	return app.SupervisorRunOnceResponse{OK: true, Run: app.SupervisorRunSummary{RunID: "supervisor_2", AnchorAssistantEventID: "pi:message:a2", Status: "stop", Reason: "dry run"}}, nil
+}
+
 func newTestRouter(cfg config.Config, svc app.Service) http.Handler {
 	return New(cfg, svc, ws.NewHandler(cfg))
 }
@@ -639,6 +659,21 @@ func TestSupervisorRoutesReturnProviderAndSessionConfig(t *testing.T) {
 	}
 	if svc.supervisorEditReq.SessionID.String() != "s_123" || svc.supervisorEditReq.Enabled == nil || *svc.supervisorEditReq.Enabled != true || svc.supervisorEditReq.IdleAfterMinutes == nil || *svc.supervisorEditReq.IdleAfterMinutes != 2 {
 		t.Fatalf("supervisor edit req = %+v", svc.supervisorEditReq)
+	}
+
+	runsReq := httptest.NewRequest(http.MethodGet, "/api/sessions/s_123/supervisor/runs?limit=5", nil)
+	runsRes := httptest.NewRecorder()
+	h.ServeHTTP(runsRes, runsReq)
+	if runsRes.Code != http.StatusOK || svc.supervisorRunsReq.SessionID.String() != "s_123" || svc.supervisorRunsReq.Limit != 5 {
+		t.Fatalf("GET runs status=%d req=%+v body=%s", runsRes.Code, svc.supervisorRunsReq, runsRes.Body.String())
+	}
+
+	runOnceReq := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/supervisor/run-once", strings.NewReader(`{"dry_run":true}`))
+	runOnceReq.Header.Set("Content-Type", "application/json")
+	runOnceRes := httptest.NewRecorder()
+	h.ServeHTTP(runOnceRes, runOnceReq)
+	if runOnceRes.Code != http.StatusOK || svc.supervisorOnceReq.SessionID.String() != "s_123" || !svc.supervisorOnceReq.DryRun {
+		t.Fatalf("POST run-once status=%d req=%+v body=%s", runOnceRes.Code, svc.supervisorOnceReq, runOnceRes.Body.String())
 	}
 }
 

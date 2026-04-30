@@ -54,20 +54,21 @@ type SessionMessagesRequest struct {
 }
 
 type SessionMessage struct {
-	Seq           uint64         `json:"seq"`
-	Role          string         `json:"role,omitempty"`
-	Kind          string         `json:"kind"`
-	Type          string         `json:"type,omitempty"`
-	Text          string         `json:"text"`
-	TS            float64        `json:"ts"`
-	EventID       string         `json:"event_id,omitempty"`
-	ParentEventID string         `json:"parent_event_id,omitempty"`
-	SourceOrder   string         `json:"source_order,omitempty"`
-	Name          string         `json:"name,omitempty"`
-	Summary       string         `json:"summary,omitempty"`
-	ToolCallID    string         `json:"tool_call_id,omitempty"`
-	IsError       bool           `json:"is_error,omitempty"`
-	Details       map[string]any `json:"details,omitempty"`
+	Seq            uint64                 `json:"seq"`
+	Role           string                 `json:"role,omitempty"`
+	Kind           string                 `json:"kind"`
+	Type           string                 `json:"type,omitempty"`
+	Text           string                 `json:"text"`
+	TS             float64                `json:"ts"`
+	EventID        string                 `json:"event_id,omitempty"`
+	ParentEventID  string                 `json:"parent_event_id,omitempty"`
+	SourceOrder    string                 `json:"source_order,omitempty"`
+	Name           string                 `json:"name,omitempty"`
+	Summary        string                 `json:"summary,omitempty"`
+	ToolCallID     string                 `json:"tool_call_id,omitempty"`
+	IsError        bool                   `json:"is_error,omitempty"`
+	Details        map[string]any         `json:"details,omitempty"`
+	SupervisorRuns []SupervisorRunSummary `json:"supervisor_runs,omitempty"`
 }
 
 type SessionMessagesResponse struct {
@@ -274,10 +275,10 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		return SessionMessagesResponse{}, err
 	}
 	if response, ok, err := s.loadPIAuthoritativeHistory(ctx, record, s.cfg.Storage.DataDir, req); ok {
-		return response, err
+		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
 	}
 	if response, ok, err := s.loadDetachedImportedPIHistory(ctx, record, req); ok {
-		return response, err
+		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
 	}
 	page := record.transcript.History(messageBeforeSeq(req.BeforeSeq), req.Limit)
 	items := page.Items()
@@ -293,7 +294,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		value := nextBefore.Uint64()
 		response.NextBeforeSeq = &value
 	}
-	return response, nil
+	return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
 }
 
 func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (SessionStateResponse, error) {

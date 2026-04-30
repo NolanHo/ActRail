@@ -64,6 +64,10 @@ type sessionSupervisorRequest struct {
 	ContextFiles             *[]string `json:"context_files"`
 }
 
+type supervisorRunOnceRequest struct {
+	DryRun bool `json:"dry_run"`
+}
+
 func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handler {
 	r := Router{cfg: cfg, app: svc, ws: wsHandler}
 	mux := http.NewServeMux()
@@ -82,6 +86,8 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler) http.Handle
 	mux.Handle("GET /api/sessions/{session_id}/messages", r.requireAuth(http.HandlerFunc(r.sessionMessages)))
 	mux.Handle("GET /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.sessionSupervisor)))
 	mux.Handle("POST /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.updateSessionSupervisor)))
+	mux.Handle("GET /api/sessions/{session_id}/supervisor/runs", r.requireAuth(http.HandlerFunc(r.supervisorRuns)))
+	mux.Handle("POST /api/sessions/{session_id}/supervisor/run-once", r.requireAuth(http.HandlerFunc(r.runSupervisorOnce)))
 	mux.Handle("GET /api/sessions/{session_id}/state", r.requireAuth(http.HandlerFunc(r.sessionState)))
 	mux.Handle("GET /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.sessionWorkspace)))
 	mux.Handle("POST /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.updateSessionWorkspace)))
@@ -359,6 +365,42 @@ func (r Router) updateSessionSupervisor(w http.ResponseWriter, req *http.Request
 		AcceptanceCriteria:       body.AcceptanceCriteria,
 		ContextFiles:             body.ContextFiles,
 	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) supervisorRuns(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	limit, err := queryInt(req, "limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.SupervisorRuns(req.Context(), app.SupervisorRunsRequest{SessionID: sessionID, Limit: limit})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) runSupervisorOnce(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body supervisorRunOnceRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.RunSupervisorOnce(req.Context(), app.SupervisorRunOnceRequest{SessionID: sessionID, DryRun: body.DryRun})
 	if err != nil {
 		writeAppError(w, err)
 		return

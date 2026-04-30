@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +23,9 @@ type supervisorStore interface {
 	UpsertSupervisorProviderSettings(context.Context, sqlitestore.SupervisorProviderSettingsRow) error
 	LookupSessionSupervisorConfig(context.Context, string) (sqlitestore.SessionSupervisorConfigRow, bool, error)
 	UpsertSessionSupervisorConfig(context.Context, sqlitestore.SessionSupervisorConfigRow) error
+	InsertSupervisorRun(context.Context, sqlitestore.SupervisorRunRow) error
+	ListSupervisorRuns(context.Context, string, int) ([]sqlitestore.SupervisorRunRow, error)
+	LookupSupervisorRunByAnchor(context.Context, string, string) (sqlitestore.SupervisorRunRow, bool, error)
 }
 
 type SupervisorProviderRequest struct{}
@@ -40,6 +46,40 @@ type UpdateSupervisorProviderRequest struct {
 
 type SessionSupervisorRequest struct {
 	SessionID session.SessionID
+}
+
+type SupervisorRunSummary struct {
+	RunID                  string  `json:"run_id"`
+	AnchorAssistantEventID string  `json:"anchor_assistant_event_id"`
+	AnchorAssistantTS      float64 `json:"anchor_assistant_ts,omitempty"`
+	Status                 string  `json:"status"`
+	Action                 string  `json:"action,omitempty"`
+	InjectedText           string  `json:"injected_text,omitempty"`
+	Reason                 string  `json:"reason,omitempty"`
+	Error                  string  `json:"error,omitempty"`
+	Model                  string  `json:"model,omitempty"`
+	BaseURL                string  `json:"base_url,omitempty"`
+	CreatedTS              float64 `json:"created_ts,omitempty"`
+}
+
+type SupervisorRunsRequest struct {
+	SessionID session.SessionID
+	Limit     int
+}
+
+type SupervisorRunsResponse struct {
+	OK   bool                   `json:"ok"`
+	Runs []SupervisorRunSummary `json:"runs"`
+}
+
+type SupervisorRunOnceRequest struct {
+	SessionID session.SessionID
+	DryRun    bool
+}
+
+type SupervisorRunOnceResponse struct {
+	OK  bool                 `json:"ok"`
+	Run SupervisorRunSummary `json:"run"`
 }
 
 type SessionSupervisorResponse struct {
@@ -71,6 +111,7 @@ type memorySupervisorStore struct {
 	provider       sqlitestore.SupervisorProviderSettingsRow
 	providerSet    bool
 	sessionConfigs map[string]sqlitestore.SessionSupervisorConfigRow
+	runs           []sqlitestore.SupervisorRunRow
 }
 
 func newMemorySupervisorStore() *memorySupervisorStore {
@@ -103,6 +144,44 @@ func (m *memorySupervisorStore) UpsertSessionSupervisorConfig(_ context.Context,
 	defer m.mu.Unlock()
 	m.sessionConfigs[row.SessionID] = row
 	return nil
+}
+
+func (m *memorySupervisorStore) InsertSupervisorRun(_ context.Context, row sqlitestore.SupervisorRunRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.runs {
+		if existing.SessionID == row.SessionID && existing.AnchorAssistantEventID == row.AnchorAssistantEventID {
+			return fmt.Errorf("supervisor run for anchor already exists")
+		}
+	}
+	m.runs = append(m.runs, row)
+	return nil
+}
+
+func (m *memorySupervisorStore) ListSupervisorRuns(_ context.Context, sessionID string, limit int) ([]sqlitestore.SupervisorRunRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	out := make([]sqlitestore.SupervisorRunRow, 0)
+	for i := len(m.runs) - 1; i >= 0 && len(out) < limit; i-- {
+		if m.runs[i].SessionID == sessionID {
+			out = append(out, m.runs[i])
+		}
+	}
+	return out, nil
+}
+
+func (m *memorySupervisorStore) LookupSupervisorRunByAnchor(_ context.Context, sessionID, anchor string) (sqlitestore.SupervisorRunRow, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, row := range m.runs {
+		if row.SessionID == sessionID && row.AnchorAssistantEventID == anchor {
+			return row, true, nil
+		}
+	}
+	return sqlitestore.SupervisorRunRow{}, false, nil
 }
 
 func (s *Stub) SupervisorProvider(ctx context.Context, _ SupervisorProviderRequest) (SupervisorProviderResponse, error) {
@@ -294,4 +373,142 @@ func cleanContextFiles(values []string) []string {
 		out = append(out, trimmed)
 	}
 	return out
+}
+func (s *Stub) SupervisorRuns(ctx context.Context, req SupervisorRunsRequest) (SupervisorRunsResponse, error) {
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
+		return SupervisorRunsResponse{}, err
+	}
+	rows, err := s.supervisorStore.ListSupervisorRuns(ctx, record.identity.SessionID().String(), req.Limit)
+	if err != nil {
+		return SupervisorRunsResponse{}, err
+	}
+	return SupervisorRunsResponse{OK: true, Runs: supervisorRunSummaries(rows)}, nil
+}
+
+func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceRequest) (SupervisorRunOnceResponse, error) {
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
+		return SupervisorRunOnceResponse{}, err
+	}
+	if record.identity.Backend() != session.BackendPI {
+		return SupervisorRunOnceResponse{}, UnsupportedBackend("supervisor mode is only supported for pi sessions")
+	}
+	config, err := s.sessionSupervisorConfig(ctx, record.identity.SessionID())
+	if err != nil {
+		return SupervisorRunOnceResponse{}, err
+	}
+	if !config.Enabled {
+		return SupervisorRunOnceResponse{}, Conflict("supervisor mode is disabled")
+	}
+	provider, err := s.SupervisorProvider(ctx, SupervisorProviderRequest{})
+	if err != nil {
+		return SupervisorRunOnceResponse{}, err
+	}
+	if !provider.Complete {
+		return SupervisorRunOnceResponse{}, Conflict("supervisor provider settings are incomplete")
+	}
+	anchor, err := s.lastStablePIAssistantAnchor(ctx, record)
+	if err != nil {
+		return SupervisorRunOnceResponse{}, err
+	}
+	if existing, ok, err := s.supervisorStore.LookupSupervisorRunByAnchor(ctx, record.identity.SessionID().String(), anchor.EventID); err != nil {
+		return SupervisorRunOnceResponse{}, err
+	} else if ok {
+		return SupervisorRunOnceResponse{OK: true, Run: supervisorRunSummary(existing)}, nil
+	}
+	run := sqlitestore.SupervisorRunRow{
+		RunID:                   newID("supervisor"),
+		SessionID:               record.identity.SessionID().String(),
+		AnchorAssistantEventID:  anchor.EventID,
+		AnchorAssistantTS:       anchor.TS,
+		AnchorAssistantTextHash: textHash(anchor.Text),
+		Status:                  "stop",
+		Action:                  "stop",
+		Reason:                  "dry run placeholder: model evaluation not executed",
+		Model:                   provider.Model,
+		BaseURL:                 provider.BaseURL,
+		SnapshotJSON:            "{}",
+		CreatedAt:               s.registry.now(),
+	}
+	if !req.DryRun {
+		run.Status = "error"
+		run.Action = ""
+		run.Reason = ""
+		run.Error = "non-dry-run supervisor execution is not implemented"
+	}
+	if err := s.supervisorStore.InsertSupervisorRun(ctx, run); err != nil {
+		if existing, ok, lookupErr := s.supervisorStore.LookupSupervisorRunByAnchor(ctx, record.identity.SessionID().String(), anchor.EventID); lookupErr == nil && ok {
+			return SupervisorRunOnceResponse{OK: true, Run: supervisorRunSummary(existing)}, nil
+		}
+		return SupervisorRunOnceResponse{}, err
+	}
+	return SupervisorRunOnceResponse{OK: true, Run: supervisorRunSummary(run)}, nil
+}
+
+func (s *Stub) lastStablePIAssistantAnchor(ctx context.Context, record sessionRecord) (SessionMessage, error) {
+	response, err := s.SessionMessages(ctx, SessionMessagesRequest{SessionID: record.identity.SessionID(), Limit: 200})
+	if err != nil {
+		return SessionMessage{}, err
+	}
+	for i := len(response.Items) - 1; i >= 0; i-- {
+		item := response.Items[i]
+		if item.Role != "assistant" || strings.TrimSpace(item.Text) == "" {
+			continue
+		}
+		if !strings.HasPrefix(item.EventID, "pi:message:") {
+			return SessionMessage{}, Invalid("anchor_assistant_event_id", "last stable assistant message has no pi:message event id")
+		}
+		return item, nil
+	}
+	return SessionMessage{}, Conflict("no stable assistant message found")
+}
+
+func (s *Stub) annotateSupervisorRuns(ctx context.Context, sessionID session.SessionID, response SessionMessagesResponse) SessionMessagesResponse {
+	rows, err := s.supervisorStore.ListSupervisorRuns(ctx, sessionID.String(), 1000)
+	if err != nil || len(rows) == 0 {
+		return response
+	}
+	byAnchor := map[string][]SupervisorRunSummary{}
+	for _, row := range rows {
+		byAnchor[row.AnchorAssistantEventID] = append(byAnchor[row.AnchorAssistantEventID], supervisorRunSummary(row))
+	}
+	for i := range response.Items {
+		if response.Items[i].Role != "assistant" || response.Items[i].EventID == "" {
+			continue
+		}
+		if runs := byAnchor[response.Items[i].EventID]; len(runs) > 0 {
+			response.Items[i].SupervisorRuns = append([]SupervisorRunSummary(nil), runs...)
+		}
+	}
+	return response
+}
+
+func supervisorRunSummaries(rows []sqlitestore.SupervisorRunRow) []SupervisorRunSummary {
+	out := make([]SupervisorRunSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, supervisorRunSummary(row))
+	}
+	return out
+}
+
+func supervisorRunSummary(row sqlitestore.SupervisorRunRow) SupervisorRunSummary {
+	return SupervisorRunSummary{
+		RunID:                  row.RunID,
+		AnchorAssistantEventID: row.AnchorAssistantEventID,
+		AnchorAssistantTS:      row.AnchorAssistantTS,
+		Status:                 row.Status,
+		Action:                 row.Action,
+		InjectedText:           row.InjectedText,
+		Reason:                 row.Reason,
+		Error:                  row.Error,
+		Model:                  row.Model,
+		BaseURL:                row.BaseURL,
+		CreatedTS:              timestampSeconds(row.CreatedAt),
+	}
+}
+
+func textHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }

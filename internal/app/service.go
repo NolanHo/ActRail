@@ -46,6 +46,8 @@ type Service interface {
 	UpdateSupervisorProvider(context.Context, UpdateSupervisorProviderRequest) (SupervisorProviderResponse, error)
 	SessionSupervisor(context.Context, SessionSupervisorRequest) (SessionSupervisorResponse, error)
 	UpdateSessionSupervisor(context.Context, UpdateSessionSupervisorRequest) (SessionSupervisorResponse, error)
+	SupervisorRuns(context.Context, SupervisorRunsRequest) (SupervisorRunsResponse, error)
+	RunSupervisorOnce(context.Context, SupervisorRunOnceRequest) (SupervisorRunOnceResponse, error)
 }
 
 type Stub struct {
