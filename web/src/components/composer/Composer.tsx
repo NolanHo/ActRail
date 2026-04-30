@@ -72,7 +72,7 @@ function sessionBackendUnavailableLabel(session: SessionSummary | null) {
 
 const MOBILE_COMPOSER_QUERY = "(max-width: 880px)";
 const MOBILE_COMPOSER_MIN_HEIGHT_PX = 56;
-const MOBILE_COMPOSER_MAX_HEIGHT_PX = 176;
+const MOBILE_COMPOSER_MAX_HEIGHT_PX = 112;
 const POST_SEND_REFRESH_DELAYS_MS = [1500, 4000, 8000];
 
 export type ComposerMode = "idle" | "typing" | "slash_menu" | "attachment" | "sending" | "busy" | "waiting_user" | "disabled";

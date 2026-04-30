@@ -405,10 +405,10 @@ select {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 70%, white);
-  border-radius: 28px;
-  background: color-mix(in srgb, var(--panel) 97%, white);
-  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.08);
+  border: 0;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--panel) 99%, white);
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -441,36 +441,19 @@ select {
 .mobileReadHeader,
 .mobileSectionHeader {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.9rem;
-  padding: 0.95rem 1rem 0.75rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 78%, white);
-}
-
-.mobileRouteHeader {
-  flex-direction: column;
-  align-items: stretch;
-}
-
-.mobileRouteHeaderTop,
-.mobileRouteActions {
-  display: flex;
   align-items: center;
-  gap: 0.55rem;
-}
-
-.mobileRouteHeaderTop {
   justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.7rem 0.85rem 0.55rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 72%, white);
 }
 
-.mobileRouteActions {
-  overflow-x: auto;
-  padding-bottom: 0.1rem;
+.mobileRouteHeader.compact {
+  padding: 0.35rem 0.65rem 0.25rem;
+  border-bottom: 0;
 }
 
-.mobileBackButton,
-.mobileRouteActions button {
+.mobileBackButton {
   flex: 0 0 auto;
 }
 
@@ -597,18 +580,18 @@ select {
 
 .mobileBottomNav {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.35rem;
-  padding: 0.75rem 0.9rem calc(0.75rem + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom) + var(--keyboardBottom, 0px));
   border-top: 1px solid color-mix(in srgb, var(--legacy-border) 78%, white);
   background: color-mix(in srgb, var(--panel) 94%, white);
 }
 
 .mobileBottomNavButton {
-  min-height: 2.7rem;
+  min-height: 2.65rem;
   border-radius: 999px;
-  padding-inline: 0.35rem;
-  font-size: 0.72rem;
+  padding-inline: 0.45rem;
+  font-size: 0.82rem;
 }
 
 .mobileToolCardStatic {
@@ -764,8 +747,21 @@ select {
   line-height: 1.05;
 }
 
-.sessionsNewButton {
+.sessionsHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   flex: 0 0 auto;
+}
+
+.sessionsNewButton,
+.sessionsMoreButton {
+  flex: 0 0 auto;
+}
+
+.sessionsMoreButton {
+  min-width: 2.4rem;
+  padding-inline: 0.65rem;
 }
 
 .sessionsSurfaceTabs {
@@ -3436,8 +3432,8 @@ select {
     left: 0;
     height: var(--appH, 100dvh);
     max-height: var(--appH, 100dvh);
-    padding: 0.45rem;
-    gap: 0.45rem;
+    padding: 0;
+    gap: 0;
   }
 
   .appShell.legacyShell {
@@ -3639,12 +3635,24 @@ select {
   }
 
   .conversationPane {
-    padding: 12px 10px 6px;
-    scroll-padding-bottom: 148px;
+    padding: 10px 9px 6px;
+    scroll-padding-bottom: 112px;
+  }
+
+  .mobileReadPane .conversationPane {
+    padding: 4px 6px 4px;
+    scroll-padding-bottom: 52px;
+    background: color-mix(in srgb, var(--panel) 99%, white);
+  }
+
+  .mobileChatPane .conversationPane {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-bottom: 4px;
   }
 
   .mobileShell {
-    border-radius: 22px;
+    border-radius: 0;
   }
 
   .mobileShellBody {
@@ -3654,7 +3662,11 @@ select {
   .mobileRouteHeader,
   .mobileChatHeader,
   .mobileSectionHeader {
-    padding: 0.85rem 0.9rem 0.7rem;
+    padding: 0.65rem 0.75rem 0.5rem;
+  }
+
+  .mobileRouteHeader.compact {
+    padding: 0.3rem 0.55rem 0.2rem;
   }
 
   .mobileChatTitle,
@@ -3851,8 +3863,20 @@ select {
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
-    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    padding: 7px 9px calc(7px + env(safe-area-inset-bottom));
     border-radius: 1rem;
+  }
+
+  .mobileChatPane .composerStack {
+    flex: 0 0 auto;
+    max-height: min(42dvh, 260px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: calc(7px + env(safe-area-inset-bottom));
+  }
+
+  .mobileChatPane .composerTodoPanel {
+    max-height: min(18dvh, 140px);
   }
 
   .composerControlsRow {
@@ -3911,7 +3935,7 @@ select {
 
   .composerTextarea {
     min-height: 56px;
-    max-height: 176px;
+    max-height: 112px;
     padding: 7px 14px;
     font-size: 16px;
     line-height: 20px;

@@ -15,6 +15,7 @@ import { SessionCard } from "./SessionCard";
 
 interface SessionsPaneProps {
   onNewSession?: () => void;
+  onOpenSettings?: () => void;
   onSessionSelect?: (session: SessionSummary) => void;
 }
 
@@ -65,7 +66,7 @@ function restartSessionProgressLabel(session: SessionSummary) {
   return sessionBackendUnavailable(session) ? `Starting ${backend}...` : `Restarting ${backend}...`;
 }
 
-export function SessionsPane({ onNewSession, onSessionSelect }: SessionsPaneProps) {
+export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: SessionsPaneProps) {
   const { items, activeSessionId, remainingCount = 0 } = useSessionsStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
@@ -275,9 +276,16 @@ export function SessionsPane({ onNewSession, onSessionSelect }: SessionsPaneProp
             <p className="sessionsEyebrow">Continue where you left off</p>
             <h2 className="sessionsSurfaceTitle">Sessions</h2>
           </div>
-          <Button type="button" size="sm" className="sessionsNewButton" onClick={() => onNewSession?.()}>
-            New session
-          </Button>
+          <div className="sessionsHeaderActions">
+            <Button type="button" size="sm" className="sessionsNewButton" onClick={() => onNewSession?.()}>
+              New session
+            </Button>
+            {onOpenSettings ? (
+              <Button type="button" size="sm" variant="outline" className="sessionsMoreButton" aria-label="Settings" onClick={() => onOpenSettings()}>
+                ...
+              </Button>
+            ) : null}
+          </div>
         </div>
         <div className="sessionsSurfaceTabs" role="tablist" aria-label="Session views">
           <Button

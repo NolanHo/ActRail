@@ -474,7 +474,7 @@ describe("AppShell", () => {
     expect(findButtonByAriaLabel("Interrupt (Esc)")?.querySelector("svg")).not.toBeNull();
   });
 
-  it("defaults to conversation route on narrow viewports when a session is active", async () => {
+  it("defaults to read route on narrow viewports when a session is active", async () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -494,9 +494,12 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      expect(getRoot().textContent).toContain("Conversation");
+      expect(getRoot().textContent).toContain("Read");
       expect(findButtonByAriaLabel("Conversation tools")).toBeNull();
-      expect(getRoot().querySelector("[data-testid='composer-card']")).not.toBeNull();
+      expect(getRoot().querySelector("[data-testid='composer-card']")).toBeNull();
+      expect(findButtonByText("Files")).toBeUndefined();
+      expect(findButtonByText("Waits")).toBeUndefined();
+      expect(findButtonByText("Command")).toBeUndefined();
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
@@ -525,11 +528,16 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      expect(getRoot().textContent).toContain("Conversation");
+      expect(getRoot().textContent).toContain("Read");
       expect(findButtonByAriaLabel("Conversation tools")).toBeNull();
 
       act(() => {
-        findButtonByText("Settings")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        findButtonByText("Sessions")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      await flush();
+
+      act(() => {
+        findButtonByAriaLabel("Settings")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
       await flush();
 
@@ -562,7 +570,7 @@ describe("AppShell", () => {
     expect(dialog?.textContent).toContain("Diagnostics");
   });
 
-  it("opens workspace details as a route on narrow viewports", async () => {
+  it("omits workspace route on narrow viewports", async () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -582,17 +590,11 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      const button = findButtonByText("Workspace");
-      expect(button).not.toBeNull();
-      act(() => {
-        button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      });
-      await flush();
-
+      expect(findButtonByText("Workspace")).toBeUndefined();
+      expect(findButtonByText("Waits")).toBeUndefined();
+      expect(findButtonByText("Command")).toBeUndefined();
       expect(getRoot().querySelector("[data-testid='workspace-dialog']")).toBeNull();
-      expect(getRoot().querySelector("[data-testid='workspace-card']")).not.toBeNull();
-      expect(getRoot().textContent).toContain("Workspace");
-      expect(getRoot().textContent).toContain("Diagnostics");
+      expect(getRoot().querySelector("[data-testid='workspace-card']")).toBeNull();
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
@@ -622,12 +624,12 @@ describe("AppShell", () => {
       await flush();
 
       act(() => {
-        findButtonByText("Conversation")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        findButtonByText("Chat")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
       await flush();
 
       expect(getRoot().querySelector("[data-testid='composer-card']")).not.toBeNull();
-      expect(getRoot().textContent).toContain("Conversation");
+      expect(getRoot().textContent).toContain("Chat");
       expect(findButtonByText("Queue")).toBeUndefined();
       expect(findButtonByAriaLabel("Attach file")).toBeNull();
       expect(findButtonByAriaLabel("Cancel current loop")).not.toBeNull();
@@ -659,7 +661,7 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      expect(getRoot().textContent).toContain("Conversation");
+      expect(getRoot().textContent).toContain("Read");
       act(() => {
         findButtonByText("Sessions")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
