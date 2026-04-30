@@ -163,11 +163,26 @@ function eventCreatesConversationAnchor(event: MessageEvent | undefined): boolea
   return !MACHINE_TRACE_TYPES.has(type);
 }
 
+function duplicateDurableAssistant(a: MessageEvent, b: MessageEvent): boolean {
+  return a.role === "assistant"
+    && b.role === "assistant"
+    && a.streaming !== true
+    && b.streaming !== true
+    && typeof a.text === "string"
+    && a.text.length > 0
+    && a.text === b.text
+    && closeTimestamp(a.ts, b.ts);
+}
+
 function mergeLiveEvents(priorEvents: MessageEvent[], incomingEvents: MessageEvent[]): MessageEvent[] {
   const next = [...priorEvents];
 
   for (const incomingEvent of incomingEvents) {
     const withoutReplacedStreaming = next.filter((event) => !isStreamingAssistantEvent(event) || !streamedAssistantMatchesDurable(event, incomingEvent));
+    if (withoutReplacedStreaming.some((event) => duplicateDurableAssistant(event, incomingEvent))) {
+      next.splice(0, next.length, ...withoutReplacedStreaming);
+      continue;
+    }
     const incomingKey = stableMessageKey(incomingEvent);
     if (incomingKey) {
       const existingIndex = withoutReplacedStreaming.findIndex((event) => stableMessageKey(event) === incomingKey);

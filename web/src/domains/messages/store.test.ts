@@ -309,6 +309,26 @@ describe("createMessagesStore", () => {
     ]);
   });
 
+  it("drops duplicate durable assistant commits with different event ids", () => {
+    const store = createMessagesStore();
+
+    store.applyLive(
+      "s1",
+      [{ seq: 1, event_id: "evt-1", role: "assistant", text: "same answer", ts: 1000 } as any],
+      { replace: true, offset: 1 },
+    );
+    store.applyLive(
+      "s1",
+      [{ seq: 2, event_id: "evt-2", role: "assistant", text: "same answer", ts: 1001 } as any],
+      { replace: false, offset: 2 },
+    );
+
+    expect(store.getState().bySessionId.s1).toEqual([
+      { seq: 1, event_id: "evt-1", role: "assistant", text: "same answer", ts: 1000 },
+    ]);
+    expect(store.getState().offsetsBySessionId.s1).toBe(2);
+  });
+
   it("prepends older replay pages and tracks the next history cursor", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({
