@@ -1,4 +1,4 @@
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -64,6 +64,7 @@ function initialFormState(session: SessionSummary | null) {
     supervisorMaxConsecutiveInjections: Number(session?.supervisor?.max_consecutive_injections || 10),
     supervisorGoal: String(session?.supervisor?.goal || ""),
     supervisorAcceptanceCriteria: String(session?.supervisor?.acceptance_criteria || ""),
+    supervisorContextFilesText: Array.isArray(session?.supervisor?.context_files) ? session.supervisor.context_files.join("\n") : "",
   };
 }
 
@@ -79,6 +80,11 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
   const [supervisorMaxConsecutiveInjections, setSupervisorMaxConsecutiveInjections] = useState(() => initialFormState(session).supervisorMaxConsecutiveInjections);
   const [supervisorGoal, setSupervisorGoal] = useState(() => initialFormState(session).supervisorGoal);
   const [supervisorAcceptanceCriteria, setSupervisorAcceptanceCriteria] = useState(() => initialFormState(session).supervisorAcceptanceCriteria);
+  const [supervisorContextFilesText, setSupervisorContextFilesText] = useState(() => initialFormState(session).supervisorContextFilesText);
+  const [providerBaseUrl, setProviderBaseUrl] = useState("");
+  const [providerModel, setProviderModel] = useState("");
+  const [providerApiKey, setProviderApiKey] = useState("");
+  const [providerStatus, setProviderStatus] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -87,6 +93,29 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
     [session?.session_id, sessions],
   );
   const supervisorSupported = session?.agent_backend === "pi";
+
+  useEffect(() => {
+    if (!open || !session || !supervisorSupported) {
+      return;
+    }
+    let cancelled = false;
+    setProviderStatus("Loading provider settings...");
+    api.getSupervisorProvider()
+      .then((provider) => {
+        if (cancelled) return;
+        setProviderBaseUrl(provider.base_url || "");
+        setProviderModel(provider.model || "");
+        setProviderApiKey("");
+        setProviderStatus(provider.api_key_configured ? "API key configured" : "API key missing");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setProviderStatus(error instanceof Error ? error.message : "Failed to load provider settings");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, session?.session_id, supervisorSupported]);
 
   if (!open || !session) {
     return null;
@@ -224,7 +253,41 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
               <span className="text-sm font-medium text-foreground">Acceptance criteria</span>
               <Input name="supervisorAcceptanceCriteria" value={supervisorAcceptanceCriteria} disabled={!supervisorSupported} onInput={(event) => setSupervisorAcceptanceCriteria(event.currentTarget.value)} />
             </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-foreground">Context files</span>
+              <textarea
+                name="supervisorContextFiles"
+                value={supervisorContextFilesText}
+                disabled={!supervisorSupported}
+                rows={3}
+                className="flex min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder="README.md\ndocs/spec.md"
+                onInput={(event) => setSupervisorContextFilesText(event.currentTarget.value)}
+              />
+              <span className="block text-xs text-muted-foreground">One path per line. Relative paths resolve against the session cwd.</span>
+            </label>
           </div>
+
+          {supervisorSupported ? (
+            <div className="space-y-3 rounded-2xl border border-border/70 bg-background/60 p-4">
+              <div>
+                <span className="block text-sm font-medium text-foreground">Global supervisor provider</span>
+                {providerStatus ? <span className="block text-sm text-muted-foreground">{providerStatus}</span> : null}
+              </div>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-foreground">Base URL</span>
+                <Input name="supervisorProviderBaseUrl" value={providerBaseUrl} placeholder="https://api.openai.com/v1" onInput={(event) => setProviderBaseUrl(event.currentTarget.value)} />
+              </label>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-foreground">Model</span>
+                <Input name="supervisorProviderModel" value={providerModel} placeholder="gpt-4.1-mini" onInput={(event) => setProviderModel(event.currentTarget.value)} />
+              </label>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-foreground">API key</span>
+                <Input name="supervisorProviderApiKey" type="password" value={providerApiKey} placeholder="Leave blank to keep existing key" onInput={(event) => setProviderApiKey(event.currentTarget.value)} />
+              </label>
+            </div>
+          ) : null}
 
           {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
         </div>
@@ -265,12 +328,18 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
                   dependency_session_id: dependencySessionId || null,
                 });
                 if (supervisorSupported) {
+                  await api.saveSupervisorProvider({
+                    base_url: providerBaseUrl,
+                    model: providerModel,
+                    ...(providerApiKey.trim() ? { api_key: providerApiKey } : {}),
+                  });
                   await api.saveSessionSupervisor(session.session_id, {
                     enabled: supervisorEnabled,
                     idle_after_minutes: Math.max(1, Math.round(supervisorIdleAfterMinutes || 1)),
                     max_consecutive_injections: Math.max(1, Math.round(supervisorMaxConsecutiveInjections || 1)),
                     goal: supervisorGoal,
                     acceptance_criteria: supervisorAcceptanceCriteria,
+                    context_files: supervisorContextFilesText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
                   });
                 }
                 await onSaved();

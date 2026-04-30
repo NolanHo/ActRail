@@ -12,6 +12,8 @@ vi.mock("../../lib/api", () => ({
     handoffSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", runtime_id: "rt-2", broker_pid: 42 }),
     restartSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-1", runtime_id: "rt-2", previous_runtime_id: "rt-1", broker_pid: 42 }),
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
+    getSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.invalid/v1", model: "model-a", api_key_configured: true, complete: true }),
+    saveSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.invalid/v1", model: "model-a", api_key_configured: true, complete: true }),
     saveSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: false, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0 }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     setSessionFocus: vi.fn().mockResolvedValue({ ok: true, focused: true }),
@@ -620,7 +622,7 @@ describe("SessionsPane", () => {
   });
 
   it("opens edit dialog from icon action and saves fields", async () => {
-    vi.mocked(api.getSessionDetails).mockResolvedValue({ session_id: "sess-1", alias: "Inbox cleanup", first_user_message: "整理一下今天的会话", agent_backend: "pi", priority_offset: 0 } as any);
+    vi.mocked(api.getSessionDetails).mockResolvedValue({ session_id: "sess-1", alias: "Inbox cleanup", first_user_message: "整理一下今天的会话", agent_backend: "pi", priority_offset: 0, supervisor: { supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0, context_files: ["README.md"] } } as any);
 
     const sessionsStore = renderSessionsPane({
       items: [
@@ -645,6 +647,16 @@ describe("SessionsPane", () => {
       dependencySelect.value = "sess-2";
       dependencySelect.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    const contextFiles = root?.querySelector('textarea[name="supervisorContextFiles"]') as HTMLTextAreaElement;
+    await act(async () => {
+      contextFiles.value = "README.md\ndocs/spec.md";
+      contextFiles.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const providerModel = root?.querySelector('input[name="supervisorProviderModel"]') as HTMLInputElement;
+    await act(async () => {
+      providerModel.value = "model-b";
+      providerModel.dispatchEvent(new Event("input", { bubbles: true }));
+    });
 
     const saveButton = Array.from(root?.querySelectorAll("button") || []).find((button) => button.textContent?.includes("Save changes"));
     expect(saveButton).toBeDefined();
@@ -657,6 +669,14 @@ describe("SessionsPane", () => {
       snooze_until: null,
       dependency_session_id: "sess-2",
     });
+    expect(api.saveSupervisorProvider).toHaveBeenCalledWith({
+      base_url: "https://llm.invalid/v1",
+      model: "model-b",
+    });
+    expect(api.saveSessionSupervisor).toHaveBeenCalledWith("sess-1", expect.objectContaining({
+      enabled: true,
+      context_files: ["README.md", "docs/spec.md"],
+    }));
     expect(sessionsStore.refresh).toHaveBeenCalled();
   });
 

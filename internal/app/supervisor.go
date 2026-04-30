@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/domain/session"
@@ -20,6 +23,8 @@ import (
 const (
 	defaultSupervisorIdleMinutes        = 5
 	defaultSupervisorMaxConsecutiveRuns = 10
+	supervisorMaxFileCharsPerFile       = 20000
+	supervisorMaxTotalFileChars         = 60000
 	supervisorSystemPrompt              = `You supervise a coding-agent session for the human operator.
 
 Decide whether the agent should receive one more user message.
@@ -104,10 +109,17 @@ type supervisorPair struct {
 	Assistant string `json:"assistant"`
 }
 
+type supervisorSnapshotFile struct {
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Truncated bool   `json:"truncated"`
+}
+
 type supervisorSnapshot struct {
-	RecentPairs        []supervisorPair `json:"recent_pairs"`
-	Goal               string           `json:"goal,omitempty"`
-	AcceptanceCriteria string           `json:"acceptance_criteria,omitempty"`
+	RecentPairs        []supervisorPair         `json:"recent_pairs"`
+	Goal               string                   `json:"goal,omitempty"`
+	AcceptanceCriteria string                   `json:"acceptance_criteria,omitempty"`
+	Files              []supervisorSnapshotFile `json:"files,omitempty"`
 }
 
 type supervisorDecision struct {
@@ -470,8 +482,6 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 	} else if ok {
 		return SupervisorRunOnceResponse{OK: true, Run: supervisorRunSummary(existing)}, nil
 	}
-	snapshot := buildSupervisorSnapshot(messages, anchor.EventID, config)
-	snapshotJSON, _ := json.Marshal(snapshot)
 	run := sqlitestore.SupervisorRunRow{
 		RunID:                   newID("supervisor"),
 		SessionID:               record.identity.SessionID().String(),
@@ -480,34 +490,42 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 		AnchorAssistantTextHash: textHash(anchor.Text),
 		Model:                   provider.Model,
 		BaseURL:                 provider.BaseURL,
-		SnapshotJSON:            string(snapshotJSON),
+		SnapshotJSON:            "{}",
 		CreatedAt:               s.registry.now(),
 	}
-	decision, rawOutput, evalErr := evaluateSupervisorModel(ctx, providerRow, snapshot)
-	run.RawOutput = rawOutput
-	if evalErr != nil {
+	snapshot, snapshotErr := buildSupervisorSnapshot(record.cwd, messages, anchor.EventID, config)
+	if snapshotErr != nil {
 		run.Status = "error"
-		run.Error = evalErr.Error()
+		run.Error = snapshotErr.Error()
 	} else {
-		run.Action = decision.Action
-		run.Reason = decision.Reason
-		if decision.Action == "inject" {
-			run.InjectedText = decision.Message
-			if req.DryRun {
-				run.Status = "stop"
-			} else {
-				if _, err := s.Send(ctx, SendRequest{SessionID: record.identity.SessionID(), Text: decision.Message}); err != nil {
-					run.Status = "error"
-					run.Error = err.Error()
-				} else {
-					run.Status = "injected"
-					config.ConsecutiveInjections++
-					config.UpdatedAt = s.registry.now()
-					_ = s.supervisorStore.UpsertSessionSupervisorConfig(ctx, config)
-				}
-			}
+		snapshotJSON, _ := json.Marshal(snapshot)
+		run.SnapshotJSON = string(snapshotJSON)
+		decision, rawOutput, evalErr := evaluateSupervisorModel(ctx, providerRow, snapshot)
+		run.RawOutput = rawOutput
+		if evalErr != nil {
+			run.Status = "error"
+			run.Error = evalErr.Error()
 		} else {
-			run.Status = "stop"
+			run.Action = decision.Action
+			run.Reason = decision.Reason
+			if decision.Action == "inject" {
+				run.InjectedText = decision.Message
+				if req.DryRun {
+					run.Status = "stop"
+				} else {
+					if _, err := s.Send(ctx, SendRequest{SessionID: record.identity.SessionID(), Text: decision.Message}); err != nil {
+						run.Status = "error"
+						run.Error = err.Error()
+					} else {
+						run.Status = "injected"
+						config.ConsecutiveInjections++
+						config.UpdatedAt = s.registry.now()
+						_ = s.supervisorStore.UpsertSessionSupervisorConfig(ctx, config)
+					}
+				}
+			} else {
+				run.Status = "stop"
+			}
 		}
 	}
 	if err := s.supervisorStore.InsertSupervisorRun(ctx, run); err != nil {
@@ -603,7 +621,7 @@ func (s *Stub) supervisorMessagesAndAnchor(ctx context.Context, record sessionRe
 	return nil, SessionMessage{}, Conflict("no stable assistant message found")
 }
 
-func buildSupervisorSnapshot(messages []SessionMessage, anchorEventID string, config sqlitestore.SessionSupervisorConfigRow) supervisorSnapshot {
+func buildSupervisorSnapshot(cwd string, messages []SessionMessage, anchorEventID string, config sqlitestore.SessionSupervisorConfigRow) (supervisorSnapshot, error) {
 	pairs := make([]supervisorPair, 0, 2)
 	pendingUser := ""
 	for _, item := range messages {
@@ -625,11 +643,58 @@ func buildSupervisorSnapshot(messages []SessionMessage, anchorEventID string, co
 	if len(pairs) > 2 {
 		pairs = pairs[len(pairs)-2:]
 	}
+	files, err := readSupervisorContextFiles(cwd, config.ContextFiles)
+	if err != nil {
+		return supervisorSnapshot{}, err
+	}
 	return supervisorSnapshot{
 		RecentPairs:        pairs,
 		Goal:               strings.TrimSpace(config.Goal),
 		AcceptanceCriteria: strings.TrimSpace(config.AcceptanceCriteria),
+		Files:              files,
+	}, nil
+}
+
+func readSupervisorContextFiles(cwd string, paths []string) ([]supervisorSnapshotFile, error) {
+	files := make([]supervisorSnapshotFile, 0, len(paths))
+	totalChars := 0
+	for _, rawPath := range paths {
+		path := strings.TrimSpace(rawPath)
+		if path == "" {
+			continue
+		}
+		resolved := path
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(cwd, resolved)
+		}
+		body, err := os.ReadFile(resolved)
+		if err != nil {
+			return nil, fmt.Errorf("read supervisor context file %q: %w", path, err)
+		}
+		if !utf8.Valid(body) {
+			return nil, fmt.Errorf("supervisor context file %q is not valid UTF-8 text", path)
+		}
+		content := string(body)
+		runes := []rune(content)
+		truncated := false
+		remaining := supervisorMaxTotalFileChars - totalChars
+		if remaining <= 0 {
+			content = ""
+			truncated = true
+		} else {
+			limit := supervisorMaxFileCharsPerFile
+			if remaining < limit {
+				limit = remaining
+			}
+			if len(runes) > limit {
+				content = string(runes[:limit])
+				truncated = true
+			}
+		}
+		totalChars += len([]rune(content))
+		files = append(files, supervisorSnapshotFile{Path: path, Content: content, Truncated: truncated})
 	}
+	return files, nil
 }
 
 func evaluateSupervisorModel(ctx context.Context, provider sqlitestore.SupervisorProviderSettingsRow, snapshot supervisorSnapshot) (supervisorDecision, string, error) {

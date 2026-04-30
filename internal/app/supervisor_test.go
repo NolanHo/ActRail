@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,6 +91,9 @@ func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
 	if err := os.WriteFile(record.importedSourcePath, []byte(body), 0o644); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", record.importedSourcePath, err)
 	}
+	if err := os.WriteFile(filepath.Join(record.cwd, "notes.txt"), []byte("local context"), 0o644); err != nil {
+		t.Fatalf("WriteFile(context) error = %v", err)
+	}
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path != "/chat/completions" {
 			t.Fatalf("model path = %q, want /chat/completions", req.URL.Path)
@@ -101,7 +106,8 @@ func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
 		t.Fatalf("UpdateSupervisorProvider() error = %v", err)
 	}
 	enabled := true
-	if _, err := svc.UpdateSessionSupervisor(context.Background(), UpdateSessionSupervisorRequest{SessionID: record.identity.SessionID(), Enabled: &enabled}); err != nil {
+	contextFiles := []string{"notes.txt"}
+	if _, err := svc.UpdateSessionSupervisor(context.Background(), UpdateSessionSupervisorRequest{SessionID: record.identity.SessionID(), Enabled: &enabled, ContextFiles: &contextFiles}); err != nil {
 		t.Fatalf("UpdateSessionSupervisor() error = %v", err)
 	}
 
@@ -111,6 +117,13 @@ func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
 	}
 	if run.Run.AnchorAssistantEventID != "pi:message:a1" || run.Run.Status != "stop" || run.Run.Action != "stop" {
 		t.Fatalf("RunSupervisorOnce() = %+v", run)
+	}
+	rows, err := svc.supervisorStore.ListSupervisorRuns(context.Background(), record.identity.SessionID().String(), 10)
+	if err != nil {
+		t.Fatalf("ListSupervisorRuns() error = %v", err)
+	}
+	if len(rows) != 1 || !strings.Contains(rows[0].SnapshotJSON, `"path":"notes.txt"`) || !strings.Contains(rows[0].SnapshotJSON, `"content":"local context"`) {
+		t.Fatalf("supervisor rows = %+v", rows)
 	}
 	second, err := svc.RunSupervisorOnce(context.Background(), SupervisorRunOnceRequest{SessionID: record.identity.SessionID(), DryRun: true})
 	if err != nil {
