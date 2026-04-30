@@ -51,7 +51,7 @@ export interface SessionsStore {
 const PAGE_SIZE = 50;
 const NEW_SESSION_DEFAULTS_CACHE_KEY = "actrail.newSessionDefaults.v1";
 const SESSION_READ_CACHE_KEY = "actrail.sessionReadAssistantTs.v1";
-const EXP_TRANSPORT_KEY = "actrail.expTransport";
+export const EXP_TRANSPORT_KEY = "actrail.expTransport";
 const DEFAULT_REALTIME_TRANSPORT: RealtimeTransportStatus = {
   active: "ws",
   connectAvailable: false,
@@ -71,6 +71,19 @@ function readConnectOptIn() {
     return window.localStorage.getItem(EXP_TRANSPORT_KEY) === "connect";
   } catch {
     return false;
+  }
+}
+
+export function setConnectTransportOptIn(enabled: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    if (enabled) {
+      window.localStorage.setItem(EXP_TRANSPORT_KEY, "connect");
+    } else {
+      window.localStorage.removeItem(EXP_TRANSPORT_KEY);
+    }
+  } catch {
+    // Browser storage policy blocked the opt-in; bootstrap will keep WebSocket.
   }
 }
 

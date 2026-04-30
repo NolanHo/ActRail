@@ -31,6 +31,7 @@ interface VoiceSettingsDialogProps {
   onChangeNarrationEnabled(value: boolean): void;
   onChangeReplySoundEnabled(value: boolean): void;
   onChangeThemeMode(value: ThemeMode): void;
+  onChangeTransportOptIn?(value: boolean): void;
   onChangeVoiceApiKey(value: string): void;
   onChangeVoiceBaseUrl(value: string): void;
   onClose(): void;
@@ -60,6 +61,7 @@ export function VoiceSettingsDialog({
   onChangeNarrationEnabled,
   onChangeReplySoundEnabled,
   onChangeThemeMode,
+  onChangeTransportOptIn,
   onChangeVoiceApiKey,
   onChangeVoiceBaseUrl,
   onClose,
@@ -222,6 +224,18 @@ export function VoiceSettingsDialog({
             </TabsContent>
 
             <TabsContent value="status" className="space-y-4">
+              <div className="fieldBlock toggleField">
+                <span className="fieldLabel">Experimental transport</span>
+                <label className="checkField">
+                  <input
+                    type="checkbox"
+                    checked={transportStatus?.connectOptIn === true}
+                    onChange={(event) => onChangeTransportOptIn?.(event.currentTarget.checked)}
+                  />
+                  <span>Use ConnectRPC transport on desktop</span>
+                </label>
+                <span className="fieldHint">Requires backend capability and desktop layout. Applies after bootstrap refresh.</span>
+              </div>
               <div className="voiceSettingsMeta fieldHint">
                 <span>Realtime transport: {transportStatus?.active === "connect" ? "ConnectRPC experimental" : "WebSocket"}</span>
                 <span>Connect opt-in: {transportStatus?.connectOptIn ? "on" : "off"}</span>

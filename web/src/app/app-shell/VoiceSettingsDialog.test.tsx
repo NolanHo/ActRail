@@ -62,7 +62,8 @@ describe("VoiceSettingsDialog", () => {
     expect(saveButton?.className).not.toContain("primaryButton");
   });
 
-  it("shows experimental transport state in the status tab", async () => {
+  it("shows and toggles experimental transport state in the status tab", async () => {
+    const onChangeTransportOptIn = vi.fn();
     root = document.createElement("div");
     document.body.appendChild(root);
 
@@ -88,6 +89,7 @@ describe("VoiceSettingsDialog", () => {
         onChangeNarrationEnabled={() => undefined}
         onChangeReplySoundEnabled={() => undefined}
         onChangeThemeMode={() => undefined}
+        onChangeTransportOptIn={onChangeTransportOptIn}
         onChangeVoiceApiKey={() => undefined}
         onChangeVoiceBaseUrl={() => undefined}
         onClose={() => undefined}
@@ -107,6 +109,12 @@ describe("VoiceSettingsDialog", () => {
     expect(root.textContent).toContain("Connect capability: available");
     expect(root.textContent).toContain("Desktop eligible: yes");
     expect(root.textContent).toContain("Connect path: /api/connect");
+    const transportToggle = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+      .find((input) => input.parentElement?.textContent?.includes("Use ConnectRPC transport on desktop"));
+    expect(transportToggle?.checked).toBe(true);
+    transportToggle!.checked = false;
+    transportToggle!.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(onChangeTransportOptIn).toHaveBeenCalledWith(false);
   });
 
   it("wires action callbacks through the footer controls", async () => {
