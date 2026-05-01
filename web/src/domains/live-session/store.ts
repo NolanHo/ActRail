@@ -105,6 +105,24 @@ function nextCursor(prior: number | undefined, value: unknown) {
   return Math.max(prior ?? 0, parsed);
 }
 
+function staleCursor(prior: number | undefined, value: unknown) {
+  const parsed = parseSnapshotCursor(value);
+  return parsed !== undefined && parsed <= (prior ?? 0);
+}
+
+function isMainStreamFrame(type: string) {
+  return type === "session.state"
+    || type === "message.delta"
+    || type === "message.generating"
+    || type === "message.commit"
+    || type === "session.generation.broken"
+    || type === "transport.reset_required";
+}
+
+function isUIStreamFrame(type: string) {
+  return type === "ui.request" || type === "ui.resolved";
+}
+
 function normalizeMessageSnapshot(payload: Awaited<ReturnType<typeof api.listMessages>>) {
   const events = Array.isArray(payload.items)
     ? payload.items
@@ -458,6 +476,12 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       const sessionId = resolveSessionId(frame);
       const payload = toObjectRecord(frame.payload);
       if (!type || !sessionId) {
+        return;
+      }
+      if (isMainStreamFrame(type) && staleCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq)) {
+        return;
+      }
+      if (isUIStreamFrame(type) && staleCursor(state.uiStreamCursorsBySessionId[sessionId], payload?.stream_seq)) {
         return;
       }
 

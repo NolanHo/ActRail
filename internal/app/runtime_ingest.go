@@ -1010,7 +1010,7 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	}
 
 	turnID := runtimeTurnID(event)
-	committed, err := s.commitRuntimeMessage(sessionID, turnID, role, event.Message.Text)
+	committed, committedNew, err := s.commitRuntimeMessage(sessionID, turnID, role, event.Message.Text)
 	if err != nil {
 		return err
 	}
@@ -1029,6 +1029,10 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 			return err
 		}
 	}
+	if !committedNew {
+		s.emitSessionState(sessionID)
+		return nil
+	}
 	committed.EventID = piMessageEventID(event)
 	committed.ParentEventID = piParentEventID(event)
 	s.emitMessageCommit(sessionID, turnID, committed)
@@ -1036,10 +1040,10 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	return nil
 }
 
-func (s *Stub) commitRuntimeMessage(sessionID session.SessionID, turnID, role, text string) (SessionMessage, error) {
+func (s *Stub) commitRuntimeMessage(sessionID session.SessionID, turnID, role, text string) (SessionMessage, bool, error) {
 	record, err := s.lookupSession(sessionID)
 	if err != nil {
-		return SessionMessage{}, err
+		return SessionMessage{}, false, err
 	}
 	if partial, ok := record.transcript.PartialAssistantTurn(); ok {
 		resolvedTurnID := strings.TrimSpace(turnID)
@@ -1047,10 +1051,22 @@ func (s *Stub) commitRuntimeMessage(sessionID session.SessionID, turnID, role, t
 			resolvedTurnID = partial.TurnID().String()
 		}
 		if partial.TurnID().String() == resolvedTurnID {
-			return s.CommitAssistantTurn(sessionID, resolvedTurnID, text)
+			msg, err := s.CommitAssistantTurn(sessionID, resolvedTurnID, text)
+			return msg, true, err
 		}
 	}
-	return s.AppendSessionMessage(sessionID, role, "message", text)
+	trimmedText := strings.TrimSpace(text)
+	if role == "assistant" && trimmedText != "" {
+		items := record.transcript.Items()
+		if len(items) > 0 {
+			last := items[len(items)-1]
+			if last.Role().String() == role && last.Kind().String() == "message" && strings.TrimSpace(last.Text()) == trimmedText {
+				return sessionMessageFromCommitted(last), false, nil
+			}
+		}
+	}
+	msg, err := s.AppendSessionMessage(sessionID, role, "message", text)
+	return msg, true, err
 }
 
 func (s *Stub) applyPITool(sessionID session.SessionID, event pi.Event) error {

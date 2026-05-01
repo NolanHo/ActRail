@@ -298,6 +298,49 @@ func TestCreateSessionConsumesPIRPCRuntimeOutputIntoStateTranscriptAndEvents(t *
 	}
 }
 
+func TestFinalAssistantCommitSuppressesDuplicateTurnCompleted(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	for _, raw := range []string{
+		`{"type":"message.delta","turn_id":"turn-dup","role":"assistant","delta":"final"}`,
+		`{"type":"message_end","turn_id":"turn-dup","message":{"role":"assistant","content":[{"type":"text","text":"final"}],"stopReason":"stop","timestamp":1774708716099}}`,
+		`{"type":"turn.completed","turn_id":"turn-dup","role":"assistant","text":"final"}`,
+	} {
+		if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(raw))); err != nil {
+			t.Fatalf("applyRuntimeProjection(%s) error = %v", raw, err)
+		}
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Role != "assistant" || messages.Items[0].Text != "final" {
+		t.Fatalf("SessionMessages().Items = %+v, want one final assistant", messages.Items)
+	}
+	commits := sink.snapshot().commits
+	assistantCommits := 0
+	for _, commit := range commits {
+		if commit.Message.Role == "assistant" && commit.Message.Text == "final" {
+			assistantCommits++
+		}
+	}
+	if assistantCommits != 1 {
+		t.Fatalf("assistant commit events = %d, want 1: %+v", assistantCommits, commits)
+	}
+}
+
 func TestPIRPCGetStateControlsBusyWithoutAgentEvents(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}

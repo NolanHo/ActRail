@@ -291,6 +291,31 @@ describe("createLiveSessionStore", () => {
     expect(messagesStore.getState().bySessionId.s1[0]).toMatchObject({ seq: 1, role: "assistant", text: "final", turn_id: "turn-1" });
   });
 
+  it("ignores stale main stream frames by stream cursor", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "message.commit",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 5, turn_id: "turn-1", message: { seq: 1, role: "assistant", text: "final" } },
+    });
+    liveStore.applyFrame({
+      type: "message.delta",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 4, turn_id: "turn-1", role: "assistant", delta: "stale" },
+    });
+    liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 4, busy: true },
+    });
+
+    expect(liveStore.getState().busyBySessionId.s1).toBeUndefined();
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([{ seq: 1, role: "assistant", text: "final", turn_id: "turn-1" }]);
+  });
+
   it("does not stop assistant generation on non-assistant commits", () => {
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
