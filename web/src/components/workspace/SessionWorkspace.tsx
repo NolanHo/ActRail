@@ -251,7 +251,7 @@ function ContextUsagePanel({
 
 interface SessionWorkspaceProps {
   mode?: "default" | "details";
-  initialTab?: "insight" | "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files";
+  initialTab?: "insight" | "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files" | "supervisor";
 }
 
 export function SessionWorkspace({ mode = "default", initialTab }: SessionWorkspaceProps) {
@@ -405,6 +405,7 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
                 <TabsTrigger value="waiting-inbox">Waiting Inbox</TabsTrigger>
                 <TabsTrigger value="requests">UI Requests</TabsTrigger>
                 <TabsTrigger value="metadata">Metadata</TabsTrigger>
+                <TabsTrigger value="supervisor">Supervisor</TabsTrigger>
                 <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
                 <TabsTrigger value="queue">Queue</TabsTrigger>
                 {files.length ? <TabsTrigger value="files">Files</TabsTrigger> : null}
@@ -709,6 +710,12 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
                     </div>
                   </ScrollArea>
                 </TabsContent>
+                <TabsContent value="supervisor" className="min-h-0">
+                  <ScrollArea className="workspaceScroll h-full pr-1">
+                    <p className="text-sm text-muted-foreground">Supervisor settings open in a dedicated dialog from the toolbar.</p>
+                  </ScrollArea>
+                </TabsContent>
+
                 <TabsContent value="metadata" className="min-h-0">
                   <ScrollArea className="workspaceScroll h-full pr-1">
                     <WorkspaceSection title="Metadata" badge={metadataEntries.length ? `${metadataEntries.length}` : undefined}>

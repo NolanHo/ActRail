@@ -313,8 +313,8 @@ func TestLiveControlUsesIod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
-	if sent.Busy {
-		t.Fatalf("Send() = %+v, want busy false before Pi reports runtime state", sent)
+	if !sent.Busy {
+		t.Fatalf("Send() = %+v, want busy true immediately after Pi RPC send", sent)
 	}
 	if err := svc.SetSessionUIRequest(sessionID, SessionUIRequestSnapshot{RequestID: "ask_1", Kind: "ask_user", Prompt: "Choose one"}); err != nil {
 		t.Fatalf("SetSessionUIRequest() error = %v", err)

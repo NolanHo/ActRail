@@ -197,7 +197,7 @@ export const api = {
     const response = await getJson<SessionDetailsResponse & { session?: Record<string, unknown> | null }>(`/api/sessions/${routeId}/details`, signal);
     return normalizeSessionDetailsResponse(response);
   },
-  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null) {
+  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null, deferred = false) {
     const query = new URLSearchParams();
     if (init) {
       query.set("init", "1");
@@ -211,6 +211,9 @@ export const api = {
     }
     if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
       query.set("limit", String(limit));
+    }
+    if (deferred) {
+      query.set("deferred", "1");
     }
     const suffix = query.size ? `?${query.toString()}` : "";
     const routeId = getSessionRouteId(sessionId, runtimeId);

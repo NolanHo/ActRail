@@ -146,7 +146,7 @@ func TestCancelQueueWaitsForQueuedDispatchCriticalSection(t *testing.T) {
 	}
 }
 
-func TestPIRPCQueuedPromptDoesNotSetBusyBeforeRuntimeState(t *testing.T) {
+func TestPIRPCQueuedPromptWaitsWhileRuntimeBusy(t *testing.T) {
 	svc, sessionID, _, pty := newControlFixture(t)
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
@@ -158,10 +158,14 @@ func TestPIRPCQueuedPromptDoesNotSetBusyBeforeRuntimeState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
-	if queued.Busy || len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "second prompt" {
-		t.Fatalf("Enqueue() = %+v, want queued second prompt with idle session state", queued)
+	if !queued.Busy || len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "second prompt" {
+		t.Fatalf("Enqueue() = %+v, want queued second prompt while first send is busy", queued)
 	}
 
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"type":"turn_end"}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(turn_end) error = %v", err)
+	}
 	waitForAppCondition(t, func() bool {
 		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 		if err != nil {
@@ -182,7 +186,6 @@ func TestPIRPCQueuedPromptDoesNotSetBusyBeforeRuntimeState(t *testing.T) {
 		t.Fatalf("SessionMessages() after dispatch = %+v, want queued second prompt committed", messages)
 	}
 
-	decoder := runtimeEventDecoder{backend: session.BackendPI}
 	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"id":"actrail-state-busy","type":"response","command":"get_state","success":true,"data":{"isStreaming":true,"isCompacting":false,"pendingMessageCount":0}}`))); err != nil {
 		t.Fatalf("applyRuntimeProjection(get_state busy) error = %v", err)
 	}

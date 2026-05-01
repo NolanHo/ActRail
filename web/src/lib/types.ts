@@ -433,6 +433,7 @@ export interface NotificationMessageResponse {
 }
 
 export interface MessageEvent {
+  seq?: number;
   type?: string;
   role?: string;
   ts?: number;
@@ -483,6 +484,7 @@ export interface MessageEvent {
   event_id?: string;
   request_id?: string;
   request_state?: string;
+  session_id?: string;
   pending_text?: string;
   supervisor_runs?: SupervisorRunSummary[];
   [key: string]: unknown;

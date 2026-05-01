@@ -647,17 +647,6 @@ describe("SessionsPane", () => {
       dependencySelect.value = "sess-2";
       dependencySelect.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    const contextFiles = root?.querySelector('textarea[name="supervisorContextFiles"]') as HTMLTextAreaElement;
-    await act(async () => {
-      contextFiles.value = "README.md\ndocs/spec.md";
-      contextFiles.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const providerModel = root?.querySelector('input[name="supervisorProviderModel"]') as HTMLInputElement;
-    await act(async () => {
-      providerModel.value = "model-b";
-      providerModel.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-
     const saveButton = Array.from(root?.querySelectorAll("button") || []).find((button) => button.textContent?.includes("Save changes"));
     expect(saveButton).toBeDefined();
     saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -666,17 +655,11 @@ describe("SessionsPane", () => {
     expect(api.editSession).toHaveBeenCalledWith("sess-1", {
       name: "Inbox cleanup",
       priority_offset: 0,
-      snooze_until: null,
+      snooze_until: 0,
       dependency_session_id: "sess-2",
     });
-    expect(api.saveSupervisorProvider).toHaveBeenCalledWith({
-      base_url: "https://llm.invalid/v1",
-      model: "model-b",
-    });
-    expect(api.saveSessionSupervisor).toHaveBeenCalledWith("sess-1", expect.objectContaining({
-      enabled: true,
-      context_files: ["README.md", "docs/spec.md"],
-    }));
+    expect(api.saveSupervisorProvider).not.toHaveBeenCalled();
+    expect(api.saveSessionSupervisor).not.toHaveBeenCalled();
     expect(sessionsStore.refresh).toHaveBeenCalled();
   });
 

@@ -936,6 +936,11 @@ func (b *runtimeLineBuffer) nextLine() ([]byte, bool) {
 
 func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 	s.messageCache.Invalidate(sessionID)
+	if event.Kind == pi.EventKindMessageDelta || event.Kind == pi.EventKindTool || event.Kind == pi.EventKindUIRequest {
+		if err := s.markRuntimeActiveFromPIEvent(sessionID); err != nil {
+			return err
+		}
+	}
 	switch event.Kind {
 	case pi.EventKindMessageDelta:
 		return s.applyPIDelta(sessionID, event)
@@ -952,6 +957,27 @@ func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 	case pi.EventKindBoundary:
 		return s.applyPIBoundary(sessionID, event)
 	}
+	return nil
+}
+
+func (s *Stub) markRuntimeActiveFromPIEvent(sessionID session.SessionID) error {
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendPI {
+		return nil
+	}
+	if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
+		s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
+	}
+	if err := s.setRuntimeAgentRunning(sessionID, true); err != nil {
+		return err
+	}
+	if record.state.Busy() {
+		return nil
+	}
+	if _, _, err := s.registry.SetBusy(sessionID, true); err != nil {
+		return err
+	}
+	s.emitSessionState(sessionID)
 	return nil
 }
 

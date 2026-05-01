@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
 import { WaitCard } from "../waits/WaitCard";
 import { useComposerStoreApi, useComposerStoreSelector, useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
+import { api } from "../../lib/api";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import type { MessageEvent, TodoSnapshotItem } from "../../lib/types";
 
@@ -2200,14 +2201,26 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
   );
 }
 
+async function hydrateDeferredToolEvent(event: MessageEvent) {
+  const sessionId = typeof event.session_id === "string" ? event.session_id : "";
+  const seq = typeof event.seq === "number" ? event.seq : 0;
+  if (!sessionId || !seq) {
+    return event;
+  }
+  const page = await api.listMessages(sessionId, true, undefined, undefined, seq + 1, 1, undefined, false);
+  const items = Array.isArray(page.items) ? page.items : Array.isArray(page.events) ? page.events : [];
+  return items.find((item) => item.seq === seq) ?? event;
+}
+
 function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {
   const traceEvents = sortMachineTraceEvents(events);
   const runningIndex = machineTraceRunningIndex(traceEvents, isBusy);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [hydratedByKey, setHydratedByKey] = useState<Record<string, MessageEvent>>({});
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000);
   const selectedEvent = selectedKey == null
     ? null
-    : traceEvents.find((event, index) => {
+    : hydratedByKey[selectedKey] ?? traceEvents.find((event, index) => {
       const kind = compactTraceKind(event);
       return kind && eventStableIdentity(event, kind, index) === selectedKey;
     }) ?? null;
@@ -2221,6 +2234,29 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
     const interval = window.setInterval(() => setNowSeconds(Date.now() / 1000), 30_000);
     return () => window.clearInterval(interval);
   }, [isBusy]);
+
+  useEffect(() => {
+    if (!selectedKey || hydratedByKey[selectedKey]) {
+      return undefined;
+    }
+    const event = traceEvents.find((candidate, index) => {
+      const kind = compactTraceKind(candidate);
+      return kind && eventStableIdentity(candidate, kind, index) === selectedKey;
+    });
+    const kind = event ? compactTraceKind(event) : null;
+    if (!event || (kind !== "tool" && kind !== "tool_result") || event.text) {
+      return undefined;
+    }
+    let cancelled = false;
+    hydrateDeferredToolEvent(event).then((hydrated) => {
+      if (!cancelled) {
+        setHydratedByKey((current) => ({ ...current, [selectedKey]: hydrated }));
+      }
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [hydratedByKey, selectedKey, traceEvents]);
 
   return (
     <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">

@@ -17,9 +17,15 @@ interface HarnessDialogProps {
 
 export function HarnessDialog({ open, sessionId, runtimeId = null, supported = true, onClose }: HarnessDialogProps) {
   const [enabled, setEnabled] = useState(false);
-  const [request, setRequest] = useState("");
-  const [cooldownMinutes, setCooldownMinutes] = useState("30");
-  const [remainingInjections, setRemainingInjections] = useState("3");
+  const [idleAfterMinutes, setIdleAfterMinutes] = useState("5");
+  const [maxConsecutiveInjections, setMaxConsecutiveInjections] = useState("10");
+  const [goal, setGoal] = useState("");
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState("");
+  const [contextFilesText, setContextFilesText] = useState("");
+  const [providerBaseUrl, setProviderBaseUrl] = useState("");
+  const [providerModel, setProviderModel] = useState("");
+  const [providerApiKey, setProviderApiKey] = useState("");
+  const [providerStatus, setProviderStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
@@ -36,13 +42,20 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
     let cancelled = false;
     setLoading(true);
     setStatus("");
-    (runtimeId ? api.getHarness(sessionId, runtimeId) : api.getHarness(sessionId))
-      .then((response) => {
+    setProviderStatus("Loading provider settings...");
+    Promise.all([api.getSupervisorProvider(), api.getSessionSupervisor(sessionId)])
+      .then(([provider, supervisor]) => {
         if (cancelled) return;
-        setEnabled(response.enabled === true);
-        setRequest(typeof response.request === "string" ? response.request : "");
-        setCooldownMinutes(String(response.cooldown_minutes ?? 30));
-        setRemainingInjections(String(response.remaining_injections ?? 3));
+        setProviderBaseUrl(provider.base_url || "");
+        setProviderModel(provider.model || "");
+        setProviderApiKey("");
+        setProviderStatus(provider.api_key_configured ? "API key configured" : "API key missing");
+        setEnabled(supervisor.enabled === true);
+        setIdleAfterMinutes(String(supervisor.idle_after_minutes ?? 5));
+        setMaxConsecutiveInjections(String(supervisor.max_consecutive_injections ?? 10));
+        setGoal(supervisor.goal || "");
+        setAcceptanceCriteria(supervisor.acceptance_criteria || "");
+        setContextFilesText(Array.isArray(supervisor.context_files) ? supervisor.context_files.join("\n") : "");
       })
       .catch((error) => {
         if (cancelled) return;
@@ -57,7 +70,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
     return () => {
       cancelled = true;
     };
-  }, [open, runtimeId, sessionId]);
+  }, [open, runtimeId, sessionId, supported]);
 
   const save = async () => {
     if (!sessionId || saving) {
@@ -70,19 +83,19 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
     setSaving(true);
     setStatus("Saving...");
     try {
-      await (runtimeId
-        ? api.saveHarness(sessionId, {
-            enabled,
-            request,
-            cooldown_minutes: Number(cooldownMinutes || 0),
-            remaining_injections: Number(remainingInjections || 0),
-          }, runtimeId)
-        : api.saveHarness(sessionId, {
-            enabled,
-            request,
-            cooldown_minutes: Number(cooldownMinutes || 0),
-            remaining_injections: Number(remainingInjections || 0),
-          }));
+      await api.saveSupervisorProvider({
+        base_url: providerBaseUrl,
+        model: providerModel,
+        ...(providerApiKey.trim() ? { api_key: providerApiKey.trim() } : {}),
+      });
+      await api.saveSessionSupervisor(sessionId, {
+        enabled,
+        idle_after_minutes: Math.max(1, Math.round(Number(idleAfterMinutes) || 1)),
+        max_consecutive_injections: Math.max(1, Math.round(Number(maxConsecutiveInjections) || 1)),
+        goal,
+        acceptance_criteria: acceptanceCriteria,
+        context_files: contextFilesText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+      });
       setStatus("Saved");
       window.setTimeout(() => {
         onClose();
@@ -95,45 +108,86 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
   };
 
   return (
-    <Dialog open={open}>
-      <DialogContent className="harnessDialog mobileDetailDialog max-w-2xl" titleId="harness-dialog-title">
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen && !saving) {
+        onClose();
+      }
+    }}>
+      <DialogContent className="harnessDialog mobileDetailDialog flex max-h-[88dvh] max-w-2xl flex-col overflow-hidden" titleId="harness-dialog-title">
         <DialogHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
               <DialogTitle id="harness-dialog-title">Supervisor</DialogTitle>
-              <p className="text-sm text-muted-foreground">Configure automatic follow-up guidance for this session.</p>
+              <p className="text-sm text-muted-foreground">Configure global supervisor model settings and this session's supervisor policy.</p>
             </div>
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
           </div>
         </DialogHeader>
-        <div className="space-y-4 px-6 pb-6 pt-2">
-          <label className="toggleOption flex items-start gap-3 rounded-2xl border border-border/70 bg-background/80 px-3 py-3 text-sm">
-            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.currentTarget.checked)} />
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6 pt-2">
+          <section className="space-y-3 rounded-2xl border border-border/70 bg-background/80 p-4">
             <div>
-              <strong className="block text-foreground">Enabled</strong>
-              <span className="text-muted-foreground">Allow ActRail to inject the configured request during supervisor sweeps.</span>
+              <h3 className="text-sm font-semibold text-foreground">Global model</h3>
+              <p className="text-xs text-muted-foreground">Shared across sessions.</p>
             </div>
-          </label>
-          <label className="fieldBlock">
-            <span className="fieldLabel">Additional request</span>
-            <Textarea value={request} onInput={(event) => setRequest(event.currentTarget.value)} rows={6} placeholder="Summarize the next blocker and suggest the next concrete step." />
-          </label>
-          <div className="fieldGrid twoCol">
+            <div className="fieldGrid twoCol">
+              <label className="fieldBlock">
+                <span className="fieldLabel">Base URL</span>
+                <Input value={providerBaseUrl} onInput={(event) => setProviderBaseUrl(event.currentTarget.value)} placeholder="https://api.openai.com/v1" />
+              </label>
+              <label className="fieldBlock">
+                <span className="fieldLabel">Model</span>
+                <Input value={providerModel} onInput={(event) => setProviderModel(event.currentTarget.value)} placeholder="gpt-5" />
+              </label>
+            </div>
             <label className="fieldBlock">
-              <span className="fieldLabel">Cooldown (minutes)</span>
-              <Input type="number" min={1} value={cooldownMinutes} onInput={(event) => setCooldownMinutes(event.currentTarget.value)} />
+              <span className="fieldLabel">API key</span>
+              <Input type="password" value={providerApiKey} onInput={(event) => setProviderApiKey(event.currentTarget.value)} placeholder="Leave blank to keep existing key" />
+            </label>
+            {providerStatus ? <p className="text-xs text-muted-foreground">{providerStatus}</p> : null}
+          </section>
+
+          <section className="space-y-3 rounded-2xl border border-border/70 bg-background/80 p-4">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Session policy</h3>
+              <p className="text-xs text-muted-foreground">Only applies to the active session.</p>
+            </div>
+            <label className="toggleOption flex items-start gap-3 rounded-2xl border border-border/70 bg-card/80 px-3 py-3 text-sm">
+              <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.currentTarget.checked)} />
+              <div>
+                <strong className="block text-foreground">Enabled</strong>
+                <span className="text-muted-foreground">Run supervisor sweeps for this session.</span>
+              </div>
+            </label>
+            <div className="fieldGrid twoCol">
+              <label className="fieldBlock">
+                <span className="fieldLabel">Idle after minutes</span>
+                <Input type="number" min={1} value={idleAfterMinutes} onInput={(event) => setIdleAfterMinutes(event.currentTarget.value)} />
+              </label>
+              <label className="fieldBlock">
+                <span className="fieldLabel">Max consecutive injections</span>
+                <Input type="number" min={1} value={maxConsecutiveInjections} onInput={(event) => setMaxConsecutiveInjections(event.currentTarget.value)} />
+              </label>
+            </div>
+            <label className="fieldBlock">
+              <span className="fieldLabel">Goal</span>
+              <Input value={goal} onInput={(event) => setGoal(event.currentTarget.value)} />
             </label>
             <label className="fieldBlock">
-              <span className="fieldLabel">Remaining injections</span>
-              <Input type="number" min={0} value={remainingInjections} onInput={(event) => setRemainingInjections(event.currentTarget.value)} />
+              <span className="fieldLabel">Acceptance criteria</span>
+              <Input value={acceptanceCriteria} onInput={(event) => setAcceptanceCriteria(event.currentTarget.value)} />
             </label>
-          </div>
+            <label className="fieldBlock">
+              <span className="fieldLabel">Context files</span>
+              <Textarea value={contextFilesText} onInput={(event) => setContextFilesText(event.currentTarget.value)} rows={4} placeholder="One path per line" />
+            </label>
+          </section>
+
           {loading ? <p className="text-sm text-muted-foreground">Loading supervisor settings...</p> : null}
           {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="button" onClick={() => void save()} disabled={saving || loading || !sessionId || !supported}>Save</Button>
-          </div>
+        </div>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border/70 bg-card/95 px-6 py-4">
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="button" onClick={() => void save()} disabled={saving || loading || !sessionId || !supported}>Save</Button>
         </div>
       </DialogContent>
     </Dialog>

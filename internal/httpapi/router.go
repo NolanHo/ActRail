@@ -337,12 +337,18 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 		writeAppError(w, err)
 		return
 	}
+	deferred, err := queryBool(req, "deferred")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
 	payload, err := r.app.SessionMessages(req.Context(), app.SessionMessagesRequest{
 		SessionID: sessionID,
 		AfterSeq:  afterSeq,
 		BeforeSeq: beforeSeq,
 		Limit:     limit,
 		Init:      init,
+		Deferred:  deferred,
 	})
 	if err != nil {
 		writeAppError(w, err)

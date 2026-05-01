@@ -60,6 +60,10 @@ vi.mock("../lib/api", () => ({
     getGitFileVersions: vi.fn().mockResolvedValue({ ok: true, path: "src/main.tsx", base_text: "before", current_text: "after" }),
     getHarness: vi.fn().mockResolvedValue({ ok: true, enabled: true, request: "Keep going", cooldown_minutes: 15, remaining_injections: 2 }),
     saveHarness: vi.fn().mockResolvedValue({ ok: true, enabled: true, request: "Keep going", cooldown_minutes: 15, remaining_injections: 2 }),
+    getSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.test/v1", model: "model-a", api_key_configured: true, complete: true }),
+    saveSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.test/v1", model: "model-a", api_key_configured: true, complete: true }),
+    getSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0, goal: "Keep going", acceptance_criteria: "", context_files: [] }),
+    saveSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0, goal: "Keep going", acceptance_criteria: "", context_files: [] }),
     interruptSession: vi.fn().mockResolvedValue({ ok: true }),
     probeSessionState: vi.fn().mockResolvedValue({ probe_id: "probe_1", state: { busy: false, queue: { items: [] }, tail_seq: 0, resume_cursors: {} } }),
     logout: vi.fn().mockResolvedValue({ ok: true }),
@@ -755,9 +759,10 @@ describe("AppShell", () => {
     });
     await flushLazy();
 
-    expect(api.getHarness).toHaveBeenCalledWith("sess-1");
+    expect(api.getSupervisorProvider).toHaveBeenCalled();
+    expect(api.getSessionSupervisor).toHaveBeenCalledWith("sess-1");
     expect(getRoot().textContent).toContain("Supervisor");
-    expect(getRoot().textContent).toContain("Additional request");
+    expect(getRoot().textContent).toContain("Global model");
 
     const saveButton = findButtonByText("Save");
     expect(saveButton).not.toBeNull();
@@ -766,7 +771,8 @@ describe("AppShell", () => {
     });
     await flush();
 
-    expect(api.saveHarness).toHaveBeenCalledWith("sess-1", expect.objectContaining({ enabled: true, request: "Keep going" }));
+    expect(api.saveSupervisorProvider).toHaveBeenCalledWith(expect.objectContaining({ model: "model-a" }));
+    expect(api.saveSessionSupervisor).toHaveBeenCalledWith("sess-1", expect.objectContaining({ enabled: true, goal: "Keep going" }));
   });
 
   it("shows persisted title in the active header before first user message", async () => {

@@ -46,7 +46,7 @@ describe("createLiveSessionStore", () => {
 
     await liveStore.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 300);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 3000, undefined, true);
     expect(api.getSessionState).toHaveBeenCalledWith("s1");
     expect(messagesStore.getState().bySessionId.s1).toEqual([
       { seq: 1, role: "assistant", text: "durable" },

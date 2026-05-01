@@ -55,6 +55,7 @@ type SessionMessagesRequest struct {
 	BeforeSeq *uint64
 	Limit     int
 	Init      bool
+	Deferred  bool
 }
 
 type SessionMessage struct {
@@ -62,8 +63,9 @@ type SessionMessage struct {
 	Role           string                 `json:"role,omitempty"`
 	Kind           string                 `json:"kind"`
 	Type           string                 `json:"type,omitempty"`
-	Text           string                 `json:"text"`
+	Text           string                 `json:"text,omitempty"`
 	TS             float64                `json:"ts"`
+	SessionID      string                 `json:"session_id,omitempty"`
 	EventID        string                 `json:"event_id,omitempty"`
 	ParentEventID  string                 `json:"parent_event_id,omitempty"`
 	SourceOrder    string                 `json:"source_order,omitempty"`
@@ -304,7 +306,9 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		}
 		for _, item := range items {
 			if item.Seq().Uint64() > *req.AfterSeq {
-				response.Items = append(response.Items, sessionMessageFromCommitted(item))
+				msg := sessionMessageForRequest(item, req, record.transcript.TailSeq().Uint64())
+				msg.SessionID = record.identity.SessionID().String()
+				response.Items = append(response.Items, msg)
 			}
 		}
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
@@ -317,13 +321,32 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		TailSeq: record.transcript.TailSeq().Uint64(),
 	}
 	for _, item := range items {
-		response.Items = append(response.Items, sessionMessageFromCommitted(item))
+		msg := sessionMessageForRequest(item, req, record.transcript.TailSeq().Uint64())
+		msg.SessionID = record.identity.SessionID().String()
+		response.Items = append(response.Items, msg)
 	}
 	if nextBefore, ok := page.NextBefore(); ok {
 		value := nextBefore.Uint64()
 		response.NextBeforeSeq = &value
 	}
 	return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
+}
+
+func sessionMessageForRequest(item message.CommittedMessage, req SessionMessagesRequest, tailSeq uint64) SessionMessage {
+	msg := sessionMessageFromCommitted(item)
+	if !req.Deferred || !deferToolMessageBody(msg, tailSeq) {
+		return msg
+	}
+	msg.Text = ""
+	msg.Details = nil
+	return msg
+}
+
+func deferToolMessageBody(msg SessionMessage, tailSeq uint64) bool {
+	if msg.Kind != "tool" && msg.Kind != "tool_result" && msg.Type != "tool" && msg.Type != "tool_result" {
+		return false
+	}
+	return msg.Seq+4 < tailSeq
 }
 
 func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (SessionStateResponse, error) {

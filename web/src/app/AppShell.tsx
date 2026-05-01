@@ -27,7 +27,7 @@ import { getSessionRuntimeId } from "../lib/session-identity";
 import { getSessionDisplayName } from "../lib/session-display";
 import { applyUserDisplaySettings, readUserDisplaySettings, writeUserDisplaySettings } from "../lib/user-settings";
 
-type WorkspaceTab = "insight" | "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files";
+type WorkspaceTab = "insight" | "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files" | "supervisor";
 
 function formatTokenK(value: number) {
   const normalized = Math.max(0, Math.round(value));
@@ -608,7 +608,7 @@ export function AppShell() {
                   void probeActiveSessionState();
                 }}
                 onOpenFiles={() => openFileViewer()}
-                onOpenHarness={() => setHarnessOpen(true)}
+                onOpenHarness={() => openWorkspace("supervisor")}
                 onOpenSessions={() => setSidebarOpen(true)}
                 onOpenInsight={() => openWorkspace("insight")}
                 onOpenWaits={openWaitWorkspace}
@@ -632,7 +632,7 @@ export function AppShell() {
         fileViewerOpen={fileViewerOpen}
         fileViewerPath={fileViewerPath}
         fileViewerRequestKey={fileViewerRequestKey}
-        harnessOpen={harnessOpen}
+        harnessOpen={harnessOpen || (workspaceOpen && workspaceInitialTab === "supervisor")}
         harnessSupported={harnessSupported}
         newSessionOpen={newSessionOpen}
         sessionsRail={renderSessionsRail()}
@@ -696,7 +696,12 @@ export function AppShell() {
         onCloseHarness={() => setHarnessOpen(false)}
         onCloseNewSession={() => setNewSessionOpen(false)}
         onCloseSidebar={() => setSidebarOpen(false)}
-        onCloseWorkspace={() => setWorkspaceOpen(false)}
+        onCloseWorkspace={() => {
+          setWorkspaceOpen(false);
+          if (workspaceInitialTab === "supervisor") {
+            setWorkspaceInitialTab("overview");
+          }
+        }}
       />
     </>
   );

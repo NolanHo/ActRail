@@ -1,7 +1,7 @@
 import { api } from "../../lib/api";
 import type { MessageEvent } from "../../lib/types";
 
-const HISTORY_PAGE_SIZE = 300;
+const HISTORY_PAGE_SIZE = 3000;
 
 const MACHINE_TRACE_TYPES = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 
@@ -254,7 +254,7 @@ export function createMessagesStore(): MessagesStore {
 
       try {
         const after = init ? undefined : state.offsetsBySessionId[sessionId];
-        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, after, undefined, HISTORY_PAGE_SIZE));
+        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, after, undefined, HISTORY_PAGE_SIZE, undefined, true));
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }
@@ -346,7 +346,7 @@ export function createMessagesStore(): MessagesStore {
       let foundAnchor = false;
 
       while ((nextBefore > 0 || hasOlder) && !foundAnchor) {
-        const data = normalizeMessagePage(await api.listMessages(sessionId, true, undefined, undefined, nextBefore, limit));
+        const data = normalizeMessagePage(await api.listMessages(sessionId, true, undefined, undefined, nextBefore, limit, undefined, true));
         if (loadId !== currentOlderLoadIds[sessionId]) {
           return;
         }

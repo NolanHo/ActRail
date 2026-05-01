@@ -393,6 +393,44 @@ func TestPIRPCGetStateControlsBusyWithoutAgentEvents(t *testing.T) {
 	}
 }
 
+func TestPIRPCActivityEventMarksIdleSessionBusy(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_rpc_state_activity_busy")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime.helper = &runtimeIODHelper{generationID: generationID}
+		record.runtime.protocol = runtimeProtocolPIRPC
+		record.transport = SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached}
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"working"},"message":{"role":"assistant","timestamp":1774708716099}}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(message_update) error = %v", err)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy {
+		t.Fatal("SessionState().Busy = false, want true after assistant delta")
+	}
+}
+
 func TestPIRPCTurnCompletedClearsBusyAfterPromptLatch(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}

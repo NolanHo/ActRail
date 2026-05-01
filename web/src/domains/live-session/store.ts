@@ -421,8 +421,8 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
 
         const [messagePayload, statePayload] = await Promise.all([
           runtimeId
-            ? api.listMessages(sessionId, replace, undefined, undefined, undefined, 300, runtimeId)
-            : api.listMessages(sessionId, replace, undefined, undefined, undefined, 300),
+            ? api.listMessages(sessionId, replace, undefined, undefined, undefined, 3000, runtimeId, true)
+            : api.listMessages(sessionId, replace, undefined, undefined, undefined, 3000, undefined, true),
           loadState(),
         ]);
         applySnapshot(sessionId, messagePayload, statePayload, replace);

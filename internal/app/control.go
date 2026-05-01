@@ -100,9 +100,11 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 		}
 		busyOnSend := true
 		if record.identity.Backend() == session.BackendPI {
-			busyOnSend = record.state.Busy()
 			pollRuntime = record.runtime
 			pollPIState = true
+			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
+				s.holdPIRPCBusy(req.SessionID, record.runtime.helper.generationID)
+			}
 		}
 		s.awaitRuntimeTurnStart(ctx, record.runtime)
 		item, state, uiRequest, ok, err := s.registry.ActivateSendWithBusy(req.SessionID, text, busyOnSend)
