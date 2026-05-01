@@ -2,8 +2,13 @@ package app
 
 import (
 	"context"
+	"io"
+	"sync"
 	"testing"
+	"time"
 
+	"actrail/internal/adapters/process"
+	"actrail/internal/config"
 	"actrail/internal/domain/session"
 )
 
@@ -46,6 +51,98 @@ func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
 	}
 	if state.Busy || len(state.Queue.Items) != 0 || state.TailSeq != 1 {
 		t.Fatalf("SessionState() after idle dispatch = %+v, want idle empty queue tail_seq 1 before Pi reports runtime state", state)
+	}
+}
+
+type blockingWritePTY struct {
+	mu      sync.Mutex
+	writes  []string
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingWritePTY() *blockingWritePTY {
+	return &blockingWritePTY{entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (p *blockingWritePTY) Read([]byte) (int, error) { return 0, io.EOF }
+
+func (p *blockingWritePTY) Write(data []byte) (int, error) {
+	p.once.Do(func() { close(p.entered) })
+	<-p.release
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.writes = append(p.writes, string(data))
+	return len(data), nil
+}
+
+func (p *blockingWritePTY) Close() error { return nil }
+
+func (p *blockingWritePTY) Resize(process.PTYSize) error { return nil }
+
+func (p *blockingWritePTY) Writes() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	copied := make([]string, len(p.writes))
+	copy(copied, p.writes)
+	return copied
+}
+
+func TestCancelQueueWaitsForQueuedDispatchCriticalSection(t *testing.T) {
+	pty := newBlockingWritePTY()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetPTY(pty)
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: &process.FakeRunner{NextHandle: handle}})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "queued prompt"}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	select {
+	case <-pty.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued dispatch did not reach runtime write")
+	}
+
+	cancelDone := make(chan error, 1)
+	go func() {
+		_, err := svc.CancelQueue(context.Background(), CancelQueueRequest{SessionID: sessionID})
+		cancelDone <- err
+	}()
+	select {
+	case err := <-cancelDone:
+		t.Fatalf("CancelQueue returned before queued dispatch finished; err=%v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(pty.release)
+	select {
+	case err := <-cancelDone:
+		if err != nil {
+			t.Fatalf("CancelQueue() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CancelQueue did not return after queued dispatch finished")
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "queued prompt" {
+		t.Fatalf("SessionMessages() = %+v, want queued prompt committed", messages.Items)
+	}
+	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "next prompt"}); err != nil {
+		t.Fatalf("Send() after CancelQueue() error = %v", err)
+	}
+	if writes := pty.Writes(); len(writes) != 2 {
+		t.Fatalf("pty writes = %#v, want queued and next prompts", writes)
 	}
 }
 

@@ -137,38 +137,48 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 	if text == "" {
 		return EnqueueResponse{}, Invalid("text", "text required")
 	}
-	record, err := s.lookupSession(req.SessionID)
-	if err != nil {
+	var response EnqueueResponse
+	shouldDispatch := false
+	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
+		if s.activeWaitForSession(req.SessionID) != nil {
+			return Conflict("session is waiting on user")
+		}
+		state, ok, err := s.registry.ReplaceQueue(req.SessionID, text)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+		}
+		response = EnqueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
+		shouldDispatch = !state.Busy() && transportControlError(sessionTransportSnapshot(record)) == nil
+		return nil
+	}); err != nil {
 		return EnqueueResponse{}, err
 	}
-	if s.activeWaitForSession(req.SessionID) != nil {
-		return EnqueueResponse{}, Conflict("session is waiting on user")
-	}
-	state, ok, err := s.registry.ReplaceQueue(req.SessionID, text)
-	if err != nil {
-		return EnqueueResponse{}, err
-	}
-	if !ok {
-		return EnqueueResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
-	}
-	response := EnqueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
-	if !state.Busy() && transportControlError(sessionTransportSnapshot(record)) == nil {
+	if shouldDispatch {
 		s.scheduleQueuedDispatch(req.SessionID)
 	}
 	return response, nil
 }
 
 func (s *Stub) CancelQueue(_ context.Context, req CancelQueueRequest) (CancelQueueResponse, error) {
-	state, ok, err := s.registry.ClearQueue(req.SessionID)
-	if err != nil {
+	var response CancelQueueResponse
+	if err := s.withSessionInputLock(req.SessionID, func(sessionRecord) error {
+		state, ok, err := s.registry.ClearQueue(req.SessionID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+		}
+		response = CancelQueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
+		return nil
+	}); err != nil {
 		return CancelQueueResponse{}, err
 	}
-	if !ok {
-		return CancelQueueResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
-	}
-	response := CancelQueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
 	return response, nil
