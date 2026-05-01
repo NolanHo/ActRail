@@ -640,37 +640,7 @@ func TestIODTransportResetRequiredEmitsDiagnosticMessage(t *testing.T) {
 }
 
 func TestPIRPCGetStateFailuresEmitWarningWithoutStallingTransport(t *testing.T) {
-	handle := process.NewFakeHandle(process.LaunchSpec{})
-	runner := &process.FakeRunner{NextHandle: handle}
-	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
-	if err != nil {
-		t.Fatalf("CreateSession() error = %v", err)
-	}
-	sessionID, err := session.ParseSessionID(created.Session.SessionID)
-	if err != nil {
-		t.Fatalf("ParseSessionID() error = %v", err)
-	}
-	generationID, err := iod.NewGenerationID("g_rpc_state_fail")
-	if err != nil {
-		t.Fatalf("NewGenerationID() error = %v", err)
-	}
-	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
-		record.runtime.helper = &runtimeIODHelper{generationID: generationID}
-		record.runtime.protocol = runtimeProtocolPIRPC
-		record.transport = SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached}
-		return nil
-	}); err != nil || !ok {
-		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
-	}
-	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
-		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
-	}
-	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
-		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
-	}
-
+	svc, sessionID, generationID := newPIRPCStateFailureFixture(t)
 	decoder := runtimeEventDecoder{backend: session.BackendPI}
 	apply := func(raw string) {
 		t.Helper()
@@ -704,6 +674,68 @@ func TestPIRPCGetStateFailuresEmitWarningWithoutStallingTransport(t *testing.T) 
 	if len(messages.Items) != 1 || messages.Items[0].Type != "pi_event" || messages.Items[0].Text != "Pi RPC state probe failed: rpc unavailable" {
 		t.Fatalf("SessionMessages() = %+v, want state probe warning event", messages.Items)
 	}
+	if got := svc.recordPIRPCStateTransportFailure(sessionID, generationID, "rpc unavailable"); got {
+		t.Fatal("recordPIRPCStateTransportFailure(rpc unavailable) = true, want false")
+	}
+}
+
+func TestPIRPCControlSocketFailureRequiresTransportResetAndStopsPolling(t *testing.T) {
+	svc, sessionID, generationID := newPIRPCStateFailureFixture(t)
+	reason := `dial iod control socket "/root/code/ActRail/data/runtime/iod/s_27/g_1777645018083526842/io": dial unix /root/code/ActRail/data/runtime/iod/s_27/g_1777645018083526842/io: connect: no such file or directory`
+	if got := svc.recordPIRPCStateTransportFailure(sessionID, generationID, reason); !got {
+		t.Fatal("recordPIRPCStateTransportFailure() = false, want true")
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateBroken || !state.Transport.ResetRequired || state.Transport.Reason != reason {
+		t.Fatalf("SessionState() = %+v, want broken reset_required control socket reason", state)
+	}
+	if svc.shouldPollPIRPCState(sessionID, sessionRuntime{protocol: runtimeProtocolPIRPC, helper: &runtimeIODHelper{generationID: generationID}}, generationID) {
+		t.Fatal("shouldPollPIRPCState() = true, want false after control socket failure")
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "IOD transport reset required: "+reason {
+		t.Fatalf("SessionMessages() = %+v, want one transport diagnostic", messages.Items)
+	}
+}
+
+func newPIRPCStateFailureFixture(t *testing.T) (*Stub, session.SessionID, iod.GenerationID) {
+	t.Helper()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_rpc_state_fail")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime.helper = &runtimeIODHelper{generationID: generationID}
+		record.runtime.protocol = runtimeProtocolPIRPC
+		record.transport = SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached}
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	return svc, sessionID, generationID
 }
 
 func TestNextPIRPCStatePollIntervalUsesBusyIntervalForPendingProbe(t *testing.T) {

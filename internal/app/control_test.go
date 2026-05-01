@@ -166,6 +166,9 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	if handle.InterruptCalls() != 0 {
 		t.Fatalf("handle.InterruptCalls() = %d, want 0 when Pi RPC uses abort command", handle.InterruptCalls())
 	}
+	if handle.KillCalls() != 0 {
+		t.Fatalf("handle.KillCalls() = %d, want 0 when cancelling Pi RPC loop", handle.KillCalls())
+	}
 	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("SessionState() after Interrupt() error = %v", err)

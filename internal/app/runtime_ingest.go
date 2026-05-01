@@ -187,6 +187,9 @@ func (s *Stub) pollPIRPCState(sessionID session.SessionID, runtime sessionRuntim
 		err := runtime.RequestPIRPCState(ctx, probeID)
 		cancel()
 		if err != nil {
+			if s.recordPIRPCStateTransportFailure(sessionID, generationID, err.Error()) {
+				return
+			}
 			if s.recordPIRPCStateProbeFailure(sessionID, generationID, probeID, err.Error()) {
 				return
 			}
@@ -300,6 +303,33 @@ func (s *Stub) recordPIRPCStateProbeFailure(sessionID session.SessionID, generat
 		_ = s.emitPIRPCStateProbeWarning(sessionID, generationID, reason)
 	}
 	return false
+}
+
+func (s *Stub) recordPIRPCStateTransportFailure(sessionID session.SessionID, generationID iod.GenerationID, reason string) bool {
+	if !isPIRPCControlSocketFailure(reason) {
+		return false
+	}
+	s.piRPCStateMu.Lock()
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID == "" {
+		cache.GenerationID = generationID
+	}
+	if cache.GenerationID != generationID {
+		s.piRPCStateMu.Unlock()
+		return true
+	}
+	cache.PendingProbeID = ""
+	cache.StalledResetRequired = true
+	cache.LastFailureTS = time.Now().UTC()
+	s.piRPCStates[sessionID] = cache
+	s.piRPCStateMu.Unlock()
+	_ = s.markSessionTransportResetRequired(sessionID, generationID, reason)
+	return true
+}
+
+func isPIRPCControlSocketFailure(reason string) bool {
+	text := strings.TrimSpace(reason)
+	return strings.Contains(text, "dial iod control socket") || strings.Contains(text, "connect: no such file or directory")
 }
 
 func (s *Stub) recordPIRPCStateSuccess(sessionID session.SessionID, state piRPCStateSnapshot) {
