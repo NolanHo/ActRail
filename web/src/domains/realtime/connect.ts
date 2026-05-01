@@ -1,3 +1,14 @@
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import {
+  CancelQueueRequestSchema,
+  CommandResponseSchema,
+  EnqueueRequestSchema,
+  EventEnvelopeSchema,
+  InterruptRequestSchema,
+  RespondUIRequestSchema,
+  SendRequestSchema,
+  SubscribeRequestSchema,
+} from "../../gen/actrail/v1/transport_pb";
 import { HttpError } from "../../lib/http";
 import type { RealtimeEnvelope } from "../../lib/types";
 import type { RealtimeCommand } from "./client";
@@ -12,113 +23,7 @@ export interface ConnectTransportConfig {
   wireFormat?: ConnectWireFormat;
 }
 
-interface ProtoField {
-  num: number;
-  wire: number;
-  value?: Uint8Array;
-  u64?: number;
-}
-
-const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-
-function concatBytes(...parts: Uint8Array[]) {
-  const length = parts.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(length);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
-}
-
-function protoVarint(value: number) {
-  const bytes: number[] = [];
-  let n = Math.max(0, Math.floor(value));
-  while (n > 0x7f) {
-    bytes.push((n & 0x7f) | 0x80);
-    n = Math.floor(n / 128);
-  }
-  bytes.push(n);
-  return new Uint8Array(bytes);
-}
-
-function protoKey(field: number, wire: number) {
-  return protoVarint(field * 8 + wire);
-}
-
-function protoString(field: number, value: unknown) {
-  const text = typeof value === "string" ? value : "";
-  if (!text) return new Uint8Array(0);
-  const bytes = textEncoder.encode(text);
-  return concatBytes(protoKey(field, 2), protoVarint(bytes.length), bytes);
-}
-
-function protoBytes(field: number, bytes: Uint8Array) {
-  if (!bytes.length) return new Uint8Array(0);
-  return concatBytes(protoKey(field, 2), protoVarint(bytes.length), bytes);
-}
-
-function protoMessage(field: number, bytes: Uint8Array) {
-  return protoBytes(field, bytes);
-}
-
-function protoUint64(field: number, value: number) {
-  if (!Number.isFinite(value) || value <= 0) return new Uint8Array(0);
-  return concatBytes(protoKey(field, 0), protoVarint(value));
-}
-
-function readVarint(data: Uint8Array, offset: number): { value: number; offset: number } {
-  let value = 0;
-  let shift = 0;
-  while (offset < data.length) {
-    const byte = data[offset++];
-    value += (byte & 0x7f) * 2 ** shift;
-    if ((byte & 0x80) === 0) return { value, offset };
-    shift += 7;
-  }
-  throw new Error("invalid protobuf varint");
-}
-
-function readProtoFields(data: Uint8Array): ProtoField[] {
-  const fields: ProtoField[] = [];
-  let offset = 0;
-  while (offset < data.length) {
-    const key = readVarint(data, offset);
-    offset = key.offset;
-    const num = Math.floor(key.value / 8);
-    const wire = key.value % 8;
-    if (wire === 0) {
-      const value = readVarint(data, offset);
-      offset = value.offset;
-      fields.push({ num, wire, u64: value.value });
-    } else if (wire === 2) {
-      const length = readVarint(data, offset);
-      offset = length.offset;
-      const end = offset + length.value;
-      if (end > data.length) throw new Error("invalid protobuf bytes length");
-      fields.push({ num, wire, value: data.slice(offset, end) });
-      offset = end;
-    } else {
-      throw new Error(`unsupported protobuf wire type ${wire}`);
-    }
-  }
-  return fields;
-}
-
-function fieldBytes(fields: ProtoField[], num: number) {
-  return fields.find((field) => field.num === num && field.wire === 2)?.value ?? new Uint8Array(0);
-}
-
-function fieldString(fields: ProtoField[], num: number) {
-  const bytes = fieldBytes(fields, num);
-  return bytes.length ? textDecoder.decode(bytes) : "";
-}
-
-function fieldNumber(fields: ProtoField[], num: number) {
-  return fields.find((field) => field.num === num && field.wire === 0)?.u64 ?? 0;
-}
 
 function apiPath(path: string) {
   return path.startsWith("/") ? path.slice(1) : path;
@@ -179,39 +84,48 @@ function decodePayloadBytes(raw: Uint8Array) {
   return json ? JSON.parse(json) as Record<string, unknown> : {};
 }
 
-function encodeSessionProto(session: ReturnType<typeof sessionFromPayload>) {
-  return concatBytes(protoString(1, session.sessionId), protoString(2, session.runtimeId));
-}
-
 function bodyForCommandProto(command: RealtimeCommand, method: string) {
   const payload = command.payload || {};
-  const session = protoMessage(1, encodeSessionProto(sessionFromPayload(payload)));
-  if (method === "Send" || method === "Enqueue") {
-    return concatBytes(session, protoString(2, payload.text));
+  const session = sessionFromPayload(payload);
+  if (method === "Send") {
+    return toBinary(SendRequestSchema, create(SendRequestSchema, { session, text: typeof payload.text === "string" ? payload.text : "" }));
+  }
+  if (method === "Enqueue") {
+    return toBinary(EnqueueRequestSchema, create(EnqueueRequestSchema, { session, text: typeof payload.text === "string" ? payload.text : "" }));
+  }
+  if (method === "CancelQueue") {
+    return toBinary(CancelQueueRequestSchema, create(CancelQueueRequestSchema, { session }));
+  }
+  if (method === "Interrupt") {
+    return toBinary(InterruptRequestSchema, create(InterruptRequestSchema, { session }));
   }
   if (method === "RespondUI") {
     const value = typeof payload.value === "string" ? payload.value : JSON.stringify(payload.value ?? "");
-    return concatBytes(session, protoString(2, payload.response_to), protoString(3, value));
+    return toBinary(RespondUIRequestSchema, create(RespondUIRequestSchema, {
+      session,
+      responseTo: typeof payload.response_to === "string" ? payload.response_to : "",
+      value,
+    }));
   }
-  return session;
+  throw new Error(`Unsupported Connect command: ${command.type}`);
 }
 
 function decodeCommandResponseProto(bytes: Uint8Array) {
-  return decodePayloadBytes(fieldBytes(readProtoFields(bytes), 1));
+  return decodePayloadBytes(fromBinary(CommandResponseSchema, bytes).payloadJson);
 }
 
 function encodeSubscribeRequestProto(afterEventId: number) {
-  return protoUint64(1, afterEventId);
+  return toBinary(SubscribeRequestSchema, create(SubscribeRequestSchema, { afterEventId: BigInt(Math.max(0, Math.floor(afterEventId))) }));
 }
 
 function decodeEventEnvelopeProto(bytes: Uint8Array): Record<string, unknown> {
-  const fields = readProtoFields(bytes);
+  const frame = fromBinary(EventEnvelopeSchema, bytes);
   return {
-    id: fieldNumber(fields, 1),
-    type: fieldString(fields, 2),
-    stream: fieldString(fields, 3),
-    unixMillis: fieldNumber(fields, 4),
-    payload: decodePayloadBytes(fieldBytes(fields, 5)),
+    id: Number(frame.id),
+    type: frame.type,
+    stream: frame.stream,
+    unixMillis: Number(frame.unixMillis),
+    payload: decodePayloadBytes(frame.payloadJson),
   };
 }
 

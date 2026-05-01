@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,8 @@ import (
 	"actrail/internal/app"
 	"actrail/internal/domain/session"
 	"actrail/internal/ws"
+	actrailv1 "actrail/proto/actrail/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 type controllerStub struct {
@@ -66,9 +67,10 @@ func TestSessionCommandServiceSendMapsToController(t *testing.T) {
 func TestSessionCommandServiceSendAcceptsProto(t *testing.T) {
 	controller := &controllerStub{}
 	h := NewHandler(controller, NewBroker(10))
-	var body []byte
-	body = appendProtoMessage(body, 1, encodeSessionIdentityProto(SessionIdentity{SessionID: "s_123"}))
-	body = appendProtoString(body, 2, "hello")
+	body, err := proto.Marshal(&actrailv1.SendRequest{Session: &actrailv1.SessionIdentity{SessionId: "s_123"}, Text: "hello"})
+	if err != nil {
+		t.Fatalf("marshal request proto: %v", err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/connect/actrail.v1.SessionCommandService/Send", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/connect+proto")
 	res := httptest.NewRecorder()
@@ -82,12 +84,12 @@ func TestSessionCommandServiceSendAcceptsProto(t *testing.T) {
 	if controller.sendReq.SessionID != session.SessionID("s_123") || controller.sendReq.Text != "hello" {
 		t.Fatalf("send req = %+v", controller.sendReq)
 	}
-	fields, err := readProtoFields(res.Body.Bytes())
-	if err != nil {
+	var response actrailv1.CommandResponse
+	if err := proto.Unmarshal(res.Body.Bytes(), &response); err != nil {
 		t.Fatalf("read response proto: %v", err)
 	}
-	if !strings.Contains(string(protoBytes(fields, 1)), `"busy":true`) {
-		t.Fatalf("payload_json = %s", string(protoBytes(fields, 1)))
+	if !strings.Contains(string(response.GetPayloadJson()), `"busy":true`) {
+		t.Fatalf("payload_json = %s", string(response.GetPayloadJson()))
 	}
 }
 
@@ -97,7 +99,11 @@ func TestEventServiceSubscribeWritesProtoEnvelope(t *testing.T) {
 	h := NewHandler(&controllerStub{}, broker)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req := httptest.NewRequest(http.MethodPost, "/api/connect/actrail.v1.EventService/Subscribe", bytes.NewReader(appendProtoUint64(nil, 1, 0))).WithContext(ctx)
+	body, err := proto.Marshal(&actrailv1.SubscribeRequest{})
+	if err != nil {
+		t.Fatalf("marshal subscribe proto: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/connect/actrail.v1.EventService/Subscribe", bytes.NewReader(body)).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/connect+proto")
 	res := httptest.NewRecorder()
 	h.ServeHTTP(res, req)
@@ -108,18 +114,14 @@ func TestEventServiceSubscribeWritesProtoEnvelope(t *testing.T) {
 	if len(data) < 5 {
 		t.Fatalf("response body too short: %d", len(data))
 	}
-	length := binary.BigEndian.Uint32(data[1:5])
-	if int(length) != len(data)-5 {
-		t.Fatalf("frame length = %d body=%d", length, len(data)-5)
-	}
-	fields, err := readProtoFields(data[5:])
-	if err != nil {
+	var event actrailv1.EventEnvelope
+	if err := proto.Unmarshal(data[5:], &event); err != nil {
 		t.Fatalf("read event proto: %v", err)
 	}
-	if protoUint64(fields, 1) != 1 || protoString(fields, 2) != string(ws.FrameTypeSessionState) || protoString(fields, 3) != "session:s_123" {
-		t.Fatalf("event fields = %#v", fields)
+	if event.GetId() != 1 || event.GetType() != string(ws.FrameTypeSessionState) || event.GetStream() != "session:s_123" {
+		t.Fatalf("event = %#v", &event)
 	}
-	if !strings.Contains(string(protoBytes(fields, 5)), `"busy":true`) {
-		t.Fatalf("payload_json = %s", string(protoBytes(fields, 5)))
+	if !strings.Contains(string(event.GetPayloadJson()), `"busy":true`) {
+		t.Fatalf("payload_json = %s", string(event.GetPayloadJson()))
 	}
 }

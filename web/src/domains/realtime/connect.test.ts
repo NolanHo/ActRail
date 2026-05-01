@@ -1,35 +1,12 @@
+import { create, toBinary } from "@bufbuild/protobuf";
+import { CommandResponseSchema } from "../../gen/actrail/v1/transport_pb";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connect, sendRealtimeCommand, configureRealtimeClient } from "./client";
 
 const encoder = new TextEncoder();
 
-function varint(value: number) {
-  const bytes: number[] = [];
-  let n = Math.max(0, Math.floor(value));
-  while (n > 0x7f) {
-    bytes.push((n & 0x7f) | 0x80);
-    n = Math.floor(n / 128);
-  }
-  bytes.push(n);
-  return new Uint8Array(bytes);
-}
-
-function concat(...parts: Uint8Array[]) {
-  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
-}
-
-function protoBytes(field: number, bytes: Uint8Array) {
-  return concat(varint(field * 8 + 2), varint(bytes.length), bytes);
-}
-
 function commandResponseProto(value: unknown) {
-  return protoBytes(1, encoder.encode(JSON.stringify(value)));
+  return toBinary(CommandResponseSchema, create(CommandResponseSchema, { payloadJson: encoder.encode(JSON.stringify(value)) }));
 }
 
 function payloadJson(value: unknown) {

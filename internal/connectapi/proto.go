@@ -2,196 +2,101 @@ package connectapi
 
 import (
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"strings"
+
+	actrailv1 "actrail/proto/actrail/v1"
+	"google.golang.org/protobuf/proto"
 )
-
-const (
-	protoWireVarint = 0
-	protoWireBytes  = 2
-)
-
-type protoField struct {
-	num   uint64
-	wire  uint64
-	value []byte
-	u64   uint64
-}
-
-func appendProtoVarint(dst []byte, value uint64) []byte {
-	return binary.AppendUvarint(dst, value)
-}
-
-func appendProtoKey(dst []byte, field uint64, wire uint64) []byte {
-	return appendProtoVarint(dst, field<<3|wire)
-}
-
-func appendProtoString(dst []byte, field uint64, value string) []byte {
-	if value == "" {
-		return dst
-	}
-	dst = appendProtoKey(dst, field, protoWireBytes)
-	dst = appendProtoVarint(dst, uint64(len(value)))
-	return append(dst, value...)
-}
-
-func appendProtoBytes(dst []byte, field uint64, value []byte) []byte {
-	if len(value) == 0 {
-		return dst
-	}
-	dst = appendProtoKey(dst, field, protoWireBytes)
-	dst = appendProtoVarint(dst, uint64(len(value)))
-	return append(dst, value...)
-}
-
-func appendProtoMessage(dst []byte, field uint64, value []byte) []byte {
-	return appendProtoBytes(dst, field, value)
-}
-
-func appendProtoUint64(dst []byte, field uint64, value uint64) []byte {
-	if value == 0 {
-		return dst
-	}
-	dst = appendProtoKey(dst, field, protoWireVarint)
-	return appendProtoVarint(dst, value)
-}
-
-func appendProtoInt64(dst []byte, field uint64, value int64) []byte {
-	if value == 0 {
-		return dst
-	}
-	dst = appendProtoKey(dst, field, protoWireVarint)
-	return appendProtoVarint(dst, uint64(value))
-}
-
-func readProtoFields(data []byte) ([]protoField, error) {
-	fields := make([]protoField, 0)
-	for len(data) > 0 {
-		key, n := binary.Uvarint(data)
-		if n <= 0 {
-			return nil, fmt.Errorf("invalid protobuf field key")
-		}
-		data = data[n:]
-		field := protoField{num: key >> 3, wire: key & 7}
-		switch field.wire {
-		case protoWireVarint:
-			value, m := binary.Uvarint(data)
-			if m <= 0 {
-				return nil, fmt.Errorf("invalid protobuf varint")
-			}
-			field.u64 = value
-			data = data[m:]
-		case protoWireBytes:
-			length, m := binary.Uvarint(data)
-			if m <= 0 || length > uint64(len(data[m:])) || length > uint64(math.MaxInt) {
-				return nil, fmt.Errorf("invalid protobuf bytes length")
-			}
-			start := m
-			end := start + int(length)
-			field.value = data[start:end]
-			data = data[end:]
-		default:
-			return nil, fmt.Errorf("unsupported protobuf wire type %d", field.wire)
-		}
-		fields = append(fields, field)
-	}
-	return fields, nil
-}
-
-func protoString(fields []protoField, num uint64) string {
-	for _, field := range fields {
-		if field.num == num && field.wire == protoWireBytes {
-			return string(field.value)
-		}
-	}
-	return ""
-}
-
-func protoBytes(fields []protoField, num uint64) []byte {
-	for _, field := range fields {
-		if field.num == num && field.wire == protoWireBytes {
-			return field.value
-		}
-	}
-	return nil
-}
-
-func protoUint64(fields []protoField, num uint64) uint64 {
-	for _, field := range fields {
-		if field.num == num && field.wire == protoWireVarint {
-			return field.u64
-		}
-	}
-	return 0
-}
-
-func encodeSessionIdentityProto(identity SessionIdentity) []byte {
-	var out []byte
-	out = appendProtoString(out, 1, identity.SessionID)
-	out = appendProtoString(out, 2, identity.RuntimeID)
-	return out
-}
-
-func decodeSessionIdentityProto(data []byte) (SessionIdentity, error) {
-	fields, err := readProtoFields(data)
-	if err != nil {
-		return SessionIdentity{}, err
-	}
-	return SessionIdentity{SessionID: protoString(fields, 1), RuntimeID: protoString(fields, 2)}, nil
-}
 
 func decodeCommandRequestProto(method string, data []byte) (commandRequest, error) {
-	fields, err := readProtoFields(data)
-	if err != nil {
-		return commandRequest{}, err
-	}
-	identity, err := decodeSessionIdentityProto(protoBytes(fields, 1))
-	if err != nil {
-		return commandRequest{}, err
-	}
-	out := commandRequest{Session: identity}
+	out := commandRequest{}
 	switch method {
-	case "Send", "Enqueue":
-		out.Text = protoString(fields, 2)
+	case "Send":
+		var req actrailv1.SendRequest
+		if err := proto.Unmarshal(data, &req); err != nil {
+			return commandRequest{}, err
+		}
+		out.Session = sessionIdentityFromProto(req.GetSession())
+		out.Text = req.GetText()
+	case "Enqueue":
+		var req actrailv1.EnqueueRequest
+		if err := proto.Unmarshal(data, &req); err != nil {
+			return commandRequest{}, err
+		}
+		out.Session = sessionIdentityFromProto(req.GetSession())
+		out.Text = req.GetText()
+	case "CancelQueue":
+		var req actrailv1.CancelQueueRequest
+		if err := proto.Unmarshal(data, &req); err != nil {
+			return commandRequest{}, err
+		}
+		out.Session = sessionIdentityFromProto(req.GetSession())
+	case "Interrupt":
+		var req actrailv1.InterruptRequest
+		if err := proto.Unmarshal(data, &req); err != nil {
+			return commandRequest{}, err
+		}
+		out.Session = sessionIdentityFromProto(req.GetSession())
 	case "RespondUI":
-		out.ResponseTo = protoString(fields, 2)
-		value, err := json.Marshal(protoString(fields, 3))
+		var req actrailv1.RespondUIRequest
+		if err := proto.Unmarshal(data, &req); err != nil {
+			return commandRequest{}, err
+		}
+		value, err := json.Marshal(req.GetValue())
 		if err != nil {
 			return commandRequest{}, err
 		}
+		out.Session = sessionIdentityFromProto(req.GetSession())
+		out.ResponseTo = req.GetResponseTo()
 		out.Value = value
+	default:
+		return commandRequest{}, fmt.Errorf("unknown command method %q", method)
 	}
 	return out, nil
 }
 
+func sessionIdentityFromProto(identity *actrailv1.SessionIdentity) SessionIdentity {
+	if identity == nil {
+		return SessionIdentity{}
+	}
+	return SessionIdentity{SessionID: identity.GetSessionId(), RuntimeID: identity.GetRuntimeId()}
+}
+
 func encodeCommandResponseProto(payload []byte) []byte {
-	return appendProtoBytes(nil, 1, payload)
+	data, err := proto.Marshal(&actrailv1.CommandResponse{PayloadJson: payload})
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 func decodeSubscribeRequestProto(data []byte) (subscribeRequest, error) {
-	fields, err := readProtoFields(data)
-	if err != nil {
+	var req actrailv1.SubscribeRequest
+	if err := proto.Unmarshal(data, &req); err != nil {
 		return subscribeRequest{}, err
 	}
-	return subscribeRequest{AfterEventID: protoUint64(fields, 1)}, nil
+	return subscribeRequest{AfterEventID: req.GetAfterEventId()}, nil
 }
 
 func encodeEventEnvelopeProto(event EventEnvelope) []byte {
-	var out []byte
-	out = appendProtoUint64(out, 1, event.ID)
-	out = appendProtoString(out, 2, event.Type)
-	out = appendProtoString(out, 3, event.Stream)
-	out = appendProtoInt64(out, 4, event.UnixMillis)
 	payload, err := base64.StdEncoding.DecodeString(event.PayloadJSON)
 	if err != nil {
 		payload = nil
 	}
-	out = appendProtoBytes(out, 5, payload)
-	return out
+	data, err := proto.Marshal(&actrailv1.EventEnvelope{
+		Id:          event.ID,
+		Type:        event.Type,
+		Stream:      event.Stream,
+		UnixMillis:  event.UnixMillis,
+		PayloadJson: payload,
+	})
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 func requestWantsProto(contentType string) bool {
