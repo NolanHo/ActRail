@@ -17,11 +17,12 @@ import (
 )
 
 const (
-	maxRuntimeLineBytes    = 1 << 20
-	piRPCStatePollInterval = 10 * time.Second
-	piRPCStatePollTimeout  = 2 * time.Second
-	piRPCStateMaxFailures  = 3
-	piRPCBusyHoldDuration  = 3 * time.Second
+	maxRuntimeLineBytes        = 1 << 20
+	piRPCStateIdlePollInterval = 10 * time.Second
+	piRPCStateBusyPollInterval = 1 * time.Second
+	piRPCStatePollTimeout      = 2 * time.Second
+	piRPCStateMaxFailures      = 3
+	piRPCBusyHoldDuration      = 3 * time.Second
 )
 
 var runtimeHelperProjectors sync.Map
@@ -189,7 +190,7 @@ func (s *Stub) pollPIRPCState(sessionID session.SessionID, runtime sessionRuntim
 				return
 			}
 		} else {
-			timer := time.NewTimer(piRPCStatePollInterval)
+			timer := time.NewTimer(s.nextPIRPCStatePollInterval(sessionID, generationID))
 			<-timer.C
 			if !s.piRPCStateProbeAcked(sessionID, generationID, probeID) {
 				if s.recordPIRPCStateProbeFailure(sessionID, generationID, probeID, "get_state timeout") {
@@ -198,6 +199,16 @@ func (s *Stub) pollPIRPCState(sessionID session.SessionID, runtime sessionRuntim
 			}
 		}
 	}
+}
+
+func (s *Stub) nextPIRPCStatePollInterval(sessionID session.SessionID, generationID iod.GenerationID) time.Duration {
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID == generationID && cache.LastState != nil && cache.LastState.Busy() {
+		return piRPCStateBusyPollInterval
+	}
+	return piRPCStateIdlePollInterval
 }
 
 func (s *Stub) shouldPollPIRPCState(sessionID session.SessionID, runtime sessionRuntime, generationID iod.GenerationID) bool {

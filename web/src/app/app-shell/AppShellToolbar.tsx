@@ -6,18 +6,21 @@ import { FileIcon, HarnessIcon, InsightIcon, MenuIcon, SessionsIcon, StopIcon, T
 export interface ConversationStatusItem {
   label: string;
   value: string;
-  tone?: "default" | "attention" | "error";
+  tone?: "default" | "attention" | "error" | "busy" | "success";
 }
 
 interface AppShellToolbarProps {
   activeSessionId: string | null;
   activeTitle: string;
   canInterrupt: boolean;
+  canProbeRuntime?: boolean;
+  probingRuntime?: boolean;
   showInterruptAction: boolean;
   statusItems?: ConversationStatusItem[];
   showMobileSessionsTrigger: boolean;
   showMobileToolbarMenu: boolean;
   onInterrupt(): void;
+  onProbeRuntime?(): void;
   onOpenFiles(): void;
   onOpenHarness(): void;
   onOpenSessions(): void;
@@ -30,11 +33,14 @@ export function AppShellToolbar({
   activeSessionId,
   activeTitle,
   canInterrupt,
+  canProbeRuntime = false,
+  probingRuntime = false,
   showInterruptAction,
   statusItems = [],
   showMobileSessionsTrigger,
   showMobileToolbarMenu,
   onInterrupt,
+  onProbeRuntime,
   onOpenFiles,
   onOpenHarness,
   onOpenSessions,
@@ -158,6 +164,23 @@ export function AppShellToolbar({
         <WorkspaceIcon />
         {mobileMenu ? <span>Details</span> : null}
       </Button>
+      {canProbeRuntime ? (
+        <Button
+          type="button"
+          variant={mobileMenu ? "ghost" : "outline"}
+          size="sm"
+          className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
+          aria-label="Probe runtime state"
+          title="Probe runtime state"
+          disabled={probingRuntime}
+          onClick={() => {
+            closeMobileToolsMenu();
+            onProbeRuntime?.();
+          }}
+        >
+          {probingRuntime ? "Probing" : "Probe"}
+        </Button>
+      ) : null}
       {showInterruptAction ? (
         <Button
           type="button"

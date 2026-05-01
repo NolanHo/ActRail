@@ -712,6 +712,16 @@ select {
   background: color-mix(in srgb, #f59e0b 10%, var(--panel));
 }
 
+.conversationStatusChip.busy {
+  border-color: color-mix(in srgb, #3b82f6 46%, var(--legacy-border));
+  background: color-mix(in srgb, #3b82f6 10%, var(--panel));
+}
+
+.conversationStatusChip.success {
+  border-color: color-mix(in srgb, #22c55e 42%, var(--legacy-border));
+  background: color-mix(in srgb, #22c55e 10%, var(--panel));
+}
+
 .conversationStatusChip.error {
   border-color: color-mix(in srgb, hsl(var(--destructive)) 36%, var(--legacy-border));
   background: color-mix(in srgb, hsl(var(--destructive)) 8%, var(--panel));
@@ -3338,6 +3348,16 @@ select {
 :root[data-theme="dark"] .conversationStatusChip.attention {
   border-color: color-mix(in srgb, #f59e0b 48%, var(--chrome-border));
   background: color-mix(in srgb, #f59e0b 16%, var(--chrome-elevated));
+}
+
+:root[data-theme="dark"] .conversationStatusChip.busy {
+  border-color: color-mix(in srgb, #3b82f6 54%, var(--chrome-border));
+  background: color-mix(in srgb, #3b82f6 18%, var(--chrome-elevated));
+}
+
+:root[data-theme="dark"] .conversationStatusChip.success {
+  border-color: color-mix(in srgb, #22c55e 52%, var(--chrome-border));
+  background: color-mix(in srgb, #22c55e 16%, var(--chrome-elevated));
 }
 
 :root[data-theme="dark"] .conversationStatusChip.error {

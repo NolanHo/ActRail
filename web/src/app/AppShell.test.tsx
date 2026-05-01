@@ -61,6 +61,7 @@ vi.mock("../lib/api", () => ({
     getHarness: vi.fn().mockResolvedValue({ ok: true, enabled: true, request: "Keep going", cooldown_minutes: 15, remaining_injections: 2 }),
     saveHarness: vi.fn().mockResolvedValue({ ok: true, enabled: true, request: "Keep going", cooldown_minutes: 15, remaining_injections: 2 }),
     interruptSession: vi.fn().mockResolvedValue({ ok: true }),
+    probeSessionState: vi.fn().mockResolvedValue({ probe_id: "probe_1", state: { busy: false, queue: { items: [] }, tail_seq: 0, resume_cursors: {} } }),
     logout: vi.fn().mockResolvedValue({ ok: true }),
   },
 }));
@@ -189,6 +190,7 @@ function renderAppShell({
     display_name?: string;
     agent_backend: string;
     busy: boolean;
+    focused?: boolean;
   }>;
   liveBusyBySessionId?: Record<string, boolean>;
   messages?: Record<string, unknown[]>;
@@ -234,6 +236,7 @@ function renderAppShell({
     {
       loadInitial: vi.fn().mockResolvedValue(undefined),
       poll: vi.fn().mockResolvedValue(undefined),
+      probe: vi.fn().mockResolvedValue(undefined),
       applyFrame: vi.fn(),
       resetSession: vi.fn(),
     },
@@ -375,6 +378,23 @@ describe("AppShell", () => {
     expect(liveSessionStore.applyFrame).toHaveBeenCalledWith(expect.objectContaining({ type: "transport.reset_required" }));
     expect(liveSessionStore.resetSession).toHaveBeenCalledWith("sess-2");
     expect(liveSessionStore.poll).toHaveBeenCalledWith("sess-2");
+  });
+
+  it("subscribes focused sessions even when they are idle", async () => {
+    renderAppShell({
+      activeSessionId: "sess-1",
+      items: [
+        { session_id: "sess-1", alias: "Alpha", agent_backend: "pi", busy: false },
+        { session_id: "sess-2", alias: "Beta", agent_backend: "pi", busy: false, focused: true },
+      ],
+    });
+
+    await flush();
+
+    expect(realtimeMocks.setRealtimeSubscriptions).toHaveBeenLastCalledWith(expect.arrayContaining([
+      expect.objectContaining({ name: "session:sess-2", suppressMessageDeltas: true }),
+      expect.objectContaining({ name: "session:sess-2:ui" }),
+    ]));
   });
 
   it("does not force a sessions refresh for tracked session frames", async () => {
@@ -754,6 +774,21 @@ describe("AppShell", () => {
 
     expect(getRoot().querySelector(".conversationTitle")?.textContent).toContain("Release checklist");
     expect(getRoot().querySelector(".conversationTitle")?.textContent).not.toContain("先整理一下今晚要发的内容");
+  });
+
+  it("probes pi runtime state from the toolbar", async () => {
+    const { liveSessionStore } = renderAppShell({ items: [{ session_id: "sess-1", alias: "Legacy shell", agent_backend: "pi", busy: false }] });
+    await flush();
+
+    const button = getRoot().querySelector<HTMLButtonElement>('[aria-label="Probe runtime state"]');
+    expect(button).not.toBeNull();
+
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(liveSessionStore.probe).toHaveBeenCalledWith("sess-1");
   });
 
   it("interrupts the active busy session from the toolbar", async () => {

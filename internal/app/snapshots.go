@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
@@ -81,6 +82,15 @@ type SessionMessagesResponse struct {
 
 type SessionStateRequest struct {
 	SessionID session.SessionID
+}
+
+type ProbeSessionStateRequest struct {
+	SessionID session.SessionID
+}
+
+type ProbeSessionStateResponse struct {
+	ProbeID string               `json:"probe_id"`
+	State   SessionStateResponse `json:"state"`
 }
 
 type SessionStateResponse struct {
@@ -317,6 +327,28 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 	if err != nil {
 		return SessionStateResponse{}, err
 	}
+	return s.sessionStateResponse(record), nil
+}
+
+func (s *Stub) ProbeSessionState(ctx context.Context, req ProbeSessionStateRequest) (ProbeSessionStateResponse, error) {
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
+		return ProbeSessionStateResponse{}, err
+	}
+	if record.identity.Backend() != session.BackendPI || record.runtime.protocol != runtimeProtocolPIRPC {
+		return ProbeSessionStateResponse{}, Invalid("runtime", "get_state probe requires Pi RPC runtime")
+	}
+	probeID := fmt.Sprintf("actrail-manual-state-%d", time.Now().UTC().UnixNano())
+	if record.runtime.helper != nil {
+		s.notePIRPCStateProbeSent(req.SessionID, record.runtime.helper.generationID, probeID)
+	}
+	if err := record.runtime.RequestPIRPCState(ctx, probeID); err != nil {
+		return ProbeSessionStateResponse{}, mapRuntimeControlError(err)
+	}
+	return ProbeSessionStateResponse{ProbeID: probeID, State: s.sessionStateResponse(record)}, nil
+}
+
+func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 	contextUsage := copyContextUsage(record.contextUsage)
 	turnTiming := copyTurnTiming(record.turnTiming)
 	return SessionStateResponse{
@@ -330,7 +362,7 @@ func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (Session
 		ContextUsage:         contextUsage,
 		TurnTiming:           turnTiming,
 		ActiveWait:           s.activeWaitForSession(record.identity.SessionID()),
-	}, nil
+	}
 }
 
 func (s *Stub) lookupSession(sessionID session.SessionID) (sessionRecord, error) {

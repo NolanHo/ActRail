@@ -131,6 +131,7 @@ export function AppShell() {
   const [displaySettings, setDisplaySettings] = useState(() => readUserDisplaySettings());
   const [displaySettingsDraft, setDisplaySettingsDraft] = useState(() => readUserDisplaySettings());
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [runtimeProbePending, setRuntimeProbePending] = useState(false);
   const voiceSupported = bootstrapCapabilities?.voice !== false;
   const harnessSupported = bootstrapCapabilities?.harness !== false;
   const notificationsSupported = bootstrapCapabilities?.notifications !== false;
@@ -257,9 +258,11 @@ export function AppShell() {
     } else if (activeSession.pending_startup === true) {
       items.push({ label: "Runtime", value: "starting", tone: "attention" });
     } else if (activeSessionGenerating) {
-      items.push({ label: "Runtime", value: "generating", tone: "attention" });
+      items.push({ label: "Runtime", value: "generating", tone: "busy" });
     } else if (activeSessionBusy) {
-      items.push({ label: "Runtime", value: "running", tone: "attention" });
+      items.push({ label: "Runtime", value: "busy", tone: "busy" });
+    } else {
+      items.push({ label: "Runtime", value: "idle", tone: "success" });
     }
     return items;
   }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeSession, activeSessionBusy, activeSessionGenerating, activeWait]);
@@ -444,6 +447,21 @@ export function AppShell() {
     setDetailsOpen(true);
   };
 
+  const probeActiveSessionState = async () => {
+    if (!activeSessionId || runtimeProbePending) return;
+    setRuntimeProbePending(true);
+    try {
+      if (activeSessionRuntimeId) {
+        await liveSessionStoreApi.probe(activeSessionId, activeSessionRuntimeId);
+      } else {
+        await liveSessionStoreApi.probe(activeSessionId);
+      }
+      await sessionsStoreApi.refresh();
+    } finally {
+      setRuntimeProbePending(false);
+    }
+  };
+
   const interruptActiveSession = async () => {
     if (!activeSessionId || !activeSessionBusy) return;
     if (activeSessionRuntimeId) {
@@ -577,12 +595,17 @@ export function AppShell() {
                 activeSessionId={activeSessionId}
                 activeTitle={activeTitle}
                 canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
+                canProbeRuntime={Boolean(activeSessionId && activeSession?.agent_backend === "pi" && !activeSessionPending)}
+                probingRuntime={runtimeProbePending}
                 showInterruptAction={showInterruptAction}
                 statusItems={conversationStatusItems}
                 showMobileSessionsTrigger={false}
                 showMobileToolbarMenu={false}
                 onInterrupt={() => {
                   void interruptActiveSession();
+                }}
+                onProbeRuntime={() => {
+                  void probeActiveSessionState();
                 }}
                 onOpenFiles={() => openFileViewer()}
                 onOpenHarness={() => setHarnessOpen(true)}

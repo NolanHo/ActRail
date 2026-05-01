@@ -247,6 +247,10 @@ export const api = {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson<LiveSessionResponse>(`/api/sessions/${routeId}/state`, signal);
   },
+  probeSessionState(sessionId: string, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return postJson<{ probe_id: string; state: LiveSessionResponse }>(`/api/sessions/${routeId}/state/probe`, {});
+  },
   getLiveSession(sessionId: string, _offset?: number, _requestsVersion?: string, signal?: AbortSignal, _liveOffset?: number, runtimeId?: string | null, _bridgeOffset?: number) {
     return api.getSessionState(sessionId, signal, runtimeId);
   },

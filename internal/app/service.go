@@ -20,6 +20,7 @@ type Service interface {
 	SessionDetails(context.Context, SessionDetailsRequest) (SessionDetailsResponse, error)
 	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)
 	SessionState(context.Context, SessionStateRequest) (SessionStateResponse, error)
+	ProbeSessionState(context.Context, ProbeSessionStateRequest) (ProbeSessionStateResponse, error)
 	SessionWorkspace(context.Context, SessionWorkspaceRequest) (SessionWorkspaceResponse, error)
 	UpdateSessionWorkspace(context.Context, UpdateSessionWorkspaceRequest) (SessionWorkspaceResponse, error)
 	WorkspaceFileList(context.Context, WorkspaceFileListRequest) (WorkspaceFileListResponse, error)

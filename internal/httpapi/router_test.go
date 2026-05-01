@@ -26,6 +26,7 @@ type serviceStub struct {
 	detailsFunc       func(context.Context, app.SessionDetailsRequest) (app.SessionDetailsResponse, error)
 	messagesFunc      func(context.Context, app.SessionMessagesRequest) (app.SessionMessagesResponse, error)
 	stateFunc         func(context.Context, app.SessionStateRequest) (app.SessionStateResponse, error)
+	probeStateFunc    func(context.Context, app.ProbeSessionStateRequest) (app.ProbeSessionStateResponse, error)
 	workspaceFunc     func(context.Context, app.SessionWorkspaceRequest) (app.SessionWorkspaceResponse, error)
 	workspaceSetFunc  func(context.Context, app.UpdateSessionWorkspaceRequest) (app.SessionWorkspaceResponse, error)
 	fileListFunc      func(context.Context, app.WorkspaceFileListRequest) (app.WorkspaceFileListResponse, error)
@@ -89,6 +90,13 @@ func (s serviceStub) SessionState(ctx context.Context, req app.SessionStateReque
 		return s.stateFunc(ctx, req)
 	}
 	return s.base.SessionState(ctx, req)
+}
+
+func (s serviceStub) ProbeSessionState(ctx context.Context, req app.ProbeSessionStateRequest) (app.ProbeSessionStateResponse, error) {
+	if s.probeStateFunc != nil {
+		return s.probeStateFunc(ctx, req)
+	}
+	return s.base.ProbeSessionState(ctx, req)
 }
 
 func (s serviceStub) SessionWorkspace(ctx context.Context, req app.SessionWorkspaceRequest) (app.SessionWorkspaceResponse, error) {
@@ -433,6 +441,14 @@ func (s *fixtureService) SessionState(_ context.Context, req app.SessionStateReq
 			Transport: "cur_transport",
 		},
 	}, nil
+}
+
+func (s *fixtureService) ProbeSessionState(_ context.Context, req app.ProbeSessionStateRequest) (app.ProbeSessionStateResponse, error) {
+	state, err := s.SessionState(context.Background(), app.SessionStateRequest{SessionID: req.SessionID})
+	if err != nil {
+		return app.ProbeSessionStateResponse{}, err
+	}
+	return app.ProbeSessionStateResponse{ProbeID: "probe_1", State: state}, nil
 }
 
 func (s *fixtureService) SessionWorkspace(_ context.Context, req app.SessionWorkspaceRequest) (app.SessionWorkspaceResponse, error) {

@@ -33,6 +33,7 @@ export interface LiveSessionStore {
   subscribe(listener: () => void): () => void;
   loadInitial(sessionId: string, runtimeId?: string | null): Promise<void>;
   poll(sessionId: string, runtimeId?: string | null): Promise<void>;
+  probe(sessionId: string, runtimeId?: string | null): Promise<void>;
   applyFrame(frame: RealtimeEnvelope): void;
   resetSession(sessionId: string): void;
   setBufferAssistantOutput(value: boolean): void;
@@ -470,6 +471,17 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     },
     poll(sessionId: string, runtimeId?: string | null) {
       return runLoad(sessionId, false, runtimeId);
+    },
+    async probe(sessionId: string, runtimeId?: string | null) {
+      const response = runtimeId
+        ? await api.probeSessionState(sessionId, runtimeId)
+        : await api.probeSessionState(sessionId);
+      applyStatePayload(sessionId, response.state);
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          void runLoad(sessionId, false, runtimeId);
+        }, 500);
+      }
     },
     applyFrame(frame: RealtimeEnvelope) {
       const type = String(frame.type || "").trim();

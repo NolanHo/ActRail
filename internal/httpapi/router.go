@@ -100,6 +100,7 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("GET /api/sessions/{session_id}/supervisor/runs", r.requireAuth(http.HandlerFunc(r.supervisorRuns)))
 	mux.Handle("POST /api/sessions/{session_id}/supervisor/run-once", r.requireAuth(http.HandlerFunc(r.runSupervisorOnce)))
 	mux.Handle("GET /api/sessions/{session_id}/state", r.requireAuth(http.HandlerFunc(r.sessionState)))
+	mux.Handle("POST /api/sessions/{session_id}/state/probe", r.requireAuth(http.HandlerFunc(r.probeSessionState)))
 	mux.Handle("GET /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.sessionWorkspace)))
 	mux.Handle("POST /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.updateSessionWorkspace)))
 	mux.Handle("GET /api/sessions/{session_id}/file/list", r.requireAuth(http.HandlerFunc(r.workspaceFileList)))
@@ -432,6 +433,19 @@ func (r Router) sessionState(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	payload, err := r.app.SessionState(req.Context(), app.SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) probeSessionState(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	payload, err := r.app.ProbeSessionState(req.Context(), app.ProbeSessionStateRequest{SessionID: sessionID})
 	if err != nil {
 		writeAppError(w, err)
 		return

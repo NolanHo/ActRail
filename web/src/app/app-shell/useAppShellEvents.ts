@@ -244,7 +244,7 @@ export function useAppShellEvents({
     const liveState = liveSessionStoreApi.getState();
     const subscriptions: RealtimeStreamSubscription[] = [{ name: "sessions" }, { name: "waits" }];
     const trackedSessionIds = new Set<string>();
-    const subscribeSession = (sessionId: string) => {
+    const subscribeSession = (sessionId: string, suppressMessageDeltas: boolean) => {
       if (!sessionId || trackedSessionIds.has(sessionId)) {
         return;
       }
@@ -252,7 +252,7 @@ export function useAppShellEvents({
       subscriptions.push({
         name: sessionStreamName(sessionId),
         resumeFrom: liveState.streamCursorsBySessionId[sessionId],
-        suppressMessageDeltas: bufferAssistantOutput,
+        suppressMessageDeltas,
       });
       subscriptions.push({
         name: sessionUiStreamName(sessionId),
@@ -261,11 +261,11 @@ export function useAppShellEvents({
     };
 
     if (activeSessionId) {
-      subscribeSession(activeSessionId);
+      subscribeSession(activeSessionId, bufferAssistantOutput);
     }
     for (const session of items) {
-      if (session.busy || session.pending_startup) {
-        subscribeSession(session.session_id);
+      if (session.focused === true || session.busy || session.pending_startup) {
+        subscribeSession(session.session_id, true);
       }
     }
     setRealtimeSubscriptions(subscriptions);
