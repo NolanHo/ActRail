@@ -1067,14 +1067,18 @@ describe("NewSessionDialog", () => {
   it("pages older resume candidates and prefers persisted Pi session titles", async () => {
     const { api } = await import("../../lib/api");
     vi.mocked(api.getSessionResumeCandidates).mockImplementation(async (_cwd, _backend, options) => {
-      if ((options?.offset || 0) > 0) {
+      if ((options?.scanOffset || 0) > 0) {
         return {
           exists: true,
           will_create: false,
           git_repo: false,
-          offset: 20,
-          limit: 20,
+          offset: 0,
+          limit: 0,
           remaining: 0,
+          scan_offset: 20,
+          scanned: 1,
+          scan_remaining: 0,
+          scan_complete: true,
           sessions: [{ session_id: "older-1", title: "older-title", first_user_message: "older prompt", updated_ts: 1_760_000_100 }],
         } as any;
       }
@@ -1083,8 +1087,12 @@ describe("NewSessionDialog", () => {
         will_create: false,
         git_repo: false,
         offset: 0,
-        limit: 20,
-        remaining: 1,
+        limit: 0,
+        remaining: 0,
+        scan_offset: 0,
+        scanned: 20,
+        scan_remaining: 20,
+        scan_complete: false,
         sessions: [{ session_id: "recent-1", display_name: "pi-slash-name", title: "first prompt title", first_user_message: "recent prompt", updated_ts: 1_760_000_200 }],
       } as any;
     });
@@ -1128,7 +1136,8 @@ describe("NewSessionDialog", () => {
     expect(root.textContent).not.toContain("first prompt title");
     expect(root.textContent).toContain("recent prompt");
     expect(root.textContent).toContain(new Date(1_760_000_200 * 1000).toLocaleString());
-    expect(root.textContent).toContain("1 older");
+    expect(root.textContent).toContain("20 older");
+    expect(root.textContent).toContain("20 uninspected");
 
     const olderButton = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Older") as HTMLButtonElement;
     await act(async () => {
@@ -1137,7 +1146,7 @@ describe("NewSessionDialog", () => {
     await wait(220);
     await flush();
 
-    expect(vi.mocked(api.getSessionResumeCandidates)).toHaveBeenLastCalledWith("/tmp/pi-project", "pi", { offset: 20, limit: 20 });
+    expect(vi.mocked(api.getSessionResumeCandidates)).toHaveBeenLastCalledWith("/tmp/pi-project", "pi", { offset: 0, limit: 0, scanOffset: 20, scanLimit: 20 });
     expect(root.textContent).toContain("older-title");
     expect(root.textContent).toContain("Showing 21-21");
   });

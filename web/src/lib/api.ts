@@ -350,7 +350,7 @@ export const api = {
     }
     return response;
   },
-  getSessionResumeCandidates(cwd: string, agentBackend: string, options?: { offset?: number; limit?: number }) {
+  getSessionResumeCandidates(cwd: string, agentBackend: string, options?: { offset?: number; limit?: number; scanOffset?: number; scanLimit?: number }) {
     const query = new URLSearchParams();
     query.set("cwd", cwd);
     query.set("backend", agentBackend);
@@ -360,6 +360,12 @@ export const api = {
     }
     if (typeof options?.limit === "number") {
       query.set("limit", String(options.limit));
+    }
+    if (typeof options?.scanOffset === "number") {
+      query.set("scan_offset", String(options.scanOffset));
+    }
+    if (typeof options?.scanLimit === "number") {
+      query.set("scan_limit", String(options.scanLimit));
     }
     return getJson<SessionResumeCandidatesResponse>(`/api/session_resume_candidates?${query.toString()}`);
   },

@@ -23,6 +23,8 @@ type SessionResumeCandidatesRequest struct {
 	AgentBackend string
 	Offset       int
 	Limit        int
+	ScanOffset   int
+	ScanLimit    int
 }
 
 type SessionResumeCandidate struct {
@@ -37,16 +39,21 @@ type SessionResumeCandidate struct {
 }
 
 type SessionResumeCandidatesResponse struct {
-	OK         bool                     `json:"ok"`
-	Exists     bool                     `json:"exists"`
-	WillCreate bool                     `json:"will_create"`
-	GitRepo    bool                     `json:"git_repo"`
-	GitRoot    string                   `json:"git_root,omitempty"`
-	GitBranch  string                   `json:"git_branch,omitempty"`
-	Offset     int                      `json:"offset"`
-	Limit      int                      `json:"limit"`
-	Remaining  int                      `json:"remaining"`
-	Sessions   []SessionResumeCandidate `json:"sessions"`
+	OK            bool                     `json:"ok"`
+	Exists        bool                     `json:"exists"`
+	WillCreate    bool                     `json:"will_create"`
+	GitRepo       bool                     `json:"git_repo"`
+	GitRoot       string                   `json:"git_root,omitempty"`
+	GitBranch     string                   `json:"git_branch,omitempty"`
+	Offset        int                      `json:"offset"`
+	Limit         int                      `json:"limit"`
+	Remaining     int                      `json:"remaining"`
+	ScanOffset    int                      `json:"scan_offset,omitempty"`
+	ScanLimit     int                      `json:"scan_limit,omitempty"`
+	Scanned       int                      `json:"scanned,omitempty"`
+	ScanRemaining int                      `json:"scan_remaining,omitempty"`
+	ScanComplete  bool                     `json:"scan_complete,omitempty"`
+	Sessions      []SessionResumeCandidate `json:"sessions"`
 }
 
 type RenameSessionRequest struct {
@@ -180,16 +187,25 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 	ordered := sortSessionsForDisplay(candidates, s.registry.now())
 	resumeItems := make([]SessionResumeCandidate, 0, len(ordered))
 	seen := make(map[string]struct{}, len(ordered))
-	for _, item := range ordered {
-		if item.record.identity.Backend() != session.BackendPI || strings.TrimSpace(item.record.importedSourcePath) == "" {
-			continue
+	if req.ScanOffset <= 0 {
+		for _, item := range ordered {
+			if item.record.identity.Backend() != session.BackendPI || strings.TrimSpace(item.record.importedSourcePath) == "" {
+				continue
+			}
+			candidate := sessionResumeCandidateFromRecord(item.record, item.updatedAt)
+			resumeItems = append(resumeItems, candidate)
+			seen[candidate.SessionID] = struct{}{}
 		}
-		candidate := sessionResumeCandidateFromRecord(item.record, item.updatedAt)
-		resumeItems = append(resumeItems, candidate)
-		seen[candidate.SessionID] = struct{}{}
 	}
+	scanOffset, scanLimit, scanned, scanRemaining, scanComplete := 0, 0, 0, 0, true
 	if backend == "" || backend == session.BackendPI.String() {
-		for _, candidate := range scanPIResumeCandidates(cwd) {
+		scannedCandidates := scanPIResumeCandidates(cwd, req.ScanOffset, req.ScanLimit)
+		scanOffset = scannedCandidates.Offset
+		scanLimit = scannedCandidates.Limit
+		scanned = scannedCandidates.Scanned
+		scanRemaining = scannedCandidates.Remaining
+		scanComplete = scannedCandidates.Complete
+		for _, candidate := range scannedCandidates.Sessions {
 			if _, ok := seen[candidate.SessionID]; ok {
 				continue
 			}
@@ -205,14 +221,19 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 	})
 	start, end := paginate(len(resumeItems), req.Offset, req.Limit)
 	payload := SessionResumeCandidatesResponse{
-		OK:         true,
-		Exists:     exists,
-		WillCreate: willCreate,
-		GitRepo:    false,
-		Offset:     req.Offset,
-		Limit:      req.Limit,
-		Remaining:  len(resumeItems) - end,
-		Sessions:   append([]SessionResumeCandidate(nil), resumeItems[start:end]...),
+		OK:            true,
+		Exists:        exists,
+		WillCreate:    willCreate,
+		GitRepo:       false,
+		Offset:        req.Offset,
+		Limit:         req.Limit,
+		Remaining:     len(resumeItems) - end,
+		ScanOffset:    scanOffset,
+		ScanLimit:     scanLimit,
+		Scanned:       scanned,
+		ScanRemaining: scanRemaining,
+		ScanComplete:  scanComplete,
+		Sessions:      append([]SessionResumeCandidate(nil), resumeItems[start:end]...),
 	}
 	return payload, nil
 }
@@ -615,13 +636,48 @@ func sameSessionCWD(a, b string) bool {
 	return left == right || canonicalSessionCWD(left) == canonicalSessionCWD(right)
 }
 
-func scanPIResumeCandidates(cwd string) []SessionResumeCandidate {
+type piResumeCandidateScan struct {
+	Sessions  []SessionResumeCandidate
+	Offset    int
+	Limit     int
+	Scanned   int
+	Remaining int
+	Complete  bool
+}
+
+func scanPIResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
+	paths := piResumeSourcePaths(cwd)
+	start, end := paginate(len(paths), offset, limit)
+	candidates := make([]SessionResumeCandidate, 0, end-start)
+	for _, path := range paths[start:end] {
+		candidate, ok := piResumeCandidateFromSourcePath(cwd, path)
+		if ok {
+			candidates = append(candidates, candidate)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].UpdatedTS != candidates[j].UpdatedTS {
+			return candidates[i].UpdatedTS > candidates[j].UpdatedTS
+		}
+		return candidates[i].SessionID < candidates[j].SessionID
+	})
+	return piResumeCandidateScan{
+		Sessions:  candidates,
+		Offset:    offset,
+		Limit:     limit,
+		Scanned:   end - start,
+		Remaining: len(paths) - end,
+		Complete:  end >= len(paths),
+	}
+}
+
+func piResumeSourcePaths(cwd string) []string {
 	roots := piSessionHistoryRoots(cwd)
 	if len(roots) == 0 {
 		return nil
 	}
 	seenPaths := make(map[string]struct{})
-	candidates := make([]SessionResumeCandidate, 0)
+	paths := make([]string, 0)
 	for _, root := range roots {
 		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 			if err != nil || entry == nil || entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
@@ -632,20 +688,19 @@ func scanPIResumeCandidates(cwd string) []SessionResumeCandidate {
 				return nil
 			}
 			seenPaths[cleaned] = struct{}{}
-			candidate, ok := piResumeCandidateFromSourcePath(cwd, cleaned)
-			if ok {
-				candidates = append(candidates, candidate)
-			}
+			paths = append(paths, cleaned)
 			return nil
 		})
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].UpdatedTS != candidates[j].UpdatedTS {
-			return candidates[i].UpdatedTS > candidates[j].UpdatedTS
+	sort.SliceStable(paths, func(i, j int) bool {
+		left, leftErr := os.Stat(paths[i])
+		right, rightErr := os.Stat(paths[j])
+		if leftErr == nil && rightErr == nil && !left.ModTime().Equal(right.ModTime()) {
+			return left.ModTime().After(right.ModTime())
 		}
-		return candidates[i].SessionID < candidates[j].SessionID
+		return paths[i] < paths[j]
 	})
-	return candidates
+	return paths
 }
 
 func piResumeCandidateFromSourcePath(cwd, sourcePath string) (SessionResumeCandidate, bool) {

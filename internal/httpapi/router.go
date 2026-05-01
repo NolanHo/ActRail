@@ -259,11 +259,23 @@ func (r Router) sessionResumeCandidates(w http.ResponseWriter, req *http.Request
 	if backend == "" {
 		backend = strings.TrimSpace(req.URL.Query().Get("agent_backend"))
 	}
+	scanOffset, err := queryInt(req, "scan_offset")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	scanLimit, err := queryInt(req, "scan_limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
 	payload, err := r.app.SessionResumeCandidates(req.Context(), app.SessionResumeCandidatesRequest{
 		CWD:          strings.TrimSpace(req.URL.Query().Get("cwd")),
 		AgentBackend: backend,
 		Offset:       offset,
 		Limit:        limit,
+		ScanOffset:   scanOffset,
+		ScanLimit:    scanLimit,
 	})
 	if err != nil {
 		writeAppError(w, err)

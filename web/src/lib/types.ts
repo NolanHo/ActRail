@@ -365,6 +365,11 @@ export interface SessionResumeCandidatesResponse {
   offset?: number;
   limit?: number;
   remaining?: number;
+  scan_offset?: number;
+  scan_limit?: number;
+  scanned?: number;
+  scan_remaining?: number;
+  scan_complete?: boolean;
   sessions: SessionResumeCandidate[];
 }
 

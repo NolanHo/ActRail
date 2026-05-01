@@ -131,6 +131,7 @@ function buildOptimisticCreatedSession(
 }
 
 const RESUME_PAGE_SIZE = 20;
+const RESUME_SCAN_BATCH_SIZE = 20;
 
 function resumeOptionLabel(item: SessionResumeCandidate) {
   const title = getSessionDisplayName(item as any, item.session_id.slice(0, 8));
@@ -201,6 +202,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const [resumeCandidates, setResumeCandidates] = useState<SessionResumeCandidate[]>([]);
   const [resumeOffset, setResumeOffset] = useState(0);
   const [resumeRemaining, setResumeRemaining] = useState(0);
+  const [resumeScanRemaining, setResumeScanRemaining] = useState(0);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeTitleFilter, setResumeTitleFilter] = useState("");
   const [refreshingPiModels, setRefreshingPiModels] = useState(false);
@@ -304,6 +306,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeCandidates([]);
     setResumeOffset(0);
     setResumeRemaining(0);
+    setResumeScanRemaining(0);
     setResumeLoading(false);
     setResumeTitleFilter("");
     setRefreshingPiModels(false);
@@ -383,6 +386,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeCandidates([]);
     setResumeSessionId("");
     setResumeRemaining(0);
+    setResumeScanRemaining(0);
     setLookupError("");
   }, [backend, cwd, open, surfaceTab]);
 
@@ -392,6 +396,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       setResumeCandidates([]);
       setResumeSessionId("");
       setResumeRemaining(0);
+      setResumeScanRemaining(0);
       setResumeLoading(false);
       setLookupError("");
       return;
@@ -401,6 +406,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       setResumeCandidates([]);
       setResumeSessionId("");
       setResumeRemaining(0);
+      setResumeScanRemaining(0);
       setResumeLoading(false);
       setLookupError("");
       setCwdInfo({ exists: false, willCreate: false, gitRepo: false, gitRoot: "", gitBranch: "" });
@@ -411,13 +417,21 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeLoading(true);
     const timeoutId = window.setTimeout(async () => {
       try {
-        const result: SessionResumeCandidatesResponse = await api.getSessionResumeCandidates(rawCwd, backend, { offset: resumeOffset, limit: RESUME_PAGE_SIZE });
+        const result: SessionResumeCandidatesResponse = await api.getSessionResumeCandidates(rawCwd, backend, {
+          offset: 0,
+          limit: 0,
+          scanOffset: resumeOffset,
+          scanLimit: RESUME_SCAN_BATCH_SIZE,
+        });
         if (cancelled) return;
-        setResumeCandidates(Array.isArray(result.sessions) ? result.sessions : []);
-        setResumeRemaining(Math.max(0, Number(result.remaining || 0)));
+        const page = Array.isArray(result.sessions) ? result.sessions : [];
+        const scanRemaining = Math.max(0, Number(result.scan_remaining || 0));
+        setResumeCandidates(page);
+        setResumeRemaining(scanRemaining);
+        setResumeScanRemaining(scanRemaining);
         setResumeSessionId((current) => {
           if (!current) return "";
-          return (result.sessions || []).some((item) => item.session_id === current) ? current : "";
+          return page.some((item) => item.session_id === current) ? current : "";
         });
         setCwdInfo({
           exists: !!result.exists,
@@ -432,6 +446,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
         setResumeCandidates([]);
         setResumeSessionId("");
         setResumeRemaining(0);
+        setResumeScanRemaining(0);
         setCwdInfo({ exists: false, willCreate: false, gitRepo: false, gitRoot: "", gitBranch: "" });
         setLookupError(loadError instanceof Error ? loadError.message : "Failed to inspect working directory");
       } finally {
@@ -727,6 +742,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                           ? `Showing ${resumeOffset + 1}-${resumeOffset + resumeCandidates.length}`
                           : `Showing ${resumeOffset + 1}-${resumeOffset}`}
                         {resumeRemaining > 0 ? `, ${resumeRemaining} older` : ""}
+                        {resumeScanRemaining > 0 ? ` (${resumeScanRemaining} uninspected)` : ""}
                       </span>
                       <div className="flex items-center gap-2">
                         <Button
