@@ -12,7 +12,7 @@ export interface RealtimeTransportStatus {
   active: "ws" | "connect";
   connectAvailable: boolean;
   connectOptIn: boolean;
-  desktopEligible: boolean;
+  connectEligible: boolean;
   connectPath: string;
   wireFormat: ConnectWireFormat;
 }
@@ -59,15 +59,10 @@ const DEFAULT_REALTIME_TRANSPORT: RealtimeTransportStatus = {
   active: "ws",
   connectAvailable: false,
   connectOptIn: false,
-  desktopEligible: false,
+  connectEligible: false,
   connectPath: "/api/connect",
   wireFormat: "json",
 };
-
-function isDesktopViewport() {
-  if (typeof window === "undefined") return false;
-  return window.innerWidth >= 768;
-}
 
 function readConnectOptIn() {
   if (typeof window === "undefined") return false;
@@ -115,15 +110,15 @@ export function setConnectWireFormat(value: ConnectWireFormat) {
 
 function getRealtimeTransportStatus(data: SessionBootstrapResponse): RealtimeTransportStatus {
   const connectAvailable = data.capabilities?.exp_connect_transport === true;
-  const desktopEligible = isDesktopViewport();
+  const connectEligible = connectAvailable;
   const connectOptIn = readConnectOptIn();
   const connectPath = String(data.transport?.connect_path || DEFAULT_REALTIME_TRANSPORT.connectPath).trim() || DEFAULT_REALTIME_TRANSPORT.connectPath;
   const wireFormat = readConnectWireFormat();
   return {
-    active: connectAvailable && desktopEligible && connectOptIn ? "connect" : "ws",
+    active: connectEligible && connectOptIn ? "connect" : "ws",
     connectAvailable,
     connectOptIn,
-    desktopEligible,
+    connectEligible,
     connectPath,
     wireFormat,
   };

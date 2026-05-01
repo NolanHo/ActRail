@@ -478,8 +478,8 @@ describe("AppShell", () => {
       expect(findButtonByText("Sessions")).not.toBeNull();
       expect(findButtonByText("Read")).not.toBeNull();
       expect(findButtonByText("Chat")).not.toBeNull();
-      expect(findButtonByText("Workspace")).not.toBeNull();
-      expect(findButtonByText("Settings")).not.toBeNull();
+      expect(findButtonByText("Workspace")).toBeUndefined();
+      expect(findButtonByText("Settings")).toBeUndefined();
       expect(findButtonByAriaLabel("Conversation tools")).toBeNull();
       expect(getRoot().querySelector('[data-testid="sessions-surface"]')).not.toBeNull();
     } finally {
@@ -599,7 +599,7 @@ describe("AppShell", () => {
     expect(dialog?.textContent).toContain("Diagnostics");
   });
 
-  it("shows session workspace tools on narrow viewports", async () => {
+  it("omits workspace route on narrow viewports", async () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -619,16 +619,10 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      const workspaceButton = findButtonByText("Workspace");
-      expect(workspaceButton).not.toBeUndefined();
-      act(() => {
-        workspaceButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      });
-      await flush();
-
-      expect(findButtonByText("File viewer")).not.toBeNull();
-      expect(findButtonByText("Insight")).not.toBeNull();
-      expect(findButtonByText("Supervisor")).not.toBeNull();
+      expect(findButtonByText("Workspace")).toBeUndefined();
+      expect(findButtonByText("Settings")).toBeUndefined();
+      expect(findButtonByText("Waits")).toBeUndefined();
+      expect(findButtonByText("Command")).toBeUndefined();
       expect(getRoot().querySelector("[data-testid='workspace-dialog']")).toBeNull();
       expect(getRoot().querySelector("[data-testid='workspace-card']")).toBeNull();
     } finally {

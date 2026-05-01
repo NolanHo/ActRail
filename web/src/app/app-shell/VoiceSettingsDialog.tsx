@@ -235,7 +235,7 @@ export function VoiceSettingsDialog({
                     checked={transportStatus?.connectOptIn === true}
                     onChange={(event) => onChangeTransportOptIn?.(event.currentTarget.checked)}
                   />
-                  <span>Use ConnectRPC transport on desktop</span>
+                  <span>Use ConnectRPC transport on this device</span>
                 </label>
                 <span className="fieldHint">Requires backend capability and desktop layout. Applies after bootstrap refresh.</span>
               </div>
@@ -257,7 +257,7 @@ export function VoiceSettingsDialog({
                 <span>Connect opt-in: {transportStatus?.connectOptIn ? "on" : "off"}</span>
                 <span>Connect wire format: {transportStatus?.wireFormat || "json"}</span>
                 <span>Connect capability: {transportStatus?.connectAvailable ? "available" : "unavailable"}</span>
-                <span>Desktop eligible: {transportStatus?.desktopEligible ? "yes" : "no"}</span>
+                <span>Connect eligible: {transportStatus?.connectEligible ? "yes" : "no"}</span>
                 <span>Connect path: {transportStatus?.connectPath || "/api/connect"}</span>
                 <span>Listeners: {audioMeta.listeners}</span>
                 <span>Queue: {audioMeta.queue}</span>

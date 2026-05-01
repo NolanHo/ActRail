@@ -51,7 +51,7 @@ describe("createSessionsStore", () => {
         active: "ws",
         connectAvailable: false,
         connectOptIn: false,
-        desktopEligible: false,
+        connectEligible: false,
         connectPath: "/api/connect",
         wireFormat: "json",
       },
@@ -93,16 +93,14 @@ describe("createSessionsStore", () => {
         active: "ws",
         connectAvailable: false,
         connectOptIn: false,
-        desktopEligible: true,
+        connectEligible: false,
         connectPath: "/api/connect",
         wireFormat: "json",
       },
     });
   });
 
-  it("uses Connect transport only for desktop opt-in with server capability", async () => {
-    const originalInnerWidth = window.innerWidth;
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1200 });
+  it("uses Connect transport for opt-in with server capability", async () => {
     window.localStorage.setItem("actrail.expTransport", "connect");
     window.localStorage.setItem("actrail.expConnectWireFormat", "proto");
     vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
@@ -127,14 +125,13 @@ describe("createSessionsStore", () => {
       active: "connect",
       connectAvailable: true,
       connectOptIn: true,
-      desktopEligible: true,
+      connectEligible: true,
       connectPath: "/api/connect",
       wireFormat: "proto",
     });
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
   });
 
-  it("keeps WebSocket transport for mobile even when Connect is opted in", async () => {
+  it("uses Connect transport on mobile when Connect is opted in", async () => {
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 480 });
     window.localStorage.setItem("actrail.expTransport", "connect");
@@ -147,12 +144,12 @@ describe("createSessionsStore", () => {
     const store = createSessionsStore();
     await store.refreshBootstrap();
 
-    expect(configureRealtimeClient).toHaveBeenCalledWith(expect.objectContaining({ transport: "ws" }));
+    expect(configureRealtimeClient).toHaveBeenCalledWith(expect.objectContaining({ transport: "connect" }));
     expect(store.getState().realtimeTransport).toEqual({
-      active: "ws",
+      active: "connect",
       connectAvailable: true,
       connectOptIn: true,
-      desktopEligible: false,
+      connectEligible: true,
       connectPath: "/api/connect",
       wireFormat: "json",
     });

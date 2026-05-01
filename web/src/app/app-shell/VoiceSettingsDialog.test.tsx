@@ -81,7 +81,7 @@ describe("VoiceSettingsDialog", () => {
           active: "connect",
           connectAvailable: true,
           connectOptIn: true,
-          desktopEligible: true,
+          connectEligible: true,
           connectPath: "/api/connect",
           wireFormat: "json",
         }}
@@ -111,10 +111,10 @@ describe("VoiceSettingsDialog", () => {
     expect(root.textContent).toContain("Connect opt-in: on");
     expect(root.textContent).toContain("Connect wire format: json");
     expect(root.textContent).toContain("Connect capability: available");
-    expect(root.textContent).toContain("Desktop eligible: yes");
+    expect(root.textContent).toContain("Connect eligible: yes");
     expect(root.textContent).toContain("Connect path: /api/connect");
     const transportToggle = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
-      .find((input) => input.parentElement?.textContent?.includes("Use ConnectRPC transport on desktop"));
+      .find((input) => input.parentElement?.textContent?.includes("Use ConnectRPC transport on this device"));
     expect(transportToggle?.checked).toBe(true);
     transportToggle!.checked = false;
     transportToggle!.dispatchEvent(new Event("change", { bubbles: true }));

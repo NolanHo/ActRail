@@ -576,10 +576,7 @@ export function AppShell() {
             }}
             onNewSession={() => setNewSessionOpen(true)}
             onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
-            onOpenFiles={() => openFileViewer()}
-            onOpenHarness={() => setHarnessOpen(true)}
             onOpenSettings={() => openVoiceSettings()}
-            onOpenInsight={() => openWorkspace("insight")}
             onToggleAnnouncements={() => {
               void toggleAnnouncements();
               if (!announcementEnabled) {
