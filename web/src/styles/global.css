@@ -580,7 +580,7 @@ select {
 
 .mobileBottomNav {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.45rem;
   padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom));
   border-top: 1px solid color-mix(in srgb, var(--legacy-border) 78%, white);
@@ -2621,8 +2621,7 @@ select {
   font-size: 1rem;
 }
 
-.mobileSheetRail,
-.mobileWorkspaceSheet {
+.mobileSheetRail {
   min-height: 0;
   display: flex;
   flex-direction: column;

@@ -97,6 +97,8 @@ function metadataEntriesFromSession(session: SessionSummary | null, sessionId: s
     push("display_name", getSessionDisplayName(session));
   }
   push("session_id", session?.session_id ?? sessionId);
+  push("session_file_path", session?.session_file_path);
+  push("backend_session_id", session?.backend_session_id);
   push("runtime_id", session?.runtime_id ?? runtimeId);
   push("agent_backend", session?.agent_backend);
   push("transport", session?.transport);
@@ -286,7 +288,8 @@ export function SessionWorkspace({ mode = "default", initialTab }: SessionWorksp
   const activeSession = workspaceSessionId ? items.find((item) => item.session_id === workspaceSessionId) ?? null : null;
   const activeWait = workspaceSessionId ? waitsState.activeBySessionId[workspaceSessionId] ?? activeSession?.active_wait ?? null : null;
   const metadataEntries = metadataEntriesFromSession(activeSession, workspaceSessionId, runtimeId);
-  const detailEntries = diagnosticsEntries.filter(([key]) => key !== "todo_snapshot");
+  const summarySessionFilePath = typeof activeSession?.session_file_path === "string" && activeSession.session_file_path.trim().length > 0;
+  const detailEntries = diagnosticsEntries.filter(([key]) => key !== "todo_snapshot" && !(key === "session_file_path" && summarySessionFilePath));
   const prioritizedDetailKeys = new Set(["session_file_path", "log_path", "updated_ts"]);
   const priorityDetailEntries = detailEntries.filter(([key]) => prioritizedDetailKeys.has(key));
   const genericDetailEntries = detailEntries.filter(([key]) => !prioritizedDetailKeys.has(key));

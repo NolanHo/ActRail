@@ -198,6 +198,8 @@ export interface SessionSummary {
   priority_offset?: number | null;
   snooze_until?: number | null;
   dependency_session_id?: string | null;
+  session_file_path?: string | null;
+  backend_session_id?: string | null;
   blocked?: boolean;
   snoozed?: boolean;
   historical?: boolean;
@@ -261,6 +263,8 @@ export interface SessionDetailsResponse {
   priority_offset?: number;
   snooze_until?: number | null;
   dependency_session_id?: string | null;
+  session_file_path?: string | null;
+  backend_session_id?: string | null;
   last_updated_ts?: number;
   last_activity_ts?: number;
   historical?: boolean;
@@ -278,6 +282,7 @@ export interface CreateSessionResponse {
   pending_startup?: boolean;
   focused?: boolean;
   alias?: string;
+  session_file_path?: string | null;
 }
 
 export interface DeleteSessionResponse {

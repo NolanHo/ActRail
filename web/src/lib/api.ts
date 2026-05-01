@@ -301,7 +301,20 @@ export const api = {
   },
   handoffSession(sessionId: string, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
-    return postJson<HandoffSessionResponse>(`/api/sessions/${routeId}/handoff`, {});
+    return postJson<HandoffSessionResponse>(`/api/sessions/${routeId}/handoff`, {}).then((response) => {
+      if (response.session && typeof response.session === "object") {
+        return {
+          ...response,
+          session_id: response.session_id ?? response.session.session_id,
+          runtime_id: response.runtime_id ?? response.session.runtime_id,
+          backend: response.backend ?? response.session.agent_backend,
+          focused: response.focused ?? response.session.focused,
+          alias: response.alias ?? response.session.alias,
+          session_file_path: response.session_file_path ?? response.session.session_file_path,
+        };
+      }
+      return response;
+    });
   },
   restartSession(sessionId: string, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);

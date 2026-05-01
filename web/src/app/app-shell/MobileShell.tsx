@@ -9,6 +9,7 @@ export type MobileRoute =
   | { screen: "sessions" }
   | { screen: "read"; sessionId: string }
   | { screen: "chat"; sessionId: string }
+  | { screen: "workspace"; sessionId: string }
   | { screen: "settings" };
 
 interface MobileShellProps {
@@ -41,7 +42,7 @@ function blurActiveInteractiveElement() {
   }
 }
 
-function sessionRoute(screen: "read" | "chat", sessionId: string | null): MobileRoute {
+function sessionRoute(screen: "read" | "chat" | "workspace", sessionId: string | null): MobileRoute {
   return sessionId ? { screen, sessionId } : { screen: "sessions" };
 }
 
@@ -53,6 +54,8 @@ function routeLabel(route: MobileRoute) {
       return "Read";
     case "chat":
       return "Chat";
+    case "workspace":
+      return "Workspace";
     case "settings":
       return "Settings";
   }
@@ -87,30 +90,14 @@ function MobileTopBar({ activeTitle, canInterrupt, compact = false, route, onBac
   );
 }
 
-function MobileSettingsSection({
-  announcementEnabled,
-  announcementLabel,
-  notificationLabel,
-  notificationsEnabled,
-  onLogout,
-  onNewSession,
+function MobileWorkspaceSection({
   onOpenFiles,
   onOpenHarness,
-  onOpenSettings,
   onOpenInsight,
-  onToggleAnnouncements,
-  onToggleNotifications,
-}: Omit<MobileShellProps, "activeSessionId" | "activeTitle" | "canInterrupt" | "onInterrupt" | "onOpenFilePath">) {
+}: Pick<MobileShellProps, "onOpenFiles" | "onOpenHarness" | "onOpenInsight">) {
   return (
-    <section className="mobileToolsPage" aria-label="Settings">
+    <section className="mobileToolsPage" aria-label="Workspace">
       <div className="mobileToolsGrid">
-        <Button type="button" variant="outline" className="mobileToolCard" onClick={onNewSession}>
-          <span className="mobileToolCardIcon" aria-hidden="true">+</span>
-          <span className="mobileToolCardText">
-            <strong>New session</strong>
-            <span>Start a browser-owned session.</span>
-          </span>
-        </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenFiles}>
           <FileIcon />
           <span className="mobileToolCardText">
@@ -128,10 +115,28 @@ function MobileSettingsSection({
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenHarness}>
           <HarnessIcon />
           <span className="mobileToolCardText">
-            <strong>Harness</strong>
-            <span>Automation controls.</span>
+            <strong>Supervisor</strong>
+            <span>Session follow-up controls.</span>
           </span>
         </Button>
+      </div>
+    </section>
+  );
+}
+
+function MobileSettingsSection({
+  announcementEnabled,
+  announcementLabel,
+  notificationLabel,
+  notificationsEnabled,
+  onLogout,
+  onOpenSettings,
+  onToggleAnnouncements,
+  onToggleNotifications,
+}: Pick<MobileShellProps, "announcementEnabled" | "announcementLabel" | "notificationLabel" | "notificationsEnabled" | "onLogout" | "onOpenSettings" | "onToggleAnnouncements" | "onToggleNotifications">) {
+  return (
+    <section className="mobileToolsPage" aria-label="Settings">
+      <div className="mobileToolsGrid">
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenSettings}>
           <span className="mobileToolCardIcon" aria-hidden="true">S</span>
           <span className="mobileToolCardText">
@@ -210,6 +215,7 @@ export function MobileShell({
 
   const readRoute = sessionRoute("read", activeSessionId);
   const chatRoute = sessionRoute("chat", activeSessionId);
+  const workspaceRoute = sessionRoute("workspace", activeSessionId);
 
   return (
     <div className="mobileShell" data-testid="mobile-shell">
@@ -242,6 +248,16 @@ export function MobileShell({
             <Composer compactMobile />
           </section>
         ) : null}
+        {route.screen === "workspace" ? (
+          <div className="mobilePane mobileSettingsPane">
+            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} route={route} onBack={back} onInterrupt={onInterrupt} />
+            <MobileWorkspaceSection
+              onOpenFiles={onOpenFiles}
+              onOpenHarness={onOpenHarness}
+              onOpenInsight={onOpenInsight}
+            />
+          </div>
+        ) : null}
         {route.screen === "settings" ? (
           <div className="mobilePane mobileSettingsPane">
             <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} route={route} onBack={back} onInterrupt={onInterrupt} />
@@ -251,11 +267,7 @@ export function MobileShell({
               notificationLabel={notificationLabel}
               notificationsEnabled={notificationsEnabled}
               onLogout={onLogout}
-              onNewSession={onNewSession}
-              onOpenFiles={onOpenFiles}
-              onOpenHarness={onOpenHarness}
               onOpenSettings={onOpenSettings}
-              onOpenInsight={onOpenInsight}
               onToggleAnnouncements={onToggleAnnouncements}
               onToggleNotifications={onToggleNotifications}
             />
@@ -266,6 +278,8 @@ export function MobileShell({
         <Button type="button" variant={route.screen === "sessions" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo({ screen: "sessions" })}>Sessions</Button>
         <Button type="button" variant={route.screen === "read" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(readRoute)}>Read</Button>
         <Button type="button" variant={route.screen === "chat" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(chatRoute)}>Chat</Button>
+        <Button type="button" variant={route.screen === "workspace" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(workspaceRoute)}>Workspace</Button>
+        <Button type="button" variant={route.screen === "settings" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo({ screen: "settings" })}>Settings</Button>
       </nav>
     </div>
   );

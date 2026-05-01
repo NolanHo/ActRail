@@ -194,6 +194,42 @@ describe("api", () => {
     }));
   });
 
+  it("posts handoff and flattens the session envelope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        ok: true,
+        previous_session_id: "sess-1",
+        history_path: "/tmp/old.jsonl",
+        session: {
+          session_id: "sess-2",
+          runtime_id: "rt-2",
+          agent_backend: "pi",
+          alias: "Inbox cleanup",
+          cwd: "/tmp/project",
+          session_file_path: "/tmp/new.jsonl",
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.handoffSession("sess-1", "rt-1")).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      session_id: "sess-2",
+      runtime_id: "rt-2",
+      backend: "pi",
+      previous_session_id: "sess-1",
+      history_path: "/tmp/old.jsonl",
+      session_file_path: "/tmp/new.jsonl",
+    }));
+
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/rt-1/handoff", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({}),
+    }));
+  });
+
   it("requests more sessions for a specific cwd group", async () => {
     const payload: SessionsResponse = {
       sessions: [{ session_id: "sess-6", cwd: "/work/docs" }],

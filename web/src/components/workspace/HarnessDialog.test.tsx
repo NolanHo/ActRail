@@ -20,7 +20,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it("does not call harness routes when the backend disables harness", async () => {
+it("does not call harness routes when the backend disables supervisor", async () => {
   const { api } = await import("../../lib/api");
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -31,5 +31,5 @@ it("does not call harness routes when the backend disables harness", async () =>
   });
 
   expect(api.getHarness).not.toHaveBeenCalled();
-  expect(root.textContent).toContain("Harness is unavailable on this backend.");
+  expect(root.textContent).toContain("Supervisor is unavailable on this backend.");
 });

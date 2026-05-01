@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,6 +116,9 @@ func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	if details.DependencySessionID != depID.String() {
 		t.Fatalf("SessionDetails().DependencySessionID = %q, want %q", details.DependencySessionID, depID)
 	}
+	if strings.TrimSpace(details.SessionFilePath) == "" {
+		t.Fatalf("SessionDetails().SessionFilePath is empty")
+	}
 
 	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
 	if err != nil {
@@ -135,6 +139,9 @@ func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	}
 	if listedRecord.Alias != "Renamed task" || !listedRecord.Focused || listedRecord.Model != model {
 		t.Fatalf("ListSessions() record = %+v", *listedRecord)
+	}
+	if listedRecord.SessionFilePath != details.SessionFilePath {
+		t.Fatalf("ListSessions().SessionFilePath = %q, want %q", listedRecord.SessionFilePath, details.SessionFilePath)
 	}
 
 	deleted, err := svc.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: sessionID})
@@ -341,7 +348,7 @@ func TestStubSessionResumeCandidatesUseUpdatedTimeTieBreaker(t *testing.T) {
 }
 
 func TestStubSessionActionsReturnNotFoundOrUnsupported(t *testing.T) {
-	svc, _, sessionID, _ := newSessionActionFixture(t)
+	svc, _, _, _ := newSessionActionFixture(t)
 	unknown, err := session.ParseSessionID("s_404")
 	if err != nil {
 		t.Fatalf("ParseSessionID() error = %v", err)
@@ -370,8 +377,57 @@ func TestStubSessionActionsReturnNotFoundOrUnsupported(t *testing.T) {
 	_, err = svc.HandoffSession(context.Background(), HandoffSessionRequest{SessionID: unknown})
 	assertNotFound(t, err)
 
-	_, err = svc.HandoffSession(context.Background(), HandoffSessionRequest{SessionID: sessionID})
-	assertUnsupported(t, err)
+}
+
+func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T) {
+	svc, handles, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
+	oldRecord, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	oldSourcePath := strings.TrimSpace(oldRecord.importedSourcePath)
+	if oldSourcePath == "" {
+		t.Fatal("old importedSourcePath is empty")
+	}
+	oldHandle := (*handles)[0]
+
+	response, err := svc.HandoffSession(context.Background(), HandoffSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("HandoffSession() error = %v", err)
+	}
+	if !response.OK || response.Session == nil {
+		t.Fatalf("HandoffSession() = %+v", response)
+	}
+	if response.PreviousSessionID != sessionID.String() || response.HistoryPath != oldSourcePath {
+		t.Fatalf("HandoffSession() previous/history = %q/%q, want %q/%q", response.PreviousSessionID, response.HistoryPath, sessionID, oldSourcePath)
+	}
+	if response.SessionID == "" || response.RuntimeID == "" || response.SessionID == sessionID.String() {
+		t.Fatalf("HandoffSession() ids = %+v", response)
+	}
+	if oldHandle.KillCalls() != 1 {
+		t.Fatalf("old handle KillCalls() = %d, want 1", oldHandle.KillCalls())
+	}
+	if len(*handles) != 2 {
+		t.Fatalf("len(handles) = %d, want 2", len(*handles))
+	}
+	newID, err := session.ParseSessionID(response.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID(new) error = %v", err)
+	}
+	newRecord, err := svc.lookupSession(newID)
+	if err != nil {
+		t.Fatalf("lookupSession(new) error = %v", err)
+	}
+	if strings.TrimSpace(newRecord.importedSourcePath) == "" || newRecord.importedSourcePath == oldSourcePath {
+		t.Fatalf("new importedSourcePath = %q, old = %q", newRecord.importedSourcePath, oldSourcePath)
+	}
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 || listed.Items[0].SessionID != response.SessionID {
+		t.Fatalf("ListSessions() = %+v, want only new session %q", listed.Items, response.SessionID)
+	}
 }
 
 func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T) {

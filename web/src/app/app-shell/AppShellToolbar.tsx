@@ -153,8 +153,8 @@ export function AppShellToolbar({
         variant={mobileMenu ? "ghost" : "outline"}
         size={mobileMenu ? "sm" : "icon"}
         className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Details"
-        title="Details"
+        aria-label="Workspace"
+        title="Workspace"
         disabled={!activeSessionId}
         onClick={() => {
           closeMobileToolsMenu();
@@ -162,7 +162,7 @@ export function AppShellToolbar({
         }}
       >
         <WorkspaceIcon />
-        {mobileMenu ? <span>Details</span> : null}
+        {mobileMenu ? <span>Workspace</span> : null}
       </Button>
       {canProbeRuntime ? (
         <Button
@@ -206,8 +206,8 @@ export function AppShellToolbar({
         variant={mobileMenu ? "ghost" : "outline"}
         size={mobileMenu ? "sm" : "icon"}
         className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Harness mode"
-        title="Harness mode"
+        aria-label="Supervisor"
+        title="Supervisor"
         disabled={!activeSessionId}
         onClick={() => {
           closeMobileToolsMenu();
@@ -215,7 +215,7 @@ export function AppShellToolbar({
         }}
       >
         <HarnessIcon />
-        {mobileMenu ? <span>Harness mode</span> : null}
+        {mobileMenu ? <span>Supervisor</span> : null}
       </Button>
     </>
   );

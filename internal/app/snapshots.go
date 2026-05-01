@@ -31,6 +31,8 @@ type SessionDetailsResponse struct {
 	PriorityOffset      float64                   `json:"priority_offset,omitempty"`
 	SnoozeUntil         *int64                    `json:"snooze_until,omitempty"`
 	DependencySessionID string                    `json:"dependency_session_id,omitempty"`
+	SessionFilePath     string                    `json:"session_file_path,omitempty"`
+	BackendSessionID    string                    `json:"backend_session_id,omitempty"`
 	LastUpdatedTS       float64                   `json:"last_updated_ts"`
 	LastActivityTS      float64                   `json:"last_activity_ts"`
 	Historical          bool                      `json:"historical"`
@@ -273,6 +275,8 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 		PriorityOffset:      record.priorityOffset,
 		SnoozeUntil:         unixSecondsPtr(record.snoozeUntil),
 		DependencySessionID: sessionIDString(record.dependencySessionID),
+		SessionFilePath:     record.importedSourcePath,
+		BackendSessionID:    record.importedBackendSessionID,
 		LastUpdatedTS:       timestampSeconds(sessionDisplayUpdatedAt(record)),
 		LastActivityTS:      timestampSeconds(record.activityAt),
 		Historical:          record.identity.Historical(),

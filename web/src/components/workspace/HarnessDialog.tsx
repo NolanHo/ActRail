@@ -30,7 +30,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
     }
     if (!supported) {
       setLoading(false);
-      setStatus("Harness is unavailable on this backend.");
+      setStatus("Supervisor is unavailable on this backend.");
       return;
     }
     let cancelled = false;
@@ -46,7 +46,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
       })
       .catch((error) => {
         if (cancelled) return;
-        setStatus(error instanceof Error ? error.message : "Unable to load harness settings");
+        setStatus(error instanceof Error ? error.message : "Unable to load supervisor settings");
       })
       .finally(() => {
         if (!cancelled) {
@@ -64,11 +64,11 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
       return;
     }
     if (!supported) {
-      setStatus("Harness is unavailable on this backend.");
+      setStatus("Supervisor is unavailable on this backend.");
       return;
     }
     setSaving(true);
-    setStatus("Saving…");
+    setStatus("Saving...");
     try {
       await (runtimeId
         ? api.saveHarness(sessionId, {
@@ -88,7 +88,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
         onClose();
       }, 150);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Unable to save harness settings");
+      setStatus(error instanceof Error ? error.message : "Unable to save supervisor settings");
     } finally {
       setSaving(false);
     }
@@ -100,7 +100,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
         <DialogHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <DialogTitle id="harness-dialog-title">Harness mode</DialogTitle>
+              <DialogTitle id="harness-dialog-title">Supervisor</DialogTitle>
               <p className="text-sm text-muted-foreground">Configure automatic follow-up guidance for this session.</p>
             </div>
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
@@ -111,7 +111,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
             <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.currentTarget.checked)} />
             <div>
               <strong className="block text-foreground">Enabled</strong>
-              <span className="text-muted-foreground">Allow ActRail to inject the configured request during harness sweeps.</span>
+              <span className="text-muted-foreground">Allow ActRail to inject the configured request during supervisor sweeps.</span>
             </div>
           </label>
           <label className="fieldBlock">
@@ -128,7 +128,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
               <Input type="number" min={0} value={remainingInjections} onInput={(event) => setRemainingInjections(event.currentTarget.value)} />
             </label>
           </div>
-          {loading ? <p className="text-sm text-muted-foreground">Loading harness settings…</p> : null}
+          {loading ? <p className="text-sm text-muted-foreground">Loading supervisor settings...</p> : null}
           {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>

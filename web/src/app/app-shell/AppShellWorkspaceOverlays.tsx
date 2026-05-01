@@ -10,7 +10,6 @@ import { HarnessDialog } from "../../components/workspace/HarnessDialog";
 interface AppShellWorkspaceOverlaysProps {
   activeSessionId: string | null;
   activeSessionRuntimeId?: string | null;
-  detailsOpen: boolean;
   fileViewerLine: number | null;
   fileViewerMode: FileViewMode | null;
   fileViewerOpen: boolean;
@@ -24,7 +23,6 @@ interface AppShellWorkspaceOverlaysProps {
   voiceSettingsDialog: ComponentChildren;
   workspaceDetails: ComponentChildren;
   workspaceOpen: boolean;
-  onCloseDetails(): void;
   onCloseFileViewer(): void;
   onCloseHarness(): void;
   onCloseNewSession(): void;
@@ -35,7 +33,6 @@ interface AppShellWorkspaceOverlaysProps {
 export function AppShellWorkspaceOverlays({
   activeSessionId,
   activeSessionRuntimeId,
-  detailsOpen,
   fileViewerLine,
   fileViewerMode,
   fileViewerOpen,
@@ -49,7 +46,6 @@ export function AppShellWorkspaceOverlays({
   voiceSettingsDialog,
   workspaceDetails,
   workspaceOpen,
-  onCloseDetails,
   onCloseFileViewer,
   onCloseHarness,
   onCloseNewSession,
@@ -72,20 +68,6 @@ export function AppShellWorkspaceOverlays({
           </SheetContent>
         </Sheet>
       </div>
-      <div data-testid="mobile-workspace-sheet">
-        <Sheet open={detailsOpen}>
-          <button type="button" className="sheetBackdropButton" aria-label="Close details panel" onClick={onCloseDetails} />
-          <SheetContent side="right" className="mobileSheetContent" titleId="mobile-workspace-title">
-            <div className="mobileWorkspaceSheet">
-              <header className="mobileSheetHeader">
-                <h2 id="mobile-workspace-title">Details</h2>
-                <Button type="button" variant="ghost" size="sm" onClick={onCloseDetails}>Close</Button>
-              </header>
-              {workspaceDetails}
-            </div>
-          </SheetContent>
-        </Sheet>
-      </div>
       <Dialog open={workspaceOpen} onOpenChange={(open) => {
         if (!open) {
           onCloseWorkspace();
@@ -96,7 +78,7 @@ export function AppShellWorkspaceOverlays({
             <DialogHeader className="workspaceDialogHeader">
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-1">
-                  <DialogTitle id="workspace-dialog-title">Details</DialogTitle>
+                  <DialogTitle id="workspace-dialog-title">Workspace</DialogTitle>
                   <p className="text-sm text-muted-foreground">Inspect waits, session metadata, queue state, tracked files, diagnostics, and UI requests.</p>
                 </div>
                 <Button type="button" variant="ghost" size="sm" onClick={onCloseWorkspace}>Close</Button>

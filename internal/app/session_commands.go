@@ -101,7 +101,7 @@ func (s *Stub) ExecuteSessionCommand(ctx context.Context, req ExecuteSessionComm
 		if err != nil {
 			return ExecuteSessionCommandResponse{}, err
 		}
-		return ExecuteSessionCommandResponse{OK: payload.OK, Command: name, Message: "handoff requested", SessionID: req.SessionID.String()}, nil
+		return ExecuteSessionCommandResponse{OK: payload.OK, Command: name, Message: "handoff requested", SessionID: payload.SessionID}, nil
 	case "model":
 		if args == "" {
 			return ExecuteSessionCommandResponse{}, Invalid("args", "model requires a model name")

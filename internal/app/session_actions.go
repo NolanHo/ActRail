@@ -143,7 +143,13 @@ type HandoffSessionRequest struct {
 }
 
 type HandoffSessionResponse struct {
-	OK bool `json:"ok"`
+	OK                bool                  `json:"ok"`
+	Session           *CreatedSession       `json:"session,omitempty"`
+	SessionID         string                `json:"session_id,omitempty"`
+	RuntimeID         string                `json:"runtime_id,omitempty"`
+	PreviousSessionID string                `json:"previous_session_id,omitempty"`
+	HistoryPath       string                `json:"history_path,omitempty"`
+	WSAttach          *SessionAttachRequest `json:"ws_attach,omitempty"`
 }
 
 func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandidatesRequest) (SessionResumeCandidatesResponse, error) {
@@ -486,11 +492,60 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 	}, nil
 }
 
-func (s *Stub) HandoffSession(_ context.Context, req HandoffSessionRequest) (HandoffSessionResponse, error) {
-	if _, err := s.lookupSession(req.SessionID); err != nil {
+func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (HandoffSessionResponse, error) {
+	record, err := s.lookupSession(req.SessionID)
+	if err != nil {
 		return HandoffSessionResponse{}, err
 	}
-	return HandoffSessionResponse{}, Unsupported("session handoff not implemented")
+	if record.identity.Historical() {
+		return HandoffSessionResponse{}, Unsupported("historical sessions cannot be handed off")
+	}
+	if record.identity.Backend() != session.BackendPI {
+		return HandoffSessionResponse{}, Unsupported("session handoff is only implemented for pi backend")
+	}
+
+	stringPtr := func(value string) *string {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return nil
+		}
+		return &trimmed
+	}
+	title := strings.TrimSpace(displayAlias(record))
+	if title == "" {
+		title = strings.TrimSpace(record.title)
+	}
+	created, err := s.CreateSession(ctx, CreateSessionRequest{
+		AgentBackend:    record.identity.Backend().String(),
+		CWD:             record.cwd,
+		Provider:        stringPtr(record.provider),
+		Model:           stringPtr(record.model),
+		ReasoningEffort: stringPtr(record.reasoningEffort),
+		Title:           stringPtr(title),
+	})
+	if err != nil {
+		return HandoffSessionResponse{}, err
+	}
+	if created.Session == nil {
+		return HandoffSessionResponse{}, fmt.Errorf("handoff launch returned no session")
+	}
+	newSessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		return HandoffSessionResponse{}, err
+	}
+	if _, err := s.DeleteSession(ctx, DeleteSessionRequest{SessionID: req.SessionID}); err != nil {
+		_, _ = s.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: newSessionID})
+		return HandoffSessionResponse{}, err
+	}
+	return HandoffSessionResponse{
+		OK:                true,
+		Session:           created.Session,
+		SessionID:         created.Session.SessionID,
+		RuntimeID:         created.Session.RuntimeID,
+		PreviousSessionID: record.identity.SessionID().String(),
+		HistoryPath:       strings.TrimSpace(record.importedSourcePath),
+		WSAttach:          created.WSAttach,
+	}, nil
 }
 
 func sessionResumeCandidateFromRecord(record sessionRecord, updatedAt time.Time) SessionResumeCandidate {

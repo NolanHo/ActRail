@@ -19,13 +19,15 @@ import { useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useSessi
 import {
   applyThemeMode,
   readThemeMode,
-  shouldUseMobileWorkspaceSheet,
+  shouldUseMobileLayout,
   shortSessionId,
   writeThemeMode,
 } from "./app-shell/utils";
 import { getSessionRuntimeId } from "../lib/session-identity";
 import { getSessionDisplayName } from "../lib/session-display";
 import { applyUserDisplaySettings, readUserDisplaySettings, writeUserDisplaySettings } from "../lib/user-settings";
+
+type WorkspaceTab = "insight" | "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files";
 
 function formatTokenK(value: number) {
   const normalized = Math.max(0, Math.round(value));
@@ -117,11 +119,10 @@ export function AppShell() {
   const sessionUiStoreApi = useSessionUiStoreApi();
   const waitsStoreApi = useWaitsStoreApi();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
   const [harnessOpen, setHarnessOpen] = useState(false);
-  const [workspaceInitialTab, setWorkspaceInitialTab] = useState<"insight" | "overview">("insight");
+  const [workspaceInitialTab, setWorkspaceInitialTab] = useState<WorkspaceTab>("insight");
   const [fileViewerPath, setFileViewerPath] = useState("");
   const [fileViewerLine, setFileViewerLine] = useState<number | null>(null);
   const [fileViewerMode, setFileViewerMode] = useState<FileViewMode | null>(null);
@@ -329,7 +330,7 @@ export function AppShell() {
     sessionUiStoreApi,
     sessionsStoreApi,
     waitsStoreApi,
-    workspaceOpen: workspaceOpen || detailsOpen,
+    workspaceOpen,
     bufferAssistantOutput: displaySettings.bufferAssistantOutput,
   });
 
@@ -347,14 +348,14 @@ export function AppShell() {
     replySoundEnabled,
     sessionUiStoreApi,
     sessionsStoreApi,
-    workspaceOpen: workspaceOpen || detailsOpen,
+    workspaceOpen,
     activeSessionReplySoundPrimingRef,
     suppressedReplySoundSessionIdsRef,
   });
 
   const sessionUiMatchesActiveSession = !!activeSessionId && sessionUiSessionId === activeSessionId;
   const showInterruptAction = !activeSessionId || activeSessionBusy;
-  const [mobileLayout, setMobileLayout] = useState(() => shouldUseMobileWorkspaceSheet());
+  const [mobileLayout, setMobileLayout] = useState(() => shouldUseMobileLayout());
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -435,16 +436,18 @@ export function AppShell() {
     ) : <EmptyDetailsWorkspace />
   );
 
-  const openWorkspace = (initialTab: "insight" | "overview" = "overview") => {
+  const openWorkspace = (initialTab: WorkspaceTab = "overview") => {
     setWorkspaceInitialTab(initialTab);
     setWorkspaceOpen(true);
   };
 
-  const openWaitDetails = () => {
+  const openWaitWorkspace = () => {
     if (activeWait && activeSessionId) {
       waitsStoreApi.openWait({ ...activeWait, session_id: activeWait.session_id || activeSessionId });
+      openWorkspace("wait");
+      return;
     }
-    setDetailsOpen(true);
+    openWorkspace("waiting-inbox");
   };
 
   const probeActiveSessionState = async () => {
@@ -611,7 +614,7 @@ export function AppShell() {
                 onOpenHarness={() => setHarnessOpen(true)}
                 onOpenSessions={() => setSidebarOpen(true)}
                 onOpenInsight={() => openWorkspace("insight")}
-                onOpenWaits={openWaitDetails}
+                onOpenWaits={openWaitWorkspace}
                 onOpenWorkspace={() => openWorkspace("overview")}
               />
               <ConversationPane
@@ -627,7 +630,6 @@ export function AppShell() {
       <AppShellWorkspaceOverlays
         activeSessionId={activeSessionId}
         activeSessionRuntimeId={activeSessionRuntimeId}
-        detailsOpen={detailsOpen}
         fileViewerLine={fileViewerLine}
         fileViewerMode={fileViewerMode}
         fileViewerOpen={fileViewerOpen}
@@ -693,7 +695,6 @@ export function AppShell() {
         )}
         workspaceDetails={renderWorkspaceDetails()}
         workspaceOpen={workspaceOpen}
-        onCloseDetails={() => setDetailsOpen(false)}
         onCloseFileViewer={closeFileViewer}
         onCloseHarness={() => setHarnessOpen(false)}
         onCloseNewSession={() => setNewSessionOpen(false)}

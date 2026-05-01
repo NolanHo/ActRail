@@ -213,6 +213,8 @@ type SessionSummary struct {
 	PriorityOffset      float64                    `json:"priority_offset,omitempty"`
 	SnoozeUntil         *int64                     `json:"snooze_until,omitempty"`
 	DependencySessionID string                     `json:"dependency_session_id,omitempty"`
+	SessionFilePath     string                     `json:"session_file_path,omitempty"`
+	BackendSessionID    string                     `json:"backend_session_id,omitempty"`
 	ActiveWait          *ActiveWaitSummary         `json:"active_wait,omitempty"`
 	Supervisor          *SessionSupervisorResponse `json:"supervisor,omitempty"`
 	IOD                 *IODRuntimeSummary         `json:"iod,omitempty"`
@@ -284,6 +286,7 @@ type CreatedSession struct {
 	TransportState  string `json:"transport_state,omitempty"`
 	ResetRequired   bool   `json:"reset_required,omitempty"`
 	TransportReason string `json:"transport_reason,omitempty"`
+	SessionFilePath string `json:"session_file_path,omitempty"`
 }
 
 type SessionAttachRequest struct {
@@ -566,6 +569,8 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		PriorityOffset:      record.priorityOffset,
 		SnoozeUntil:         unixSecondsPtr(record.snoozeUntil),
 		DependencySessionID: sessionIDString(record.dependencySessionID),
+		SessionFilePath:     record.importedSourcePath,
+		BackendSessionID:    record.importedBackendSessionID,
 		ActiveWait:          s.activeWaitForSession(record.identity.SessionID()),
 		Supervisor:          supervisor,
 		IOD:                 s.iodRuntimeSummary(record),
@@ -616,6 +621,7 @@ func createdSessionFromRecord(record sessionRecord) *CreatedSession {
 		TransportState:  transport.State.String(),
 		ResetRequired:   transport.ResetRequired,
 		TransportReason: transport.Reason,
+		SessionFilePath: record.importedSourcePath,
 	}
 }
 

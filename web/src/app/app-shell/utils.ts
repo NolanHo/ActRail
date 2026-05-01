@@ -113,7 +113,7 @@ export function notificationDeviceClass() {
   return isMobileNotificationDevice() ? "mobile" : "desktop";
 }
 
-export function shouldUseMobileWorkspaceSheet() {
+export function shouldUseMobileLayout() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
   return window.matchMedia("(max-width: 880px)").matches;
 }

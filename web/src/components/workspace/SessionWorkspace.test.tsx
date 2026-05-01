@@ -351,6 +351,8 @@ describe("SessionWorkspace", () => {
             runtime_id: "runtime-9",
             alias: "Workflow",
             cwd: "/work/docs",
+            session_file_path: "/tmp/actrail-session.jsonl",
+            backend_session_id: "pi-backend-1",
             git_branch: "main",
             agent_backend: "pi",
             transport: "pi-rpc",
@@ -378,6 +380,10 @@ describe("SessionWorkspace", () => {
     expect(root.textContent).toContain("Workflow");
     expect(root.textContent).toContain("runtime-9");
     expect(root.textContent).toContain("/work/docs");
+    expect(root.textContent).toContain("Session file");
+    expect(root.textContent).toContain("/tmp/actrail-session.jsonl");
+    expect(root.textContent).toContain("Backend Session Id");
+    expect(root.textContent).toContain("pi-backend-1");
     expect(root.textContent).toContain("Diagnostics");
     expect(root.textContent).toContain("Status");
     expect(root.textContent).toContain("Queue");
