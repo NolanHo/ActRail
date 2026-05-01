@@ -18,8 +18,8 @@ import (
 
 const (
 	maxRuntimeLineBytes        = 1 << 20
-	piRPCStateIdlePollInterval = 10 * time.Second
-	piRPCStateBusyPollInterval = 1 * time.Second
+	piRPCStateIdlePollInterval = 30 * time.Second
+	piRPCStateBusyPollInterval = 3 * time.Second
 	piRPCStatePollTimeout      = 2 * time.Second
 	piRPCStateMaxFailures      = 3
 	piRPCBusyHoldDuration      = 3 * time.Second
@@ -205,7 +205,10 @@ func (s *Stub) nextPIRPCStatePollInterval(sessionID session.SessionID, generatio
 	s.piRPCStateMu.Lock()
 	defer s.piRPCStateMu.Unlock()
 	cache := s.piRPCStates[sessionID]
-	if cache.GenerationID == generationID && cache.LastState != nil && cache.LastState.Busy() {
+	if cache.GenerationID != generationID {
+		return piRPCStateIdlePollInterval
+	}
+	if cache.PendingProbeID != "" || (cache.LastState != nil && cache.LastState.Busy()) {
 		return piRPCStateBusyPollInterval
 	}
 	return piRPCStateIdlePollInterval

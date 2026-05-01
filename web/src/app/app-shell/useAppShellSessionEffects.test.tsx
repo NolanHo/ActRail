@@ -89,7 +89,7 @@ it("refreshes sessions immediately and every 5 seconds while any session is busy
   expect(sessionsStoreApi.refresh).toHaveBeenCalledTimes(2);
 });
 
-it("polls the active busy session every 2 seconds and workspace every 15 seconds when open", async () => {
+it("polls the active busy session every 3 seconds and workspace every 15 seconds when open", async () => {
   vi.useFakeTimers();
   const liveSessionStoreApi = {
     loadInitial: vi.fn().mockResolvedValue(undefined),
@@ -125,7 +125,7 @@ it("polls the active busy session every 2 seconds and workspace every 15 seconds
   expect(sessionUiStoreApi.refresh).toHaveBeenCalledWith("sess-1", { agentBackend: "pi" });
 
   await act(async () => {
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(3000);
     await Promise.resolve();
   });
   expect(liveSessionStoreApi.poll).toHaveBeenCalledWith("sess-1");
@@ -164,14 +164,14 @@ it("stops active busy polling when realtime is connected", async () => {
   });
 
   await act(async () => {
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(3000);
     await Promise.resolve();
   });
 
   expect(liveSessionStoreApi.poll).not.toHaveBeenCalled();
 });
 
-it("slows active idle live polling to every 12 seconds", async () => {
+it("slows active idle live polling to every 30 seconds", async () => {
   vi.useFakeTimers();
   const liveSessionStoreApi = {
     loadInitial: vi.fn().mockResolvedValue(undefined),
@@ -203,7 +203,7 @@ it("slows active idle live polling to every 12 seconds", async () => {
   });
 
   await act(async () => {
-    vi.advanceTimersByTime(11999);
+    vi.advanceTimersByTime(29999);
     await Promise.resolve();
   });
   expect(liveSessionStoreApi.poll).toHaveBeenCalledTimes(0);
@@ -264,7 +264,7 @@ it("switches to fast live polling as soon as live state reports the active sessi
   });
 
   await act(async () => {
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(3000);
     await Promise.resolve();
   });
 
@@ -310,7 +310,7 @@ it("skips live and workspace polling for historical pi sessions", async () => {
   expect(sessionUiStoreApi.refresh).not.toHaveBeenCalled();
 
   await act(async () => {
-    vi.advanceTimersByTime(12000);
+    vi.advanceTimersByTime(30000);
     await Promise.resolve();
   });
 

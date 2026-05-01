@@ -572,6 +572,28 @@ func TestPIRPCGetStateFailuresMarkTransportStalledAfterThreeConsecutiveFailures(
 	}
 }
 
+func TestNextPIRPCStatePollIntervalUsesBusyIntervalForPendingProbe(t *testing.T) {
+	sessionID, err := session.ParseSessionID("s_rpc_state_pending")
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_rpc_state_pending")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	svc := &Stub{piRPCStates: map[session.SessionID]piRPCStateCache{
+		sessionID: {
+			GenerationID:   generationID,
+			PendingProbeID: "pending-probe",
+			LastState:      &piRPCStateSnapshot{ProbeID: "old-state"},
+		},
+	}}
+
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateBusyPollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() = %s, want %s", got, piRPCStateBusyPollInterval)
+	}
+}
+
 func TestPIRPCStatePollerResetsFailureBudgetForNewGeneration(t *testing.T) {
 	sessionID, err := session.ParseSessionID("s_rpc_state_reset")
 	if err != nil {
