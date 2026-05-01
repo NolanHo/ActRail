@@ -66,6 +66,9 @@ func (s *Stub) markSessionGenerationEnded(sessionID session.SessionID, generatio
 	if err != nil {
 		return err
 	}
+	if err := s.emitTransportDiagnostic(sessionID, generationID, "generation_ended", reason, false); err != nil {
+		return err
+	}
 	s.emitSessionState(sessionID)
 	return nil
 }
@@ -77,6 +80,9 @@ func (s *Stub) markSessionGenerationBroken(sessionID session.SessionID, generati
 	}
 	if updated.GenerationID != "" {
 		s.emitGenerationBroken(sessionID, updated.GenerationID, updated.Reason)
+	}
+	if err := s.emitTransportDiagnostic(sessionID, generationID, "generation_broken", reason, false); err != nil {
+		return err
 	}
 	s.emitSessionState(sessionID)
 	return nil
@@ -90,7 +96,33 @@ func (s *Stub) markSessionTransportResetRequired(sessionID session.SessionID, ge
 	if updated.GenerationID != "" {
 		s.emitTransportResetRequired(sessionID, updated.GenerationID, updated.Reason)
 	}
+	if err := s.emitTransportDiagnostic(sessionID, generationID, "transport_reset_required", reason, true); err != nil {
+		return err
+	}
 	s.emitSessionState(sessionID)
+	return nil
+}
+
+func (s *Stub) emitTransportDiagnostic(sessionID session.SessionID, generationID iod.GenerationID, eventType, reason string, resetRequired bool) error {
+	resolvedReason := strings.TrimSpace(reason)
+	if resolvedReason == "" {
+		resolvedReason = eventType
+	}
+	committed, err := s.AppendSessionMessage(sessionID, "system", "pi_event", fmt.Sprintf("IOD %s: %s", strings.ReplaceAll(eventType, "_", " "), resolvedReason))
+	if err != nil {
+		return err
+	}
+	committed.Role = ""
+	committed.Type = "pi_event"
+	committed.Summary = "IOD " + strings.ReplaceAll(eventType, "_", " ")
+	committed.Details = map[string]any{
+		"raw_type":       "iod_transport_diagnostic",
+		"event_type":     eventType,
+		"generation_id":  strings.TrimSpace(generationID.String()),
+		"reason":         resolvedReason,
+		"reset_required": resetRequired,
+	}
+	s.emitMessageCommit(sessionID, "", committed)
 	return nil
 }
 

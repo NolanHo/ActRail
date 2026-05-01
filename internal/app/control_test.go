@@ -245,6 +245,8 @@ func TestSendAndUIResponseReturnConflictWithoutRuntimeInput(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
@@ -255,11 +257,36 @@ func TestSendAndUIResponseReturnConflictWithoutRuntimeInput(t *testing.T) {
 	}
 	_, err = svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "prompt"})
 	assertConflict(t, err)
+	assertRuntimeControlDiagnostic(t, svc, sink, sessionID, "send")
 	if err := svc.SetSessionUIRequest(sessionID, SessionUIRequestSnapshot{RequestID: "ask_1", Kind: "ask_user", Prompt: "Choose"}); err != nil {
 		t.Fatalf("SetSessionUIRequest() error = %v", err)
 	}
 	_, err = svc.RespondUI(context.Background(), UIResponseRequest{SessionID: sessionID, ResponseTo: "ask_1", Value: "A"})
 	assertConflict(t, err)
+	assertRuntimeControlDiagnostic(t, svc, sink, sessionID, "ui_response")
+}
+
+func assertRuntimeControlDiagnostic(t *testing.T, svc *Stub, sink *captureRuntimeSink, sessionID session.SessionID, operation string) {
+	t.Helper()
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) == 0 {
+		t.Fatalf("SessionMessages() = %+v, want runtime control diagnostic", messages.Items)
+	}
+	msg := messages.Items[len(messages.Items)-1]
+	if msg.Type != "pi_event" || msg.Text == "" {
+		t.Fatalf("SessionMessages() last = %+v, want runtime control pi_event", msg)
+	}
+	snapshot := sink.snapshot()
+	if len(snapshot.commits) == 0 {
+		t.Fatalf("runtime commits = %+v, want runtime control diagnostic", snapshot.commits)
+	}
+	commit := snapshot.commits[len(snapshot.commits)-1]
+	if commit.Message.Details["raw_type"] != "runtime_control_diagnostic" || commit.Message.Details["operation"] != operation {
+		t.Fatalf("runtime commit last = %+v, want runtime_control_diagnostic %q", commit, operation)
+	}
 }
 
 func TestControlMethodsReturnTransportResetRequired(t *testing.T) {

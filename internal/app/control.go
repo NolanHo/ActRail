@@ -93,9 +93,11 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 			return err
 		}
 		if err := s.prepareRuntimeSend(ctx, req.SessionID, record.runtime); err != nil {
+			_ = s.emitRuntimeControlDiagnostic(req.SessionID, "prepare_send", err)
 			return mapRuntimeControlError(err)
 		}
 		if err := record.runtime.SendPrompt(ctx, text); err != nil {
+			_ = s.emitRuntimeControlDiagnostic(req.SessionID, "send", err)
 			return mapRuntimeControlError(err)
 		}
 		busyOnSend := true
@@ -195,6 +197,7 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 		return InterruptResponse{}, err
 	}
 	if err := record.runtime.Interrupt(ctx); err != nil {
+		_ = s.emitRuntimeControlDiagnostic(req.SessionID, "interrupt", err)
 		return InterruptResponse{}, mapRuntimeControlError(err)
 	}
 	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
@@ -237,6 +240,7 @@ func (s *Stub) RespondUI(ctx context.Context, req UIResponseRequest) (UIResponse
 			return Conflict(fmt.Sprintf("session %q pending ui request is %q", req.SessionID, record.uiRequest.RequestID))
 		}
 		if err := record.runtime.RespondUI(ctx, responseTo, value); err != nil {
+			_ = s.emitRuntimeControlDiagnostic(req.SessionID, "ui_response", err)
 			return mapRuntimeControlError(err)
 		}
 		resolved, state, ok, err := s.registry.ClearUIRequest(req.SessionID, responseTo)
@@ -337,6 +341,30 @@ func (s *Stub) awaitRuntimeTurnStart(ctx context.Context, runtime sessionRuntime
 	}
 }
 
+func (s *Stub) emitRuntimeControlDiagnostic(sessionID session.SessionID, operation string, err error) error {
+	if s == nil || err == nil {
+		return nil
+	}
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		message = "runtime control failed"
+	}
+	committed, appendErr := s.AppendSessionMessage(sessionID, "system", "pi_event", fmt.Sprintf("Runtime control %s failed: %s", operation, message))
+	if appendErr != nil {
+		return appendErr
+	}
+	committed.Role = ""
+	committed.Type = "pi_event"
+	committed.Summary = "Runtime control failed"
+	committed.Details = map[string]any{
+		"raw_type":  "runtime_control_diagnostic",
+		"operation": operation,
+		"error":     message,
+	}
+	s.emitMessageCommit(sessionID, "", committed)
+	return nil
+}
+
 func mapRuntimeControlError(err error) error {
 	if errors.Is(err, errRuntimeInputUnavailable) {
 		return Conflict("session runtime input is unavailable")
@@ -345,12 +373,18 @@ func mapRuntimeControlError(err error) error {
 }
 
 func transportControlError(transport SessionTransportSnapshot) error {
+	if isRecoverableTransportProbeIssue(transport) {
+		return nil
+	}
 	if transport.ResetRequired {
 		message := "session transport reset is required"
 		if transport.Reason != "" {
 			message = fmt.Sprintf("session transport reset is required: %s", transport.Reason)
 		}
 		return &Error{Code: "transport_reset_required", Message: message}
+	}
+	if transport.State == SessionTransportStateBroken && isRecoverableTransportProbeIssue(transport) {
+		return nil
 	}
 	if transport.State == SessionTransportStateBroken {
 		message := "session generation is broken"

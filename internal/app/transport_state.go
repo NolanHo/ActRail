@@ -12,6 +12,11 @@ const (
 	SessionTransportStateEnded    SessionTransportState = "ended"
 )
 
+func isRecoverableTransportProbeIssue(transport SessionTransportSnapshot) bool {
+	reason := strings.TrimSpace(transport.Reason)
+	return reason == "get_state failed" || reason == "rpc unavailable"
+}
+
 type SessionTransportSnapshot struct {
 	GenerationID  string                `json:"generation_id,omitempty"`
 	State         SessionTransportState `json:"state"`

@@ -605,7 +605,41 @@ func TestPIRPCIdleHoldIgnoresStaleBusyGetStateAfterCompletion(t *testing.T) {
 	}
 }
 
-func TestPIRPCGetStateFailuresMarkTransportStalledAfterThreeConsecutiveFailures(t *testing.T) {
+func TestIODTransportResetRequiredEmitsDiagnosticMessage(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_rpc_transport_diag")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	if err := svc.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String()); err != nil {
+		t.Fatalf("markSessionTransportResetRequired() error = %v", err)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Type != "pi_event" || messages.Items[0].Text != "IOD transport reset required: attach_lost" {
+		t.Fatalf("SessionMessages() = %+v, want iod diagnostic event", messages.Items)
+	}
+	snapshot := sink.snapshot()
+	if len(snapshot.commits) != 1 || snapshot.commits[0].Message.Details["raw_type"] != "iod_transport_diagnostic" {
+		t.Fatalf("runtime commits = %+v, want iod transport diagnostic", snapshot.commits)
+	}
+}
+
+func TestPIRPCGetStateFailuresEmitWarningWithoutStallingTransport(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
@@ -660,8 +694,15 @@ func TestPIRPCGetStateFailuresMarkTransportStalledAfterThreeConsecutiveFailures(
 	if err != nil {
 		t.Fatalf("SessionState() after threshold error = %v", err)
 	}
-	if state.Busy || state.Transport.State != SessionTransportStateStalled || !state.Transport.ResetRequired || state.Transport.Reason != "rpc unavailable" {
-		t.Fatalf("SessionState() after threshold = %+v, want idle stalled reset_required rpc unavailable", state)
+	if state.Transport.ResetRequired || state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState() after threshold = %+v, want attached without reset", state)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Type != "pi_event" || messages.Items[0].Text != "Pi RPC state probe failed: rpc unavailable" {
+		t.Fatalf("SessionMessages() = %+v, want state probe warning event", messages.Items)
 	}
 }
 

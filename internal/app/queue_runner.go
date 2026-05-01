@@ -31,12 +31,17 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		}
 		queued := items[0]
 		if err := record.runtime.SendPrompt(context.Background(), queued.Text()); err != nil {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil
 		}
 		busyOnSend := record.identity.Backend() != session.BackendPI
 		if record.identity.Backend() == session.BackendPI {
 			pollRuntime = record.runtime
 			pollPIState = true
+			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
+				busyOnSend = true
+				s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
+			}
 		}
 		item, state, ok, err := s.registry.ActivateQueuedWithBusy(sessionID, queued.ID(), busyOnSend)
 		if err != nil || !ok {

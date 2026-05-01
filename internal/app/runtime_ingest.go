@@ -22,7 +22,8 @@ const (
 	piRPCStateBusyPollInterval = 3 * time.Second
 	piRPCStatePollTimeout      = 2 * time.Second
 	piRPCStateMaxFailures      = 3
-	piRPCBusyHoldDuration      = 3 * time.Second
+	piRPCBusyHoldDuration      = 30 * time.Second
+	piRPCIdleHoldDuration      = 3 * time.Second
 )
 
 var runtimeHelperProjectors sync.Map
@@ -293,15 +294,12 @@ func (s *Stub) recordPIRPCStateProbeFailure(sessionID session.SessionID, generat
 	cache.ConsecutiveFailures++
 	cache.LastFailureTS = time.Now().UTC()
 	stalled := cache.ConsecutiveFailures >= piRPCStateMaxFailures
-	if stalled {
-		cache.StalledResetRequired = true
-	}
 	s.piRPCStates[sessionID] = cache
 	s.piRPCStateMu.Unlock()
 	if stalled {
-		_ = s.markPIRPCStateStalled(sessionID, generationID, reason)
+		_ = s.emitPIRPCStateProbeWarning(sessionID, generationID, reason)
 	}
-	return stalled
+	return false
 }
 
 func (s *Stub) recordPIRPCStateSuccess(sessionID session.SessionID, state piRPCStateSnapshot) {
@@ -365,7 +363,7 @@ func (s *Stub) holdPIRPCIdle(sessionID session.SessionID, generationID iod.Gener
 		cache = piRPCStateCache{GenerationID: generationID}
 	}
 	cache.GenerationID = generationID
-	until := time.Now().UTC().Add(piRPCBusyHoldDuration)
+	until := time.Now().UTC().Add(piRPCIdleHoldDuration)
 	if cache.IdleHoldUntil.Before(until) {
 		cache.IdleHoldUntil = until
 	}
@@ -795,8 +793,16 @@ func (s *Stub) applyPIRPCState(sessionID session.SessionID, state piRPCStateSnap
 	if !ok {
 		return nil
 	}
-	if record.identity.Backend() == session.BackendPI && sessionTransportSnapshot(record).ResetRequired {
-		return nil
+	transport := sessionTransportSnapshot(record)
+	if record.identity.Backend() == session.BackendPI && transport.ResetRequired {
+		if !isPIRPCStateProbeTransportIssue(transport) {
+			return nil
+		}
+		if record.runtime.helper != nil {
+			if _, err := s.setSessionTransport(sessionID, transportSnapshotAttached(record.runtime.helper.generationID)); err != nil {
+				return err
+			}
+		}
 	}
 	s.recordPIRPCStateSuccess(sessionID, state)
 	busy := state.Busy()
@@ -828,6 +834,28 @@ func (s *Stub) applyPIRPCState(sessionID session.SessionID, state piRPCStateSnap
 		s.scheduleQueuedDispatch(sessionID)
 	}
 	return nil
+}
+
+func (s *Stub) emitPIRPCStateProbeWarning(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
+	resolvedReason := firstNonEmptyString(reason, "get_state failed")
+	committed, err := s.AppendSessionMessage(sessionID, "system", "pi_event", "Pi RPC state probe failed: "+resolvedReason)
+	if err != nil {
+		return err
+	}
+	committed.Role = ""
+	committed.Type = "pi_event"
+	committed.Summary = "Pi RPC state probe failed"
+	committed.Details = map[string]any{
+		"raw_type":      "actrail_state_probe_failure",
+		"generation_id": strings.TrimSpace(generationID.String()),
+		"reason":        resolvedReason,
+	}
+	s.emitMessageCommit(sessionID, "", committed)
+	return nil
+}
+
+func isPIRPCStateProbeTransportIssue(transport SessionTransportSnapshot) bool {
+	return transport.State == SessionTransportStateStalled && isRecoverableTransportProbeIssue(transport)
 }
 
 func (s *Stub) markPIRPCStateStalled(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
