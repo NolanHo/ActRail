@@ -101,6 +101,7 @@ type Event struct {
 	Error      *ErrorMessage
 	UIRequest  *UIRequest
 	UIResolved *UIResolution
+	Compaction *CompactionEvent
 	Boundary   *Boundary
 }
 
@@ -184,6 +185,23 @@ type UIResolution struct {
 	AnswerValues            []string
 	AnswersByQuestion       map[string]string
 	PromptFallbackAvailable bool
+}
+
+// CompactionEvent is one Pi RPC compaction lifecycle event.
+type CompactionEvent struct {
+	Phase        string
+	Reason       string
+	InputTokens  int
+	InputTokensK float64
+	TokensBefore int
+	TokensAfter  int
+	TokensAfterK float64
+	DurationMS   int
+	Model        map[string]any
+	Result       map[string]any
+	Aborted      bool
+	WillRetry    bool
+	ErrorMessage string
 }
 
 // Boundary is one turn lifecycle boundary.

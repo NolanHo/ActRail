@@ -323,3 +323,30 @@ func TestParseJSONLAssistantNarrationAndFinalHeuristics(t *testing.T) {
 		t.Fatalf("Events[3].Boundary = %#v, want inferred turn_completed", material.Events[3].Boundary)
 	}
 }
+
+func TestParsePIRPCCompactionEvents(t *testing.T) {
+	data := []byte(`{"type":"compaction_start","reason":"overflow","inputTokens":258842,"inputTokensK":258.8,"model":{"provider":"deepseek","id":"deepseek-v4-pro","contextWindow":1048576}}
+{"type":"compaction_end","reason":"overflow","result":{"summary":"checkpoint","firstKeptEntryId":"3406d21e","tokensBefore":258842},"aborted":false,"willRetry":true,"tokensAfter":41200,"tokensAfterK":41.2,"durationMs":1834,"model":{"provider":"deepseek","id":"deepseek-v4-pro","contextWindow":1048576}}
+`)
+	material, err := ParseJSONLBytes(data)
+	if err != nil {
+		t.Fatalf("ParseJSONLBytes() error = %v", err)
+	}
+	if len(material.Events) != 2 {
+		t.Fatalf("len(Events) = %d, want 2", len(material.Events))
+	}
+	start := material.Events[0]
+	if start.Compaction == nil || start.Compaction.Phase != "start" || start.Compaction.Reason != "overflow" || start.Compaction.InputTokens != 258842 || start.Compaction.InputTokensK != 258.8 {
+		t.Fatalf("start.Compaction = %#v", start.Compaction)
+	}
+	if start.Message == nil || start.Message.StopReason != "status" || start.Message.Text == "" {
+		t.Fatalf("start.Message = %#v, want status text", start.Message)
+	}
+	end := material.Events[1]
+	if end.Compaction == nil || end.Compaction.Phase != "end" || !end.Compaction.WillRetry || end.Compaction.TokensAfter != 41200 || end.Compaction.TokensAfterK != 41.2 || end.Compaction.DurationMS != 1834 {
+		t.Fatalf("end.Compaction = %#v", end.Compaction)
+	}
+	if end.Compaction.Result == nil || end.Compaction.TokensBefore != 258842 {
+		t.Fatalf("end.Compaction result = %#v tokensBefore=%d", end.Compaction.Result, end.Compaction.TokensBefore)
+	}
+}

@@ -494,7 +494,7 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("maxAttempts");
   });
 
-  it("renders compaction pi events as highlighted trace icons with expandable detail", () => {
+  it("renders compaction start and end pi events as highlighted trace icons with expandable detail", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-compaction", loading: false, newSessionDefaults: null },
       { refresh: () => Promise.resolve(), select: () => undefined },
@@ -506,18 +506,43 @@ describe("ConversationPane", () => {
             { role: "assistant", text: "before", ts: 100 },
             {
               type: "pi_event",
-              summary: "Compaction finished",
-              text: "Retrying with compacted context.",
+              summary: "Compaction started",
+              text: "Compaction started reason=overflow input=258.8K",
               details: {
-                reason: "threshold",
-                summary: "Compaction finished successfully",
+                raw_type: "compaction_start",
+                compaction: {
+                  phase: "start",
+                  reason: "overflow",
+                  inputTokens: 258842,
+                  inputTokensK: 258.8,
+                  model: { provider: "deepseek", id: "deepseek-v4-pro", contextWindow: 1048576 },
+                },
               },
               ts: 110,
             },
-            { role: "assistant", text: "after", ts: 120 },
+            {
+              type: "pi_event",
+              summary: "Compaction ended, retrying",
+              text: "Compaction ended reason=overflow after=41.2K retrying",
+              details: {
+                raw_type: "compaction_end",
+                compaction: {
+                  phase: "end",
+                  reason: "overflow",
+                  tokensAfter: 41200,
+                  tokensAfterK: 41.2,
+                  durationMs: 1834,
+                  willRetry: true,
+                  result: { firstKeptEntryId: "3406d21e", tokensBefore: 258842 },
+                  model: { provider: "deepseek", id: "deepseek-v4-pro", contextWindow: 1048576 },
+                },
+              },
+              ts: 120,
+            },
+            { role: "assistant", text: "after", ts: 130 },
           ],
         },
-        offsetsBySessionId: { "sess-compaction": 3 },
+        offsetsBySessionId: { "sess-compaction": 4 },
         loading: false,
       },
       { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
@@ -532,18 +557,24 @@ describe("ConversationPane", () => {
       root,
     );
 
-    const token = root.querySelector(".machineTraceToken.pi_event.isCompaction[data-variant='compaction']") as HTMLButtonElement | null;
-    expect(token).not.toBeNull();
+    const tokens = root.querySelectorAll<HTMLButtonElement>(".machineTraceToken.pi_event.isCompaction[data-variant='compaction']");
+    expect(tokens).toHaveLength(2);
     expect(root.textContent).toContain("before");
     expect(root.textContent).toContain("after");
 
     act(() => {
-      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      tokens[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
+    expect(root.textContent).toContain("Compaction started");
+    expect(root.textContent).toContain("258.8K");
+    expect(root.textContent).toContain("deepseek-v4-pro");
 
-    expect(root.textContent).toContain("Compaction finished");
-    expect(root.textContent).toContain("Retrying with compacted context.");
-    expect(root.textContent).toContain("threshold");
+    act(() => {
+      tokens[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(root.textContent).toContain("Compaction ended");
+    expect(root.textContent).toContain("41.2K");
+    expect(root.textContent).toContain("3406d21e");
   });
 
   it("shows bash tool call command as code block instead of json args", () => {

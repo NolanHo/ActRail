@@ -700,6 +700,9 @@ function piEventCompactVariant(event: MessageEvent): (typeof PI_EVENT_COMPACT_VA
   if (details?.raw_type === "extension_ui_request") {
     return PI_EVENT_COMPACT_VARIANTS.extension_ui;
   }
+  if (details?.raw_type === "compaction_start" || details?.raw_type === "compaction_end" || asRecord(details?.compaction)) {
+    return PI_EVENT_COMPACT_VARIANTS.compaction;
+  }
   const summary = firstNonEmptyText(event.summary, event.text).toLowerCase();
   if (!summary) {
     return null;
@@ -1301,14 +1304,15 @@ function TurnTerminalIcon() {
   );
 }
 
-function CompactionIcon() {
+function CompactionIcon({ phase }: { phase?: string | null }) {
+  const ending = phase === "end";
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="5" y="6" width="14" height="12" rx="2" />
-      <path d="M8 10h8" />
-      <path d="M8 14h5" />
-      <path d="m15.5 4 2 2-2 2" />
-      <path d="M17.5 6h-3" />
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+      <path d="M8 9h8" />
+      <path d="M8 12h6" />
+      <path d="M8 15h4" />
+      {ending ? <path d="m16 13 2.5 2.5L21 13" /> : <path d="m16 11 2.5-2.5L21 11" />}
     </svg>
   );
 }
@@ -1382,6 +1386,25 @@ function normalizedToolName(event: MessageEvent): string {
   return firstNonEmptyText(event.name, typeof event.details?.name === "string" ? event.details.name : "").trim().toLowerCase();
 }
 
+function compactionDetails(event: MessageEvent): Record<string, unknown> | null {
+  return asRecord(asRecord(event.details)?.compaction);
+}
+
+function compactionPhase(event: MessageEvent): string | null {
+  const phase = compactionDetails(event)?.phase;
+  if (typeof phase === "string") {
+    return phase;
+  }
+  const text = firstNonEmptyText(event.summary, event.text).toLowerCase();
+  if (text.includes("compaction started") || text.includes("compacting")) {
+    return "start";
+  }
+  if (text.includes("compaction ended") || text.includes("compaction finished")) {
+    return "end";
+  }
+  return null;
+}
+
 function machineTraceToolFamily(event: MessageEvent): string {
   const name = normalizedToolName(event);
   if (!name) {
@@ -1437,7 +1460,7 @@ function machineTraceIcon(event: MessageEvent, kind: CompactTraceKind, piEventVa
     return piEventVariant === PI_EVENT_COMPACT_VARIANTS.extension_ui
       ? <ExtensionUIIcon />
       : piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction
-        ? <CompactionIcon />
+        ? <CompactionIcon phase={compactionPhase(event)} />
         : piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal
           ? <TurnTerminalIcon />
           : <EmptyOutputIcon />;
@@ -1459,6 +1482,12 @@ function machineTraceTitle(event: MessageEvent, kind: CompactTraceKind) {
     return firstNonEmptyText(event.text, event.summary, event.custom_type, "Process update");
   }
   if (kind === "pi_event") {
+    const compaction = compactionDetails(event);
+    if (compaction) {
+      const phase = typeof compaction.phase === "string" ? compaction.phase : "";
+      if (phase === "start") return "Compaction started";
+      if (phase === "end") return "Compaction ended";
+    }
     return firstNonEmptyText(event.summary, event.text, "System event");
   }
   return firstNonEmptyText(event.name, event.summary, "Tool result");
@@ -1483,6 +1512,17 @@ function machineTraceSummary(event: MessageEvent, kind: CompactTraceKind) {
     return compactSingleLine(firstNonEmptyText(event.summary, event.text, event.custom_type), 90);
   }
   if (kind === "pi_event") {
+    const compaction = compactionDetails(event);
+    if (compaction) {
+      const reason = typeof compaction.reason === "string" ? compaction.reason : "";
+      const model = asRecord(compaction.model);
+      const modelID = typeof model?.id === "string" ? model.id : "";
+      const inputTokensK = typeof compaction.inputTokensK === "number" ? `${compaction.inputTokensK.toFixed(1)}K` : "";
+      const tokensAfterK = typeof compaction.tokensAfterK === "number" ? `${compaction.tokensAfterK.toFixed(1)}K` : "";
+      const retry = compaction.willRetry === true ? "retrying" : "";
+      const error = typeof compaction.errorMessage === "string" ? compaction.errorMessage : "";
+      return compactSingleLine(firstNonEmptyText(error, [reason, inputTokensK, tokensAfterK, modelID, retry].filter(Boolean).join(" "), event.text), 90);
+    }
     const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
     return compactSingleLine(firstNonEmptyText(event.text, detailsSummary(event.details), detailsText), 90);
   }
@@ -2146,11 +2186,13 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
   }
 
   if (kind === "pi_event") {
+    const compaction = compactionDetails(event);
     const body = firstNonEmptyText(event.text, detailsSummary(event.details));
     const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
     return (
       <div className="machineTraceDetailBody space-y-3">
         {renderCardHeader("pi_event", machineTraceTitle(event, kind), undefined, event.ts)}
+        {compaction ? <CompactionDetail compaction={compaction} /> : null}
         {body ? renderRichText(body, "messageBody", options) : null}
         {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
       </div>
@@ -2197,6 +2239,34 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
       {isTodoToolResult ? renderTodoItemsList(todoItems) : null}
       {body && !hideTodoJsonBody ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
       {!isTodoToolResult && !structured && detailsText ? renderCodeBlock(detailsText) : null}
+    </div>
+  );
+}
+
+function CompactionDetail({ compaction }: { compaction: Record<string, unknown> }) {
+  const model = asRecord(compaction.model);
+  const result = asRecord(compaction.result);
+  const rows = [
+    ["Phase", typeof compaction.phase === "string" ? compaction.phase : ""],
+    ["Reason", typeof compaction.reason === "string" ? compaction.reason : ""],
+    ["Input", typeof compaction.inputTokensK === "number" ? `${compaction.inputTokensK.toFixed(1)}K` : ""],
+    ["Before", typeof compaction.tokensBefore === "number" ? String(compaction.tokensBefore) : ""],
+    ["After", typeof compaction.tokensAfterK === "number" ? `${compaction.tokensAfterK.toFixed(1)}K` : ""],
+    ["Model", [typeof model?.provider === "string" ? model.provider : "", typeof model?.id === "string" ? model.id : ""].filter(Boolean).join(" / ")],
+    ["Duration", typeof compaction.durationMs === "number" ? `${compaction.durationMs} ms` : ""],
+    ["Retry", compaction.willRetry === true ? "yes" : ""],
+    ["Aborted", compaction.aborted === true ? "yes" : ""],
+    ["Error", typeof compaction.errorMessage === "string" ? compaction.errorMessage : ""],
+    ["First kept", typeof result?.firstKeptEntryId === "string" ? result.firstKeptEntryId : ""],
+  ].filter(([, value]) => value);
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {rows.map(([label, value]) => (
+        <div key={label} className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
     </div>
   );
 }

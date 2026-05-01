@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -428,6 +429,60 @@ func TestPIRPCActivityEventMarksIdleSessionBusy(t *testing.T) {
 	}
 	if !state.Busy {
 		t.Fatal("SessionState().Busy = false, want true after assistant delta")
+	}
+}
+
+func TestPIRPCCompactionEventsCommitPiEventMessages(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	lines := []string{
+		`{"type":"compaction_start","reason":"overflow","inputTokens":258842,"inputTokensK":258.8,"model":{"provider":"deepseek","id":"deepseek-v4-pro","contextWindow":1048576}}`,
+		`{"type":"compaction_end","reason":"overflow","result":{"summary":"checkpoint","firstKeptEntryId":"3406d21e","tokensBefore":258842},"aborted":false,"willRetry":true,"tokensAfter":41200,"tokensAfterK":41.2,"durationMs":1834,"model":{"provider":"deepseek","id":"deepseek-v4-pro","contextWindow":1048576}}`,
+	}
+	for _, line := range lines {
+		if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(line))); err != nil {
+			t.Fatalf("applyRuntimeProjection(%s) error = %v", line, err)
+		}
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 2 {
+		t.Fatalf("SessionMessages().Items = %#v, want 2 compaction events", messages.Items)
+	}
+	if messages.Items[0].Type != "pi_event" || !strings.Contains(messages.Items[0].Text, "Compaction started") {
+		t.Fatalf("start message = %#v", messages.Items[0])
+	}
+	if messages.Items[1].Type != "pi_event" || !strings.Contains(messages.Items[1].Text, "Compaction ended") || !strings.Contains(messages.Items[1].Text, "retrying") {
+		t.Fatalf("end message = %#v", messages.Items[1])
+	}
+
+	snapshot := sink.snapshot()
+	if len(snapshot.commits) != 2 {
+		t.Fatalf("runtime commits = %#v, want 2 compaction commits", snapshot.commits)
+	}
+	if snapshot.commits[0].Message.Summary != "Compaction started" {
+		t.Fatalf("start commit = %#v", snapshot.commits[0].Message)
+	}
+	if snapshot.commits[1].Message.Summary != "Compaction ended, retrying" {
+		t.Fatalf("end commit = %#v", snapshot.commits[1].Message)
+	}
+	compaction, ok := snapshot.commits[1].Message.Details["compaction"].(map[string]any)
+	if !ok || compaction["phase"] != "end" || compaction["willRetry"] != true {
+		t.Fatalf("end compaction details = %#v", snapshot.commits[1].Message.Details["compaction"])
 	}
 }
 

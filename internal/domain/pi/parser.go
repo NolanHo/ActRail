@@ -84,6 +84,8 @@ func parseObject(raw map[string]any) Material {
 
 	var events []Event
 	switch rawType {
+	case "compaction_start", "compaction_end":
+		events = append(events, newCompactionEvent(raw, rawType, ts))
 	case "agent_start":
 		events = append(events, newBoundaryEvent(raw, ts, Boundary{Kind: BoundaryKindAgentStarted, CommitLike: false, Reason: rawType}))
 	case "agent_end":
@@ -151,6 +153,84 @@ func parseObject(raw map[string]any) Material {
 		}
 	}
 	return Material{Events: events}
+}
+
+func newCompactionEvent(raw map[string]any, rawType string, ts float64) Event {
+	inputTokens, _ := intValue(raw["inputTokens"])
+	inputTokensK, _ := numberValue(raw["inputTokensK"])
+	tokensAfter, _ := intValue(raw["tokensAfter"])
+	tokensAfterK, _ := numberValue(raw["tokensAfterK"])
+	durationMS, _ := intValue(raw["durationMs"])
+	compaction := &CompactionEvent{
+		Reason:       cleanString(raw["reason"]),
+		InputTokens:  inputTokens,
+		InputTokensK: inputTokensK,
+		TokensAfter:  tokensAfter,
+		TokensAfterK: tokensAfterK,
+		DurationMS:   durationMS,
+		Aborted:      boolValue(raw["aborted"]),
+		WillRetry:    boolValue(raw["willRetry"]),
+		ErrorMessage: cleanString(raw["errorMessage"]),
+	}
+	if rawType == "compaction_start" {
+		compaction.Phase = "start"
+	} else {
+		compaction.Phase = "end"
+	}
+	if model := objectValue(raw["model"]); model != nil {
+		compaction.Model = model
+	}
+	if result := objectValue(raw["result"]); result != nil {
+		compaction.Result = result
+		compaction.TokensBefore, _ = intValue(result["tokensBefore"])
+	}
+	return Event{
+		Kind:       EventKindMessage,
+		Timestamp:  ts,
+		RawType:    rawType,
+		RawID:      cleanString(raw["id"]),
+		ParentID:   cleanString(raw["parentId"]),
+		SessionID:  extractSessionID(raw),
+		TurnID:     extractTurnID(raw),
+		Compaction: compaction,
+		Message: &Message{
+			Role:       MessageRoleAssistant,
+			Text:       compactionMessageText(compaction),
+			Class:      MessageClassCommitted,
+			StopReason: "status",
+			CommitLike: true,
+		},
+	}
+}
+
+func compactionMessageText(event *CompactionEvent) string {
+	if event == nil {
+		return "Compaction event"
+	}
+	label := "Compaction started"
+	if event.Phase == "end" {
+		label = "Compaction ended"
+	}
+	parts := []string{label}
+	if event.Reason != "" {
+		parts = append(parts, "reason="+event.Reason)
+	}
+	if event.Phase == "start" && event.InputTokensK > 0 {
+		parts = append(parts, fmt.Sprintf("input=%.1fK", event.InputTokensK))
+	}
+	if event.Phase == "end" && event.TokensAfterK > 0 {
+		parts = append(parts, fmt.Sprintf("after=%.1fK", event.TokensAfterK))
+	}
+	if event.WillRetry {
+		parts = append(parts, "retrying")
+	}
+	if event.Aborted {
+		parts = append(parts, "aborted")
+	}
+	if event.ErrorMessage != "" {
+		parts = append(parts, "error="+event.ErrorMessage)
+	}
+	return strings.Join(parts, " ")
 }
 
 func genericContentMessageEvent(raw map[string]any, rawType string, ts float64) *Event {
@@ -1148,17 +1228,24 @@ func objectValue(v any) map[string]any {
 }
 
 func intValue(v any) (int, bool) {
+	value, ok := numberValue(v)
+	if !ok {
+		return 0, false
+	}
+	return int(value), true
+}
+
+func numberValue(v any) (float64, bool) {
 	switch value := v.(type) {
 	case int:
-		return value, true
+		return float64(value), true
 	case int64:
-		return int(value), true
+		return float64(value), true
 	case float64:
-		return int(value), true
+		return value, true
 	case json.Number:
-		if parsed, err := value.Int64(); err == nil {
-			return int(parsed), true
-		}
+		parsed, err := value.Float64()
+		return parsed, err == nil
 	}
 	return 0, false
 }

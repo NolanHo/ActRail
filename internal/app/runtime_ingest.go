@@ -1014,6 +1014,10 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 			"raw_type": strings.TrimSpace(event.RawType),
 			"status":   true,
 		}
+		if event.Compaction != nil {
+			committed.Details["compaction"] = compactionEventDetails(*event.Compaction)
+			committed.Summary = compactionEventSummary(*event.Compaction)
+		}
 		s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
 		s.emitSessionState(sessionID)
 		return nil
@@ -1149,6 +1153,59 @@ func (s *Stub) applyPITool(sessionID session.SessionID, event pi.Event) error {
 	s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
 	s.emitSessionState(sessionID)
 	return nil
+}
+
+func compactionEventSummary(event pi.CompactionEvent) string {
+	if event.Phase == "start" {
+		return "Compaction started"
+	}
+	if event.ErrorMessage != "" {
+		return "Compaction failed"
+	}
+	if event.Aborted {
+		return "Compaction aborted"
+	}
+	if event.WillRetry {
+		return "Compaction ended, retrying"
+	}
+	return "Compaction ended"
+}
+
+func compactionEventDetails(event pi.CompactionEvent) map[string]any {
+	details := map[string]any{
+		"phase":     event.Phase,
+		"reason":    event.Reason,
+		"aborted":   event.Aborted,
+		"willRetry": event.WillRetry,
+	}
+	if event.InputTokens > 0 {
+		details["inputTokens"] = event.InputTokens
+	}
+	if event.InputTokensK > 0 {
+		details["inputTokensK"] = event.InputTokensK
+	}
+	if event.TokensBefore > 0 {
+		details["tokensBefore"] = event.TokensBefore
+	}
+	if event.TokensAfter > 0 {
+		details["tokensAfter"] = event.TokensAfter
+	}
+	if event.TokensAfterK > 0 {
+		details["tokensAfterK"] = event.TokensAfterK
+	}
+	if event.DurationMS > 0 {
+		details["durationMs"] = event.DurationMS
+	}
+	if event.ErrorMessage != "" {
+		details["errorMessage"] = event.ErrorMessage
+	}
+	if event.Model != nil {
+		details["model"] = event.Model
+	}
+	if event.Result != nil {
+		details["result"] = event.Result
+	}
+	return details
 }
 
 func (s *Stub) applyPIError(sessionID session.SessionID, event pi.Event) error {
