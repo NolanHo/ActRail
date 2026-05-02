@@ -46,6 +46,7 @@ function Harness({
         data-reply-sound={state.replySoundEnabled ? "yes" : "no"}
       />
       <button type="button" onClick={() => { void state.toggleNotifications(); }}>Toggle</button>
+      <button type="button" onClick={() => state.showRealtimeNotification({ title: "Background shell", body: "ready", message_id: "msg-realtime" })}>Realtime</button>
     </div>
   );
 }
@@ -96,6 +97,40 @@ it("dedupes desktop notifications by message id", async () => {
 
   expect(notificationSpy).toHaveBeenCalledTimes(1);
   expect(notificationSpy).toHaveBeenCalledWith("Legacy shell", expect.objectContaining({ body: "done" }));
+});
+
+it("shows realtime desktop notifications", async () => {
+  const notificationSpy = vi.fn();
+  vi.stubGlobal("Notification", class NotificationMock {
+    static permission = "granted";
+    static requestPermission = vi.fn().mockResolvedValue("granted");
+
+    constructor(title: string, options?: NotificationOptions) {
+      notificationSpy(title, options);
+    }
+  } as any);
+  localStorage.setItem("actrail.notificationEnabled", "1");
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        activeSessionId="sess-1"
+        bySessionId={{ "sess-1": [] }}
+        voiceSettings={{ notifications: { vapid_public_key: "" } }}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  await act(async () => {
+    (root.querySelector("button:nth-of-type(2)") as HTMLButtonElement).click();
+    await flush();
+  });
+
+  expect(notificationSpy).toHaveBeenCalledWith("Background shell", expect.objectContaining({ body: "ready" }));
 });
 
 it("reads the persisted reply-sound preference", async () => {

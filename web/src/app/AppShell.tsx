@@ -306,6 +306,7 @@ export function AppShell() {
     refreshNotificationFeed,
     replySoundEnabled,
     setReplySoundEnabled,
+    showRealtimeNotification,
     toggleNotifications,
   } = useAppShellNotifications({
     activeSessionId,
@@ -330,6 +331,7 @@ export function AppShell() {
     liveSessionStoreApi,
     onConnectionChange: setRealtimeConnected,
     refreshNotificationsFeed: refreshNotificationFeed,
+    showRealtimeNotification,
     sessionUiStoreApi,
     sessionsStoreApi,
     waitsStoreApi,

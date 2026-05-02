@@ -71,6 +71,7 @@ type captureRuntimeSink struct {
 	uiResolved             []UIResolvedEvent
 	generationBroken       []GenerationBrokenEvent
 	transportResetRequired []TransportResetRequiredEvent
+	notifications          []NotificationEvent
 }
 
 func (s *captureRuntimeSink) PublishSessionState(event SessionStateEvent) {
@@ -121,6 +122,12 @@ func (s *captureRuntimeSink) PublishTransportResetRequired(event TransportResetR
 	s.transportResetRequired = append(s.transportResetRequired, event)
 }
 
+func (s *captureRuntimeSink) PublishNotification(event NotificationEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notifications = append(s.notifications, event)
+}
+
 func (s *captureRuntimeSink) snapshot() captureRuntimeSink {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -133,6 +140,7 @@ func (s *captureRuntimeSink) snapshot() captureRuntimeSink {
 		uiResolved:             append([]UIResolvedEvent(nil), s.uiResolved...),
 		generationBroken:       append([]GenerationBrokenEvent(nil), s.generationBroken...),
 		transportResetRequired: append([]TransportResetRequiredEvent(nil), s.transportResetRequired...),
+		notifications:          append([]NotificationEvent(nil), s.notifications...),
 	}
 }
 
@@ -204,6 +212,9 @@ func TestCreateSessionConsumesPIRuntimeOutputIntoStateAndTranscript(t *testing.T
 	}
 	if len(snapshot.commits) != 1 || snapshot.commits[0].Message.Text != "Codoxear serves a browser UI for Codex-style sessions." {
 		t.Fatalf("runtime commit events = %#v", snapshot.commits)
+	}
+	if len(snapshot.notifications) != 1 || snapshot.notifications[0].Body != "Codoxear serves a browser UI for Codex-style sessions." {
+		t.Fatalf("runtime notifications = %#v", snapshot.notifications)
 	}
 	if len(snapshot.uiRequests) != 1 || snapshot.uiRequests[0].Request.RequestID != "ui-req-1" {
 		t.Fatalf("runtime ui request events = %#v", snapshot.uiRequests)

@@ -113,7 +113,7 @@ func Load() Config {
 			WebSocketRealtime: true,
 			Voice:             false,
 			Harness:           false,
-			Notifications:     false,
+			Notifications:     true,
 			PIUI:              true,
 			WorkspaceRead:     true,
 			WorkspaceWrite:    false,
@@ -127,7 +127,7 @@ func Load() Config {
 		Storage: Storage{
 			DataDir: envString("ACTRAIL_DATA_DIR", defaultDataDir),
 		},
-		DisabledUI: []string{"voice", "harness", "notifications"},
+		DisabledUI: []string{"voice", "harness"},
 	}
 
 	cfg.AllowedHosts = []string{cfg.Server.Host}

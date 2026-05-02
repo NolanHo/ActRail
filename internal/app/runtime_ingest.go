@@ -1229,8 +1229,24 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	committed.EventID = piMessageEventID(event)
 	committed.ParentEventID = piParentEventID(event)
 	s.emitMessageCommit(sessionID, turnID, committed)
+	s.emitAssistantFinalNotification(sessionID, committed)
 	s.emitSessionState(sessionID)
 	return nil
+}
+
+func (s *Stub) emitAssistantFinalNotification(sessionID session.SessionID, msg SessionMessage) {
+	if msg.Role != "assistant" || strings.TrimSpace(msg.Text) == "" {
+		return
+	}
+	title := "Session"
+	if record, ok := s.registry.Lookup(sessionID); ok {
+		title = firstNonEmptyString(record.alias, record.title, record.cwd, sessionID.String())
+	}
+	messageID := strings.TrimSpace(msg.EventID)
+	if messageID == "" && msg.Seq > 0 {
+		messageID = fmt.Sprintf("%s:%d", sessionID, msg.Seq)
+	}
+	s.emitNotification(NotificationEvent{SessionID: sessionID.String(), Title: title, Body: msg.Text, MessageID: messageID, Kind: "assistant_final"})
 }
 
 func (s *Stub) commitRuntimeMessage(sessionID session.SessionID, turnID, role, text string) (SessionMessage, bool, error) {

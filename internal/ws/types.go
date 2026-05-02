@@ -17,6 +17,7 @@ const (
 	FrameTypeTransportResetRequired  FrameType = "transport.reset_required"
 	FrameTypeSessionGenerationBroken FrameType = "session.generation.broken"
 	FrameTypeSessionsUpdated         FrameType = "sessions.updated"
+	FrameTypeNotification            FrameType = "notification"
 	FrameTypeSessionState            FrameType = "session.state"
 	FrameTypeMessageDelta            FrameType = "message.delta"
 	FrameTypeMessageGenerating       FrameType = "message.generating"

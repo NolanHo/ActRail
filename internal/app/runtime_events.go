@@ -16,6 +16,7 @@ type RuntimeEventSink interface {
 	PublishUIResolved(UIResolvedEvent)
 	PublishGenerationBroken(GenerationBrokenEvent)
 	PublishTransportResetRequired(TransportResetRequiredEvent)
+	PublishNotification(NotificationEvent)
 }
 
 // SessionResumeCursorWriter stores the latest published stream cursor for reconnect snapshots.
@@ -69,6 +70,14 @@ type TransportResetRequiredEvent struct {
 	SessionID    session.SessionID
 	GenerationID string
 	Reason       string
+}
+
+type NotificationEvent struct {
+	SessionID string
+	Title     string
+	Body      string
+	MessageID string
+	Kind      string
 }
 
 func (s *Stub) SetRuntimeEventSink(sink RuntimeEventSink) {
@@ -143,4 +152,11 @@ func (s *Stub) emitTransportResetRequired(sessionID session.SessionID, generatio
 		return
 	}
 	s.sink.PublishTransportResetRequired(TransportResetRequiredEvent{SessionID: sessionID, GenerationID: generationID, Reason: reason})
+}
+
+func (s *Stub) emitNotification(event NotificationEvent) {
+	if s == nil || s.sink == nil || !s.cfg.Features.Notifications {
+		return
+	}
+	s.sink.PublishNotification(event)
 }
