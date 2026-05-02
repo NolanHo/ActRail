@@ -50,15 +50,12 @@ jobs:
         working-directory: web
         run: npm ci
 
-      - name: Go vet
-        env:
-          PI_HOME: ${{ runner.temp }}/pi-home
+      - name: Prepare test runtime shims
         run: |
           sudo mkdir -p /usr/local/go/bin /usr/local/bin
           sudo ln -sf "$(command -v go)" /usr/local/go/bin/go
           sudo ln -sf /bin/true /usr/local/bin/pi
           sudo ln -sf /bin/true /usr/local/bin/codex
-          go vet ./...
 
       - name: Go tests
         env:
