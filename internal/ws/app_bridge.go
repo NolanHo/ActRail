@@ -99,6 +99,14 @@ type transportResetRequiredPayload struct {
 	Reason       string `json:"reason"`
 }
 
+type notificationPayload struct {
+	SessionID string `json:"session_id,omitempty"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	MessageID string `json:"message_id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+}
+
 // AppBridge maps app-side live events and control requests onto websocket frames.
 type AppBridge struct {
 	controller app.SessionController
@@ -286,6 +294,14 @@ func (b *AppBridge) PublishTransportResetRequired(event app.TransportResetRequir
 			Reason:       event.Reason,
 		}
 	})
+}
+
+func (b *AppBridge) PublishNotification(event app.NotificationEvent) {
+	if b == nil || b.publisher == nil {
+		return
+	}
+	frame := Frame{Type: FrameTypeNotification, ID: b.frameIDs.Next(), TS: UnixTS(b.now()), Stream: SystemStream.String(), Payload: notificationPayload{SessionID: event.SessionID, Title: event.Title, Body: event.Body, MessageID: event.MessageID, Kind: event.Kind}}
+	_, _ = b.publisher.Publish(0, frame)
 }
 
 func (b *AppBridge) publishGenerating(sessionID session.SessionID, turnID, role string, active bool) {

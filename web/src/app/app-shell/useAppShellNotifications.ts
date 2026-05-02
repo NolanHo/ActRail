@@ -422,6 +422,16 @@ export function useAppShellNotifications({
     pushNotificationsEnabled,
     refreshNotificationFeed: () => refreshNotificationFeed(false),
     replySoundEnabled,
+    showRealtimeNotification: (payload: Record<string, unknown>) => {
+      if (!bootstrapLoaded || !notificationsSupported || !notificationsEnabled || notificationDeviceClass() !== "desktop" || notificationPermission !== "granted") {
+        return;
+      }
+      showDesktopNotification(
+        String(payload.title || payload.session_display_name || "Session"),
+        String(payload.body || payload.notification_text || ""),
+        typeof payload.message_id === "string" ? payload.message_id : undefined,
+      );
+    },
     setReplySoundEnabled,
     toggleNotifications,
   };

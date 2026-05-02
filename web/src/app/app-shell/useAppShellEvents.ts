@@ -24,6 +24,7 @@ interface UseAppShellEventsOptions {
   liveSessionStoreApi: LiveSessionStore;
   onConnectionChange?: (connected: boolean) => void;
   refreshNotificationsFeed: () => Promise<void>;
+  showRealtimeNotification?: (payload: Record<string, unknown>) => void;
   sessionUiStoreApi: SessionUiStore;
   sessionsStoreApi: SessionsStore;
   waitsStoreApi: WaitsStore;
@@ -41,6 +42,7 @@ interface LatestAppShellEventContext {
   items: SessionSummary[];
   onConnectionChange?: (connected: boolean) => void;
   refreshNotificationsFeed: () => Promise<void>;
+  showRealtimeNotification?: (payload: Record<string, unknown>) => void;
   workspaceOpen: boolean;
 }
 
@@ -80,6 +82,7 @@ export function useAppShellEvents({
   liveSessionStoreApi,
   onConnectionChange,
   refreshNotificationsFeed,
+  showRealtimeNotification,
   sessionUiStoreApi,
   sessionsStoreApi,
   waitsStoreApi,
@@ -97,6 +100,7 @@ export function useAppShellEvents({
     items,
     onConnectionChange,
     refreshNotificationsFeed,
+    showRealtimeNotification,
     workspaceOpen,
   });
 
@@ -111,9 +115,10 @@ export function useAppShellEvents({
       items,
       onConnectionChange,
       refreshNotificationsFeed,
+      showRealtimeNotification,
       workspaceOpen,
     };
-  }, [activeSessionBackend, activeSessionHistorical, activeSessionId, activeSessionPending, activeSessionRuntimeId, bootstrapLoaded, items, onConnectionChange, refreshNotificationsFeed, workspaceOpen]);
+  }, [activeSessionBackend, activeSessionHistorical, activeSessionId, activeSessionPending, activeSessionRuntimeId, bootstrapLoaded, items, onConnectionChange, refreshNotificationsFeed, showRealtimeNotification, workspaceOpen]);
 
   useEffect(() => {
     const refreshSessions = () => sessionsStoreApi.refresh().catch(() => undefined);
@@ -158,6 +163,11 @@ export function useAppShellEvents({
 
       if (type === "sessions.updated") {
         void refreshSessions();
+        return;
+      }
+      if (type === "notification") {
+        const payload = frame.payload && typeof frame.payload === "object" ? frame.payload as Record<string, unknown> : {};
+        latestRef.current.showRealtimeNotification?.(payload);
         return;
       }
       if (type === "notifications.invalidate") {
@@ -242,7 +252,7 @@ export function useAppShellEvents({
       return;
     }
     const liveState = liveSessionStoreApi.getState();
-    const subscriptions: RealtimeStreamSubscription[] = [{ name: "sessions" }, { name: "waits" }];
+    const subscriptions: RealtimeStreamSubscription[] = [{ name: "system" }, { name: "sessions" }, { name: "waits" }];
     const trackedSessionIds = new Set<string>();
     const subscribeSession = (sessionId: string, suppressMessageDeltas: boolean) => {
       if (!sessionId || trackedSessionIds.has(sessionId)) {
