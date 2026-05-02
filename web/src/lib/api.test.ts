@@ -202,6 +202,7 @@ describe("api", () => {
         ok: true,
         previous_session_id: "sess-1",
         history_path: "/tmp/old.jsonl",
+        sidecar_path: "/tmp/sidecar.json",
         session: {
           session_id: "sess-2",
           runtime_id: "rt-2",
@@ -221,6 +222,7 @@ describe("api", () => {
       backend: "pi",
       previous_session_id: "sess-1",
       history_path: "/tmp/old.jsonl",
+      sidecar_path: "/tmp/sidecar.json",
       session_file_path: "/tmp/new.jsonl",
     }));
 

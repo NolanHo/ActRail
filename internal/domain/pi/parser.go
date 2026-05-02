@@ -68,6 +68,10 @@ func ParseJSONL(r io.Reader) (Material, error) {
 	}
 }
 
+func ParseRawObject(raw map[string]any) Material {
+	return parseObject(raw)
+}
+
 func parseObject(raw map[string]any) Material {
 	if raw == nil {
 		return Material{}

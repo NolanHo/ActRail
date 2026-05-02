@@ -293,6 +293,7 @@ export interface DeleteSessionResponse {
 
 export interface HandoffSessionResponse extends CreateSessionResponse {
   history_path?: string;
+  sidecar_path?: string;
   previous_session_id?: string;
 }
 

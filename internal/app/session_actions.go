@@ -157,6 +157,7 @@ type HandoffSessionResponse struct {
 	RuntimeID         string                `json:"runtime_id,omitempty"`
 	PreviousSessionID string                `json:"previous_session_id,omitempty"`
 	HistoryPath       string                `json:"history_path,omitempty"`
+	SidecarPath       string                `json:"sidecar_path,omitempty"`
 	WSAttach          *SessionAttachRequest `json:"ws_attach,omitempty"`
 }
 
@@ -582,6 +583,10 @@ func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (H
 		}
 		return &trimmed
 	}
+	sidecarPath, err := s.writeSessionHandoffSidecar(record)
+	if err != nil {
+		return HandoffSessionResponse{}, err
+	}
 	title := strings.TrimSpace(displayAlias(record))
 	if title == "" {
 		title = strings.TrimSpace(record.title)
@@ -604,6 +609,10 @@ func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (H
 	if err != nil {
 		return HandoffSessionResponse{}, err
 	}
+	if _, err := s.Send(ctx, SendRequest{SessionID: newSessionID, Text: handoffPrompt(sidecarPath)}); err != nil {
+		_, _ = s.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: newSessionID})
+		return HandoffSessionResponse{}, err
+	}
 	if _, err := s.DeleteSession(ctx, DeleteSessionRequest{SessionID: req.SessionID}); err != nil {
 		_, _ = s.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: newSessionID})
 		return HandoffSessionResponse{}, err
@@ -615,6 +624,7 @@ func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (H
 		RuntimeID:         created.Session.RuntimeID,
 		PreviousSessionID: record.identity.SessionID().String(),
 		HistoryPath:       strings.TrimSpace(record.importedSourcePath),
+		SidecarPath:       sidecarPath,
 		WSAttach:          created.WSAttach,
 	}, nil
 }
