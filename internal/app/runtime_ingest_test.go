@@ -760,6 +760,34 @@ func TestNextPIRPCStatePollIntervalUsesBusyIntervalForPendingProbe(t *testing.T)
 	}
 }
 
+func TestPIRPCStatePollerKickRequestsImmediateProbeForActiveGeneration(t *testing.T) {
+	sessionID, err := session.ParseSessionID("s_rpc_state_kick")
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_rpc_state_kick")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	svc := &Stub{piRPCStates: map[session.SessionID]piRPCStateCache{
+		sessionID: {GenerationID: generationID, Polling: true},
+	}}
+
+	if svc.activatePIRPCStatePoller(sessionID, generationID) {
+		t.Fatal("activatePIRPCStatePoller() = true, want false for active generation")
+	}
+	cache := svc.piRPCStates[sessionID]
+	if cache.KickSeq != 1 || !cache.Polling {
+		t.Fatalf("cache after active generation kick = %+v, want kick_seq 1 polling true", cache)
+	}
+	if !svc.piRPCStatePollKicked(sessionID, generationID, 0) {
+		t.Fatal("piRPCStatePollKicked(seq 0) = false, want true")
+	}
+	if svc.piRPCStatePollKicked(sessionID, generationID, 1) {
+		t.Fatal("piRPCStatePollKicked(seq 1) = true, want false")
+	}
+}
+
 func TestPIRPCStatePollerResetsFailureBudgetForNewGeneration(t *testing.T) {
 	sessionID, err := session.ParseSessionID("s_rpc_state_reset")
 	if err != nil {

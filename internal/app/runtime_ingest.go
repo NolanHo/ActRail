@@ -77,6 +77,7 @@ type piRPCStateCache struct {
 	StalledResetRequired bool
 	BusyHoldUntil        time.Time
 	IdleHoldUntil        time.Time
+	KickSeq              uint64
 }
 
 func (s piRPCStateSnapshot) Busy() bool {
@@ -182,7 +183,7 @@ func (s *Stub) startPIRPCStatePolling(sessionID session.SessionID, runtime sessi
 func (s *Stub) pollPIRPCState(sessionID session.SessionID, runtime sessionRuntime, generationID iod.GenerationID) {
 	for s.shouldPollPIRPCState(sessionID, runtime, generationID) {
 		probeID := fmt.Sprintf("actrail-state-%d", time.Now().UTC().UnixNano())
-		s.notePIRPCStateProbeSent(sessionID, generationID, probeID)
+		kickSeq := s.notePIRPCStateProbeSent(sessionID, generationID, probeID)
 		ctx, cancel := context.WithTimeout(context.Background(), piRPCStatePollTimeout)
 		err := runtime.RequestPIRPCState(ctx, probeID)
 		cancel()
@@ -193,15 +194,46 @@ func (s *Stub) pollPIRPCState(sessionID session.SessionID, runtime sessionRuntim
 			if s.recordPIRPCStateProbeFailure(sessionID, generationID, probeID, err.Error()) {
 				return
 			}
-		} else {
-			timer := time.NewTimer(s.nextPIRPCStatePollInterval(sessionID, generationID))
-			<-timer.C
-			if !s.piRPCStateProbeAcked(sessionID, generationID, probeID) {
-				if s.recordPIRPCStateProbeFailure(sessionID, generationID, probeID, "get_state timeout") {
-					return
-				}
-			}
+			continue
 		}
+		if !s.waitPIRPCStateProbeAck(sessionID, generationID, probeID) {
+			if s.recordPIRPCStateProbeFailure(sessionID, generationID, probeID, "get_state timeout") {
+				return
+			}
+			continue
+		}
+		if !s.waitPIRPCStatePollInterval(sessionID, generationID, kickSeq) {
+			return
+		}
+	}
+}
+
+func (s *Stub) waitPIRPCStateProbeAck(sessionID session.SessionID, generationID iod.GenerationID, probeID string) bool {
+	deadline := time.Now().UTC().Add(piRPCStatePollTimeout)
+	for {
+		if s.piRPCStateProbeAcked(sessionID, generationID, probeID) {
+			return true
+		}
+		if time.Now().UTC().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (s *Stub) waitPIRPCStatePollInterval(sessionID session.SessionID, generationID iod.GenerationID, kickSeq uint64) bool {
+	deadline := time.Now().UTC().Add(s.nextPIRPCStatePollInterval(sessionID, generationID))
+	for {
+		if s.piRPCStatePollKicked(sessionID, generationID, kickSeq) {
+			return true
+		}
+		if !s.shouldPollPIRPCState(sessionID, sessionRuntime{protocol: runtimeProtocolPIRPC, helper: &runtimeIODHelper{generationID: generationID}}, generationID) {
+			return false
+		}
+		if time.Now().UTC().After(deadline) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -238,6 +270,8 @@ func (s *Stub) activatePIRPCStatePoller(sessionID session.SessionID, generationI
 	}
 	cache := s.piRPCStates[sessionID]
 	if cache.Polling && cache.GenerationID == generationID && !cache.StalledResetRequired {
+		cache.KickSeq++
+		s.piRPCStates[sessionID] = cache
 		return false
 	}
 	if cache.GenerationID != generationID {
@@ -261,7 +295,7 @@ func (s *Stub) deactivatePIRPCStatePoller(sessionID session.SessionID, generatio
 	s.piRPCStates[sessionID] = cache
 }
 
-func (s *Stub) notePIRPCStateProbeSent(sessionID session.SessionID, generationID iod.GenerationID, probeID string) {
+func (s *Stub) notePIRPCStateProbeSent(sessionID session.SessionID, generationID iod.GenerationID, probeID string) uint64 {
 	s.piRPCStateMu.Lock()
 	defer s.piRPCStateMu.Unlock()
 	cache := s.piRPCStates[sessionID]
@@ -270,6 +304,14 @@ func (s *Stub) notePIRPCStateProbeSent(sessionID session.SessionID, generationID
 	}
 	cache.PendingProbeID = probeID
 	s.piRPCStates[sessionID] = cache
+	return cache.KickSeq
+}
+
+func (s *Stub) piRPCStatePollKicked(sessionID session.SessionID, generationID iod.GenerationID, kickSeq uint64) bool {
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	return cache.GenerationID == generationID && cache.KickSeq != kickSeq
 }
 
 func (s *Stub) piRPCStateProbeAcked(sessionID session.SessionID, generationID iod.GenerationID, probeID string) bool {
