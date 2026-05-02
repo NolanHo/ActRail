@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"actrail/internal/domain/message"
-	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
 
@@ -772,44 +771,73 @@ func piResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string, c
 		if line == "" {
 			continue
 		}
-		if name := piSessionInfoNameFromLine(line); name != "" {
-			sessionName = name
-		}
-		material, err := pi.ParseObjectJSON([]byte(line))
-		if err != nil {
+		entry, ok := piResumeMetaEntryFromLine(line)
+		if !ok {
 			return "", "", "", "", false
 		}
-		if material.Header != nil {
-			sessionID = strings.TrimSpace(material.Header.SessionID)
-			cwd = strings.TrimSpace(material.Header.CWD)
-			continue
+		if entry.sessionID != "" {
+			sessionID = entry.sessionID
 		}
-		for _, event := range material.Events {
-			if firstUser == "" && event.Message != nil && event.Message.Role == pi.MessageRoleUser {
-				firstUser = strings.TrimSpace(event.Message.Text)
-			}
+		if entry.cwd != "" {
+			cwd = entry.cwd
+		}
+		if entry.sessionName != "" {
+			sessionName = entry.sessionName
+		}
+		if firstUser == "" && entry.firstUser != "" {
+			firstUser = entry.firstUser
 		}
 	}
 	return sessionID, cwd, sessionName, firstUser, sessionID != ""
 }
 
-func piSessionInfoNameFromLine(line string) string {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return ""
-	}
-	if strings.TrimSpace(jsonStringValue(raw["type"])) != "session_info" {
-		return ""
-	}
-	return strings.TrimSpace(jsonStringValue(raw["name"]))
+type piResumeMetaEntry struct {
+	sessionID   string
+	cwd         string
+	sessionName string
+	firstUser   string
 }
 
-func jsonStringValue(value any) string {
-	text, ok := value.(string)
-	if !ok {
-		return ""
+func piResumeMetaEntryFromLine(line string) (piResumeMetaEntry, bool) {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(line), &raw); err != nil {
+		return piResumeMetaEntry{}, false
 	}
-	return text
+	switch strings.TrimSpace(stringValue(raw["type"])) {
+	case "session":
+		return piResumeMetaEntry{
+			sessionID: firstNonEmptyString(stringValue(raw["id"]), stringValue(raw["session_id"]), stringValue(raw["sessionId"])),
+			cwd:       strings.TrimSpace(stringValue(raw["cwd"])),
+		}, true
+	case "session_info":
+		return piResumeMetaEntry{sessionName: strings.TrimSpace(stringValue(raw["name"]))}, true
+	case "message":
+		message, _ := raw["message"].(map[string]any)
+		if strings.TrimSpace(stringValue(message["role"])) != "user" {
+			return piResumeMetaEntry{}, true
+		}
+		return piResumeMetaEntry{firstUser: piResumeMessageText(message)}, true
+	default:
+		return piResumeMetaEntry{}, true
+	}
+}
+
+func piResumeMessageText(message map[string]any) string {
+	content, _ := message["content"].([]any)
+	parts := make([]string, 0, len(content))
+	for _, item := range content {
+		obj, _ := item.(map[string]any)
+		switch strings.TrimSpace(stringValue(obj["type"])) {
+		case "text", "input_text", "output_text":
+			if text := stringValue(obj["text"]); text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+	if len(parts) > 0 {
+		return strings.TrimSpace(strings.Join(parts, ""))
+	}
+	return strings.TrimSpace(stringValue(message["text"]))
 }
 
 func truncateResumeTitle(value string) string {

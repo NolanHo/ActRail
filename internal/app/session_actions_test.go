@@ -257,6 +257,45 @@ func TestPIResumeCandidateFromSourcePathPrefersSessionInfoName(t *testing.T) {
 	}
 }
 
+func TestPIResumeCandidateFromSourcePathReadsCommonMessageShapes(t *testing.T) {
+	cwd := t.TempDir()
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "content parts",
+			body: `{"type":"session","version":3,"id":"pi-content","cwd":` + fmt.Sprintf("%q", cwd) + `}
+{"type":"message","message":{"role":"user","content":[{"type":"input_text","text":"alpha"},{"type":"text","text":" beta"}]}}
+`,
+			want: "alpha beta",
+		},
+		{
+			name: "text fallback",
+			body: `{"type":"session","version":3,"id":"pi-text","cwd":` + fmt.Sprintf("%q", cwd) + `}
+{"type":"message","message":{"role":"user","text":"fallback text"}}
+`,
+			want: "fallback text",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sourcePath := filepath.Join(t.TempDir(), "pi.jsonl")
+			if err := os.WriteFile(sourcePath, []byte(tc.body), 0o644); err != nil {
+				t.Fatalf("WriteFile(%q) error = %v", sourcePath, err)
+			}
+			candidate, ok := piResumeCandidateFromSourcePath(cwd, sourcePath)
+			if !ok {
+				t.Fatal("piResumeCandidateFromSourcePath() ok = false, want true")
+			}
+			if candidate.FirstUserMessage != tc.want {
+				t.Fatalf("FirstUserMessage = %q, want %q", candidate.FirstUserMessage, tc.want)
+			}
+		})
+	}
+}
+
 func TestStubSessionResumeCandidatesUseUpdatedTimeDescendingForDemotedSessions(t *testing.T) {
 	cfg := config.Load()
 	now := time.Unix(1760000000, 0).UTC()
