@@ -566,6 +566,44 @@ func TestPIRPCBusyHoldIgnoresEarlyIdleGetState(t *testing.T) {
 	}
 }
 
+func TestPIRPCActiveTurnIgnoresIdleGetState(t *testing.T) {
+	svc, sessionID, generationID := newPIRPCStateFailureFixture(t)
+	svc.holdPIRPCIdle(sessionID, generationID)
+	svc.holdPIRPCBusy(sessionID, generationID)
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"id":"idle-during-active","type":"response","command":"get_state","success":true,"data":{"isStreaming":false,"isCompacting":false,"pendingMessageCount":0}}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(get_state idle) error = %v", err)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy {
+		t.Fatalf("SessionState().Busy = false, want true during active turn")
+	}
+}
+
+func TestPIRPCGetStateTimeoutsDoNotEmitUserVisibleWarnings(t *testing.T) {
+	svc, sessionID, _ := newPIRPCStateFailureFixture(t)
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	apply := func(raw string) {
+		t.Helper()
+		if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(raw))); err != nil {
+			t.Fatalf("applyRuntimeProjection(%s) error = %v", raw, err)
+		}
+	}
+	apply(`{"id":"fail-1","type":"response","command":"get_state","success":false,"error":"get_state timeout"}`)
+	apply(`{"id":"fail-2","type":"response","command":"get_state","success":false,"error":"get_state timeout"}`)
+	apply(`{"id":"fail-3","type":"response","command":"get_state","success":false,"error":"get_state timeout"}`)
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 0 {
+		t.Fatalf("SessionMessages() = %+v, want no timeout warning", messages.Items)
+	}
+}
+
 func TestPIRPCIdleHoldIgnoresStaleBusyGetStateAfterCompletion(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
@@ -757,6 +795,10 @@ func TestNextPIRPCStatePollIntervalUsesBusyIntervalForPendingProbe(t *testing.T)
 
 	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateBusyPollInterval {
 		t.Fatalf("nextPIRPCStatePollInterval() = %s, want %s", got, piRPCStateBusyPollInterval)
+	}
+	svc.startPIRPCStartupProbe(sessionID, generationID)
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateStartupPollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() after startup = %s, want %s", got, piRPCStateStartupPollInterval)
 	}
 }
 

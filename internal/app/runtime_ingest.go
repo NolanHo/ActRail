@@ -17,13 +17,15 @@ import (
 )
 
 const (
-	maxRuntimeLineBytes        = 1 << 20
-	piRPCStateIdlePollInterval = 30 * time.Second
-	piRPCStateBusyPollInterval = 3 * time.Second
-	piRPCStatePollTimeout      = 2 * time.Second
-	piRPCStateMaxFailures      = 3
-	piRPCBusyHoldDuration      = 30 * time.Second
-	piRPCIdleHoldDuration      = 3 * time.Second
+	maxRuntimeLineBytes           = 1 << 20
+	piRPCStateIdlePollInterval    = 30 * time.Second
+	piRPCStateBusyPollInterval    = 3 * time.Second
+	piRPCStateStartupPollInterval = 1 * time.Second
+	piRPCStatePollTimeout         = 2 * time.Second
+	piRPCStateMaxFailures         = 3
+	piRPCBusyHoldDuration         = 30 * time.Second
+	piRPCStartupProbeDuration     = 10 * time.Second
+	piRPCIdleHoldDuration         = 3 * time.Second
 )
 
 var runtimeHelperProjectors sync.Map
@@ -76,7 +78,9 @@ type piRPCStateCache struct {
 	LastState            *piRPCStateSnapshot
 	StalledResetRequired bool
 	BusyHoldUntil        time.Time
+	StartupProbeUntil    time.Time
 	IdleHoldUntil        time.Time
+	ActiveTurn           bool
 	KickSeq              uint64
 }
 
@@ -244,7 +248,11 @@ func (s *Stub) nextPIRPCStatePollInterval(sessionID session.SessionID, generatio
 	if cache.GenerationID != generationID {
 		return piRPCStateIdlePollInterval
 	}
-	if cache.PendingProbeID != "" || (cache.LastState != nil && cache.LastState.Busy()) {
+	now := time.Now().UTC()
+	if cache.ActiveTurn && now.Before(cache.StartupProbeUntil) {
+		return piRPCStateStartupPollInterval
+	}
+	if cache.PendingProbeID != "" || cache.ActiveTurn || (cache.LastState != nil && cache.LastState.Busy()) {
 		return piRPCStateBusyPollInterval
 	}
 	return piRPCStateIdlePollInterval
@@ -341,7 +349,7 @@ func (s *Stub) recordPIRPCStateProbeFailure(sessionID session.SessionID, generat
 	stalled := cache.ConsecutiveFailures >= piRPCStateMaxFailures
 	s.piRPCStates[sessionID] = cache
 	s.piRPCStateMu.Unlock()
-	if stalled {
+	if stalled && !isPIRPCStateProbeTimeout(reason) {
 		_ = s.emitPIRPCStateProbeWarning(sessionID, generationID, reason)
 	}
 	return false
@@ -374,6 +382,10 @@ func isPIRPCControlSocketFailure(reason string) bool {
 	return strings.Contains(text, "dial iod control socket") || strings.Contains(text, "connect: no such file or directory")
 }
 
+func isPIRPCStateProbeTimeout(reason string) bool {
+	return strings.TrimSpace(reason) == "get_state timeout"
+}
+
 func (s *Stub) recordPIRPCStateSuccess(sessionID session.SessionID, state piRPCStateSnapshot) {
 	s.piRPCStateMu.Lock()
 	defer s.piRPCStateMu.Unlock()
@@ -403,11 +415,35 @@ func (s *Stub) holdPIRPCBusy(sessionID session.SessionID, generationID iod.Gener
 		cache = piRPCStateCache{GenerationID: generationID}
 	}
 	cache.GenerationID = generationID
+	cache.ActiveTurn = true
 	until := time.Now().UTC().Add(piRPCBusyHoldDuration)
 	if cache.BusyHoldUntil.Before(until) {
 		cache.BusyHoldUntil = until
 	}
 	cache.IdleHoldUntil = time.Time{}
+	s.piRPCStates[sessionID] = cache
+}
+
+func (s *Stub) startPIRPCStartupProbe(sessionID session.SessionID, generationID iod.GenerationID) {
+	if s == nil || generationID == "" {
+		return
+	}
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	if s.piRPCStates == nil {
+		s.piRPCStates = map[session.SessionID]piRPCStateCache{}
+	}
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID != "" && cache.GenerationID != generationID {
+		cache = piRPCStateCache{GenerationID: generationID}
+	}
+	cache.GenerationID = generationID
+	cache.ActiveTurn = true
+	until := time.Now().UTC().Add(piRPCStartupProbeDuration)
+	if cache.StartupProbeUntil.Before(until) {
+		cache.StartupProbeUntil = until
+	}
+	cache.KickSeq++
 	s.piRPCStates[sessionID] = cache
 }
 
@@ -419,6 +455,16 @@ func (s *Stub) piRPCBusyHeld(sessionID session.SessionID, generationID iod.Gener
 	defer s.piRPCStateMu.Unlock()
 	cache := s.piRPCStates[sessionID]
 	return cache.GenerationID == generationID && time.Now().UTC().Before(cache.BusyHoldUntil)
+}
+
+func (s *Stub) piRPCActiveTurn(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if s == nil || generationID == "" {
+		return false
+	}
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	return cache.GenerationID == generationID && cache.ActiveTurn
 }
 
 func (s *Stub) holdPIRPCIdle(sessionID session.SessionID, generationID iod.GenerationID) {
@@ -435,6 +481,9 @@ func (s *Stub) holdPIRPCIdle(sessionID session.SessionID, generationID iod.Gener
 		cache = piRPCStateCache{GenerationID: generationID}
 	}
 	cache.GenerationID = generationID
+	cache.ActiveTurn = false
+	cache.StartupProbeUntil = time.Time{}
+	cache.BusyHoldUntil = time.Time{}
 	until := time.Now().UTC().Add(piRPCIdleHoldDuration)
 	if cache.IdleHoldUntil.Before(until) {
 		cache.IdleHoldUntil = until
@@ -880,7 +929,7 @@ func (s *Stub) applyPIRPCState(sessionID session.SessionID, state piRPCStateSnap
 	busy := state.Busy()
 	if record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 		generationID := record.runtime.helper.generationID
-		if !busy && s.piRPCBusyHeld(sessionID, generationID) {
+		if !busy && (s.piRPCActiveTurn(sessionID, generationID) || s.piRPCBusyHeld(sessionID, generationID)) {
 			return nil
 		}
 		if busy && !s.isRuntimeAgentRunning(sessionID) && s.piRPCIdleHeld(sessionID, generationID) {
@@ -1385,6 +1434,9 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 	}
 	switch event.Boundary.Kind {
 	case pi.BoundaryKindAgentStarted:
+		if piRPCSession && record.runtime.helper != nil {
+			s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
+		}
 		if err := s.setRuntimeAgentRunning(sessionID, true); err != nil {
 			return err
 		}
@@ -1411,6 +1463,9 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 		}
 	case pi.BoundaryKindTurnStarted:
 		if piRPCSession {
+			if record.runtime.helper != nil {
+				s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
+			}
 			if err := s.setRuntimeAgentRunning(sessionID, true); err != nil {
 				return err
 			}

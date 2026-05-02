@@ -106,6 +106,7 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 			pollPIState = true
 			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 				s.holdPIRPCBusy(req.SessionID, record.runtime.helper.generationID)
+				s.startPIRPCStartupProbe(req.SessionID, record.runtime.helper.generationID)
 			}
 		}
 		s.awaitRuntimeTurnStart(ctx, record.runtime)
@@ -199,6 +200,9 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 	if err := record.runtime.Interrupt(ctx); err != nil {
 		_ = s.emitRuntimeControlDiagnostic(req.SessionID, "interrupt", err)
 		return InterruptResponse{}, mapRuntimeControlError(err)
+	}
+	if record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
+		s.holdPIRPCIdle(req.SessionID, record.runtime.helper.generationID)
 	}
 	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
 		return InterruptResponse{}, err
