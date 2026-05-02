@@ -3271,13 +3271,13 @@ select {
 
 .composerCommandMenu {
   position: relative;
-  margin: 8px 8px 0;
+  margin: 0 8px 8px;
   z-index: 12;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: min(42dvh, 320px);
-  overflow: auto;
+  max-height: min(54dvh, 520px);
+  overflow-y: auto;
   overscroll-behavior: contain;
   padding: 8px;
   border: 1px solid color-mix(in srgb, var(--legacy-border) 72%, white);

@@ -59,7 +59,7 @@ function commandMenuNode({
   onApply: (command: SessionCommand) => void;
 }) {
   return (
-    <div className="composerCommandMenu" data-testid="composer-command-menu">
+    <div className="composerCommandMenu" data-testid="composer-command-menu" onWheel={(event) => event.stopPropagation()}>
       {commandsLoading ? <div className="composerCommandHint">Loading Pi commands...</div> : null}
       {!commandsLoading
         ? visibleCommands.map((command, index) => (
@@ -898,6 +898,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
         className="composerCard rounded-[1.5rem] border-border/70 bg-card/95 shadow-lg shadow-primary/5 backdrop-blur-sm"
       >
         <CardContent className="p-3 sm:p-4 space-y-2">
+          {commandMenu}
           {activeSessionSendBlocked && activeSessionSendBlockReason ? <div className="composerModelError">{activeSessionSendBlockReason}</div> : null}
           <form
             className={cn("composer composerShell flex items-end gap-2 border-t-0", draft.includes("\n") && "multiline")}
@@ -1021,7 +1022,6 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
               </div>
             </div>
           </form>
-          {commandMenu}
           {commandMenuVisible && compactMobile ? (
             <div className="composerCommandSheetBackdrop" data-testid="composer-command-menu" onMouseDown={() => setSlashMenuDismissed(true)}>
               <div className="composerCommandSheet" role="dialog" aria-label="Slash commands" onMouseDown={(event) => event.stopPropagation()}>
