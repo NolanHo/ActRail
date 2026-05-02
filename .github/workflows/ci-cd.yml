@@ -46,7 +46,7 @@ jobs:
           sudo ln -sf "$(command -v go)" /usr/local/go/bin/go
           sudo ln -sf /bin/true /usr/local/bin/pi
           sudo ln -sf /bin/true /usr/local/bin/codex
-          go test ./...
+          go test -p 1 ./...
 
       - name: Web tests
         working-directory: web
