@@ -118,8 +118,12 @@ func (piAdapter) CommandArgs(opts Options) ([]string, error) {
 	if err := (piAdapter{}).ValidateOptions(opts); err != nil {
 		return nil, err
 	}
-	args := make([]string, 0, 8)
-	args = append(args, "--mode", "rpc")
+	args := make([]string, 0, 10)
+	if socketPath := opts.GRPCSocketPath(); socketPath != "" {
+		args = append(args, "--mode", "grpc", "--grpc-socket", socketPath)
+	} else {
+		args = append(args, "--mode", "rpc")
+	}
 	if provider := opts.Provider(); provider != "" {
 		args = append(args, "--provider", provider)
 	}

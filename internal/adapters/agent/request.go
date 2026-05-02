@@ -37,6 +37,7 @@ type Options struct {
 	model           string
 	reasoningEffort string
 	sessionPath     string
+	grpcSocketPath  string
 }
 
 func NewOptions(provider, model, reasoningEffort string) (Options, error) {
@@ -44,6 +45,10 @@ func NewOptions(provider, model, reasoningEffort string) (Options, error) {
 }
 
 func NewOptionsWithSessionPath(provider, model, reasoningEffort, sessionPath string) (Options, error) {
+	return NewOptionsWithTransport(provider, model, reasoningEffort, sessionPath, "")
+}
+
+func NewOptionsWithTransport(provider, model, reasoningEffort, sessionPath, grpcSocketPath string) (Options, error) {
 	normalizedProvider, err := normalizeOptionValue("provider", provider)
 	if err != nil {
 		return Options{}, err
@@ -60,16 +65,21 @@ func NewOptionsWithSessionPath(provider, model, reasoningEffort, sessionPath str
 	if err != nil {
 		return Options{}, err
 	}
+	normalizedGRPCSocketPath, err := normalizeOptionValue("grpc_socket_path", grpcSocketPath)
+	if err != nil {
+		return Options{}, err
+	}
 	return Options{
 		provider:        normalizedProvider,
 		model:           normalizedModel,
 		reasoningEffort: normalizedReasoning,
 		sessionPath:     normalizedSessionPath,
+		grpcSocketPath:  normalizedGRPCSocketPath,
 	}, nil
 }
 
 func (o Options) Validate() error {
-	_, err := NewOptionsWithSessionPath(o.provider, o.model, o.reasoningEffort, o.sessionPath)
+	_, err := NewOptionsWithTransport(o.provider, o.model, o.reasoningEffort, o.sessionPath, o.grpcSocketPath)
 	return err
 }
 
@@ -87,6 +97,10 @@ func (o Options) ReasoningEffort() string {
 
 func (o Options) SessionPath() string {
 	return o.sessionPath
+}
+
+func (o Options) GRPCSocketPath() string {
+	return o.grpcSocketPath
 }
 
 func normalizeOptionValue(label, raw string) (string, error) {

@@ -34,7 +34,7 @@ func (s *Stub) sessionTransportSnapshot(record sessionRecord) SessionTransportSn
 
 func sessionTransportSnapshot(record sessionRecord) SessionTransportSnapshot {
 	snapshot := record.transport
-	if snapshot.State == SessionTransportStateAttached && !record.identity.Historical() && record.runtime.helper == nil && record.runtime.handle == nil {
+	if snapshot.State == SessionTransportStateAttached && !record.identity.Historical() && record.runtime.helper == nil && record.runtime.piAgentGRPC == nil && record.runtime.handle == nil {
 		snapshot.State = SessionTransportStateEnded
 		if snapshot.Reason == "" {
 			snapshot.Reason = "helper_not_running"

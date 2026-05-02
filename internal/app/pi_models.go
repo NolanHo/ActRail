@@ -311,7 +311,8 @@ func (s *Stub) newSessionDefaults(ctx context.Context, req BootstrapRequest) New
 	}
 	addBackend(s.cfg.Launch.DefaultBackend)
 	return NewSessionDefaults{
-		DefaultBackend: s.cfg.Launch.DefaultBackend,
-		Backends:       backends,
+		DefaultBackend:     s.cfg.Launch.DefaultBackend,
+		Backends:           backends,
+		PIAgentGRPCDefault: true,
 	}
 }

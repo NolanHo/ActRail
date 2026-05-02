@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,11 +14,23 @@ import (
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
+	piagentv1 "actrail/proto/pi/agent/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 )
 
 type launchAdapter struct {
 	backend session.Backend
 	args    []string
+}
+
+type fakePiAgentServer struct {
+	piagentv1.UnimplementedPiAgentServer
+}
+
+func (fakePiAgentServer) GetState(context.Context, *piagentv1.GetStateRequest) (*piagentv1.SessionState, error) {
+	return &piagentv1.SessionState{SessionId: "pi-grpc-test"}, nil
 }
 
 func (a launchAdapter) Backend() session.Backend {
@@ -99,6 +112,71 @@ func TestCreateSessionLaunchesRuntimeThroughInjectedCatalogAndRunner(t *testing.
 	}
 	if record.runtime.launchSpec.Command().Path() != "/tmp/custom-pi" {
 		t.Fatalf("record.runtime.launchSpec.Command().Path() = %q, want %q", record.runtime.launchSpec.Command().Path(), "/tmp/custom-pi")
+	}
+}
+
+func TestCreateSessionLaunchesPIAgentGRPCWhenRequested(t *testing.T) {
+	catalog := agent.DefaultCatalog()
+	runner := &process.FakeRunner{}
+	grpcServer := grpc.NewServer()
+	piagentv1.RegisterPiAgentServer(grpcServer, fakePiAgentServer{})
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
+	resolvedTarget := ""
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Catalog: catalog,
+		Runner:  runner,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/custom-pi", nil
+		},
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(ctx context.Context, target string) (*grpc.ClientConn, error) {
+			resolvedTarget = target
+			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		},
+	})
+	useGRPC := true
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+		AgentBackend: "pi",
+		CWD:          "/root/code/ActRail",
+		PIAgentGRPC:  &useGRPC,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if created.Session == nil {
+		t.Fatal("CreateSession().Session = nil")
+	}
+	if resolvedTarget != "unix:///tmp/custom-pi-agent.sock" {
+		t.Fatalf("grpc target = %q, want custom target", resolvedTarget)
+	}
+	if len(runner.Starts) != 1 {
+		t.Fatalf("len(runner.Starts) = %d, want 1", len(runner.Starts))
+	}
+	args := runner.Starts[0].Command().Args()
+	wantPrefix := []string{"--mode", "grpc", "--grpc-socket", "/tmp/custom-pi-agent.sock"}
+	if !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("launch args prefix = %#v, want %#v", args[:len(wantPrefix)], wantPrefix)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("Lookup() ok = false")
+	}
+	if record.runtime.helper != nil {
+		t.Fatal("record.runtime.helper != nil; grpc path must not use IOD helper")
+	}
+	if record.runtime.piAgentGRPC == nil {
+		t.Fatal("record.runtime.piAgentGRPC = nil")
 	}
 }
 

@@ -198,6 +198,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const [reasoningEffort, setReasoningEffort] = useState("");
   const [createInTmux, setCreateInTmux] = useState(false);
   const [fastMode, setFastMode] = useState(false);
+  const [usePIAgentGRPC, setUsePIAgentGRPC] = useState(true);
   const [resumeSessionId, setResumeSessionId] = useState("");
   const [resumeCandidates, setResumeCandidates] = useState<SessionResumeCandidate[]>([]);
   const [resumeOffset, setResumeOffset] = useState(0);
@@ -302,6 +303,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setReasoningEffort(defaultReasoningFor(initialDefaults, initialBackend));
     setCreateInTmux(Boolean(tmuxAvailable));
     setFastMode(String(initialDefaults.service_tier || "").trim().toLowerCase() === "fast");
+    setUsePIAgentGRPC(newSessionDefaults?.pi_agent_grpc_default !== false);
     setResumeSessionId("");
     setResumeCandidates([]);
     setResumeOffset(0);
@@ -501,6 +503,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       touchedLaunchSettingsRef.current.fastMode = false;
     }
     setBackend(nextBackend);
+    setUsePIAgentGRPC(nextBackend === "pi" && newSessionDefaults?.pi_agent_grpc_default !== false);
     setProviderChoice(nextProvider);
     setModel(defaultModelFor(nextDefaults, nextBackend, nextProvider));
     setReasoningEffort(defaultReasoningFor(nextDefaults, nextBackend));
@@ -634,6 +637,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   provider: providerChoice.trim() || backendDefaults.provider_choice?.trim() || undefined,
                   model: model.trim() || undefined,
                   reasoning_effort: backendSupportsReasoningEffort(backend) ? reasoningEffort.trim() || undefined : undefined,
+                  pi_agent_grpc: backend === "pi" ? usePIAgentGRPC : undefined,
                 });
                 const optimisticSession = buildOptimisticCreatedSession(response, {
                   backend,
@@ -930,6 +934,18 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                       }}
                     />
                   </div>
+                  {backend === "pi" ? (
+                    <div className="fieldBlock space-y-2">
+                      <span className="fieldLabel">Pi transport</span>
+                      <ToggleField
+                        label="Use gRPC IPC"
+                        name="usePIAgentGRPC"
+                        checked={usePIAgentGRPC}
+                        description="Launch Pi with --mode grpc and connect ActRail directly to the local Unix socket. Disable to use the existing IOD helper path."
+                        onChange={setUsePIAgentGRPC}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               </section>
 

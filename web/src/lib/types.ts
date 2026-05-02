@@ -17,6 +17,7 @@ export interface LaunchBackendDefaults {
 export interface NewSessionDefaults {
   default_backend?: string;
   backends?: Record<string, LaunchBackendDefaults>;
+  pi_agent_grpc_default?: boolean;
 }
 
 export interface BootstrapCapabilities {
