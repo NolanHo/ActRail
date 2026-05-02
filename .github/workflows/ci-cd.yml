@@ -39,6 +39,8 @@ jobs:
         run: npm ci
 
       - name: Go tests
+        env:
+          PI_HOME: ${{ runner.temp }}/pi-home
         run: go test ./...
 
       - name: Web tests
