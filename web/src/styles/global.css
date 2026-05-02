@@ -3052,7 +3052,7 @@ select {
   background: color-mix(in srgb, white 91%, var(--panel)) !important;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08) !important;
   backdrop-filter: none !important;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .composerCard > div {
@@ -3225,7 +3225,7 @@ select {
   min-height: 56px;
   display: flex;
   align-items: center;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 0.82rem;
 }
 
