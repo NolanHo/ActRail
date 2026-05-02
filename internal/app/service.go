@@ -16,6 +16,17 @@ type Service interface {
 	Bootstrap(context.Context, BootstrapRequest) BootstrapSnapshot
 	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
 	CreateSession(context.Context, CreateSessionRequest) (CreateSessionResponse, error)
+	ListSubagents(context.Context, ListSubagentsRequest) (ListSubagentsResponse, error)
+	SpawnSubagent(context.Context, SpawnSubagentRequest) (SubagentCommandResponse, error)
+	PromptSubagent(context.Context, PromptSubagentRequest) (SubagentCommandResponse, error)
+	FollowupSubagent(context.Context, FollowupSubagentRequest) (SubagentCommandResponse, error)
+	SendSubagent(context.Context, SendSubagentRequest) (SubagentDeliveryResponse, error)
+	AskParent(context.Context, AskParentRequest) (AskParentResponse, error)
+	ResumeAskParent(context.Context, AskParentRequest) (AskParentResponse, error)
+	AnswerSubagent(context.Context, AnswerSubagentRequest) (SubagentCommandResponse, error)
+	AbortSubagent(context.Context, AbortSubagentRequest) (SubagentCommandResponse, error)
+	CloseSubagent(context.Context, CloseSubagentRequest) (SubagentCommandResponse, error)
+	SubagentEvents(context.Context, SubagentEventsRequest) (SubagentEventsResponse, error)
 	SessionResumeCandidates(context.Context, SessionResumeCandidatesRequest) (SessionResumeCandidatesResponse, error)
 	SessionDetails(context.Context, SessionDetailsRequest) (SessionDetailsResponse, error)
 	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)
@@ -63,6 +74,7 @@ type Stub struct {
 	messageCache        *sessionMessageCache
 	waitStore           waitStore
 	supervisorStore     supervisorStore
+	subagents           *subagentRegistry
 	runtimeAgentMu      sync.RWMutex
 	runtimeAgentRunning map[session.SessionID]bool
 	piRPCStateMu        sync.Mutex
@@ -103,6 +115,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
 		waitStore:           newMemoryWaitStore(),
 		supervisorStore:     newMemorySupervisorStore(),
+		subagents:           newSubagentRegistry(now),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
 		piModels:            piModelCache{},
@@ -252,6 +265,7 @@ type CreateSessionRequest struct {
 	ReasoningEffort *string `json:"reasoning_effort"`
 	ResumeSessionID *string `json:"resume_session_id"`
 	Title           *string `json:"title"`
+	Hidden          bool    `json:"-"`
 }
 
 type CreateSessionResponse struct {
@@ -322,6 +336,10 @@ func Conflict(message string) *Error {
 
 func NotFound(message string) *Error {
 	return &Error{Code: "not_found", Message: message}
+}
+
+func Forbidden(message string) *Error {
+	return &Error{Code: "forbidden", Message: message}
 }
 
 func (s *Stub) Bootstrap(ctx context.Context, req BootstrapRequest) BootstrapSnapshot {
@@ -458,8 +476,10 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 			}
 		}
 	}
-	if err := s.recordRecentCWD(cwd); err != nil {
-		return CreateSessionResponse{}, err
+	if !req.Hidden {
+		if err := s.recordRecentCWD(cwd); err != nil {
+			return CreateSessionResponse{}, err
+		}
 	}
 	identity, err := s.registry.ReserveIdentity(backend)
 	if err != nil {
@@ -507,6 +527,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		Model:            optionalString(req.Model),
 		ReasoningEffort:  optionalString(req.ReasoningEffort),
 		Title:            optionalString(req.Title),
+		Hidden:           req.Hidden,
 		SourcePath:       sourcePath,
 		BackendSessionID: resumeBackendSessionID,
 		SourceConfidence: map[bool]string{true: sourceConfidenceExact, false: sourceConfidenceProvisional}[resumeBackendSessionID != ""],

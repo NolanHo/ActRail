@@ -5,9 +5,10 @@ import { ConversationPane } from "../components/conversation/ConversationPane";
 import { ConversationStateTray } from "../components/conversation/ConversationStateTray";
 import { Composer } from "../components/composer/Composer";
 import type { FileViewMode } from "../components/workspace/FileViewerDialog";
-import { AppShellSidebar } from "./app-shell/AppShellSidebar";
+import { AppShellSidebar, GlobalNavRail, type DesktopGlobalView } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
+import { mockSubagents, SubagentsThreadView } from "../components/subagents/SubagentsView";
 import { MobileShell } from "./app-shell/MobileShell";
 import { VoiceSettingsDialog } from "./app-shell/VoiceSettingsDialog";
 import { useAppShellAudio } from "./app-shell/useAppShellAudio";
@@ -128,6 +129,8 @@ export function AppShell() {
   const [fileViewerMode, setFileViewerMode] = useState<FileViewMode | null>(null);
   const [fileViewerRequestKey, setFileViewerRequestKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [desktopGlobalView, setDesktopGlobalView] = useState<DesktopGlobalView>("sessions");
+  const [selectedSubagentId, setSelectedSubagentId] = useState(() => mockSubagents[0]?.actorId || "");
   const [themeMode, setThemeMode] = useState(() => readThemeMode());
   const [displaySettings, setDisplaySettings] = useState(() => readUserDisplaySettings());
   const [displaySettingsDraft, setDisplaySettingsDraft] = useState(() => readUserDisplaySettings());
@@ -426,7 +429,7 @@ export function AppShell() {
     setWorkspaceInitialTab("insight");
   }, [activeSessionId]);
 
-  const shellClassName = useMemo(() => ["appShell", "editorialShell"].join(" "), []);
+  const shellClassName = useMemo(() => ["appShell", "editorialShell", "withGlobalNav"].join(" "), []);
 
   const renderWorkspaceDetails = () => (
     sessionUiMatchesActiveSession || activeWait ? (
@@ -525,32 +528,23 @@ export function AppShell() {
     }
   };
 
+  const handleBrandClick = () => {
+    setSidebarOpen(false);
+    if (announcementEnabled) {
+      void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
+    }
+  };
+
   const renderSessionsRail = () => (
     <AppShellSidebar
-      announcementEnabled={announcementEnabled}
-      announcementLabel={announcementLabel}
-      notificationLabel={notificationLabel}
-      notificationsEnabled={notificationsEnabled}
-      onBrandClick={() => {
-        setSidebarOpen(false);
-        if (announcementEnabled) {
-          void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
-        }
-      }}
+      activeView={desktopGlobalView}
+      activeSubagentId={selectedSubagentId}
       onNewSession={() => setNewSessionOpen(true)}
       onOpenSettings={() => openVoiceSettings()}
       onLogout={() => {
         void logout();
       }}
-      onToggleAnnouncements={() => {
-        void toggleAnnouncements();
-        if (!announcementEnabled) {
-          void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
-        }
-      }}
-      onToggleNotifications={() => {
-        void toggleNotifications();
-      }}
+      onSubagentSelect={setSelectedSubagentId}
     />
   );
 
@@ -589,38 +583,56 @@ export function AppShell() {
           />
         ) : (
           <>
+            <GlobalNavRail
+              activeView={desktopGlobalView}
+              onBrandClick={handleBrandClick}
+              onViewChange={setDesktopGlobalView}
+            />
+            <div className="desktopHiddenLegacyActions" aria-hidden="false">
+              <button type="button" aria-label={notificationLabel} title={notificationLabel} onClick={() => { void toggleNotifications(); }} />
+              <button type="button" aria-label={announcementLabel} title={announcementLabel} onClick={() => {
+                void toggleAnnouncements();
+                if (!announcementEnabled) {
+                  void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
+                }
+              }} />
+            </div>
             <aside className="sidebarColumn desktopSessionsRail">{renderSessionsRail()}</aside>
-            <section className="conversationColumn">
-              <AppShellToolbar
-                activeSessionId={activeSessionId}
-                activeTitle={activeTitle}
-                canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
-                canProbeRuntime={Boolean(activeSessionId && activeSession?.agent_backend === "pi" && !activeSessionPending)}
-                probingRuntime={runtimeProbePending}
-                showInterruptAction={showInterruptAction}
-                statusItems={conversationStatusItems}
-                showMobileSessionsTrigger={false}
-                showMobileToolbarMenu={false}
-                onInterrupt={() => {
-                  void interruptActiveSession();
-                }}
-                onProbeRuntime={() => {
-                  void probeActiveSessionState();
-                }}
-                onOpenFiles={() => openFileViewer()}
-                onOpenHarness={() => openWorkspace("supervisor")}
-                onOpenSessions={() => setSidebarOpen(true)}
-                onOpenInsight={() => openWorkspace("insight")}
-                onOpenWaits={openWaitWorkspace}
-                onOpenWorkspace={() => openWorkspace("overview")}
-              />
-              <ConversationPane
-                key={activeSessionId || "no-session"}
-                onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
-              />
-              <ConversationStateTray />
-              <Composer />
-            </section>
+            {desktopGlobalView === "sessions" ? (
+              <section className="conversationColumn">
+                <AppShellToolbar
+                  activeSessionId={activeSessionId}
+                  activeTitle={activeTitle}
+                  canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
+                  canProbeRuntime={Boolean(activeSessionId && activeSession?.agent_backend === "pi" && !activeSessionPending)}
+                  probingRuntime={runtimeProbePending}
+                  showInterruptAction={showInterruptAction}
+                  statusItems={conversationStatusItems}
+                  showMobileSessionsTrigger={false}
+                  showMobileToolbarMenu={false}
+                  onInterrupt={() => {
+                    void interruptActiveSession();
+                  }}
+                  onProbeRuntime={() => {
+                    void probeActiveSessionState();
+                  }}
+                  onOpenFiles={() => openFileViewer()}
+                  onOpenHarness={() => openWorkspace("supervisor")}
+                  onOpenSessions={() => setSidebarOpen(true)}
+                  onOpenInsight={() => openWorkspace("insight")}
+                  onOpenWaits={openWaitWorkspace}
+                  onOpenWorkspace={() => openWorkspace("overview")}
+                />
+                <ConversationPane
+                  key={activeSessionId || "no-session"}
+                  onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
+                />
+                <ConversationStateTray />
+                <Composer />
+              </section>
+            ) : (
+              <SubagentsThreadView selectedActorId={selectedSubagentId} />
+            )}
           </>
         )}
       </div>

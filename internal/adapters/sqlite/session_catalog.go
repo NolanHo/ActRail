@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 8
+const currentSchemaVersion = 10
 
 const tsLayout = time.RFC3339Nano
 
@@ -345,6 +345,87 @@ var migrations = []migration{
 				}
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 8, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 9,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS subagent_actors (
+					actor_id TEXT PRIMARY KEY,
+					child_session_id TEXT NOT NULL,
+					parent_actor_id TEXT NOT NULL DEFAULT '',
+					parent_session_id TEXT NOT NULL,
+					name TEXT NOT NULL,
+					role TEXT NOT NULL DEFAULT '',
+					status TEXT NOT NULL,
+					turn_id TEXT NOT NULL DEFAULT '',
+					question_id TEXT NOT NULL DEFAULT '',
+					question_turn_id TEXT NOT NULL DEFAULT '',
+					question TEXT NOT NULL DEFAULT '',
+					question_context TEXT NOT NULL DEFAULT '',
+					question_created_ts REAL NOT NULL DEFAULT 0,
+					question_done INTEGER NOT NULL DEFAULT 0,
+					last_event_id TEXT NOT NULL DEFAULT '',
+					last_event_at TEXT,
+					model TEXT NOT NULL DEFAULT '',
+					cwd TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL,
+					FOREIGN KEY(child_session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE UNIQUE INDEX IF NOT EXISTS subagent_active_parent_name_idx ON subagent_actors(parent_session_id, name) WHERE status <> 'closed'`,
+				`CREATE INDEX IF NOT EXISTS subagent_parent_actor_idx ON subagent_actors(parent_actor_id, updated_at DESC)`,
+				`CREATE TABLE IF NOT EXISTS subagent_events (
+					actor_id TEXT NOT NULL,
+					ordinal INTEGER NOT NULL,
+					event_id TEXT NOT NULL UNIQUE,
+					type TEXT NOT NULL,
+					child_session_id TEXT NOT NULL,
+					parent_actor_id TEXT NOT NULL DEFAULT '',
+					parent_session_id TEXT NOT NULL,
+					turn_id TEXT NOT NULL DEFAULT '',
+					question_id TEXT NOT NULL DEFAULT '',
+					message TEXT NOT NULL DEFAULT '',
+					status TEXT NOT NULL DEFAULT '',
+					ts REAL NOT NULL DEFAULT 0,
+					PRIMARY KEY(actor_id, ordinal),
+					FOREIGN KEY(actor_id) REFERENCES subagent_actors(actor_id) ON DELETE CASCADE
+				)`,
+				`CREATE INDEX IF NOT EXISTS subagent_events_actor_event_idx ON subagent_events(actor_id, event_id)`,
+				`CREATE TABLE IF NOT EXISTS subagent_messages (
+					actor_id TEXT NOT NULL,
+					ordinal INTEGER NOT NULL,
+					message_id TEXT NOT NULL,
+					kind TEXT NOT NULL DEFAULT '',
+					label TEXT NOT NULL DEFAULT '',
+					body TEXT NOT NULL DEFAULT '',
+					ts REAL NOT NULL DEFAULT 0,
+					meta TEXT NOT NULL DEFAULT '',
+					PRIMARY KEY(actor_id, ordinal),
+					FOREIGN KEY(actor_id) REFERENCES subagent_actors(actor_id) ON DELETE CASCADE
+				)`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 9, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 10,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			if err := ensureColumnExists(ctx, tx, "subagent_actors", "question_answer", `ALTER TABLE subagent_actors ADD COLUMN question_answer TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "subagent_actors", "question_terminal", `ALTER TABLE subagent_actors ADD COLUMN question_terminal TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 10, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},
