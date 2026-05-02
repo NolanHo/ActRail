@@ -49,7 +49,10 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
 		waitStore:           catalog,
 		supervisorStore:     catalog,
+		subagents:           newSubagentRegistry(now),
 		runtimeAgentRunning: map[session.SessionID]bool{},
+		piRPCStates:         map[session.SessionID]piRPCStateCache{},
+		piModels:            piModelCache{},
 		recentCwds:          recentCwds,
 		cwdGroups:           cwdGroups,
 	}

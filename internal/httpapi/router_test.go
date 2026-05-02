@@ -72,6 +72,42 @@ func (s serviceStub) ListSubagents(ctx context.Context, req app.ListSubagentsReq
 	return s.base.ListSubagents(ctx, req)
 }
 
+func (s serviceStub) SpawnSubagent(ctx context.Context, req app.SpawnSubagentRequest) (app.SubagentCommandResponse, error) {
+	return s.base.SpawnSubagent(ctx, req)
+}
+
+func (s serviceStub) PromptSubagent(ctx context.Context, req app.PromptSubagentRequest) (app.SubagentCommandResponse, error) {
+	return s.base.PromptSubagent(ctx, req)
+}
+
+func (s serviceStub) FollowupSubagent(ctx context.Context, req app.FollowupSubagentRequest) (app.SubagentCommandResponse, error) {
+	return s.base.FollowupSubagent(ctx, req)
+}
+
+func (s serviceStub) SendSubagent(ctx context.Context, req app.SendSubagentRequest) (app.SubagentDeliveryResponse, error) {
+	return s.base.SendSubagent(ctx, req)
+}
+
+func (s serviceStub) AskParent(ctx context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
+	return s.base.AskParent(ctx, req)
+}
+
+func (s serviceStub) AnswerSubagent(ctx context.Context, req app.AnswerSubagentRequest) (app.SubagentCommandResponse, error) {
+	return s.base.AnswerSubagent(ctx, req)
+}
+
+func (s serviceStub) AbortSubagent(ctx context.Context, req app.AbortSubagentRequest) (app.SubagentCommandResponse, error) {
+	return s.base.AbortSubagent(ctx, req)
+}
+
+func (s serviceStub) CloseSubagent(ctx context.Context, req app.CloseSubagentRequest) (app.SubagentCommandResponse, error) {
+	return s.base.CloseSubagent(ctx, req)
+}
+
+func (s serviceStub) SubagentEvents(ctx context.Context, req app.SubagentEventsRequest) (app.SubagentEventsResponse, error) {
+	return s.base.SubagentEvents(ctx, req)
+}
+
 func (s serviceStub) SessionResumeCandidates(ctx context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
 	if s.resumeFunc != nil {
 		return s.resumeFunc(ctx, req)
@@ -377,6 +413,42 @@ func (s *fixtureService) ListSubagents(_ context.Context, req app.ListSubagentsR
 		TotalCount:   2,
 		NonLeafCount: 1,
 	}, nil
+}
+
+func (s *fixtureService) SpawnSubagent(_ context.Context, req app.SpawnSubagentRequest) (app.SubagentCommandResponse, error) {
+	return app.SubagentCommandResponse{OK: true, ActorID: "actor_1", ChildSessionID: "s_child", Status: app.SubagentStatusIdle}, nil
+}
+
+func (s *fixtureService) PromptSubagent(_ context.Context, req app.PromptSubagentRequest) (app.SubagentCommandResponse, error) {
+	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, ChildSessionID: "s_child", TurnID: "turn_1", Status: app.SubagentStatusRunning}, nil
+}
+
+func (s *fixtureService) FollowupSubagent(_ context.Context, req app.FollowupSubagentRequest) (app.SubagentCommandResponse, error) {
+	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, ChildSessionID: "s_child", TurnID: "turn_2", Status: app.SubagentStatusRunning}, nil
+}
+
+func (s *fixtureService) SendSubagent(_ context.Context, req app.SendSubagentRequest) (app.SubagentDeliveryResponse, error) {
+	return app.SubagentDeliveryResponse{OK: true, ActorID: req.ActorID, TurnID: "turn_1", Delivery: "live"}, nil
+}
+
+func (s *fixtureService) AskParent(_ context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
+	return app.AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: "question_1", Answer: "answer"}, nil
+}
+
+func (s *fixtureService) AnswerSubagent(_ context.Context, req app.AnswerSubagentRequest) (app.SubagentCommandResponse, error) {
+	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, QuestionID: req.QuestionID, Status: app.SubagentStatusRunning}, nil
+}
+
+func (s *fixtureService) AbortSubagent(_ context.Context, req app.AbortSubagentRequest) (app.SubagentCommandResponse, error) {
+	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, Status: app.SubagentStatusIdle}, nil
+}
+
+func (s *fixtureService) CloseSubagent(_ context.Context, req app.CloseSubagentRequest) (app.SubagentCommandResponse, error) {
+	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, Status: app.SubagentStatusClosed}, nil
+}
+
+func (s *fixtureService) SubagentEvents(_ context.Context, req app.SubagentEventsRequest) (app.SubagentEventsResponse, error) {
+	return app.SubagentEventsResponse{OK: true, Events: []app.SubagentEvent{{EventID: "event_1", ActorID: req.ActorID, Type: "subagent.started"}}}, nil
 }
 
 func (s *fixtureService) SessionResumeCandidates(_ context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
@@ -808,6 +880,22 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		}
 	})
 
+	t.Run("subagent events", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/subagents/actor_lead/events?after_event_id=event_1", nil)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+
+		var payload app.SubagentEventsResponse
+		decodeJSON(t, res, &payload)
+		if !payload.OK || len(payload.Events) != 1 || payload.Events[0].ActorID != "actor_lead" {
+			t.Fatalf("unexpected events payload: %+v", payload)
+		}
+	})
+
 	t.Run("create session", func(t *testing.T) {
 		body := bytes.NewBufferString(`{"agent_backend":"pi","cwd":"/root/code/ActRail"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/sessions", body)
@@ -1076,6 +1164,15 @@ func TestProtectedRoutesRequireAuthCookieInPasswordMode(t *testing.T) {
 		{name: "list sessions", method: http.MethodGet, target: "/api/sessions"},
 		{name: "create session", method: http.MethodPost, target: "/api/sessions"},
 		{name: "list subagents", method: http.MethodGet, target: "/api/subagents"},
+		{name: "spawn subagent", method: http.MethodPost, target: "/api/subagents/spawn"},
+		{name: "prompt subagent", method: http.MethodPost, target: "/api/subagents/actor_1/prompt"},
+		{name: "followup subagent", method: http.MethodPost, target: "/api/subagents/actor_1/followup"},
+		{name: "send subagent", method: http.MethodPost, target: "/api/subagents/actor_1/send"},
+		{name: "ask parent", method: http.MethodPost, target: "/api/subagents/actor_1/ask_parent"},
+		{name: "answer subagent", method: http.MethodPost, target: "/api/subagents/actor_1/answer"},
+		{name: "abort subagent", method: http.MethodPost, target: "/api/subagents/actor_1/abort"},
+		{name: "close subagent", method: http.MethodPost, target: "/api/subagents/actor_1/close"},
+		{name: "subagent events", method: http.MethodGet, target: "/api/subagents/actor_1/events"},
 		{name: "resume candidates", method: http.MethodGet, target: "/api/session_resume_candidates"},
 		{name: "session details", method: http.MethodGet, target: "/api/sessions/s_123/details"},
 		{name: "session messages", method: http.MethodGet, target: "/api/sessions/s_123/messages"},

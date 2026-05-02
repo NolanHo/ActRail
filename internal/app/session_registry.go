@@ -36,6 +36,7 @@ type sessionCreateSpec struct {
 	Model            string
 	ReasoningEffort  string
 	Title            string
+	Hidden           bool
 	SourcePath       string
 	BackendSessionID string
 	SourceConfidence string
@@ -116,7 +117,8 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 		provider:                 strings.TrimSpace(spec.Provider),
 		model:                    strings.TrimSpace(spec.Model),
 		reasoningEffort:          strings.TrimSpace(spec.ReasoningEffort),
-		focused:                  true,
+		focused:                  !spec.Hidden,
+		hidden:                   spec.Hidden,
 		createdAt:                now,
 		updatedAt:                now,
 		activityAt:               now,

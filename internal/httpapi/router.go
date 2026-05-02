@@ -88,6 +88,15 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("GET /api/sessions", r.requireAuth(http.HandlerFunc(r.listSessions)))
 	mux.Handle("POST /api/sessions", r.requireAuth(http.HandlerFunc(r.createSession)))
 	mux.Handle("GET /api/subagents", r.requireAuth(http.HandlerFunc(r.listSubagents)))
+	mux.Handle("POST /api/subagents/spawn", r.requireAuth(http.HandlerFunc(r.spawnSubagent)))
+	mux.Handle("POST /api/subagents/{actor_id}/prompt", r.requireAuth(http.HandlerFunc(r.promptSubagent)))
+	mux.Handle("POST /api/subagents/{actor_id}/followup", r.requireAuth(http.HandlerFunc(r.followupSubagent)))
+	mux.Handle("POST /api/subagents/{actor_id}/send", r.requireAuth(http.HandlerFunc(r.sendSubagent)))
+	mux.Handle("POST /api/subagents/{actor_id}/ask_parent", r.requireAuth(http.HandlerFunc(r.askParent)))
+	mux.Handle("POST /api/subagents/{actor_id}/answer", r.requireAuth(http.HandlerFunc(r.answerSubagent)))
+	mux.Handle("POST /api/subagents/{actor_id}/abort", r.requireAuth(http.HandlerFunc(r.abortSubagent)))
+	mux.Handle("POST /api/subagents/{actor_id}/close", r.requireAuth(http.HandlerFunc(r.closeSubagent)))
+	mux.Handle("GET /api/subagents/{actor_id}/events", r.requireAuth(http.HandlerFunc(r.subagentEvents)))
 	mux.Handle("GET /api/session_resume_candidates", r.requireAuth(http.HandlerFunc(r.sessionResumeCandidates)))
 	mux.Handle("GET /api/settings/voice", r.requireAuth(http.HandlerFunc(r.voiceSettings)))
 	mux.Handle("POST /api/settings/voice", r.requireAuth(http.HandlerFunc(r.updateVoiceSettings)))
@@ -238,6 +247,128 @@ func (r Router) listSubagents(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	payload, err := r.app.ListSubagents(req.Context(), app.ListSubagentsRequest{IncludeClosed: includeClosed})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) spawnSubagent(w http.ResponseWriter, req *http.Request) {
+	var body app.SpawnSubagentRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.SpawnSubagent(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) promptSubagent(w http.ResponseWriter, req *http.Request) {
+	var body app.PromptSubagentRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.ActorID = req.PathValue("actor_id")
+	payload, err := r.app.PromptSubagent(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) followupSubagent(w http.ResponseWriter, req *http.Request) {
+	var body app.FollowupSubagentRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.ActorID = req.PathValue("actor_id")
+	payload, err := r.app.FollowupSubagent(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sendSubagent(w http.ResponseWriter, req *http.Request) {
+	var body app.SendSubagentRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.ActorID = req.PathValue("actor_id")
+	payload, err := r.app.SendSubagent(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) askParent(w http.ResponseWriter, req *http.Request) {
+	var body app.AskParentRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.ActorID = req.PathValue("actor_id")
+	payload, err := r.app.AskParent(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) answerSubagent(w http.ResponseWriter, req *http.Request) {
+	var body app.AnswerSubagentRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.ActorID = req.PathValue("actor_id")
+	payload, err := r.app.AnswerSubagent(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) abortSubagent(w http.ResponseWriter, req *http.Request) {
+	var body app.AbortSubagentRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.ActorID = req.PathValue("actor_id")
+	payload, err := r.app.AbortSubagent(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) closeSubagent(w http.ResponseWriter, req *http.Request) {
+	payload, err := r.app.CloseSubagent(req.Context(), app.CloseSubagentRequest{ActorID: req.PathValue("actor_id")})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) subagentEvents(w http.ResponseWriter, req *http.Request) {
+	payload, err := r.app.SubagentEvents(req.Context(), app.SubagentEventsRequest{ActorID: req.PathValue("actor_id"), AfterEventID: strings.TrimSpace(req.URL.Query().Get("after_event_id"))})
 	if err != nil {
 		writeAppError(w, err)
 		return

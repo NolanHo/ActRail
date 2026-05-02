@@ -2,7 +2,12 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
 	"time"
+
+	"actrail/internal/domain/session"
 )
 
 type SubagentStatus string
@@ -63,35 +68,631 @@ type SubagentThreadMsg struct {
 	Meta      string  `json:"meta,omitempty"`
 }
 
+type SubagentEvent struct {
+	EventID         string         `json:"event_id"`
+	Type            string         `json:"type"`
+	ActorID         string         `json:"actor_id"`
+	ChildSessionID  string         `json:"child_session_id"`
+	ParentActorID   string         `json:"parent_actor_id,omitempty"`
+	ParentSessionID string         `json:"parent_session_id"`
+	TurnID          string         `json:"turn_id,omitempty"`
+	QuestionID      string         `json:"question_id,omitempty"`
+	Message         string         `json:"message,omitempty"`
+	Status          SubagentStatus `json:"status,omitempty"`
+	TS              float64        `json:"ts"`
+}
+
+type SpawnSubagentRequest struct {
+	ParentSessionID string  `json:"parent_session_id"`
+	ParentActorID   string  `json:"parent_actor_id"`
+	Name            string  `json:"name"`
+	Role            string  `json:"role"`
+	AgentBackend    string  `json:"agent_backend"`
+	CWD             string  `json:"cwd"`
+	Model           *string `json:"model"`
+	Provider        *string `json:"provider"`
+	InitialPrompt   string  `json:"initial_prompt"`
+}
+
+type PromptSubagentRequest struct {
+	ActorID string `json:"actor_id"`
+	Prompt  string `json:"prompt"`
+}
+
+type FollowupSubagentRequest struct {
+	ActorID string `json:"actor_id"`
+	Prompt  string `json:"prompt"`
+}
+
+type SendSubagentRequest struct {
+	ActorID string `json:"actor_id"`
+	Message string `json:"message"`
+}
+
+type AskParentRequest struct {
+	ActorID  string `json:"actor_id"`
+	TurnID   string `json:"turn_id"`
+	Question string `json:"question"`
+	Context  string `json:"context"`
+}
+
+type AskParentResponse struct {
+	OK         bool   `json:"ok"`
+	ActorID    string `json:"actor_id"`
+	QuestionID string `json:"question_id"`
+	Answer     string `json:"answer,omitempty"`
+	Terminal   string `json:"terminal,omitempty"`
+}
+
+type AnswerSubagentRequest struct {
+	ActorID    string `json:"actor_id"`
+	QuestionID string `json:"question_id"`
+	Answer     string `json:"answer"`
+}
+
+type AbortSubagentRequest struct {
+	ActorID string `json:"actor_id"`
+	TurnID  string `json:"turn_id"`
+}
+
+type CloseSubagentRequest struct {
+	ActorID string `json:"actor_id"`
+}
+
+type SubagentEventsRequest struct {
+	ActorID      string `json:"actor_id"`
+	AfterEventID string `json:"after_event_id"`
+}
+
+type SubagentCommandResponse struct {
+	OK             bool           `json:"ok"`
+	Actor          *SubagentNode  `json:"actor,omitempty"`
+	ActorID        string         `json:"actor_id,omitempty"`
+	ChildSessionID string         `json:"child_session_id,omitempty"`
+	TurnID         string         `json:"turn_id,omitempty"`
+	QuestionID     string         `json:"question_id,omitempty"`
+	Status         SubagentStatus `json:"status,omitempty"`
+}
+
+type SubagentDeliveryResponse struct {
+	OK       bool                      `json:"ok"`
+	ActorID  string                    `json:"actor_id"`
+	TurnID   string                    `json:"turn_id,omitempty"`
+	Delivery string                    `json:"delivery"`
+	Queue    SessionQueueSnapshot      `json:"queue"`
+	UI       *SessionUIRequestSnapshot `json:"ui_request,omitempty"`
+}
+
+type SubagentEventsResponse struct {
+	OK     bool            `json:"ok"`
+	Events []SubagentEvent `json:"events"`
+}
+
+type subagentRegistry struct {
+	mu           sync.Mutex
+	now          func() time.Time
+	nextActor    int64
+	nextTurn     int64
+	nextEvent    int64
+	nextQuestion int64
+	actors       map[string]*subagentActor
+	order        []string
+}
+
+type subagentActor struct {
+	ActorID         string
+	ChildSessionID  session.SessionID
+	ParentActorID   string
+	ParentSessionID session.SessionID
+	Name            string
+	Role            string
+	Status          SubagentStatus
+	TurnID          string
+	Question        *subagentQuestionState
+	LastEventID     string
+	LastEventTS     time.Time
+	Model           string
+	CWD             string
+	Messages        []SubagentThreadMsg
+	Events          []SubagentEvent
+}
+
+type subagentParentAnswer struct {
+	answer   string
+	terminal string
+}
+
+type subagentQuestionState struct {
+	SubagentQuestion
+	answer chan subagentParentAnswer
+	done   bool
+}
+
+func newSubagentRegistry(now func() time.Time) *subagentRegistry {
+	if now == nil {
+		now = time.Now
+	}
+	return &subagentRegistry{now: now, actors: map[string]*subagentActor{}}
+}
+
 func (s *Stub) ListSubagents(_ context.Context, req ListSubagentsRequest) (ListSubagentsResponse, error) {
-	roots := filterClosedSubagentNodes(nil, req.IncludeClosed)
+	roots := s.subagents.snapshot(req.IncludeClosed)
 	return ListSubagentsResponse{OK: true, Roots: roots, TotalCount: countSubagentNodes(roots), NonLeafCount: countNonLeafSubagentNodes(roots)}, nil
 }
 
-func filterClosedSubagentNodes(nodes []SubagentNode, includeClosed bool) []SubagentNode {
-	if includeClosed {
-		return cloneSubagentNodes(nodes)
+func (s *Stub) SpawnSubagent(ctx context.Context, req SpawnSubagentRequest) (SubagentCommandResponse, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return SubagentCommandResponse{}, Invalid("name", "name required")
 	}
-	out := make([]SubagentNode, 0, len(nodes))
-	for _, node := range nodes {
-		if node.Status == SubagentStatusClosed {
-			continue
+	parentSessionID, err := s.subagents.resolveParentSession(req.ParentSessionID, req.ParentActorID)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	if strings.TrimSpace(req.ParentActorID) == "" {
+		parent, ok := s.registry.Lookup(parentSessionID)
+		if !ok {
+			return SubagentCommandResponse{}, NotFound(fmt.Sprintf("parent session %q not found", parentSessionID))
 		}
-		node.Children = filterClosedSubagentNodes(node.Children, false)
-		node.Messages = append([]SubagentThreadMsg(nil), node.Messages...)
-		out = append(out, node)
+		if parent.hidden {
+			return SubagentCommandResponse{}, Forbidden("parent_session_id refers to a generated child session; use parent_actor_id")
+		}
 	}
-	return out
+	if err := s.subagents.validateSpawn(parentSessionID, name); err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	backend := strings.TrimSpace(req.AgentBackend)
+	if backend == "" {
+		backend = string(session.BackendPI)
+	}
+	cwd := strings.TrimSpace(req.CWD)
+	if cwd == "" {
+		cwd = "."
+	}
+	title := name
+	created, err := s.CreateSession(ctx, CreateSessionRequest{AgentBackend: backend, CWD: cwd, Model: req.Model, Provider: req.Provider, Title: &title, Hidden: true})
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	if created.Session == nil {
+		return SubagentCommandResponse{}, Conflict("subagent child session was not created")
+	}
+	model := ""
+	if req.Model != nil {
+		model = strings.TrimSpace(*req.Model)
+	}
+	actor, err := s.subagents.spawn(parentSessionID, req.ParentActorID, created.Session.SessionID, name, req.Role, backend, model, cwd)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	if text := strings.TrimSpace(req.InitialPrompt); text != "" {
+		if _, err := s.sendSubagentText(ctx, actor.ActorID, text, true); err != nil {
+			s.subagents.markFailed(actor.ActorID, err.Error())
+			return SubagentCommandResponse{}, err
+		}
+		actor = s.subagents.lookupNode(actor.ActorID)
+	}
+	return SubagentCommandResponse{OK: true, Actor: actor, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID, TurnID: actor.TurnID, Status: actor.Status}, nil
 }
 
-func cloneSubagentNodes(nodes []SubagentNode) []SubagentNode {
-	out := make([]SubagentNode, len(nodes))
-	for i, node := range nodes {
-		out[i] = node
-		out[i].Children = cloneSubagentNodes(node.Children)
-		out[i].Messages = append([]SubagentThreadMsg(nil), node.Messages...)
+func (s *Stub) PromptSubagent(ctx context.Context, req PromptSubagentRequest) (SubagentCommandResponse, error) {
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true)
+	if err != nil {
+		return SubagentCommandResponse{}, err
 	}
-	return out
+	return SubagentCommandResponse{OK: true, Actor: actor, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID, TurnID: actor.TurnID, Status: actor.Status}, nil
+}
+
+func (s *Stub) FollowupSubagent(ctx context.Context, req FollowupSubagentRequest) (SubagentCommandResponse, error) {
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	return SubagentCommandResponse{OK: true, Actor: actor, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID, TurnID: actor.TurnID, Status: actor.Status}, nil
+}
+
+func (s *Stub) SendSubagent(ctx context.Context, req SendSubagentRequest) (SubagentDeliveryResponse, error) {
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Message, false)
+	if err != nil {
+		return SubagentDeliveryResponse{}, err
+	}
+	return SubagentDeliveryResponse{OK: true, ActorID: actor.ActorID, TurnID: actor.TurnID, Delivery: "live"}, nil
+}
+
+func (s *Stub) sendSubagentText(ctx context.Context, actorID, text string, newTurn bool) (*SubagentNode, error) {
+	cleaned := strings.TrimSpace(text)
+	if cleaned == "" {
+		return nil, Invalid("text", "text required")
+	}
+	actor, turnID, err := s.subagents.beginSend(actorID, cleaned, newTurn)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.Send(ctx, SendRequest{SessionID: actor.ChildSessionID, Text: cleaned}); err != nil {
+		s.subagents.markFailed(actorID, err.Error())
+		return nil, err
+	}
+	node := s.subagents.lookupNode(actorID)
+	if node != nil {
+		node.TurnID = turnID
+	}
+	return node, nil
+}
+
+func (s *Stub) AskParent(ctx context.Context, req AskParentRequest) (AskParentResponse, error) {
+	questionID, err := s.subagents.askParent(req.ActorID, req.TurnID, req.Question, req.Context)
+	if err != nil {
+		return AskParentResponse{}, err
+	}
+	answer, err := s.subagents.waitForAnswer(ctx, req.ActorID, questionID)
+	if err != nil {
+		return AskParentResponse{}, err
+	}
+	return AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: questionID, Answer: answer.answer, Terminal: answer.terminal}, nil
+}
+
+func (s *Stub) AnswerSubagent(_ context.Context, req AnswerSubagentRequest) (SubagentCommandResponse, error) {
+	actor, err := s.subagents.answer(req.ActorID, req.QuestionID, req.Answer)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	return SubagentCommandResponse{OK: true, Actor: actor, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID, TurnID: actor.TurnID, QuestionID: req.QuestionID, Status: actor.Status}, nil
+}
+
+func (s *Stub) AbortSubagent(ctx context.Context, req AbortSubagentRequest) (SubagentCommandResponse, error) {
+	actor, err := s.subagents.get(req.ActorID)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	if _, err := s.Interrupt(ctx, InterruptRequest{SessionID: actor.ChildSessionID}); err != nil {
+		s.subagents.markFailed(req.ActorID, err.Error())
+		return SubagentCommandResponse{}, err
+	}
+	node, err := s.subagents.abort(req.ActorID, req.TurnID)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	return SubagentCommandResponse{OK: true, Actor: node, ActorID: node.ActorID, ChildSessionID: node.ChildSessionID, TurnID: node.TurnID, Status: node.Status}, nil
+}
+
+func (s *Stub) CloseSubagent(ctx context.Context, req CloseSubagentRequest) (SubagentCommandResponse, error) {
+	actor, err := s.subagents.get(req.ActorID)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	record, err := s.lookupSession(actor.ChildSessionID)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	if err := record.runtime.Kill(ctx); err != nil {
+		s.subagents.markFailed(req.ActorID, err.Error())
+		return SubagentCommandResponse{}, err
+	}
+	if err := s.setRuntimeAgentRunning(actor.ChildSessionID, false); err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	s.helpers.Remove(actor.ChildSessionID)
+	if err := s.helperBindings.Delete(actor.ChildSessionID); err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	node, err := s.subagents.close(req.ActorID)
+	if err != nil {
+		return SubagentCommandResponse{}, err
+	}
+	return SubagentCommandResponse{OK: true, Actor: node, ActorID: node.ActorID, ChildSessionID: node.ChildSessionID, TurnID: node.TurnID, Status: node.Status}, nil
+}
+
+func (s *Stub) SubagentEvents(_ context.Context, req SubagentEventsRequest) (SubagentEventsResponse, error) {
+	events, err := s.subagents.eventsAfter(req.ActorID, req.AfterEventID)
+	if err != nil {
+		return SubagentEventsResponse{}, err
+	}
+	return SubagentEventsResponse{OK: true, Events: events}, nil
+}
+
+func (r *subagentRegistry) resolveParentSession(rawSession, rawActor string) (session.SessionID, error) {
+	parentSession := session.SessionID(strings.TrimSpace(rawSession))
+	parentActor := strings.TrimSpace(rawActor)
+	if parentSession != "" {
+		return parentSession, nil
+	}
+	if parentActor == "" {
+		return "", Invalid("parent_session_id", "parent_session_id or parent_actor_id required")
+	}
+	actor, err := r.get(parentActor)
+	if err != nil {
+		return "", err
+	}
+	return actor.ChildSessionID, nil
+}
+
+func (r *subagentRegistry) validateSpawn(parentSession session.SessionID, name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.validateSpawnLocked(parentSession, name)
+}
+
+func (r *subagentRegistry) validateSpawnLocked(parentSession session.SessionID, name string) error {
+	for _, actor := range r.actors {
+		if actor.ParentSessionID == parentSession && actor.Name == name && actor.Status != SubagentStatusClosed {
+			return Conflict(fmt.Sprintf("subagent %q already exists for parent %q", name, parentSession))
+		}
+	}
+	return nil
+}
+
+func (r *subagentRegistry) spawn(parentSession session.SessionID, parentActorID, childSessionID, name, role, backend, model, cwd string) (*SubagentNode, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.validateSpawnLocked(parentSession, name); err != nil {
+		return nil, err
+	}
+	r.nextActor++
+	actorID := fmt.Sprintf("actor_%d", r.nextActor)
+	now := r.now()
+	actor := &subagentActor{ActorID: actorID, ChildSessionID: session.SessionID(childSessionID), ParentActorID: strings.TrimSpace(parentActorID), ParentSessionID: parentSession, Name: name, Role: strings.TrimSpace(role), Status: SubagentStatusIdle, Model: model, CWD: cwd, LastEventTS: now}
+	r.actors[actorID] = actor
+	r.order = append(r.order, actorID)
+	r.appendEventLocked(actor, "subagent.started", "", "", "", actor.Status)
+	node := r.nodeLocked(actor)
+	return &node, nil
+}
+
+func (r *subagentRegistry) beginSend(actorID, text string, newTurn bool) (*subagentActor, string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return nil, "", err
+	}
+	if actor.Status == SubagentStatusClosed {
+		return nil, "", Conflict("subagent is closed")
+	}
+	if newTurn || actor.TurnID == "" {
+		r.nextTurn++
+		actor.TurnID = fmt.Sprintf("turn_%d", r.nextTurn)
+		r.appendEventLocked(actor, "subagent.turn_started", actor.TurnID, "", "", SubagentStatusRunning)
+	}
+	actor.Status = SubagentStatusRunning
+	actor.Messages = append(actor.Messages, SubagentThreadMsg{MessageID: actor.LastEventID + ":prompt", Kind: "leader", Label: "parent", Body: text, TS: subagentTimestamp(r.now())})
+	r.appendEventLocked(actor, "subagent.prompt", actor.TurnID, "", text, actor.Status)
+	return cloneSubagentActor(actor), actor.TurnID, nil
+}
+
+func (r *subagentRegistry) askParent(actorID, turnID, question, contextText string) (string, error) {
+	cleaned := strings.TrimSpace(question)
+	if cleaned == "" {
+		return "", Invalid("question", "question required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return "", err
+	}
+	if actor.Question != nil && !actor.Question.done {
+		return "", Conflict("subagent already has a pending question")
+	}
+	if turnID == "" {
+		turnID = actor.TurnID
+	}
+	r.nextQuestion++
+	questionID := fmt.Sprintf("question_%d", r.nextQuestion)
+	q := &subagentQuestionState{SubagentQuestion: SubagentQuestion{QuestionID: questionID, TurnID: turnID, Question: cleaned, Context: strings.TrimSpace(contextText), CreatedTS: subagentTimestamp(r.now())}, answer: make(chan subagentParentAnswer, 1)}
+	actor.Question = q
+	actor.Status = SubagentStatusWaitingForParent
+	actor.Messages = append(actor.Messages, SubagentThreadMsg{MessageID: questionID, Kind: "member", Label: actor.Name, Body: cleaned, TS: q.CreatedTS, Meta: "ask_parent"})
+	r.appendEventLocked(actor, "subagent.question", turnID, questionID, cleaned, actor.Status)
+	return questionID, nil
+}
+
+func (r *subagentRegistry) waitForAnswer(ctx context.Context, actorID, questionID string) (subagentParentAnswer, error) {
+	r.mu.Lock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		r.mu.Unlock()
+		return subagentParentAnswer{}, err
+	}
+	if actor.Question == nil || actor.Question.QuestionID != questionID {
+		r.mu.Unlock()
+		return subagentParentAnswer{}, NotFound("subagent question not found")
+	}
+	ch := actor.Question.answer
+	r.mu.Unlock()
+	select {
+	case answer := <-ch:
+		return answer, nil
+	case <-ctx.Done():
+		return subagentParentAnswer{}, ctx.Err()
+	}
+}
+
+func (r *subagentRegistry) answer(actorID, questionID, answer string) (*SubagentNode, error) {
+	cleaned := strings.TrimSpace(answer)
+	if cleaned == "" {
+		return nil, Invalid("answer", "answer required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return nil, err
+	}
+	if actor.Question == nil || actor.Question.QuestionID != questionID || actor.Question.done {
+		return nil, NotFound("subagent pending question not found")
+	}
+	actor.Question.done = true
+	actor.Question.answer <- subagentParentAnswer{answer: cleaned}
+	actor.Status = SubagentStatusRunning
+	actor.Messages = append(actor.Messages, SubagentThreadMsg{MessageID: questionID + ":answer", Kind: "leader", Label: "parent", Body: cleaned, TS: subagentTimestamp(r.now()), Meta: "answer"})
+	r.appendEventLocked(actor, "subagent.answer_accepted", actor.TurnID, questionID, cleaned, actor.Status)
+	node := r.nodeLocked(actor)
+	return &node, nil
+}
+
+func (r *subagentRegistry) abort(actorID, turnID string) (*SubagentNode, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return nil, err
+	}
+	if turnID != "" && actor.TurnID != "" && actor.TurnID != turnID {
+		return nil, Conflict("subagent turn id mismatch")
+	}
+	actor.Status = SubagentStatusIdle
+	if actor.Question != nil && !actor.Question.done {
+		actor.Question.done = true
+		actor.Question.answer <- subagentParentAnswer{terminal: "aborted"}
+	}
+	r.appendEventLocked(actor, "subagent.aborted", actor.TurnID, "", "", actor.Status)
+	node := r.nodeLocked(actor)
+	return &node, nil
+}
+
+func (r *subagentRegistry) close(actorID string) (*SubagentNode, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return nil, err
+	}
+	actor.Status = SubagentStatusClosed
+	if actor.Question != nil && !actor.Question.done {
+		actor.Question.done = true
+		actor.Question.answer <- subagentParentAnswer{terminal: "closed"}
+	}
+	r.appendEventLocked(actor, "subagent.closed", actor.TurnID, "", "", actor.Status)
+	node := r.nodeLocked(actor)
+	return &node, nil
+}
+
+func (r *subagentRegistry) markFailed(actorID, message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return
+	}
+	actor.Status = SubagentStatusFailed
+	if actor.Question != nil && !actor.Question.done {
+		actor.Question.done = true
+		actor.Question.answer <- subagentParentAnswer{terminal: "failed"}
+	}
+	r.appendEventLocked(actor, "subagent.error", actor.TurnID, "", message, actor.Status)
+}
+
+func (r *subagentRegistry) snapshot(includeClosed bool) []SubagentNode {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	byParent := map[string][]SubagentNode{}
+	roots := []SubagentNode{}
+	for _, actorID := range r.order {
+		actor := r.actors[actorID]
+		if !includeClosed && actor.Status == SubagentStatusClosed {
+			continue
+		}
+		node := r.nodeLocked(actor)
+		if actor.ParentActorID == "" {
+			roots = append(roots, node)
+		} else {
+			byParent[actor.ParentActorID] = append(byParent[actor.ParentActorID], node)
+		}
+	}
+	var attach func(*SubagentNode)
+	attach = func(node *SubagentNode) {
+		children := byParent[node.ActorID]
+		node.Children = children
+		for i := range node.Children {
+			attach(&node.Children[i])
+		}
+	}
+	for i := range roots {
+		attach(&roots[i])
+	}
+	return roots
+}
+
+func (r *subagentRegistry) lookupNode(actorID string) *SubagentNode {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return nil
+	}
+	node := r.nodeLocked(actor)
+	return &node
+}
+
+func (r *subagentRegistry) eventsAfter(actorID, after string) ([]SubagentEvent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return nil, err
+	}
+	start := 0
+	if after != "" {
+		found := false
+		for i, event := range actor.Events {
+			if event.EventID == after {
+				start = i + 1
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, NotFound("subagent event cursor not found")
+		}
+	}
+	return append([]SubagentEvent(nil), actor.Events[start:]...), nil
+}
+
+func (r *subagentRegistry) get(actorID string) (*subagentActor, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return nil, err
+	}
+	return cloneSubagentActor(actor), nil
+}
+
+func (r *subagentRegistry) getLocked(actorID string) (*subagentActor, error) {
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return nil, Invalid("actor_id", "actor_id required")
+	}
+	actor, ok := r.actors[actorID]
+	if !ok {
+		return nil, NotFound(fmt.Sprintf("subagent actor %q not found", actorID))
+	}
+	return actor, nil
+}
+
+func (r *subagentRegistry) appendEventLocked(actor *subagentActor, typ, turnID, questionID, message string, status SubagentStatus) {
+	r.nextEvent++
+	now := r.now()
+	event := SubagentEvent{EventID: fmt.Sprintf("event_%d", r.nextEvent), Type: typ, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID.String(), ParentActorID: actor.ParentActorID, ParentSessionID: actor.ParentSessionID.String(), TurnID: turnID, QuestionID: questionID, Message: message, Status: status, TS: subagentTimestamp(now)}
+	actor.LastEventID = event.EventID
+	actor.LastEventTS = now
+	actor.Events = append(actor.Events, event)
+}
+
+func (r *subagentRegistry) nodeLocked(actor *subagentActor) SubagentNode {
+	var question *SubagentQuestion
+	if actor.Question != nil && !actor.Question.done {
+		q := actor.Question.SubagentQuestion
+		question = &q
+	}
+	return SubagentNode{ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID.String(), ParentActorID: actor.ParentActorID, ParentSessionID: actor.ParentSessionID.String(), Name: actor.Name, Role: actor.Role, Status: actor.Status, TurnID: actor.TurnID, Question: question, LastEventID: actor.LastEventID, LastEventTS: subagentTimestamp(actor.LastEventTS), Model: actor.Model, CWD: actor.CWD, Messages: append([]SubagentThreadMsg(nil), actor.Messages...)}
+}
+
+func cloneSubagentActor(actor *subagentActor) *subagentActor {
+	cloned := *actor
+	cloned.Messages = append([]SubagentThreadMsg(nil), actor.Messages...)
+	cloned.Events = append([]SubagentEvent(nil), actor.Events...)
+	return &cloned
 }
 
 func countSubagentNodes(nodes []SubagentNode) int {
