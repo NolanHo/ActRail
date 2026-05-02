@@ -50,16 +50,18 @@ function isSlashCommandDraft(draft: string) {
 function commandMenuNode({
   commandsLoading,
   highlightedCommandIndex,
+  menuRef,
   visibleCommands,
   onApply,
 }: {
   commandsLoading: boolean;
   highlightedCommandIndex: number;
+  menuRef?: preact.Ref<HTMLDivElement>;
   visibleCommands: SessionCommand[];
   onApply: (command: SessionCommand) => void;
 }) {
   return (
-    <div className="composerCommandMenu" data-testid="composer-command-menu" onWheel={(event) => event.stopPropagation()}>
+    <div ref={menuRef} className="composerCommandMenu" data-testid="composer-command-menu" onWheel={(event) => event.stopPropagation()}>
       {commandsLoading ? <div className="composerCommandHint">Loading Pi commands...</div> : null}
       {!commandsLoading
         ? visibleCommands.map((command, index) => (
@@ -356,6 +358,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const [commandsLoadingBySessionId, setCommandsLoadingBySessionId] = useState<Record<string, boolean>>({});
   const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
+  const commandMenuRef = useRef<HTMLDivElement | null>(null);
   const [attachedFilesBySessionId, setAttachedFilesBySessionId] = useState<Record<string, number>>({});
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [mobileWaitSubmitting, setMobileWaitSubmitting] = useState(false);
@@ -611,8 +614,19 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
     composerStoreApi.setDraft(activeSessionId, formatSlashCommandValue(command.name));
     setHighlightedCommandIndex(0);
   };
+  useEffect(() => {
+    const menu = commandMenuRef.current;
+    if (!menu || !visibleCommands.length) {
+      return;
+    }
+    const active = menu.querySelector<HTMLElement>(".composerCommandItem.is-active");
+    if (typeof active?.scrollIntoView === "function") {
+      active.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedCommandIndex, visibleCommands.length]);
+
   const commandMenu = commandMenuVisible && !compactMobile
-    ? commandMenuNode({ commandsLoading, highlightedCommandIndex, visibleCommands, onApply: applySlashCommand })
+    ? commandMenuNode({ commandsLoading, highlightedCommandIndex, menuRef: commandMenuRef, visibleCommands, onApply: applySlashCommand })
     : null;
 
   const clearAttachmentCount = (sessionId: string) => {
