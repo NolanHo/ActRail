@@ -87,6 +87,7 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("GET /api/bootstrap", r.requireAuth(http.HandlerFunc(r.bootstrap)))
 	mux.Handle("GET /api/sessions", r.requireAuth(http.HandlerFunc(r.listSessions)))
 	mux.Handle("POST /api/sessions", r.requireAuth(http.HandlerFunc(r.createSession)))
+	mux.Handle("GET /api/subagents", r.requireAuth(http.HandlerFunc(r.listSubagents)))
 	mux.Handle("GET /api/session_resume_candidates", r.requireAuth(http.HandlerFunc(r.sessionResumeCandidates)))
 	mux.Handle("GET /api/settings/voice", r.requireAuth(http.HandlerFunc(r.voiceSettings)))
 	mux.Handle("POST /api/settings/voice", r.requireAuth(http.HandlerFunc(r.updateVoiceSettings)))
@@ -223,6 +224,20 @@ func (r Router) listSessions(w http.ResponseWriter, req *http.Request) {
 		CWD:          strings.TrimSpace(req.URL.Query().Get("cwd")),
 		Title:        strings.TrimSpace(req.URL.Query().Get("title")),
 	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) listSubagents(w http.ResponseWriter, req *http.Request) {
+	includeClosed, err := queryBool(req, "include_closed")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.ListSubagents(req.Context(), app.ListSubagentsRequest{IncludeClosed: includeClosed})
 	if err != nil {
 		writeAppError(w, err)
 		return

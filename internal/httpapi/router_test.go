@@ -22,6 +22,7 @@ type serviceStub struct {
 	base              *app.Stub
 	listSessionsFunc  func(context.Context, app.ListSessionsRequest) (app.ListSessionsResponse, error)
 	createSessionFunc func(context.Context, app.CreateSessionRequest) (app.CreateSessionResponse, error)
+	subagentsFunc     func(context.Context, app.ListSubagentsRequest) (app.ListSubagentsResponse, error)
 	resumeFunc        func(context.Context, app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error)
 	detailsFunc       func(context.Context, app.SessionDetailsRequest) (app.SessionDetailsResponse, error)
 	messagesFunc      func(context.Context, app.SessionMessagesRequest) (app.SessionMessagesResponse, error)
@@ -62,6 +63,13 @@ func (s serviceStub) CreateSession(ctx context.Context, req app.CreateSessionReq
 		return s.createSessionFunc(ctx, req)
 	}
 	return s.base.CreateSession(ctx, req)
+}
+
+func (s serviceStub) ListSubagents(ctx context.Context, req app.ListSubagentsRequest) (app.ListSubagentsResponse, error) {
+	if s.subagentsFunc != nil {
+		return s.subagentsFunc(ctx, req)
+	}
+	return s.base.ListSubagents(ctx, req)
 }
 
 func (s serviceStub) SessionResumeCandidates(ctx context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
@@ -253,6 +261,7 @@ func (s serviceStub) RunSupervisorOnce(ctx context.Context, req app.SupervisorRu
 type fixtureService struct {
 	listReq           app.ListSessionsRequest
 	createReq         app.CreateSessionRequest
+	subagentsReq      app.ListSubagentsRequest
 	resumeReq         app.SessionResumeCandidatesRequest
 	detailsReq        app.SessionDetailsRequest
 	messagesReq       app.SessionMessagesRequest
@@ -341,6 +350,32 @@ func (s *fixtureService) CreateSession(_ context.Context, req app.CreateSessionR
 			SessionID:            "s_123",
 			SuggestSubscriptions: []string{"session:s_123"},
 		},
+	}, nil
+}
+
+func (s *fixtureService) ListSubagents(_ context.Context, req app.ListSubagentsRequest) (app.ListSubagentsResponse, error) {
+	s.subagentsReq = req
+	return app.ListSubagentsResponse{
+		OK: true,
+		Roots: []app.SubagentNode{{
+			ActorID:         "actor_lead",
+			ChildSessionID:  "child_lead",
+			ParentSessionID: "s_123",
+			Name:            "lead",
+			Role:            "main agent",
+			Status:          app.SubagentStatusRunning,
+			Children: []app.SubagentNode{{
+				ActorID:         "actor_leaf",
+				ChildSessionID:  "child_leaf",
+				ParentActorID:   "actor_lead",
+				ParentSessionID: "s_123",
+				Name:            "leaf",
+				Role:            "tester",
+				Status:          app.SubagentStatusIdle,
+			}},
+		}},
+		TotalCount:   2,
+		NonLeafCount: 1,
 	}, nil
 }
 
@@ -751,6 +786,28 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		}
 	})
 
+	t.Run("list subagents", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/subagents?include_closed=true", nil)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+
+		var payload app.ListSubagentsResponse
+		decodeJSON(t, res, &payload)
+		if !payload.OK || payload.TotalCount != 2 || payload.NonLeafCount != 1 || len(payload.Roots) != 1 {
+			t.Fatalf("unexpected subagents payload: %+v", payload)
+		}
+		if payload.Roots[0].ActorID != "actor_lead" || payload.Roots[0].Children[0].ActorID != "actor_leaf" {
+			t.Fatalf("unexpected subagent tree: %+v", payload.Roots)
+		}
+		if !svc.subagentsReq.IncludeClosed {
+			t.Fatalf("expected include_closed request, got %+v", svc.subagentsReq)
+		}
+	})
+
 	t.Run("create session", func(t *testing.T) {
 		body := bytes.NewBufferString(`{"agent_backend":"pi","cwd":"/root/code/ActRail"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/sessions", body)
@@ -1018,6 +1075,7 @@ func TestProtectedRoutesRequireAuthCookieInPasswordMode(t *testing.T) {
 		{name: "bootstrap", method: http.MethodGet, target: "/api/bootstrap"},
 		{name: "list sessions", method: http.MethodGet, target: "/api/sessions"},
 		{name: "create session", method: http.MethodPost, target: "/api/sessions"},
+		{name: "list subagents", method: http.MethodGet, target: "/api/subagents"},
 		{name: "resume candidates", method: http.MethodGet, target: "/api/session_resume_candidates"},
 		{name: "session details", method: http.MethodGet, target: "/api/sessions/s_123/details"},
 		{name: "session messages", method: http.MethodGet, target: "/api/sessions/s_123/messages"},

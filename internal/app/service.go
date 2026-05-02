@@ -16,6 +16,7 @@ type Service interface {
 	Bootstrap(context.Context, BootstrapRequest) BootstrapSnapshot
 	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
 	CreateSession(context.Context, CreateSessionRequest) (CreateSessionResponse, error)
+	ListSubagents(context.Context, ListSubagentsRequest) (ListSubagentsResponse, error)
 	SessionResumeCandidates(context.Context, SessionResumeCandidatesRequest) (SessionResumeCandidatesResponse, error)
 	SessionDetails(context.Context, SessionDetailsRequest) (SessionDetailsResponse, error)
 	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)
