@@ -79,6 +79,7 @@ type Stub struct {
 	runtimeAgentRunning map[session.SessionID]bool
 	piRPCStateMu        sync.Mutex
 	piRPCStates         map[session.SessionID]piRPCStateCache
+	piResumePaths       piResumePathCache
 	piModels            piModelCache
 	appStateMu          sync.RWMutex
 	recentCwds          []string
@@ -118,6 +119,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		subagents:           newSubagentRegistry(now),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
+		piResumePaths:       piResumePathCache{},
 		piModels:            piModelCache{},
 		recentCwds:          []string{},
 		cwdGroups:           map[string]CwdGroupMeta{},

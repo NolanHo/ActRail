@@ -199,7 +199,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 	}
 	scanOffset, scanLimit, scanned, scanRemaining, scanComplete := 0, 0, 0, 0, true
 	if backend == "" || backend == session.BackendPI.String() {
-		scannedCandidates := scanPIResumeCandidates(cwd, req.ScanOffset, req.ScanLimit)
+		scannedCandidates := s.scanPIResumeCandidates(cwd, req.ScanOffset, req.ScanLimit)
 		scanOffset = scannedCandidates.Offset
 		scanLimit = scannedCandidates.Limit
 		scanned = scannedCandidates.Scanned
@@ -645,8 +645,8 @@ type piResumeCandidateScan struct {
 	Complete  bool
 }
 
-func scanPIResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
-	paths := piResumeSourcePaths(cwd)
+func (s *Stub) scanPIResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
+	paths := s.piResumePaths.paths(cwd)
 	start, end := paginate(len(paths), offset, limit)
 	candidates := make([]SessionResumeCandidate, 0, end-start)
 	for _, path := range paths[start:end] {
@@ -672,35 +672,53 @@ func scanPIResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan
 }
 
 func piResumeSourcePaths(cwd string) []string {
+	return listPIResumeSourcePaths(cwd)
+}
+
+func listPIResumeSourcePaths(cwd string) []string {
 	roots := piSessionHistoryRoots(cwd)
 	if len(roots) == 0 {
 		return nil
 	}
 	seenPaths := make(map[string]struct{})
-	paths := make([]string, 0)
+	entries := make([]piResumePathEntry, 0)
 	for _, root := range roots {
-		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-			if err != nil || entry == nil || entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
-				return nil
+		items, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, item := range items {
+			if item.IsDir() || filepath.Ext(item.Name()) != ".jsonl" {
+				continue
 			}
-			cleaned := filepath.Clean(path)
+			cleaned := filepath.Clean(filepath.Join(root, item.Name()))
 			if _, ok := seenPaths[cleaned]; ok {
-				return nil
+				continue
+			}
+			info, err := item.Info()
+			if err != nil {
+				continue
 			}
 			seenPaths[cleaned] = struct{}{}
-			paths = append(paths, cleaned)
-			return nil
-		})
-	}
-	sort.SliceStable(paths, func(i, j int) bool {
-		left, leftErr := os.Stat(paths[i])
-		right, rightErr := os.Stat(paths[j])
-		if leftErr == nil && rightErr == nil && !left.ModTime().Equal(right.ModTime()) {
-			return left.ModTime().After(right.ModTime())
+			entries = append(entries, piResumePathEntry{Path: cleaned, ModTime: info.ModTime()})
 		}
-		return paths[i] < paths[j]
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if !entries[i].ModTime.Equal(entries[j].ModTime) {
+			return entries[i].ModTime.After(entries[j].ModTime)
+		}
+		return entries[i].Path < entries[j].Path
 	})
+	paths := make([]string, len(entries))
+	for i, entry := range entries {
+		paths[i] = entry.Path
+	}
 	return paths
+}
+
+type piResumePathEntry struct {
+	Path    string
+	ModTime time.Time
 }
 
 func piResumeCandidateFromSourcePath(cwd, sourcePath string) (SessionResumeCandidate, bool) {
