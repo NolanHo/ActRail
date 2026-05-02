@@ -41,7 +41,10 @@ jobs:
       - name: Go tests
         env:
           PI_HOME: ${{ runner.temp }}/pi-home
-        run: go test ./...
+        run: |
+          sudo mkdir -p /usr/local/go/bin
+          sudo ln -sf "$(command -v go)" /usr/local/go/bin/go
+          go test ./...
 
       - name: Web tests
         working-directory: web
