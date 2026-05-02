@@ -7,6 +7,7 @@ import type {
   CreateSessionResponse,
   DeleteSessionResponse,
   EditSessionResponse,
+  ExecuteSessionCommandResponse,
   HandoffSessionResponse,
   RestartSessionResponse,
   FocusSessionResponse,
@@ -269,6 +270,10 @@ export const api = {
   getSessionCommands(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson<SessionCommandsResponse>(`/api/sessions/${routeId}/commands`, signal);
+  },
+  executeSessionCommand(sessionId: string, payload: { name?: string; command?: string; args?: string }, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return postJson<ExecuteSessionCommandResponse>(`/api/sessions/${routeId}/commands`, payload);
   },
   attachSessionFile(sessionId: string, payload: { filename: string; data_b64: string; attachment_index: number }, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);

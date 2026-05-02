@@ -41,6 +41,33 @@ func TestStateFromProtoCopiesSessionState(t *testing.T) {
 	}
 }
 
+func TestCommandsFromProtoCopiesSourceInfo(t *testing.T) {
+	commands := commandsFromProto([]*piagentv1.SlashCommand{
+		{
+			Name:        " review ",
+			Description: " Review current diff ",
+			Source:      " prompt ",
+			SourceInfo: &piagentv1.SourceInfo{
+				Path:    " /tmp/review.md ",
+				Source:  " project ",
+				Scope:   " project ",
+				Origin:  " top-level ",
+				BaseDir: " /tmp ",
+			},
+		},
+	})
+	if len(commands) != 1 {
+		t.Fatalf("len(commands) = %d, want 1", len(commands))
+	}
+	got := commands[0]
+	if got.Name != "review" || got.Description != "Review current diff" || got.Source != "prompt" {
+		t.Fatalf("command = %+v", got)
+	}
+	if got.SourceInfo.Path != "/tmp/review.md" || got.SourceInfo.BaseDir != "/tmp" {
+		t.Fatalf("source info = %+v", got.SourceInfo)
+	}
+}
+
 func TestEventFromProtoCopiesBoundaryAndPayload(t *testing.T) {
 	event := eventFromProto(&piagentv1.Event{
 		Type:     " session_boundary ",

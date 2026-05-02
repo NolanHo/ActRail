@@ -46,6 +46,21 @@ type SessionBoundary struct {
 	Reason      string
 }
 
+type SourceInfo struct {
+	Path    string `json:"path,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Scope   string `json:"scope,omitempty"`
+	Origin  string `json:"origin,omitempty"`
+	BaseDir string `json:"base_dir,omitempty"`
+}
+
+type Command struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	Source      string     `json:"source"`
+	SourceInfo  SourceInfo `json:"source_info,omitempty"`
+}
+
 type State struct {
 	SessionID           string
 	SessionFile         string
@@ -119,6 +134,31 @@ func (c *Client) Abort(ctx context.Context) error {
 		return err
 	}
 	_, err = rpc.Abort(ctx, &piagentv1.AbortRequest{})
+	return err
+}
+
+func (c *Client) ListCommands(ctx context.Context) ([]Command, error) {
+	rpc, err := c.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := rpc.ListCommands(ctx, &piagentv1.ListCommandsRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return commandsFromProto(resp.GetCommands()), nil
+}
+
+func (c *Client) ExecuteCommand(ctx context.Context, name, args string) error {
+	command := strings.TrimPrefix(strings.TrimSpace(name), "/")
+	if command == "" {
+		return fmt.Errorf("command is required")
+	}
+	rpc, err := c.client(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = rpc.ExecuteCommand(ctx, &piagentv1.ExecuteCommandRequest{Name: command, Args: strings.TrimSpace(args)})
 	return err
 }
 
@@ -255,6 +295,35 @@ func stateFromProto(state *piagentv1.SessionState) State {
 		out.Provider = strings.TrimSpace(model.GetProvider())
 	}
 	return out
+}
+
+func commandsFromProto(commands []*piagentv1.SlashCommand) []Command {
+	out := make([]Command, 0, len(commands))
+	for _, command := range commands {
+		if command == nil {
+			continue
+		}
+		out = append(out, Command{
+			Name:        strings.TrimSpace(command.GetName()),
+			Description: strings.TrimSpace(command.GetDescription()),
+			Source:      strings.TrimSpace(command.GetSource()),
+			SourceInfo:  sourceInfoFromProto(command.GetSourceInfo()),
+		})
+	}
+	return out
+}
+
+func sourceInfoFromProto(sourceInfo *piagentv1.SourceInfo) SourceInfo {
+	if sourceInfo == nil {
+		return SourceInfo{}
+	}
+	return SourceInfo{
+		Path:    strings.TrimSpace(sourceInfo.GetPath()),
+		Source:  strings.TrimSpace(sourceInfo.GetSource()),
+		Scope:   strings.TrimSpace(sourceInfo.GetScope()),
+		Origin:  strings.TrimSpace(sourceInfo.GetOrigin()),
+		BaseDir: strings.TrimSpace(sourceInfo.GetBaseDir()),
+	}
 }
 
 func eventFromProto(event *piagentv1.Event) Event {

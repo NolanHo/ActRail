@@ -644,10 +644,18 @@ export interface SessionCommand {
   name: string;
   description?: string;
   source?: string;
+  source_info?: Record<string, unknown>;
 }
 
 export interface SessionCommandsResponse {
   commands: SessionCommand[];
+}
+
+export interface ExecuteSessionCommandResponse {
+  ok?: boolean;
+  command?: string;
+  message?: string;
+  session_id?: string;
 }
 
 export interface AttachmentInjectResponse {

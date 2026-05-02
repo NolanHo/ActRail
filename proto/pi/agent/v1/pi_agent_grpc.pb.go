@@ -25,6 +25,8 @@ const (
 	PiAgent_FollowUp_FullMethodName        = "/pi.agent.v1.PiAgent/FollowUp"
 	PiAgent_Abort_FullMethodName           = "/pi.agent.v1.PiAgent/Abort"
 	PiAgent_NewSession_FullMethodName      = "/pi.agent.v1.PiAgent/NewSession"
+	PiAgent_ListCommands_FullMethodName    = "/pi.agent.v1.PiAgent/ListCommands"
+	PiAgent_ExecuteCommand_FullMethodName  = "/pi.agent.v1.PiAgent/ExecuteCommand"
 	PiAgent_GetMessages_FullMethodName     = "/pi.agent.v1.PiAgent/GetMessages"
 	PiAgent_ReadBlob_FullMethodName        = "/pi.agent.v1.PiAgent/ReadBlob"
 	PiAgent_SubscribeEvents_FullMethodName = "/pi.agent.v1.PiAgent/SubscribeEvents"
@@ -40,6 +42,8 @@ type PiAgentClient interface {
 	FollowUp(ctx context.Context, in *FollowUpRequest, opts ...grpc.CallOption) (*CommandAck, error)
 	Abort(ctx context.Context, in *AbortRequest, opts ...grpc.CallOption) (*CommandAck, error)
 	NewSession(ctx context.Context, in *NewSessionRequest, opts ...grpc.CallOption) (*SessionSwitchResult, error)
+	ListCommands(ctx context.Context, in *ListCommandsRequest, opts ...grpc.CallOption) (*ListCommandsResponse, error)
+	ExecuteCommand(ctx context.Context, in *ExecuteCommandRequest, opts ...grpc.CallOption) (*CommandAck, error)
 	GetMessages(ctx context.Context, in *GetMessagesRequest, opts ...grpc.CallOption) (*GetMessagesResponse, error)
 	ReadBlob(ctx context.Context, in *ReadBlobRequest, opts ...grpc.CallOption) (*ReadBlobResponse, error)
 	SubscribeEvents(ctx context.Context, in *SubscribeEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[EventBatch], error)
@@ -113,6 +117,26 @@ func (c *piAgentClient) NewSession(ctx context.Context, in *NewSessionRequest, o
 	return out, nil
 }
 
+func (c *piAgentClient) ListCommands(ctx context.Context, in *ListCommandsRequest, opts ...grpc.CallOption) (*ListCommandsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListCommandsResponse)
+	err := c.cc.Invoke(ctx, PiAgent_ListCommands_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *piAgentClient) ExecuteCommand(ctx context.Context, in *ExecuteCommandRequest, opts ...grpc.CallOption) (*CommandAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommandAck)
+	err := c.cc.Invoke(ctx, PiAgent_ExecuteCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *piAgentClient) GetMessages(ctx context.Context, in *GetMessagesRequest, opts ...grpc.CallOption) (*GetMessagesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetMessagesResponse)
@@ -162,6 +186,8 @@ type PiAgentServer interface {
 	FollowUp(context.Context, *FollowUpRequest) (*CommandAck, error)
 	Abort(context.Context, *AbortRequest) (*CommandAck, error)
 	NewSession(context.Context, *NewSessionRequest) (*SessionSwitchResult, error)
+	ListCommands(context.Context, *ListCommandsRequest) (*ListCommandsResponse, error)
+	ExecuteCommand(context.Context, *ExecuteCommandRequest) (*CommandAck, error)
 	GetMessages(context.Context, *GetMessagesRequest) (*GetMessagesResponse, error)
 	ReadBlob(context.Context, *ReadBlobRequest) (*ReadBlobResponse, error)
 	SubscribeEvents(*SubscribeEventsRequest, grpc.ServerStreamingServer[EventBatch]) error
@@ -192,6 +218,12 @@ func (UnimplementedPiAgentServer) Abort(context.Context, *AbortRequest) (*Comman
 }
 func (UnimplementedPiAgentServer) NewSession(context.Context, *NewSessionRequest) (*SessionSwitchResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method NewSession not implemented")
+}
+func (UnimplementedPiAgentServer) ListCommands(context.Context, *ListCommandsRequest) (*ListCommandsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListCommands not implemented")
+}
+func (UnimplementedPiAgentServer) ExecuteCommand(context.Context, *ExecuteCommandRequest) (*CommandAck, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ExecuteCommand not implemented")
 }
 func (UnimplementedPiAgentServer) GetMessages(context.Context, *GetMessagesRequest) (*GetMessagesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMessages not implemented")
@@ -331,6 +363,42 @@ func _PiAgent_NewSession_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PiAgent_ListCommands_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListCommandsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PiAgentServer).ListCommands(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PiAgent_ListCommands_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PiAgentServer).ListCommands(ctx, req.(*ListCommandsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PiAgent_ExecuteCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PiAgentServer).ExecuteCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PiAgent_ExecuteCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PiAgentServer).ExecuteCommand(ctx, req.(*ExecuteCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PiAgent_GetMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetMessagesRequest)
 	if err := dec(in); err != nil {
@@ -408,6 +476,14 @@ var PiAgent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "NewSession",
 			Handler:    _PiAgent_NewSession_Handler,
+		},
+		{
+			MethodName: "ListCommands",
+			Handler:    _PiAgent_ListCommands_Handler,
+		},
+		{
+			MethodName: "ExecuteCommand",
+			Handler:    _PiAgent_ExecuteCommand_Handler,
 		},
 		{
 			MethodName: "GetMessages",
