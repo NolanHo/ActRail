@@ -590,6 +590,282 @@ func (x *NewSessionRequest) GetParentSession() string {
 	return ""
 }
 
+type ListCommandsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCommandsRequest) Reset() {
+	*x = ListCommandsRequest{}
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCommandsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCommandsRequest) ProtoMessage() {}
+
+func (x *ListCommandsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCommandsRequest.ProtoReflect.Descriptor instead.
+func (*ListCommandsRequest) Descriptor() ([]byte, []int) {
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{9}
+}
+
+type ExecuteCommandRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Args          string                 `protobuf:"bytes,2,opt,name=args,proto3" json:"args,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecuteCommandRequest) Reset() {
+	*x = ExecuteCommandRequest{}
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecuteCommandRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecuteCommandRequest) ProtoMessage() {}
+
+func (x *ExecuteCommandRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecuteCommandRequest.ProtoReflect.Descriptor instead.
+func (*ExecuteCommandRequest) Descriptor() ([]byte, []int) {
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ExecuteCommandRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ExecuteCommandRequest) GetArgs() string {
+	if x != nil {
+		return x.Args
+	}
+	return ""
+}
+
+type ListCommandsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Commands      []*SlashCommand        `protobuf:"bytes,1,rep,name=commands,proto3" json:"commands,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCommandsResponse) Reset() {
+	*x = ListCommandsResponse{}
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCommandsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCommandsResponse) ProtoMessage() {}
+
+func (x *ListCommandsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCommandsResponse.ProtoReflect.Descriptor instead.
+func (*ListCommandsResponse) Descriptor() ([]byte, []int) {
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ListCommandsResponse) GetCommands() []*SlashCommand {
+	if x != nil {
+		return x.Commands
+	}
+	return nil
+}
+
+type SlashCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	Source        string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	SourceInfo    *SourceInfo            `protobuf:"bytes,4,opt,name=source_info,json=sourceInfo,proto3" json:"source_info,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SlashCommand) Reset() {
+	*x = SlashCommand{}
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SlashCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SlashCommand) ProtoMessage() {}
+
+func (x *SlashCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SlashCommand.ProtoReflect.Descriptor instead.
+func (*SlashCommand) Descriptor() ([]byte, []int) {
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SlashCommand) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SlashCommand) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *SlashCommand) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *SlashCommand) GetSourceInfo() *SourceInfo {
+	if x != nil {
+		return x.SourceInfo
+	}
+	return nil
+}
+
+type SourceInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Source        string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
+	Scope         string                 `protobuf:"bytes,3,opt,name=scope,proto3" json:"scope,omitempty"`
+	Origin        string                 `protobuf:"bytes,4,opt,name=origin,proto3" json:"origin,omitempty"`
+	BaseDir       string                 `protobuf:"bytes,5,opt,name=base_dir,json=baseDir,proto3" json:"base_dir,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SourceInfo) Reset() {
+	*x = SourceInfo{}
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceInfo) ProtoMessage() {}
+
+func (x *SourceInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourceInfo.ProtoReflect.Descriptor instead.
+func (*SourceInfo) Descriptor() ([]byte, []int) {
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SourceInfo) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *SourceInfo) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *SourceInfo) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
+}
+
+func (x *SourceInfo) GetOrigin() string {
+	if x != nil {
+		return x.Origin
+	}
+	return ""
+}
+
+func (x *SourceInfo) GetBaseDir() string {
+	if x != nil {
+		return x.BaseDir
+	}
+	return ""
+}
+
 type SubscribeEventsRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Level           EventLevel             `protobuf:"varint,1,opt,name=level,proto3,enum=pi.agent.v1.EventLevel" json:"level,omitempty"`
@@ -604,7 +880,7 @@ type SubscribeEventsRequest struct {
 
 func (x *SubscribeEventsRequest) Reset() {
 	*x = SubscribeEventsRequest{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[9]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +892,7 @@ func (x *SubscribeEventsRequest) String() string {
 func (*SubscribeEventsRequest) ProtoMessage() {}
 
 func (x *SubscribeEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[9]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +905,7 @@ func (x *SubscribeEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeEventsRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeEventsRequest) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{9}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SubscribeEventsRequest) GetLevel() EventLevel {
@@ -684,7 +960,7 @@ type Image struct {
 
 func (x *Image) Reset() {
 	*x = Image{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[10]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -696,7 +972,7 @@ func (x *Image) String() string {
 func (*Image) ProtoMessage() {}
 
 func (x *Image) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[10]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -709,7 +985,7 @@ func (x *Image) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Image.ProtoReflect.Descriptor instead.
 func (*Image) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{10}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Image) GetData() string {
@@ -746,7 +1022,7 @@ type SessionState struct {
 
 func (x *SessionState) Reset() {
 	*x = SessionState{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[11]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -758,7 +1034,7 @@ func (x *SessionState) String() string {
 func (*SessionState) ProtoMessage() {}
 
 func (x *SessionState) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[11]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -771,7 +1047,7 @@ func (x *SessionState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionState.ProtoReflect.Descriptor instead.
 func (*SessionState) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{11}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SessionState) GetModel() *Model {
@@ -876,7 +1152,7 @@ type Model struct {
 
 func (x *Model) Reset() {
 	*x = Model{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[12]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -888,7 +1164,7 @@ func (x *Model) String() string {
 func (*Model) ProtoMessage() {}
 
 func (x *Model) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[12]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -901,7 +1177,7 @@ func (x *Model) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Model.ProtoReflect.Descriptor instead.
 func (*Model) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{12}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Model) GetId() string {
@@ -986,7 +1262,7 @@ type ModelCost struct {
 
 func (x *ModelCost) Reset() {
 	*x = ModelCost{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[13]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -998,7 +1274,7 @@ func (x *ModelCost) String() string {
 func (*ModelCost) ProtoMessage() {}
 
 func (x *ModelCost) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[13]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1011,7 +1287,7 @@ func (x *ModelCost) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelCost.ProtoReflect.Descriptor instead.
 func (*ModelCost) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{13}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ModelCost) GetInput() float64 {
@@ -1050,7 +1326,7 @@ type CommandAck struct {
 
 func (x *CommandAck) Reset() {
 	*x = CommandAck{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[14]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1062,7 +1338,7 @@ func (x *CommandAck) String() string {
 func (*CommandAck) ProtoMessage() {}
 
 func (x *CommandAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[14]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1075,7 +1351,7 @@ func (x *CommandAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandAck.ProtoReflect.Descriptor instead.
 func (*CommandAck) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{14}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{19}
 }
 
 type SessionSwitchResult struct {
@@ -1087,7 +1363,7 @@ type SessionSwitchResult struct {
 
 func (x *SessionSwitchResult) Reset() {
 	*x = SessionSwitchResult{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[15]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1099,7 +1375,7 @@ func (x *SessionSwitchResult) String() string {
 func (*SessionSwitchResult) ProtoMessage() {}
 
 func (x *SessionSwitchResult) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[15]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1112,7 +1388,7 @@ func (x *SessionSwitchResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionSwitchResult.ProtoReflect.Descriptor instead.
 func (*SessionSwitchResult) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{15}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SessionSwitchResult) GetCancelled() bool {
@@ -1131,7 +1407,7 @@ type GetMessagesResponse struct {
 
 func (x *GetMessagesResponse) Reset() {
 	*x = GetMessagesResponse{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[16]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1143,7 +1419,7 @@ func (x *GetMessagesResponse) String() string {
 func (*GetMessagesResponse) ProtoMessage() {}
 
 func (x *GetMessagesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[16]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1156,7 +1432,7 @@ func (x *GetMessagesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMessagesResponse.ProtoReflect.Descriptor instead.
 func (*GetMessagesResponse) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{16}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *GetMessagesResponse) GetMessages() []*AgentMessage {
@@ -1176,7 +1452,7 @@ type Payload struct {
 
 func (x *Payload) Reset() {
 	*x = Payload{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[17]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1188,7 +1464,7 @@ func (x *Payload) String() string {
 func (*Payload) ProtoMessage() {}
 
 func (x *Payload) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[17]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1201,7 +1477,7 @@ func (x *Payload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Payload.ProtoReflect.Descriptor instead.
 func (*Payload) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{17}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Payload) GetJson() []byte {
@@ -1228,7 +1504,7 @@ type BlobRef struct {
 
 func (x *BlobRef) Reset() {
 	*x = BlobRef{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[18]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1240,7 +1516,7 @@ func (x *BlobRef) String() string {
 func (*BlobRef) ProtoMessage() {}
 
 func (x *BlobRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[18]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1253,7 +1529,7 @@ func (x *BlobRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobRef.ProtoReflect.Descriptor instead.
 func (*BlobRef) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{18}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *BlobRef) GetBlobId() string {
@@ -1280,7 +1556,7 @@ type AgentMessage struct {
 
 func (x *AgentMessage) Reset() {
 	*x = AgentMessage{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[19]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1292,7 +1568,7 @@ func (x *AgentMessage) String() string {
 func (*AgentMessage) ProtoMessage() {}
 
 func (x *AgentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[19]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1305,7 +1581,7 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
 func (*AgentMessage) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{19}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AgentMessage) GetRole() string {
@@ -1332,7 +1608,7 @@ type EventBatch struct {
 
 func (x *EventBatch) Reset() {
 	*x = EventBatch{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[20]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1344,7 +1620,7 @@ func (x *EventBatch) String() string {
 func (*EventBatch) ProtoMessage() {}
 
 func (x *EventBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[20]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1357,7 +1633,7 @@ func (x *EventBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventBatch.ProtoReflect.Descriptor instead.
 func (*EventBatch) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{20}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *EventBatch) GetSequence() uint64 {
@@ -1386,7 +1662,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[21]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1398,7 +1674,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[21]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1411,7 +1687,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{21}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Event) GetType() string {
@@ -1453,7 +1729,7 @@ type SessionBoundary struct {
 
 func (x *SessionBoundary) Reset() {
 	*x = SessionBoundary{}
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[22]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1465,7 +1741,7 @@ func (x *SessionBoundary) String() string {
 func (*SessionBoundary) ProtoMessage() {}
 
 func (x *SessionBoundary) ProtoReflect() protoreflect.Message {
-	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[22]
+	mi := &file_pi_agent_v1_pi_agent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1478,7 +1754,7 @@ func (x *SessionBoundary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionBoundary.ProtoReflect.Descriptor instead.
 func (*SessionBoundary) Descriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{22}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *SessionBoundary) GetSessionId() string {
@@ -1535,7 +1811,26 @@ const file_pi_agent_v1_pi_agent_proto_rawDesc = "" +
 	"\fAbortRequest\"R\n" +
 	"\x11NewSessionRequest\x12*\n" +
 	"\x0eparent_session\x18\x01 \x01(\tH\x00R\rparentSession\x88\x01\x01B\x11\n" +
-	"\x0f_parent_session\"\x91\x02\n" +
+	"\x0f_parent_session\"\x15\n" +
+	"\x13ListCommandsRequest\"?\n" +
+	"\x15ExecuteCommandRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04args\x18\x02 \x01(\tR\x04args\"M\n" +
+	"\x14ListCommandsResponse\x125\n" +
+	"\bcommands\x18\x01 \x03(\v2\x19.pi.agent.v1.SlashCommandR\bcommands\"\x96\x01\n" +
+	"\fSlashCommand\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06source\x18\x03 \x01(\tR\x06source\x128\n" +
+	"\vsource_info\x18\x04 \x01(\v2\x17.pi.agent.v1.SourceInfoR\n" +
+	"sourceInfo\"\x81\x01\n" +
+	"\n" +
+	"SourceInfo\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
+	"\x06source\x18\x02 \x01(\tR\x06source\x12\x14\n" +
+	"\x05scope\x18\x03 \x01(\tR\x05scope\x12\x16\n" +
+	"\x06origin\x18\x04 \x01(\tR\x06origin\x12\x19\n" +
+	"\bbase_dir\x18\x05 \x01(\tR\abaseDir\"\x91\x02\n" +
 	"\x16SubscribeEventsRequest\x12-\n" +
 	"\x05level\x18\x01 \x01(\x0e2\x17.pi.agent.v1.EventLevelR\x05level\x12&\n" +
 	"\x0fbatch_window_ms\x18\x02 \x01(\rR\rbatchWindowMs\x12$\n" +
@@ -1624,7 +1919,7 @@ const file_pi_agent_v1_pi_agent_proto_rawDesc = "" +
 	"\x13EVENT_LEVEL_SUMMARY\x10\x00\x12\x14\n" +
 	"\x10EVENT_LEVEL_NONE\x10\x01\x12\x15\n" +
 	"\x11EVENT_LEVEL_STATE\x10\x02\x12\x14\n" +
-	"\x10EVENT_LEVEL_FULL\x10\x032\x88\x05\n" +
+	"\x10EVENT_LEVEL_FULL\x10\x032\xac\x06\n" +
 	"\aPiAgent\x12C\n" +
 	"\bGetState\x12\x1c.pi.agent.v1.GetStateRequest\x1a\x19.pi.agent.v1.SessionState\x12=\n" +
 	"\x06Prompt\x12\x1a.pi.agent.v1.PromptRequest\x1a\x17.pi.agent.v1.CommandAck\x12;\n" +
@@ -1632,7 +1927,9 @@ const file_pi_agent_v1_pi_agent_proto_rawDesc = "" +
 	"\bFollowUp\x12\x1c.pi.agent.v1.FollowUpRequest\x1a\x17.pi.agent.v1.CommandAck\x12;\n" +
 	"\x05Abort\x12\x19.pi.agent.v1.AbortRequest\x1a\x17.pi.agent.v1.CommandAck\x12N\n" +
 	"\n" +
-	"NewSession\x12\x1e.pi.agent.v1.NewSessionRequest\x1a .pi.agent.v1.SessionSwitchResult\x12P\n" +
+	"NewSession\x12\x1e.pi.agent.v1.NewSessionRequest\x1a .pi.agent.v1.SessionSwitchResult\x12S\n" +
+	"\fListCommands\x12 .pi.agent.v1.ListCommandsRequest\x1a!.pi.agent.v1.ListCommandsResponse\x12M\n" +
+	"\x0eExecuteCommand\x12\".pi.agent.v1.ExecuteCommandRequest\x1a\x17.pi.agent.v1.CommandAck\x12P\n" +
 	"\vGetMessages\x12\x1f.pi.agent.v1.GetMessagesRequest\x1a .pi.agent.v1.GetMessagesResponse\x12G\n" +
 	"\bReadBlob\x12\x1c.pi.agent.v1.ReadBlobRequest\x1a\x1d.pi.agent.v1.ReadBlobResponse\x12Q\n" +
 	"\x0fSubscribeEvents\x12#.pi.agent.v1.SubscribeEventsRequest\x1a\x17.pi.agent.v1.EventBatch0\x01B%Z#actrail/proto/pi/agent/v1;piagentv1b\x06proto3"
@@ -1650,7 +1947,7 @@ func file_pi_agent_v1_pi_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_pi_agent_v1_pi_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_pi_agent_v1_pi_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_pi_agent_v1_pi_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_pi_agent_v1_pi_agent_proto_goTypes = []any{
 	(StreamingBehavior)(0),         // 0: pi.agent.v1.StreamingBehavior
 	(EventLevel)(0),                // 1: pi.agent.v1.EventLevel
@@ -1663,58 +1960,69 @@ var file_pi_agent_v1_pi_agent_proto_goTypes = []any{
 	(*FollowUpRequest)(nil),        // 8: pi.agent.v1.FollowUpRequest
 	(*AbortRequest)(nil),           // 9: pi.agent.v1.AbortRequest
 	(*NewSessionRequest)(nil),      // 10: pi.agent.v1.NewSessionRequest
-	(*SubscribeEventsRequest)(nil), // 11: pi.agent.v1.SubscribeEventsRequest
-	(*Image)(nil),                  // 12: pi.agent.v1.Image
-	(*SessionState)(nil),           // 13: pi.agent.v1.SessionState
-	(*Model)(nil),                  // 14: pi.agent.v1.Model
-	(*ModelCost)(nil),              // 15: pi.agent.v1.ModelCost
-	(*CommandAck)(nil),             // 16: pi.agent.v1.CommandAck
-	(*SessionSwitchResult)(nil),    // 17: pi.agent.v1.SessionSwitchResult
-	(*GetMessagesResponse)(nil),    // 18: pi.agent.v1.GetMessagesResponse
-	(*Payload)(nil),                // 19: pi.agent.v1.Payload
-	(*BlobRef)(nil),                // 20: pi.agent.v1.BlobRef
-	(*AgentMessage)(nil),           // 21: pi.agent.v1.AgentMessage
-	(*EventBatch)(nil),             // 22: pi.agent.v1.EventBatch
-	(*Event)(nil),                  // 23: pi.agent.v1.Event
-	(*SessionBoundary)(nil),        // 24: pi.agent.v1.SessionBoundary
+	(*ListCommandsRequest)(nil),    // 11: pi.agent.v1.ListCommandsRequest
+	(*ExecuteCommandRequest)(nil),  // 12: pi.agent.v1.ExecuteCommandRequest
+	(*ListCommandsResponse)(nil),   // 13: pi.agent.v1.ListCommandsResponse
+	(*SlashCommand)(nil),           // 14: pi.agent.v1.SlashCommand
+	(*SourceInfo)(nil),             // 15: pi.agent.v1.SourceInfo
+	(*SubscribeEventsRequest)(nil), // 16: pi.agent.v1.SubscribeEventsRequest
+	(*Image)(nil),                  // 17: pi.agent.v1.Image
+	(*SessionState)(nil),           // 18: pi.agent.v1.SessionState
+	(*Model)(nil),                  // 19: pi.agent.v1.Model
+	(*ModelCost)(nil),              // 20: pi.agent.v1.ModelCost
+	(*CommandAck)(nil),             // 21: pi.agent.v1.CommandAck
+	(*SessionSwitchResult)(nil),    // 22: pi.agent.v1.SessionSwitchResult
+	(*GetMessagesResponse)(nil),    // 23: pi.agent.v1.GetMessagesResponse
+	(*Payload)(nil),                // 24: pi.agent.v1.Payload
+	(*BlobRef)(nil),                // 25: pi.agent.v1.BlobRef
+	(*AgentMessage)(nil),           // 26: pi.agent.v1.AgentMessage
+	(*EventBatch)(nil),             // 27: pi.agent.v1.EventBatch
+	(*Event)(nil),                  // 28: pi.agent.v1.Event
+	(*SessionBoundary)(nil),        // 29: pi.agent.v1.SessionBoundary
 }
 var file_pi_agent_v1_pi_agent_proto_depIdxs = []int32{
-	12, // 0: pi.agent.v1.PromptRequest.images:type_name -> pi.agent.v1.Image
+	17, // 0: pi.agent.v1.PromptRequest.images:type_name -> pi.agent.v1.Image
 	0,  // 1: pi.agent.v1.PromptRequest.streaming_behavior:type_name -> pi.agent.v1.StreamingBehavior
-	12, // 2: pi.agent.v1.SteerRequest.images:type_name -> pi.agent.v1.Image
-	12, // 3: pi.agent.v1.FollowUpRequest.images:type_name -> pi.agent.v1.Image
-	1,  // 4: pi.agent.v1.SubscribeEventsRequest.level:type_name -> pi.agent.v1.EventLevel
-	14, // 5: pi.agent.v1.SessionState.model:type_name -> pi.agent.v1.Model
-	15, // 6: pi.agent.v1.Model.cost:type_name -> pi.agent.v1.ModelCost
-	21, // 7: pi.agent.v1.GetMessagesResponse.messages:type_name -> pi.agent.v1.AgentMessage
-	20, // 8: pi.agent.v1.Payload.blob:type_name -> pi.agent.v1.BlobRef
-	19, // 9: pi.agent.v1.AgentMessage.payload:type_name -> pi.agent.v1.Payload
-	23, // 10: pi.agent.v1.EventBatch.events:type_name -> pi.agent.v1.Event
-	19, // 11: pi.agent.v1.Event.payload:type_name -> pi.agent.v1.Payload
-	24, // 12: pi.agent.v1.Event.session_boundary:type_name -> pi.agent.v1.SessionBoundary
-	2,  // 13: pi.agent.v1.PiAgent.GetState:input_type -> pi.agent.v1.GetStateRequest
-	6,  // 14: pi.agent.v1.PiAgent.Prompt:input_type -> pi.agent.v1.PromptRequest
-	7,  // 15: pi.agent.v1.PiAgent.Steer:input_type -> pi.agent.v1.SteerRequest
-	8,  // 16: pi.agent.v1.PiAgent.FollowUp:input_type -> pi.agent.v1.FollowUpRequest
-	9,  // 17: pi.agent.v1.PiAgent.Abort:input_type -> pi.agent.v1.AbortRequest
-	10, // 18: pi.agent.v1.PiAgent.NewSession:input_type -> pi.agent.v1.NewSessionRequest
-	3,  // 19: pi.agent.v1.PiAgent.GetMessages:input_type -> pi.agent.v1.GetMessagesRequest
-	4,  // 20: pi.agent.v1.PiAgent.ReadBlob:input_type -> pi.agent.v1.ReadBlobRequest
-	11, // 21: pi.agent.v1.PiAgent.SubscribeEvents:input_type -> pi.agent.v1.SubscribeEventsRequest
-	13, // 22: pi.agent.v1.PiAgent.GetState:output_type -> pi.agent.v1.SessionState
-	16, // 23: pi.agent.v1.PiAgent.Prompt:output_type -> pi.agent.v1.CommandAck
-	16, // 24: pi.agent.v1.PiAgent.Steer:output_type -> pi.agent.v1.CommandAck
-	16, // 25: pi.agent.v1.PiAgent.FollowUp:output_type -> pi.agent.v1.CommandAck
-	16, // 26: pi.agent.v1.PiAgent.Abort:output_type -> pi.agent.v1.CommandAck
-	17, // 27: pi.agent.v1.PiAgent.NewSession:output_type -> pi.agent.v1.SessionSwitchResult
-	18, // 28: pi.agent.v1.PiAgent.GetMessages:output_type -> pi.agent.v1.GetMessagesResponse
-	5,  // 29: pi.agent.v1.PiAgent.ReadBlob:output_type -> pi.agent.v1.ReadBlobResponse
-	22, // 30: pi.agent.v1.PiAgent.SubscribeEvents:output_type -> pi.agent.v1.EventBatch
-	22, // [22:31] is the sub-list for method output_type
-	13, // [13:22] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	17, // 2: pi.agent.v1.SteerRequest.images:type_name -> pi.agent.v1.Image
+	17, // 3: pi.agent.v1.FollowUpRequest.images:type_name -> pi.agent.v1.Image
+	14, // 4: pi.agent.v1.ListCommandsResponse.commands:type_name -> pi.agent.v1.SlashCommand
+	15, // 5: pi.agent.v1.SlashCommand.source_info:type_name -> pi.agent.v1.SourceInfo
+	1,  // 6: pi.agent.v1.SubscribeEventsRequest.level:type_name -> pi.agent.v1.EventLevel
+	19, // 7: pi.agent.v1.SessionState.model:type_name -> pi.agent.v1.Model
+	20, // 8: pi.agent.v1.Model.cost:type_name -> pi.agent.v1.ModelCost
+	26, // 9: pi.agent.v1.GetMessagesResponse.messages:type_name -> pi.agent.v1.AgentMessage
+	25, // 10: pi.agent.v1.Payload.blob:type_name -> pi.agent.v1.BlobRef
+	24, // 11: pi.agent.v1.AgentMessage.payload:type_name -> pi.agent.v1.Payload
+	28, // 12: pi.agent.v1.EventBatch.events:type_name -> pi.agent.v1.Event
+	24, // 13: pi.agent.v1.Event.payload:type_name -> pi.agent.v1.Payload
+	29, // 14: pi.agent.v1.Event.session_boundary:type_name -> pi.agent.v1.SessionBoundary
+	2,  // 15: pi.agent.v1.PiAgent.GetState:input_type -> pi.agent.v1.GetStateRequest
+	6,  // 16: pi.agent.v1.PiAgent.Prompt:input_type -> pi.agent.v1.PromptRequest
+	7,  // 17: pi.agent.v1.PiAgent.Steer:input_type -> pi.agent.v1.SteerRequest
+	8,  // 18: pi.agent.v1.PiAgent.FollowUp:input_type -> pi.agent.v1.FollowUpRequest
+	9,  // 19: pi.agent.v1.PiAgent.Abort:input_type -> pi.agent.v1.AbortRequest
+	10, // 20: pi.agent.v1.PiAgent.NewSession:input_type -> pi.agent.v1.NewSessionRequest
+	11, // 21: pi.agent.v1.PiAgent.ListCommands:input_type -> pi.agent.v1.ListCommandsRequest
+	12, // 22: pi.agent.v1.PiAgent.ExecuteCommand:input_type -> pi.agent.v1.ExecuteCommandRequest
+	3,  // 23: pi.agent.v1.PiAgent.GetMessages:input_type -> pi.agent.v1.GetMessagesRequest
+	4,  // 24: pi.agent.v1.PiAgent.ReadBlob:input_type -> pi.agent.v1.ReadBlobRequest
+	16, // 25: pi.agent.v1.PiAgent.SubscribeEvents:input_type -> pi.agent.v1.SubscribeEventsRequest
+	18, // 26: pi.agent.v1.PiAgent.GetState:output_type -> pi.agent.v1.SessionState
+	21, // 27: pi.agent.v1.PiAgent.Prompt:output_type -> pi.agent.v1.CommandAck
+	21, // 28: pi.agent.v1.PiAgent.Steer:output_type -> pi.agent.v1.CommandAck
+	21, // 29: pi.agent.v1.PiAgent.FollowUp:output_type -> pi.agent.v1.CommandAck
+	21, // 30: pi.agent.v1.PiAgent.Abort:output_type -> pi.agent.v1.CommandAck
+	22, // 31: pi.agent.v1.PiAgent.NewSession:output_type -> pi.agent.v1.SessionSwitchResult
+	13, // 32: pi.agent.v1.PiAgent.ListCommands:output_type -> pi.agent.v1.ListCommandsResponse
+	21, // 33: pi.agent.v1.PiAgent.ExecuteCommand:output_type -> pi.agent.v1.CommandAck
+	23, // 34: pi.agent.v1.PiAgent.GetMessages:output_type -> pi.agent.v1.GetMessagesResponse
+	5,  // 35: pi.agent.v1.PiAgent.ReadBlob:output_type -> pi.agent.v1.ReadBlobResponse
+	27, // 36: pi.agent.v1.PiAgent.SubscribeEvents:output_type -> pi.agent.v1.EventBatch
+	26, // [26:37] is the sub-list for method output_type
+	15, // [15:26] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_pi_agent_v1_pi_agent_proto_init() }
@@ -1723,15 +2031,15 @@ func file_pi_agent_v1_pi_agent_proto_init() {
 		return
 	}
 	file_pi_agent_v1_pi_agent_proto_msgTypes[8].OneofWrappers = []any{}
-	file_pi_agent_v1_pi_agent_proto_msgTypes[11].OneofWrappers = []any{}
-	file_pi_agent_v1_pi_agent_proto_msgTypes[22].OneofWrappers = []any{}
+	file_pi_agent_v1_pi_agent_proto_msgTypes[16].OneofWrappers = []any{}
+	file_pi_agent_v1_pi_agent_proto_msgTypes[27].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pi_agent_v1_pi_agent_proto_rawDesc), len(file_pi_agent_v1_pi_agent_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   23,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

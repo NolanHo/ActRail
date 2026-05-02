@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"actrail/internal/adapters/piagentgrpc"
 	"actrail/internal/domain/session"
 )
 
@@ -13,6 +14,8 @@ type SessionCommand struct {
 	Source      string         `json:"source"`
 	SourceInfo  map[string]any `json:"source_info,omitempty"`
 }
+
+const sessionCommandSourceActRail = "actrail"
 
 type SessionCommandsRequest struct {
 	SessionID session.SessionID
@@ -37,31 +40,76 @@ type ExecuteSessionCommandResponse struct {
 
 func actrailSlashCommands() []SessionCommand {
 	return []SessionCommand{
-		{Name: "rename", Description: "Rename current session", Source: "actrail"},
-		{Name: "focus", Description: "Mark current session focused or unfocused", Source: "actrail"},
-		{Name: "restart", Description: "Restart current runtime", Source: "actrail"},
-		{Name: "handoff", Description: "Start a fresh Pi runtime for this session", Source: "actrail"},
-		{Name: "model", Description: "Switch session model", Source: "actrail"},
+		{Name: "rename", Description: "Rename current session", Source: sessionCommandSourceActRail},
+		{Name: "focus", Description: "Mark current session focused or unfocused", Source: sessionCommandSourceActRail},
+		{Name: "restart", Description: "Restart current runtime", Source: sessionCommandSourceActRail},
+		{Name: "handoff", Description: "Start a fresh Pi runtime for this session", Source: sessionCommandSourceActRail},
+		{Name: "model", Description: "Switch session model", Source: sessionCommandSourceActRail},
 	}
 }
 
-func (s *Stub) SessionCommands(_ context.Context, req SessionCommandsRequest) (SessionCommandsResponse, error) {
+func (s *Stub) SessionCommands(ctx context.Context, req SessionCommandsRequest) (SessionCommandsResponse, error) {
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
 		return SessionCommandsResponse{}, err
 	}
 	commands := actrailSlashCommands()
 	if record.identity.Backend() == session.BackendPI {
-		commands = append(commands,
-			SessionCommand{Name: "name", Description: "Set Pi session display name when supported by runtime", Source: "builtin"},
-			SessionCommand{Name: "help", Description: "Show runtime command help when supported by runtime", Source: "builtin"},
-		)
+		if record.runtime.piAgentGRPC != nil {
+			piCommands, err := record.runtime.piAgentGRPC.ListCommands(ctx)
+			if err != nil {
+				return SessionCommandsResponse{}, err
+			}
+			commands = append(commands, sessionCommandsFromPIAgentGRPC(piCommands)...)
+		} else {
+			commands = append(commands,
+				SessionCommand{Name: "name", Description: "Set Pi session display name when supported by runtime", Source: "builtin"},
+				SessionCommand{Name: "help", Description: "Show runtime command help when supported by runtime", Source: "builtin"},
+			)
+		}
 	}
 	return SessionCommandsResponse{Commands: commands}, nil
 }
 
+func sessionCommandsFromPIAgentGRPC(commands []piagentgrpc.Command) []SessionCommand {
+	out := make([]SessionCommand, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, SessionCommand{
+			Name:        command.Name,
+			Description: command.Description,
+			Source:      command.Source,
+			SourceInfo:  sourceInfoMapFromPIAgentGRPC(command.SourceInfo),
+		})
+	}
+	return out
+}
+
+func sourceInfoMapFromPIAgentGRPC(sourceInfo piagentgrpc.SourceInfo) map[string]any {
+	out := map[string]any{}
+	if sourceInfo.Path != "" {
+		out["path"] = sourceInfo.Path
+	}
+	if sourceInfo.Source != "" {
+		out["source"] = sourceInfo.Source
+	}
+	if sourceInfo.Scope != "" {
+		out["scope"] = sourceInfo.Scope
+	}
+	if sourceInfo.Origin != "" {
+		out["origin"] = sourceInfo.Origin
+	}
+	if sourceInfo.BaseDir != "" {
+		out["base_dir"] = sourceInfo.BaseDir
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (s *Stub) ExecuteSessionCommand(ctx context.Context, req ExecuteSessionCommandRequest) (ExecuteSessionCommandResponse, error) {
-	name := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(req.Name)), "/")
+	name := strings.TrimLeft(strings.TrimSpace(req.Name), "/")
+	actrailName := strings.ToLower(name)
 	args := strings.TrimSpace(req.Args)
 	if name == "" {
 		return ExecuteSessionCommandResponse{}, Invalid("command", "command is required")
@@ -70,7 +118,7 @@ func (s *Stub) ExecuteSessionCommand(ctx context.Context, req ExecuteSessionComm
 	if err != nil {
 		return ExecuteSessionCommandResponse{}, err
 	}
-	switch name {
+	switch actrailName {
 	case "rename":
 		if args == "" {
 			return ExecuteSessionCommandResponse{}, Invalid("args", "rename requires a name")
@@ -113,6 +161,12 @@ func (s *Stub) ExecuteSessionCommand(ctx context.Context, req ExecuteSessionComm
 		return ExecuteSessionCommandResponse{OK: payload.OK, Command: name, Message: "model updated", SessionID: req.SessionID.String()}, nil
 	default:
 		if record.identity.Backend() == session.BackendPI {
+			if record.runtime.piAgentGRPC != nil {
+				if err := record.runtime.piAgentGRPC.ExecuteCommand(ctx, name, args); err != nil {
+					return ExecuteSessionCommandResponse{}, err
+				}
+				return ExecuteSessionCommandResponse{OK: true, Command: name, Message: "executed by runtime", SessionID: req.SessionID.String()}, nil
+			}
 			text := "/" + name
 			if args != "" {
 				text += " " + args

@@ -501,6 +501,26 @@ describe("api", () => {
     });
   });
 
+  it("executes a session command", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '{"ok":true,"command":"review","message":"executed by runtime"}',
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.executeSessionCommand("pi-session", { name: "review", args: "current diff" })).resolves.toEqual({
+      ok: true,
+      command: "review",
+      message: "executed by runtime",
+    });
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/pi-session/commands", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name: "review", args: "current diff" }),
+    }));
+  });
+
   it("posts attachment payloads for a session", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

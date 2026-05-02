@@ -57,6 +57,19 @@ function readPersistedDrafts(): Record<string, string> {
   }
 }
 
+function parseSlashCommand(text: string) {
+  const trimmed = text.trim();
+  const body = trimmed.startsWith("/") ? trimmed.slice(1) : trimmed;
+  const splitAt = body.search(/\s/);
+  if (splitAt === -1) {
+    return { name: body, args: "" };
+  }
+  return {
+    name: body.slice(0, splitAt),
+    args: body.slice(splitAt + 1).trim(),
+  };
+}
+
 function persistDrafts(draftBySessionId: Record<string, string>) {
   if (typeof window === "undefined") {
     return;
@@ -198,9 +211,11 @@ export function createComposerStore(): ComposerStore {
       emit();
 
       try {
-        const response = runtimeId
-          ? await api.sendMessage(sessionId, text, runtimeId)
-          : await api.sendMessage(sessionId, text);
+        const response = text.trimStart().startsWith("/")
+          ? await api.executeSessionCommand(sessionId, parseSlashCommand(text), runtimeId)
+          : runtimeId
+            ? await api.sendMessage(sessionId, text, runtimeId)
+            : await api.sendMessage(sessionId, text);
         const requestId = response && typeof response === "object" && typeof (response as { request_id?: unknown }).request_id === "string"
           ? String((response as { request_id?: unknown }).request_id)
           : "";

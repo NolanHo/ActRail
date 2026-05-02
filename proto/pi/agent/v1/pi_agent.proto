@@ -11,6 +11,8 @@ service PiAgent {
   rpc FollowUp(FollowUpRequest) returns (CommandAck);
   rpc Abort(AbortRequest) returns (CommandAck);
   rpc NewSession(NewSessionRequest) returns (SessionSwitchResult);
+  rpc ListCommands(ListCommandsRequest) returns (ListCommandsResponse);
+  rpc ExecuteCommand(ExecuteCommandRequest) returns (CommandAck);
   rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
   rpc ReadBlob(ReadBlobRequest) returns (ReadBlobResponse);
   rpc SubscribeEvents(SubscribeEventsRequest) returns (stream EventBatch);
@@ -57,6 +59,32 @@ message AbortRequest {}
 
 message NewSessionRequest {
   optional string parent_session = 1;
+}
+
+message ListCommandsRequest {}
+
+message ExecuteCommandRequest {
+  string name = 1;
+  string args = 2;
+}
+
+message ListCommandsResponse {
+  repeated SlashCommand commands = 1;
+}
+
+message SlashCommand {
+  string name = 1;
+  string description = 2;
+  string source = 3;
+  SourceInfo source_info = 4;
+}
+
+message SourceInfo {
+  string path = 1;
+  string source = 2;
+  string scope = 3;
+  string origin = 4;
+  string base_dir = 5;
 }
 
 message SubscribeEventsRequest {

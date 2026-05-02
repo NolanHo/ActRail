@@ -4,6 +4,7 @@ import { createComposerStore } from "./store";
 
 vi.mock("../../lib/api", () => ({
   api: {
+    executeSessionCommand: vi.fn(),
     sendMessage: vi.fn(),
   },
 }));
@@ -65,6 +66,17 @@ describe("createComposerStore", () => {
         ],
       },
     });
+  });
+
+  it("executes slash commands through the command endpoint", async () => {
+    vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true } as never);
+    const store = createComposerStore();
+    store.setDraft("s1", "/review current diff");
+
+    await store.submit("s1", "r1");
+
+    expect(api.executeSessionCommand).toHaveBeenCalledWith("s1", { name: "review", args: "current diff" }, "r1");
+    expect(api.sendMessage).not.toHaveBeenCalled();
   });
 
   it("restores sending=false on failure without clearing the session draft", async () => {
