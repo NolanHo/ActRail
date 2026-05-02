@@ -1,4 +1,4 @@
-name: CI/CD
+name: CI
 
 on:
   pull_request:
@@ -9,13 +9,16 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: actrail-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    name: Test
+    name: Test and typecheck
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -24,21 +27,30 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.1'
           cache: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.14.1'
           cache: npm
           cache-dependency-path: web/package-lock.json
+
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-${{ hashFiles('go.sum') }}-
+            ${{ runner.os }}-go-build-
 
       - name: Install web dependencies
         working-directory: web
         run: npm ci
 
-      - name: Go tests
+      - name: Go vet
         env:
           PI_HOME: ${{ runner.temp }}/pi-home
         run: |
@@ -46,38 +58,20 @@ jobs:
           sudo ln -sf "$(command -v go)" /usr/local/go/bin/go
           sudo ln -sf /bin/true /usr/local/bin/pi
           sudo ln -sf /bin/true /usr/local/bin/codex
-          go test -p 1 ./...
+          go vet ./...
 
-      - name: Web tests
+      - name: Go tests
+        env:
+          PI_HOME: ${{ runner.temp }}/pi-home
+        run: go test -p 1 ./...
+
+      - name: Web typecheck and tests
         working-directory: web
         run: npm test -- --run
 
-      - name: Build web
+      - name: Web build
         working-directory: web
         run: npm run build
 
-      - name: Build iod helper
+      - name: IOD helper build
         run: go build -o data/bin/actrail-iod ./cmd/actrail-iod
-
-  deploy:
-    name: Deploy
-    needs: test
-    runs-on: self-hosted
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    concurrency:
-      group: actrail-deploy-main
-      cancel-in-progress: false
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Deploy tmux runtime
-        run: |
-          scripts/tmux/stop.sh || true
-          scripts/tmux/start.sh
-
-      - name: Verify deployment
-        run: |
-          scripts/tmux/status.sh
-          curl -fsS http://127.0.0.1:8743/healthz
-          curl -fsSI http://127.0.0.1:18743
