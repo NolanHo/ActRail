@@ -3270,10 +3270,8 @@ select {
 }
 
 .composerCommandMenu {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: calc(100% + 8px);
+  position: relative;
+  margin: 8px 8px 0;
   z-index: 12;
   display: flex;
   flex-direction: column;
@@ -4356,11 +4354,6 @@ select {
     line-height: 20px;
     border-radius: 1.1rem;
     overflow-y: hidden;
-  }
-
-  .composerCommandMenu {
-    left: 0;
-    right: 0;
   }
 
   .sendButton {

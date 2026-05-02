@@ -47,6 +47,39 @@ function isSlashCommandDraft(draft: string) {
   return draft.trimStart().startsWith("/");
 }
 
+function commandMenuNode({
+  commandsLoading,
+  highlightedCommandIndex,
+  visibleCommands,
+  onApply,
+}: {
+  commandsLoading: boolean;
+  highlightedCommandIndex: number;
+  visibleCommands: SessionCommand[];
+  onApply: (command: SessionCommand) => void;
+}) {
+  return (
+    <div className="composerCommandMenu" data-testid="composer-command-menu">
+      {commandsLoading ? <div className="composerCommandHint">Loading Pi commands...</div> : null}
+      {!commandsLoading
+        ? visibleCommands.map((command, index) => (
+          <button
+            key={command.name}
+            type="button"
+            className={cn("composerCommandItem", index === highlightedCommandIndex && "is-active")}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onApply(command)}
+          >
+            <span className="composerCommandName">/{command.name}</span>
+            {command.description ? <span className="composerCommandDescription">{command.description}</span> : null}
+            {command.source ? <span className="composerCommandSource">{command.source}</span> : null}
+          </button>
+        ))
+        : null}
+    </div>
+  );
+}
+
 function formatSlashCommandValue(commandName: string) {
   const normalized = commandName.startsWith("/") ? commandName : `/${commandName}`;
 
@@ -578,6 +611,9 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
     composerStoreApi.setDraft(activeSessionId, formatSlashCommandValue(command.name));
     setHighlightedCommandIndex(0);
   };
+  const commandMenu = commandMenuVisible && !compactMobile
+    ? commandMenuNode({ commandsLoading, highlightedCommandIndex, visibleCommands, onApply: applySlashCommand })
+    : null;
 
   const clearAttachmentCount = (sessionId: string) => {
     setAttachedFilesBySessionId((value) => {
@@ -943,26 +979,6 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                 }}
                 disabled={sending || Boolean(activeWait)}
               />
-              {commandMenuVisible && !compactMobile ? (
-                <div className="composerCommandMenu" data-testid="composer-command-menu">
-                  {commandsLoading ? <div className="composerCommandHint">Loading Pi commands...</div> : null}
-                  {!commandsLoading
-                    ? visibleCommands.map((command, index) => (
-                      <button
-                        key={command.name}
-                        type="button"
-                        className={cn("composerCommandItem", index === highlightedCommandIndex && "is-active")}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => applySlashCommand(command)}
-                      >
-                        <span className="composerCommandName">/{command.name}</span>
-                        {command.description ? <span className="composerCommandDescription">{command.description}</span> : null}
-                        {command.source ? <span className="composerCommandSource">{command.source}</span> : null}
-                      </button>
-                    ))
-                    : null}
-                </div>
-              ) : null}
             </div>
             <div className={cn("composerControlsColumn", compactMobile && "compactMobile") }>
               <div className={cn("composerControlsRow", compactMobile && "compactMobile")}>
@@ -1005,6 +1021,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
               </div>
             </div>
           </form>
+          {commandMenu}
           {commandMenuVisible && compactMobile ? (
             <div className="composerCommandSheetBackdrop" data-testid="composer-command-menu" onMouseDown={() => setSlashMenuDismissed(true)}>
               <div className="composerCommandSheet" role="dialog" aria-label="Slash commands" onMouseDown={(event) => event.stopPropagation()}>
