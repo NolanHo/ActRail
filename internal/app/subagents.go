@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/domain/session"
 )
 
@@ -168,9 +169,15 @@ type SubagentEventsResponse struct {
 	Events []SubagentEvent `json:"events"`
 }
 
+type subagentStore interface {
+	ReplaceSubagentSnapshot(context.Context, sqlitestore.SubagentSnapshotRow) error
+	ListSubagentSnapshots(context.Context) ([]sqlitestore.SubagentSnapshotRow, error)
+}
+
 type subagentRegistry struct {
 	mu           sync.Mutex
 	now          func() time.Time
+	store        subagentStore
 	nextActor    int64
 	nextTurn     int64
 	nextEvent    int64
@@ -193,6 +200,8 @@ type subagentActor struct {
 	LastEventTS     time.Time
 	Model           string
 	CWD             string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	Messages        []SubagentThreadMsg
 	Events          []SubagentEvent
 }
@@ -208,11 +217,15 @@ type subagentQuestionState struct {
 	done   bool
 }
 
-func newSubagentRegistry(now func() time.Time) *subagentRegistry {
+func newSubagentRegistry(now func() time.Time, stores ...subagentStore) *subagentRegistry {
 	if now == nil {
 		now = time.Now
 	}
-	return &subagentRegistry{now: now, actors: map[string]*subagentActor{}}
+	var store subagentStore
+	if len(stores) > 0 {
+		store = stores[0]
+	}
+	return &subagentRegistry{now: now, store: store, actors: map[string]*subagentActor{}}
 }
 
 func (s *Stub) ListSubagents(_ context.Context, req ListSubagentsRequest) (ListSubagentsResponse, error) {
@@ -430,10 +443,15 @@ func (r *subagentRegistry) spawn(parentSession session.SessionID, parentActorID,
 	r.nextActor++
 	actorID := fmt.Sprintf("actor_%d", r.nextActor)
 	now := r.now()
-	actor := &subagentActor{ActorID: actorID, ChildSessionID: session.SessionID(childSessionID), ParentActorID: strings.TrimSpace(parentActorID), ParentSessionID: parentSession, Name: name, Role: strings.TrimSpace(role), Status: SubagentStatusIdle, Model: model, CWD: cwd, LastEventTS: now}
+	actor := &subagentActor{ActorID: actorID, ChildSessionID: session.SessionID(childSessionID), ParentActorID: strings.TrimSpace(parentActorID), ParentSessionID: parentSession, Name: name, Role: strings.TrimSpace(role), Status: SubagentStatusIdle, Model: model, CWD: cwd, LastEventTS: now, CreatedAt: now, UpdatedAt: now}
 	r.actors[actorID] = actor
 	r.order = append(r.order, actorID)
 	r.appendEventLocked(actor, "subagent.started", "", "", "", actor.Status)
+	if err := r.persistActorLocked(actor); err != nil {
+		delete(r.actors, actorID)
+		r.order = r.order[:len(r.order)-1]
+		return nil, err
+	}
 	node := r.nodeLocked(actor)
 	return &node, nil
 }
@@ -456,6 +474,9 @@ func (r *subagentRegistry) beginSend(actorID, text string, newTurn bool) (*subag
 	actor.Status = SubagentStatusRunning
 	actor.Messages = append(actor.Messages, SubagentThreadMsg{MessageID: actor.LastEventID + ":prompt", Kind: "leader", Label: "parent", Body: text, TS: subagentTimestamp(r.now())})
 	r.appendEventLocked(actor, "subagent.prompt", actor.TurnID, "", text, actor.Status)
+	if err := r.persistActorLocked(actor); err != nil {
+		return nil, "", err
+	}
 	return cloneSubagentActor(actor), actor.TurnID, nil
 }
 
@@ -483,6 +504,9 @@ func (r *subagentRegistry) askParent(actorID, turnID, question, contextText stri
 	actor.Status = SubagentStatusWaitingForParent
 	actor.Messages = append(actor.Messages, SubagentThreadMsg{MessageID: questionID, Kind: "member", Label: actor.Name, Body: cleaned, TS: q.CreatedTS, Meta: "ask_parent"})
 	r.appendEventLocked(actor, "subagent.question", turnID, questionID, cleaned, actor.Status)
+	if err := r.persistActorLocked(actor); err != nil {
+		return "", err
+	}
 	return questionID, nil
 }
 
@@ -526,6 +550,9 @@ func (r *subagentRegistry) answer(actorID, questionID, answer string) (*Subagent
 	actor.Status = SubagentStatusRunning
 	actor.Messages = append(actor.Messages, SubagentThreadMsg{MessageID: questionID + ":answer", Kind: "leader", Label: "parent", Body: cleaned, TS: subagentTimestamp(r.now()), Meta: "answer"})
 	r.appendEventLocked(actor, "subagent.answer_accepted", actor.TurnID, questionID, cleaned, actor.Status)
+	if err := r.persistActorLocked(actor); err != nil {
+		return nil, err
+	}
 	node := r.nodeLocked(actor)
 	return &node, nil
 }
@@ -546,6 +573,9 @@ func (r *subagentRegistry) abort(actorID, turnID string) (*SubagentNode, error) 
 		actor.Question.answer <- subagentParentAnswer{terminal: "aborted"}
 	}
 	r.appendEventLocked(actor, "subagent.aborted", actor.TurnID, "", "", actor.Status)
+	if err := r.persistActorLocked(actor); err != nil {
+		return nil, err
+	}
 	node := r.nodeLocked(actor)
 	return &node, nil
 }
@@ -563,6 +593,9 @@ func (r *subagentRegistry) close(actorID string) (*SubagentNode, error) {
 		actor.Question.answer <- subagentParentAnswer{terminal: "closed"}
 	}
 	r.appendEventLocked(actor, "subagent.closed", actor.TurnID, "", "", actor.Status)
+	if err := r.persistActorLocked(actor); err != nil {
+		return nil, err
+	}
 	node := r.nodeLocked(actor)
 	return &node, nil
 }
@@ -580,6 +613,7 @@ func (r *subagentRegistry) markFailed(actorID, message string) {
 		actor.Question.answer <- subagentParentAnswer{terminal: "failed"}
 	}
 	r.appendEventLocked(actor, "subagent.error", actor.TurnID, "", message, actor.Status)
+	_ = r.persistActorLocked(actor)
 }
 
 func (r *subagentRegistry) snapshot(includeClosed bool) []SubagentNode {
@@ -676,7 +710,46 @@ func (r *subagentRegistry) appendEventLocked(actor *subagentActor, typ, turnID, 
 	event := SubagentEvent{EventID: fmt.Sprintf("event_%d", r.nextEvent), Type: typ, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID.String(), ParentActorID: actor.ParentActorID, ParentSessionID: actor.ParentSessionID.String(), TurnID: turnID, QuestionID: questionID, Message: message, Status: status, TS: subagentTimestamp(now)}
 	actor.LastEventID = event.EventID
 	actor.LastEventTS = now
+	actor.UpdatedAt = now
 	actor.Events = append(actor.Events, event)
+}
+
+func (r *subagentRegistry) persistActorLocked(actor *subagentActor) error {
+	if r.store == nil {
+		return nil
+	}
+	return r.store.ReplaceSubagentSnapshot(context.Background(), durableSubagentSnapshotFromActor(actor))
+}
+
+func (r *subagentRegistry) rehydrate(snapshots []sqlitestore.SubagentSnapshotRow) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.actors = map[string]*subagentActor{}
+	r.order = []string{}
+	r.nextActor = 0
+	r.nextTurn = 0
+	r.nextEvent = 0
+	r.nextQuestion = 0
+	for _, snapshot := range snapshots {
+		actor := subagentActorFromDurableSnapshot(snapshot)
+		r.actors[actor.ActorID] = actor
+		r.order = append(r.order, actor.ActorID)
+		r.observeActorCountersLocked(actor)
+	}
+	return nil
+}
+
+func (r *subagentRegistry) observeActorCountersLocked(actor *subagentActor) {
+	r.nextActor = maxInt64(r.nextActor, parseCounterSuffix(actor.ActorID, "actor_"))
+	r.nextTurn = maxInt64(r.nextTurn, parseCounterSuffix(actor.TurnID, "turn_"))
+	if actor.Question != nil {
+		r.nextQuestion = maxInt64(r.nextQuestion, parseCounterSuffix(actor.Question.QuestionID, "question_"))
+	}
+	for _, event := range actor.Events {
+		r.nextEvent = maxInt64(r.nextEvent, parseCounterSuffix(event.EventID, "event_"))
+		r.nextTurn = maxInt64(r.nextTurn, parseCounterSuffix(event.TurnID, "turn_"))
+		r.nextQuestion = maxInt64(r.nextQuestion, parseCounterSuffix(event.QuestionID, "question_"))
+	}
 }
 
 func (r *subagentRegistry) nodeLocked(actor *subagentActor) SubagentNode {
@@ -693,6 +766,73 @@ func cloneSubagentActor(actor *subagentActor) *subagentActor {
 	cloned.Messages = append([]SubagentThreadMsg(nil), actor.Messages...)
 	cloned.Events = append([]SubagentEvent(nil), actor.Events...)
 	return &cloned
+}
+
+func durableSubagentSnapshotFromActor(actor *subagentActor) sqlitestore.SubagentSnapshotRow {
+	var lastEventAt *time.Time
+	if !actor.LastEventTS.IsZero() {
+		lastEventAt = copyTimePtr(&actor.LastEventTS)
+	}
+	row := sqlitestore.SubagentActorRow{ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID.String(), ParentActorID: actor.ParentActorID, ParentSessionID: actor.ParentSessionID.String(), Name: actor.Name, Role: actor.Role, Status: string(actor.Status), TurnID: actor.TurnID, LastEventID: actor.LastEventID, LastEventAt: lastEventAt, Model: actor.Model, CWD: actor.CWD, CreatedAt: actor.CreatedAt, UpdatedAt: actor.UpdatedAt}
+	if row.CreatedAt.IsZero() {
+		row.CreatedAt = actor.LastEventTS
+	}
+	if row.UpdatedAt.IsZero() {
+		row.UpdatedAt = actor.LastEventTS
+	}
+	if actor.Question != nil {
+		row.QuestionID = actor.Question.QuestionID
+		row.QuestionTurnID = actor.Question.TurnID
+		row.Question = actor.Question.Question
+		row.QuestionContext = actor.Question.Context
+		row.QuestionCreatedTS = actor.Question.CreatedTS
+		row.QuestionDone = actor.Question.done
+	}
+	events := make([]sqlitestore.SubagentEventRow, 0, len(actor.Events))
+	for i, event := range actor.Events {
+		events = append(events, sqlitestore.SubagentEventRow{ActorID: event.ActorID, Ordinal: i + 1, EventID: event.EventID, Type: event.Type, ChildSessionID: event.ChildSessionID, ParentActorID: event.ParentActorID, ParentSessionID: event.ParentSessionID, TurnID: event.TurnID, QuestionID: event.QuestionID, Message: event.Message, Status: string(event.Status), TS: event.TS})
+	}
+	messages := make([]sqlitestore.SubagentMessageRow, 0, len(actor.Messages))
+	for i, msg := range actor.Messages {
+		messages = append(messages, sqlitestore.SubagentMessageRow{ActorID: actor.ActorID, Ordinal: i + 1, MessageID: msg.MessageID, Kind: msg.Kind, Label: msg.Label, Body: msg.Body, TS: msg.TS, Meta: msg.Meta})
+	}
+	return sqlitestore.SubagentSnapshotRow{Actor: row, Events: events, Messages: messages}
+}
+
+func subagentActorFromDurableSnapshot(snapshot sqlitestore.SubagentSnapshotRow) *subagentActor {
+	row := snapshot.Actor
+	actor := &subagentActor{ActorID: row.ActorID, ChildSessionID: session.SessionID(row.ChildSessionID), ParentActorID: row.ParentActorID, ParentSessionID: session.SessionID(row.ParentSessionID), Name: row.Name, Role: row.Role, Status: SubagentStatus(row.Status), TurnID: row.TurnID, LastEventID: row.LastEventID, Model: row.Model, CWD: row.CWD, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	if row.LastEventAt != nil {
+		actor.LastEventTS = *row.LastEventAt
+	}
+	if row.QuestionID != "" && !row.QuestionDone {
+		actor.Question = &subagentQuestionState{SubagentQuestion: SubagentQuestion{QuestionID: row.QuestionID, TurnID: row.QuestionTurnID, Question: row.Question, Context: row.QuestionContext, CreatedTS: row.QuestionCreatedTS}, answer: make(chan subagentParentAnswer, 1), done: false}
+	}
+	actor.Events = make([]SubagentEvent, 0, len(snapshot.Events))
+	for _, event := range snapshot.Events {
+		actor.Events = append(actor.Events, SubagentEvent{EventID: event.EventID, Type: event.Type, ActorID: event.ActorID, ChildSessionID: event.ChildSessionID, ParentActorID: event.ParentActorID, ParentSessionID: event.ParentSessionID, TurnID: event.TurnID, QuestionID: event.QuestionID, Message: event.Message, Status: SubagentStatus(event.Status), TS: event.TS})
+	}
+	actor.Messages = make([]SubagentThreadMsg, 0, len(snapshot.Messages))
+	for _, msg := range snapshot.Messages {
+		actor.Messages = append(actor.Messages, SubagentThreadMsg{MessageID: msg.MessageID, Kind: msg.Kind, Label: msg.Label, Body: msg.Body, TS: msg.TS, Meta: msg.Meta})
+	}
+	return actor
+}
+
+func parseCounterSuffix(raw, prefix string) int64 {
+	if !strings.HasPrefix(raw, prefix) {
+		return 0
+	}
+	var n int64
+	_, _ = fmt.Sscanf(strings.TrimPrefix(raw, prefix), "%d", &n)
+	return n
+}
+
+func maxInt64(a, b int64) int64 {
+	if b > a {
+		return b
+	}
+	return a
 }
 
 func countSubagentNodes(nodes []SubagentNode) int {

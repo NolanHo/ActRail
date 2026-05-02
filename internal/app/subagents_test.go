@@ -38,6 +38,54 @@ func TestPersistentStubListSubagentsEmpty(t *testing.T) {
 	}
 }
 
+func TestPersistentStubRehydratesSubagentActorsAndEvents(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	created, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	cwd := t.TempDir()
+	parent, err := created.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	spawned, err := created.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", Role: "review", AgentBackend: "pi", CWD: cwd})
+	if err != nil {
+		t.Fatalf("SpawnSubagent() error = %v", err)
+	}
+	if _, err := created.PromptSubagent(context.Background(), PromptSubagentRequest{ActorID: spawned.ActorID, Prompt: "Inspect this"}); err != nil {
+		t.Fatalf("PromptSubagent() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
+	}
+	listed, err := rehydrated.ListSubagents(context.Background(), ListSubagentsRequest{IncludeClosed: true})
+	if err != nil {
+		t.Fatalf("ListSubagents() error = %v", err)
+	}
+	if listed.TotalCount != 1 || len(listed.Roots) != 1 {
+		t.Fatalf("ListSubagents() = %+v, want one actor", listed)
+	}
+	actor := listed.Roots[0]
+	if actor.ActorID != spawned.ActorID || actor.ChildSessionID != spawned.ChildSessionID || actor.Status != SubagentStatusRunning || len(actor.Messages) != 1 {
+		t.Fatalf("rehydrated actor = %+v, want persisted prompt actor", actor)
+	}
+	events, err := rehydrated.SubagentEvents(context.Background(), SubagentEventsRequest{ActorID: spawned.ActorID})
+	if err != nil {
+		t.Fatalf("SubagentEvents() error = %v", err)
+	}
+	if len(events.Events) != 3 || events.Events[0].Type != "subagent.started" || events.Events[2].Type != "subagent.prompt" {
+		t.Fatalf("events = %+v, want started, turn_started, prompt", events.Events)
+	}
+	again, err := rehydrated.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", AgentBackend: "pi", CWD: cwd})
+	if err == nil || again.OK {
+		t.Fatalf("SpawnSubagent duplicate = %+v, %v, want conflict", again, err)
+	}
+}
+
 func TestSpawnSubagentCreatesChildSessionAndActor(t *testing.T) {
 	s := newStub(config.Load(), time.Now)
 	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/repo"})
