@@ -1,99 +1,96 @@
 import { Button } from "@/components/ui/button";
 import { SessionsPane } from "../../components/sessions/SessionsPane";
 import { SubagentsRail } from "../../components/subagents/SubagentsView";
-import { BellIcon, VolumeIcon } from "./icons";
 
 export type DesktopGlobalView = "sessions" | "subagents";
+
+interface GlobalNavRailProps {
+  activeView: DesktopGlobalView;
+  onBrandClick(): void;
+  onViewChange(view: DesktopGlobalView): void;
+}
+
+function GlobalSessionsIcon() {
+  return (
+    <svg className="globalNavIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5" y="4" width="14" height="5" rx="1.8" />
+      <rect x="5" y="10" width="14" height="5" rx="1.8" />
+      <rect x="5" y="16" width="14" height="4" rx="1.8" />
+    </svg>
+  );
+}
+
+function GlobalSubagentsIcon() {
+  return (
+    <svg className="globalNavIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="6" r="2.3" />
+      <circle cx="7" cy="16" r="2.3" />
+      <circle cx="17" cy="16" r="2.3" />
+      <path d="M11 8.1 8.1 13.9" />
+      <path d="M13 8.1 15.9 13.9" />
+      <path d="M9.4 16h5.2" />
+    </svg>
+  );
+}
+
+export function GlobalNavRail({
+  activeView,
+  onBrandClick,
+  onViewChange,
+}: GlobalNavRailProps) {
+  return (
+    <nav className="globalNavRail" aria-label="Global views">
+      <Button type="button" variant="ghost" className="globalNavBrand" aria-label="ActRail home" onClick={onBrandClick}>AR</Button>
+      <div className="globalNavPrimary">
+        <Button
+          type="button"
+          variant={activeView === "sessions" ? "default" : "outline"}
+          className="globalNavButton"
+          aria-label="Sessions view"
+          title="Sessions"
+          onClick={() => onViewChange("sessions")}
+        >
+          <GlobalSessionsIcon />
+        </Button>
+        <Button
+          type="button"
+          variant={activeView === "subagents" ? "default" : "outline"}
+          className="globalNavButton"
+          aria-label="Subagents view"
+          title="Subagents"
+          onClick={() => onViewChange("subagents")}
+        >
+          <GlobalSubagentsIcon />
+        </Button>
+      </div>
+    </nav>
+  );
+}
 
 interface AppShellSidebarProps {
   activeView: DesktopGlobalView;
   activeSubagentId: string;
-  announcementEnabled: boolean;
-  announcementLabel: string;
-  notificationLabel: string;
-  notificationsEnabled: boolean;
-  onBrandClick(): void;
   onNewSession(): void;
   onOpenSettings(): void;
   onLogout(): void;
-  onToggleAnnouncements(): void;
-  onToggleNotifications(): void;
   onSubagentSelect(actorId: string): void;
-  onViewChange(view: DesktopGlobalView): void;
 }
 
 export function AppShellSidebar({
   activeView,
   activeSubagentId,
-  announcementEnabled,
-  announcementLabel,
-  notificationLabel,
-  notificationsEnabled,
-  onBrandClick,
   onNewSession,
   onOpenSettings,
   onLogout,
-  onToggleAnnouncements,
-  onToggleNotifications,
   onSubagentSelect,
-  onViewChange,
 }: AppShellSidebarProps) {
   return (
     <>
-      <header className="sidebarBanner">
-        <div className="sidebarBannerActions">
-          <Button type="button" variant="ghost" className="brandMark" onClick={onBrandClick}>ActRail</Button>
-          <div className="sidebarActionButtons">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className={`iconAction legacyToggleAction${notificationsEnabled ? " isActive" : ""}`}
-              aria-label={notificationLabel}
-              title={notificationLabel}
-              onClick={onToggleNotifications}
-            >
-              <BellIcon />
-              <span className="visuallyHidden">{notificationLabel}</span>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className={`iconAction legacyToggleAction${announcementEnabled ? " isActive" : ""}`}
-              aria-label={announcementLabel}
-              title={announcementLabel}
-              onClick={onToggleAnnouncements}
-            >
-              <VolumeIcon />
-              <span className="visuallyHidden">{announcementLabel}</span>
-            </Button>
-          </div>
-        </div>
-      </header>
-      <nav className="globalViewSwitch" aria-label="Global view">
-        <Button
-          type="button"
-          variant={activeView === "sessions" ? "default" : "outline"}
-          className="globalViewSwitchButton"
-          onClick={() => onViewChange("sessions")}
-        >
-          Sessions
-        </Button>
-        <Button
-          type="button"
-          variant={activeView === "subagents" ? "default" : "outline"}
-          className="globalViewSwitchButton"
-          onClick={() => onViewChange("subagents")}
-        >
-          Subagents
-        </Button>
-      </nav>
       {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : <SubagentsRail selectedActorId={activeSubagentId} onSelect={onSubagentSelect} />}
       <footer className="sidebarFooter">
         <Button type="button" variant="outline" className="footerAction"><span className="buttonGlyph">?</span><span>Help</span></Button>
-        <Button type="button" variant="outline" className="footerAction" onClick={onOpenSettings}><span className="buttonGlyph">⚙</span><span>Settings</span></Button>
-        <Button type="button" variant="outline" className="footerAction" onClick={onLogout}><span className="buttonGlyph">→|</span><span>Log out</span></Button>
+        <Button type="button" variant="outline" className="footerAction" onClick={onOpenSettings}><span className="buttonGlyph">ST</span><span>Settings</span></Button>
+        <Button type="button" variant="outline" className="footerAction" onClick={onLogout}><span className="buttonGlyph">LO</span><span>Log out</span></Button>
       </footer>
     </>
   );

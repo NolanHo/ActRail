@@ -101,6 +101,10 @@ select {
   overflow: hidden;
 }
 
+.appShell.editorialShell.withGlobalNav {
+  grid-template-columns: 4.5rem minmax(16rem, var(--sidebar-w)) minmax(0, 1fr);
+}
+
 .mobileSheetTrigger,
 .mobileToolsTrigger {
   display: none;
@@ -138,15 +142,58 @@ select {
   gap: 0.65rem;
 }
 
-.globalViewSwitch {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem;
-  padding: 0 0.85rem 0.8rem;
+.globalNavRail {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--chrome-border);
+  border-radius: 28px;
+  background: var(--chrome-surface);
+  box-shadow: var(--shadow);
+  padding: 0.8rem 0.55rem;
 }
 
-.globalViewSwitchButton {
-  min-height: 2.25rem;
+.globalNavBrand {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 1rem;
+  padding: 0;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.globalNavPrimary {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.globalNavButton {
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  border-radius: 1rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.globalNavIcon {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.desktopHiddenLegacyActions {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
 }
 
 .brandMark {
@@ -411,7 +458,7 @@ select {
   box-shadow: 0 28px 64px rgba(15, 23, 42, 0.08);
 }
 
-.subagentsInspector {
+.subagentsThreadView {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -788,9 +835,9 @@ select {
 .subagentsSearch {
   width: 100%;
   min-height: 2.45rem;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 72%, white);
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 72%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, white 94%, var(--panel));
+  background: color-mix(in srgb, var(--panel) 94%, var(--chrome-elevated));
   padding: 0 0.85rem;
   color: var(--text);
   font: inherit;
@@ -806,53 +853,58 @@ select {
   flex: 1 1 auto;
 }
 
-.subagentsGroup {
+.mainAgentList {
   display: flex;
   flex-direction: column;
-  gap: 0.42rem;
-  padding: 0.32rem;
-  border: 1px solid color-mix(in srgb, var(--border) 48%, transparent);
-  border-radius: 0.9rem;
-  background: color-mix(in srgb, var(--card) 92%, white 8%);
-  margin-bottom: 0.5rem;
-}
-
-.subagentsGroupHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.1rem 0.18rem 0;
-  color: var(--legacy-muted);
-  font-size: 0.78rem;
-  font-weight: 700;
 }
 
-.subagentsGroupList {
-  display: flex;
-  flex-direction: column;
-  gap: 0.36rem;
-}
-
-.subagentCard {
+.mainAgentSelectCard {
   width: 100%;
   display: flex;
   flex-direction: column;
   gap: 0.34rem;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 64%, white);
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 64%, transparent);
   border-radius: 1rem;
-  background: color-mix(in srgb, white 94%, var(--panel));
+  background: color-mix(in srgb, var(--panel) 94%, var(--chrome-elevated));
   color: var(--text);
   padding: 0.72rem 0.78rem;
   text-align: left;
   cursor: pointer;
 }
 
-.subagentCard:hover,
-.subagentCard:focus-visible,
-.subagentCard.active {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--legacy-border));
-  background: color-mix(in srgb, var(--accent) 8%, white);
+.mainAgentSelectCard:hover,
+.mainAgentSelectCard:focus-visible,
+.mainAgentSelectCard.active {
+  border-color: color-mix(in srgb, var(--legacy-accent) 45%, var(--legacy-border));
+  background: color-mix(in srgb, var(--legacy-accent) 10%, var(--panel));
+}
+
+.mainAgentCardTopline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.mainAgentCardMeta,
+.mainAgentCardBadges {
+  color: var(--legacy-muted);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.mainAgentCardBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.mainAgentCardBadges span {
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 58%, transparent);
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+  background: color-mix(in srgb, var(--panel) 90%, var(--chrome-elevated));
 }
 
 .subagentCardTopline {
@@ -870,14 +922,14 @@ select {
 }
 
 .subagentCardQuestion {
-  color: #92400e;
+  color: color-mix(in srgb, #d97706 76%, var(--text));
 }
 
 .subagentStatusPill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 70%, white);
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 70%, transparent);
   border-radius: 999px;
   padding: 0.18rem 0.5rem;
   font-size: 0.68rem;
@@ -885,19 +937,19 @@ select {
   line-height: 1;
   white-space: nowrap;
   color: var(--legacy-muted);
-  background: color-mix(in srgb, white 92%, var(--panel));
+  background: color-mix(in srgb, var(--panel) 92%, var(--chrome-elevated));
 }
 
 .subagentStatusPill.waiting_for_parent {
   border-color: color-mix(in srgb, #d97706 34%, var(--legacy-border));
-  color: #92400e;
-  background: rgba(217, 119, 6, 0.12);
+  color: color-mix(in srgb, #d97706 76%, var(--text));
+  background: color-mix(in srgb, #d97706 12%, var(--panel));
 }
 
 .subagentStatusPill.running {
   border-color: color-mix(in srgb, #2563eb 34%, var(--legacy-border));
-  color: #1d4ed8;
-  background: rgba(37, 99, 235, 0.10);
+  color: color-mix(in srgb, #60a5fa 76%, var(--text));
+  background: color-mix(in srgb, #2563eb 12%, var(--panel));
 }
 
 .subagentStatusPill.failed {
@@ -909,137 +961,142 @@ select {
 .subagentStatusPill.idle,
 .subagentStatusPill.completed {
   border-color: color-mix(in srgb, #22c55e 34%, var(--legacy-border));
-  color: #15803d;
-  background: rgba(34, 197, 94, 0.10);
+  color: color-mix(in srgb, #22c55e 70%, var(--text));
+  background: color-mix(in srgb, #22c55e 10%, var(--panel));
 }
 
-.subagentsInspectorHeader {
+.subagentsThreadHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
   padding: 1.25rem 1.35rem 1rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 70%, white);
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 70%, transparent);
 }
 
-.subagentsInspectorHeader h1,
-.subagentsPanel h2 {
+.subagentsThreadTitleBlock {
+  min-width: 0;
+}
+
+.subagentsThreadTitleBlock h1 {
   margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.08;
 }
 
-.subagentsInspectorSummary {
+.subagentsThreadTitleBlock p:last-child {
+  margin: 0.25rem 0 0;
+  color: var(--legacy-muted);
+}
+
+.subagentsThreadHeaderMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 0 0 auto;
+}
+
+.subagentsTeamStrip {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.45rem;
-  color: var(--legacy-muted);
-  font-size: 0.82rem;
-}
-
-.subagentsInspectorSummary span {
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 70%, white);
-  border-radius: 999px;
-  padding: 0.28rem 0.62rem;
-  background: color-mix(in srgb, white 92%, var(--panel));
-}
-
-.subagentsInspectorGrid {
-  min-height: 0;
-  overflow: auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
-  gap: 0.9rem;
-  padding: 1rem;
-}
-
-.subagentsPanel {
-  min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 68%, white);
-  border-radius: 1.2rem;
-  background: color-mix(in srgb, white 95%, var(--panel));
-  padding: 1rem;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.05);
-}
-
-.subagentsSelectedPanel,
-.subagentsTimelinePanel {
-  grid-column: span 2;
-}
-
-.subagentsPanelHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.8rem;
-  margin-bottom: 0.8rem;
-}
-
-.subagentsIdentityList {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.65rem;
-  margin: 0;
+  padding: 0.9rem 1.2rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 70%, transparent);
 }
 
-.subagentsIdentityList div {
-  min-width: 0;
+.subagentTeamChip {
+  min-width: min(15rem, 100%);
+  max-width: 22rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 64%, transparent);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--panel) 94%, var(--chrome-elevated));
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
 }
 
-.subagentsIdentityList dt {
+.subagentTeamChip span,
+.subagentTeamChip small {
   color: var(--legacy-muted);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: 0.78rem;
 }
 
-.subagentsIdentityList dd {
-  margin: 0.15rem 0 0;
-  overflow-wrap: anywhere;
+.subagentsThreadScroll {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.subagentsThreadMessages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1.2rem;
+}
+
+.subagentsThreadMessage {
+  align-self: flex-start;
+  max-width: min(72%, 58rem);
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 66%, transparent);
+  border-radius: 1.2rem 1.2rem 1.2rem 0.35rem;
+  padding: 0.85rem 0.95rem;
+  background: color-mix(in srgb, var(--panel) 95%, var(--chrome-elevated));
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.05);
+}
+
+.subagentsThreadMessage.leader {
+  background: color-mix(in srgb, #2563eb 13%, var(--panel));
+}
+
+.subagentsThreadMessage.member {
+  background: color-mix(in srgb, #22c55e 12%, var(--panel));
+}
+
+.subagentsThreadMessage.system {
+  max-width: min(58%, 42rem);
+  padding: 0.48rem 0.7rem;
+  border-radius: 0.85rem 0.85rem 0.85rem 0.35rem;
+  background: color-mix(in srgb, var(--muted) 62%, var(--panel));
+  color: var(--legacy-muted);
+  box-shadow: none;
+}
+
+.subagentsThreadMessage p {
+  margin: 0.35rem 0 0;
+  line-height: 1.48;
+}
+
+.subagentsThreadMessage small {
+  display: block;
+  margin-top: 0.42rem;
+  color: var(--legacy-muted);
   font-family: var(--font-code);
-  font-size: 0.84rem;
+  font-size: 0.74rem;
 }
 
-.subagentsOutputPreview,
-.subagentsQuestionContext,
-.subagentsReadOnlyNote {
-  margin: 0;
-  color: var(--legacy-muted);
-  line-height: 1.5;
-}
-
-.subagentsQuestionText {
-  margin: 0 0 0.55rem;
-  font-size: 1.04rem;
-  font-weight: 700;
-  line-height: 1.35;
-}
-
-.subagentsReadOnlyNote {
-  margin-top: 0.75rem;
-  color: #92400e;
-}
-
-.subagentsTimeline {
-  display: grid;
-  gap: 0.55rem;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.subagentsTimeline li {
+.subagentsMessageMeta {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.8rem;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 62%, white);
-  border-radius: 0.85rem;
-  padding: 0.65rem 0.72rem;
-  background: color-mix(in srgb, white 94%, var(--panel));
+  color: var(--legacy-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
 }
 
-.subagentsTimeline small {
+.subagentsThreadFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.1rem;
   color: var(--legacy-muted);
+  font-size: 0.8rem;
+}
+
+.subagentsThreadFooter span:last-child {
+  font-family: var(--font-code);
 }
 
 .sessionsSurfaceHeader {

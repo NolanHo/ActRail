@@ -5,10 +5,10 @@ import { ConversationPane } from "../components/conversation/ConversationPane";
 import { ConversationStateTray } from "../components/conversation/ConversationStateTray";
 import { Composer } from "../components/composer/Composer";
 import type { FileViewMode } from "../components/workspace/FileViewerDialog";
-import { AppShellSidebar, type DesktopGlobalView } from "./app-shell/AppShellSidebar";
+import { AppShellSidebar, GlobalNavRail, type DesktopGlobalView } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
-import { mockSubagents, SubagentsInspector } from "../components/subagents/SubagentsView";
+import { mockSubagents, SubagentsThreadView } from "../components/subagents/SubagentsView";
 import { MobileShell } from "./app-shell/MobileShell";
 import { VoiceSettingsDialog } from "./app-shell/VoiceSettingsDialog";
 import { useAppShellAudio } from "./app-shell/useAppShellAudio";
@@ -429,7 +429,7 @@ export function AppShell() {
     setWorkspaceInitialTab("insight");
   }, [activeSessionId]);
 
-  const shellClassName = useMemo(() => ["appShell", "editorialShell"].join(" "), []);
+  const shellClassName = useMemo(() => ["appShell", "editorialShell", "withGlobalNav"].join(" "), []);
 
   const renderWorkspaceDetails = () => (
     sessionUiMatchesActiveSession || activeWait ? (
@@ -528,36 +528,23 @@ export function AppShell() {
     }
   };
 
+  const handleBrandClick = () => {
+    setSidebarOpen(false);
+    if (announcementEnabled) {
+      void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
+    }
+  };
+
   const renderSessionsRail = () => (
     <AppShellSidebar
       activeView={desktopGlobalView}
       activeSubagentId={selectedSubagentId}
-      announcementEnabled={announcementEnabled}
-      announcementLabel={announcementLabel}
-      notificationLabel={notificationLabel}
-      notificationsEnabled={notificationsEnabled}
-      onBrandClick={() => {
-        setSidebarOpen(false);
-        if (announcementEnabled) {
-          void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
-        }
-      }}
       onNewSession={() => setNewSessionOpen(true)}
       onOpenSettings={() => openVoiceSettings()}
       onLogout={() => {
         void logout();
       }}
-      onToggleAnnouncements={() => {
-        void toggleAnnouncements();
-        if (!announcementEnabled) {
-          void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
-        }
-      }}
-      onToggleNotifications={() => {
-        void toggleNotifications();
-      }}
       onSubagentSelect={setSelectedSubagentId}
-      onViewChange={setDesktopGlobalView}
     />
   );
 
@@ -596,6 +583,20 @@ export function AppShell() {
           />
         ) : (
           <>
+            <GlobalNavRail
+              activeView={desktopGlobalView}
+              onBrandClick={handleBrandClick}
+              onViewChange={setDesktopGlobalView}
+            />
+            <div className="desktopHiddenLegacyActions" aria-hidden="false">
+              <button type="button" aria-label={notificationLabel} title={notificationLabel} onClick={() => { void toggleNotifications(); }} />
+              <button type="button" aria-label={announcementLabel} title={announcementLabel} onClick={() => {
+                void toggleAnnouncements();
+                if (!announcementEnabled) {
+                  void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
+                }
+              }} />
+            </div>
             <aside className="sidebarColumn desktopSessionsRail">{renderSessionsRail()}</aside>
             {desktopGlobalView === "sessions" ? (
               <section className="conversationColumn">
@@ -630,7 +631,7 @@ export function AppShell() {
                 <Composer />
               </section>
             ) : (
-              <SubagentsInspector selectedActorId={selectedSubagentId} />
+              <SubagentsThreadView selectedActorId={selectedSubagentId} />
             )}
           </>
         )}

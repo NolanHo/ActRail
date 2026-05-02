@@ -442,6 +442,8 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Help");
     expect(getRoot().textContent).toContain("Settings");
     expect(getRoot().textContent).toContain("Log out");
+    expect(findButtonByAriaLabel("Sessions view")).not.toBeNull();
+    expect(findButtonByAriaLabel("Subagents view")).not.toBeNull();
     expect(getRoot().textContent).toContain("No session selected");
     expect(getRoot().querySelector(".mobileSheetTrigger")).toBeNull();
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
@@ -450,14 +452,7 @@ describe("AppShell", () => {
     expect(findButtonByAriaLabel("Workspace")).not.toBeNull();
     expect(findButtonByAriaLabel("Supervisor")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt (Esc)")).not.toBeNull();
-    const notificationsButton = getRoot().querySelector<HTMLButtonElement>('[aria-label="Notifications off"]');
-    const announcementsButton = getRoot().querySelector<HTMLButtonElement>('[aria-label="Announcements off"]');
-    expect(notificationsButton).not.toBeNull();
-    expect(announcementsButton).not.toBeNull();
-    expect(notificationsButton?.title).toBe("Notifications off");
-    expect(announcementsButton?.title).toBe("Announcements off");
-    expect(notificationsButton?.querySelector("svg")).not.toBeNull();
-    expect(announcementsButton?.querySelector("svg")).not.toBeNull();
+
   });
 
   it("renders bottom navigation on narrow viewports and defaults to the sessions page without an active session", () => {
