@@ -1,0 +1,76 @@
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actrail-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Go tests
+        run: go test ./...
+
+      - name: Web tests
+        working-directory: web
+        run: npm test -- --run
+
+      - name: Build web
+        working-directory: web
+        run: npm run build
+
+      - name: Build iod helper
+        run: go build -o data/bin/actrail-iod ./cmd/actrail-iod
+
+  deploy:
+    name: Deploy
+    needs: test
+    runs-on: self-hosted
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: actrail-deploy-main
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy tmux runtime
+        run: |
+          scripts/tmux/stop.sh || true
+          scripts/tmux/start.sh
+
+      - name: Verify deployment
+        run: |
+          scripts/tmux/status.sh
+          curl -fsS http://127.0.0.1:8743/healthz
+          curl -fsSI http://127.0.0.1:18743
