@@ -38,6 +38,73 @@ func TestPersistentStubListSubagentsEmpty(t *testing.T) {
 	}
 }
 
+func TestPersistentStubResumeAskParentAfterRestart(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000100, 0).UTC()
+	created, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	cwd := t.TempDir()
+	parent, err := created.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	spawned, err := created.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", AgentBackend: "pi", CWD: cwd})
+	if err != nil {
+		t.Fatalf("SpawnSubagent() error = %v", err)
+	}
+	_, err = created.subagents.askParent(spawned.ActorID, "turn_1", "Continue?", "ctx")
+	if err != nil {
+		t.Fatalf("askParent() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
+	}
+	listed, err := rehydrated.ListSubagents(context.Background(), ListSubagentsRequest{})
+	if err != nil {
+		t.Fatalf("ListSubagents() error = %v", err)
+	}
+	if listed.TotalCount != 1 || listed.Roots[0].Question == nil || listed.Roots[0].Status != SubagentStatusWaitingForParent {
+		t.Fatalf("rehydrated pending question = %+v", listed)
+	}
+	answerCh := make(chan appAskParentResult, 1)
+	go func() {
+		answer, err := rehydrated.ResumeAskParent(context.Background(), AskParentRequest{ActorID: spawned.ActorID, QuestionID: listed.Roots[0].Question.QuestionID})
+		answerCh <- appAskParentResult{answer: answer, err: err}
+	}()
+	if _, err := rehydrated.AnswerSubagent(context.Background(), AnswerSubagentRequest{ActorID: spawned.ActorID, QuestionID: listed.Roots[0].Question.QuestionID, Answer: "Continue"}); err != nil {
+		t.Fatalf("AnswerSubagent() error = %v", err)
+	}
+	select {
+	case got := <-answerCh:
+		if got.err != nil || got.answer.Answer != "Continue" {
+			t.Fatalf("ResumeAskParent() = %+v, %v", got.answer, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ResumeAskParent did not return")
+	}
+
+	restartedAgain, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(2 * time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart after answer) error = %v", err)
+	}
+	resumed, err := restartedAgain.ResumeAskParent(context.Background(), AskParentRequest{ActorID: spawned.ActorID, QuestionID: listed.Roots[0].Question.QuestionID})
+	if err != nil {
+		t.Fatalf("ResumeAskParent(after answer) error = %v", err)
+	}
+	if resumed.Answer != "Continue" {
+		t.Fatalf("ResumeAskParent(after answer) = %+v, want persisted answer", resumed)
+	}
+}
+
+type appAskParentResult struct {
+	answer AskParentResponse
+	err    error
+}
+
 func TestPersistentStubRehydratesSubagentActorsAndEvents(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

@@ -111,10 +111,11 @@ type SendSubagentRequest struct {
 }
 
 type AskParentRequest struct {
-	ActorID  string `json:"actor_id"`
-	TurnID   string `json:"turn_id"`
-	Question string `json:"question"`
-	Context  string `json:"context"`
+	ActorID    string `json:"actor_id"`
+	TurnID     string `json:"turn_id"`
+	QuestionID string `json:"question_id"`
+	Question   string `json:"question"`
+	Context    string `json:"context"`
 }
 
 type AskParentResponse struct {
@@ -213,8 +214,10 @@ type subagentParentAnswer struct {
 
 type subagentQuestionState struct {
 	SubagentQuestion
-	answer chan subagentParentAnswer
-	done   bool
+	answer       chan subagentParentAnswer
+	done         bool
+	answerText   string
+	terminalText string
 }
 
 func newSubagentRegistry(now func() time.Time, stores ...subagentStore) *subagentRegistry {
@@ -336,6 +339,21 @@ func (s *Stub) AskParent(ctx context.Context, req AskParentRequest) (AskParentRe
 	questionID, err := s.subagents.askParent(req.ActorID, req.TurnID, req.Question, req.Context)
 	if err != nil {
 		return AskParentResponse{}, err
+	}
+	answer, err := s.subagents.waitForAnswer(ctx, req.ActorID, questionID)
+	if err != nil {
+		return AskParentResponse{}, err
+	}
+	return AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: questionID, Answer: answer.answer, Terminal: answer.terminal}, nil
+}
+
+func (s *Stub) ResumeAskParent(ctx context.Context, req AskParentRequest) (AskParentResponse, error) {
+	questionID := strings.TrimSpace(req.QuestionID)
+	if questionID == "" {
+		questionID = strings.TrimSpace(req.Question)
+	}
+	if questionID == "" {
+		return AskParentResponse{}, Invalid("question_id", "question_id required")
 	}
 	answer, err := s.subagents.waitForAnswer(ctx, req.ActorID, questionID)
 	if err != nil {
@@ -521,6 +539,11 @@ func (r *subagentRegistry) waitForAnswer(ctx context.Context, actorID, questionI
 		r.mu.Unlock()
 		return subagentParentAnswer{}, NotFound("subagent question not found")
 	}
+	if actor.Question.done {
+		answer := subagentParentAnswer{answer: actor.Question.answerText, terminal: actor.Question.terminalText}
+		r.mu.Unlock()
+		return answer, nil
+	}
 	ch := actor.Question.answer
 	r.mu.Unlock()
 	select {
@@ -546,6 +569,7 @@ func (r *subagentRegistry) answer(actorID, questionID, answer string) (*Subagent
 		return nil, NotFound("subagent pending question not found")
 	}
 	actor.Question.done = true
+	actor.Question.answerText = cleaned
 	actor.Question.answer <- subagentParentAnswer{answer: cleaned}
 	actor.Status = SubagentStatusRunning
 	actor.Messages = append(actor.Messages, SubagentThreadMsg{MessageID: questionID + ":answer", Kind: "leader", Label: "parent", Body: cleaned, TS: subagentTimestamp(r.now()), Meta: "answer"})
@@ -570,6 +594,7 @@ func (r *subagentRegistry) abort(actorID, turnID string) (*SubagentNode, error) 
 	actor.Status = SubagentStatusIdle
 	if actor.Question != nil && !actor.Question.done {
 		actor.Question.done = true
+		actor.Question.terminalText = "aborted"
 		actor.Question.answer <- subagentParentAnswer{terminal: "aborted"}
 	}
 	r.appendEventLocked(actor, "subagent.aborted", actor.TurnID, "", "", actor.Status)
@@ -590,6 +615,7 @@ func (r *subagentRegistry) close(actorID string) (*SubagentNode, error) {
 	actor.Status = SubagentStatusClosed
 	if actor.Question != nil && !actor.Question.done {
 		actor.Question.done = true
+		actor.Question.terminalText = "closed"
 		actor.Question.answer <- subagentParentAnswer{terminal: "closed"}
 	}
 	r.appendEventLocked(actor, "subagent.closed", actor.TurnID, "", "", actor.Status)
@@ -610,6 +636,7 @@ func (r *subagentRegistry) markFailed(actorID, message string) {
 	actor.Status = SubagentStatusFailed
 	if actor.Question != nil && !actor.Question.done {
 		actor.Question.done = true
+		actor.Question.terminalText = "failed"
 		actor.Question.answer <- subagentParentAnswer{terminal: "failed"}
 	}
 	r.appendEventLocked(actor, "subagent.error", actor.TurnID, "", message, actor.Status)
@@ -787,6 +814,8 @@ func durableSubagentSnapshotFromActor(actor *subagentActor) sqlitestore.Subagent
 		row.QuestionContext = actor.Question.Context
 		row.QuestionCreatedTS = actor.Question.CreatedTS
 		row.QuestionDone = actor.Question.done
+		row.QuestionAnswer = actor.Question.answerText
+		row.QuestionTerminal = actor.Question.terminalText
 	}
 	events := make([]sqlitestore.SubagentEventRow, 0, len(actor.Events))
 	for i, event := range actor.Events {
@@ -805,8 +834,8 @@ func subagentActorFromDurableSnapshot(snapshot sqlitestore.SubagentSnapshotRow) 
 	if row.LastEventAt != nil {
 		actor.LastEventTS = *row.LastEventAt
 	}
-	if row.QuestionID != "" && !row.QuestionDone {
-		actor.Question = &subagentQuestionState{SubagentQuestion: SubagentQuestion{QuestionID: row.QuestionID, TurnID: row.QuestionTurnID, Question: row.Question, Context: row.QuestionContext, CreatedTS: row.QuestionCreatedTS}, answer: make(chan subagentParentAnswer, 1), done: false}
+	if row.QuestionID != "" {
+		actor.Question = &subagentQuestionState{SubagentQuestion: SubagentQuestion{QuestionID: row.QuestionID, TurnID: row.QuestionTurnID, Question: row.Question, Context: row.QuestionContext, CreatedTS: row.QuestionCreatedTS}, answer: make(chan subagentParentAnswer, 1), done: row.QuestionDone, answerText: row.QuestionAnswer, terminalText: row.QuestionTerminal}
 	}
 	actor.Events = make([]SubagentEvent, 0, len(snapshot.Events))
 	for _, event := range snapshot.Events {

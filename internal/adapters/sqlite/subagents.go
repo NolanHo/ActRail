@@ -23,6 +23,8 @@ type SubagentActorRow struct {
 	QuestionContext   string
 	QuestionCreatedTS float64
 	QuestionDone      bool
+	QuestionAnswer    string
+	QuestionTerminal  string
 	LastEventID       string
 	LastEventAt       *time.Time
 	Model             string
@@ -108,9 +110,9 @@ func replaceSubagentSnapshotTx(ctx context.Context, tx *sql.Tx, snapshot Subagen
 	row := snapshot.Actor
 	_, err := tx.ExecContext(ctx, `INSERT INTO subagent_actors(
 		actor_id, child_session_id, parent_actor_id, parent_session_id, name, role, status, turn_id,
-		question_id, question_turn_id, question, question_context, question_created_ts, question_done,
+		question_id, question_turn_id, question, question_context, question_created_ts, question_done, question_answer, question_terminal,
 		last_event_id, last_event_at, model, cwd, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(actor_id) DO UPDATE SET
 		child_session_id = excluded.child_session_id,
 		parent_actor_id = excluded.parent_actor_id,
@@ -125,13 +127,15 @@ func replaceSubagentSnapshotTx(ctx context.Context, tx *sql.Tx, snapshot Subagen
 		question_context = excluded.question_context,
 		question_created_ts = excluded.question_created_ts,
 		question_done = excluded.question_done,
+		question_answer = excluded.question_answer,
+		question_terminal = excluded.question_terminal,
 		last_event_id = excluded.last_event_id,
 		last_event_at = excluded.last_event_at,
 		model = excluded.model,
 		cwd = excluded.cwd,
 		updated_at = excluded.updated_at`,
 		strings.TrimSpace(row.ActorID), strings.TrimSpace(row.ChildSessionID), strings.TrimSpace(row.ParentActorID), strings.TrimSpace(row.ParentSessionID), strings.TrimSpace(row.Name), strings.TrimSpace(row.Role), strings.TrimSpace(row.Status), strings.TrimSpace(row.TurnID),
-		strings.TrimSpace(row.QuestionID), strings.TrimSpace(row.QuestionTurnID), strings.TrimSpace(row.Question), strings.TrimSpace(row.QuestionContext), row.QuestionCreatedTS, boolToInt(row.QuestionDone), strings.TrimSpace(row.LastEventID), formatNullableTime(row.LastEventAt), strings.TrimSpace(row.Model), strings.TrimSpace(row.CWD), formatTime(row.CreatedAt), formatTime(row.UpdatedAt))
+		strings.TrimSpace(row.QuestionID), strings.TrimSpace(row.QuestionTurnID), strings.TrimSpace(row.Question), strings.TrimSpace(row.QuestionContext), row.QuestionCreatedTS, boolToInt(row.QuestionDone), strings.TrimSpace(row.QuestionAnswer), strings.TrimSpace(row.QuestionTerminal), strings.TrimSpace(row.LastEventID), formatNullableTime(row.LastEventAt), strings.TrimSpace(row.Model), strings.TrimSpace(row.CWD), formatTime(row.CreatedAt), formatTime(row.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("upsert subagent actor %q: %w", row.ActorID, err)
 	}
@@ -168,7 +172,7 @@ func replaceSubagentSnapshotTx(ctx context.Context, tx *sql.Tx, snapshot Subagen
 
 func (c *SessionCatalog) listSubagentActors(ctx context.Context) ([]SubagentActorRow, error) {
 	rows, err := c.db.QueryContext(ctx, `SELECT actor_id, child_session_id, parent_actor_id, parent_session_id, name, role, status, turn_id,
-		question_id, question_turn_id, question, question_context, question_created_ts, question_done,
+		question_id, question_turn_id, question, question_context, question_created_ts, question_done, question_answer, question_terminal,
 		last_event_id, last_event_at, model, cwd, created_at, updated_at
 		FROM subagent_actors ORDER BY created_at ASC, actor_id ASC`)
 	if err != nil {
@@ -228,7 +232,7 @@ func scanSubagentActorRow(scanner interface{ Scan(...any) error }) (SubagentActo
 	var lastEventAt sql.NullString
 	var createdAt string
 	var updatedAt string
-	if err := scanner.Scan(&row.ActorID, &row.ChildSessionID, &row.ParentActorID, &row.ParentSessionID, &row.Name, &row.Role, &row.Status, &row.TurnID, &row.QuestionID, &row.QuestionTurnID, &row.Question, &row.QuestionContext, &row.QuestionCreatedTS, &questionDone, &row.LastEventID, &lastEventAt, &row.Model, &row.CWD, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&row.ActorID, &row.ChildSessionID, &row.ParentActorID, &row.ParentSessionID, &row.Name, &row.Role, &row.Status, &row.TurnID, &row.QuestionID, &row.QuestionTurnID, &row.Question, &row.QuestionContext, &row.QuestionCreatedTS, &questionDone, &row.QuestionAnswer, &row.QuestionTerminal, &row.LastEventID, &lastEventAt, &row.Model, &row.CWD, &createdAt, &updatedAt); err != nil {
 		return SubagentActorRow{}, err
 	}
 	row.QuestionDone = questionDone != 0

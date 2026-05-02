@@ -22,6 +22,7 @@ type Service interface {
 	FollowupSubagent(context.Context, FollowupSubagentRequest) (SubagentCommandResponse, error)
 	SendSubagent(context.Context, SendSubagentRequest) (SubagentDeliveryResponse, error)
 	AskParent(context.Context, AskParentRequest) (AskParentResponse, error)
+	ResumeAskParent(context.Context, AskParentRequest) (AskParentResponse, error)
 	AnswerSubagent(context.Context, AnswerSubagentRequest) (SubagentCommandResponse, error)
 	AbortSubagent(context.Context, AbortSubagentRequest) (SubagentCommandResponse, error)
 	CloseSubagent(context.Context, CloseSubagentRequest) (SubagentCommandResponse, error)

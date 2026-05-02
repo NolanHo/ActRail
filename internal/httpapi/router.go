@@ -93,6 +93,7 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("POST /api/subagents/{actor_id}/followup", r.requireAuth(http.HandlerFunc(r.followupSubagent)))
 	mux.Handle("POST /api/subagents/{actor_id}/send", r.requireAuth(http.HandlerFunc(r.sendSubagent)))
 	mux.Handle("POST /api/subagents/{actor_id}/ask_parent", r.requireAuth(http.HandlerFunc(r.askParent)))
+	mux.Handle("POST /api/subagents/{actor_id}/ask_parent/resume", r.requireAuth(http.HandlerFunc(r.resumeAskParent)))
 	mux.Handle("POST /api/subagents/{actor_id}/answer", r.requireAuth(http.HandlerFunc(r.answerSubagent)))
 	mux.Handle("POST /api/subagents/{actor_id}/abort", r.requireAuth(http.HandlerFunc(r.abortSubagent)))
 	mux.Handle("POST /api/subagents/{actor_id}/close", r.requireAuth(http.HandlerFunc(r.closeSubagent)))
@@ -321,6 +322,21 @@ func (r Router) askParent(w http.ResponseWriter, req *http.Request) {
 	}
 	body.ActorID = req.PathValue("actor_id")
 	payload, err := r.app.AskParent(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) resumeAskParent(w http.ResponseWriter, req *http.Request) {
+	var body app.AskParentRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.ActorID = req.PathValue("actor_id")
+	payload, err := r.app.ResumeAskParent(req.Context(), body)
 	if err != nil {
 		writeAppError(w, err)
 		return

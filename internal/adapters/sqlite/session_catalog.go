@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 10
 
 const tsLayout = time.RFC3339Nano
 
@@ -413,6 +413,19 @@ var migrations = []migration{
 				}
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 9, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 10,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			if err := ensureColumnExists(ctx, tx, "subagent_actors", "question_answer", `ALTER TABLE subagent_actors ADD COLUMN question_answer TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "subagent_actors", "question_terminal", `ALTER TABLE subagent_actors ADD COLUMN question_terminal TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 10, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},

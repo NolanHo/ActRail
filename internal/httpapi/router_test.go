@@ -92,6 +92,10 @@ func (s serviceStub) AskParent(ctx context.Context, req app.AskParentRequest) (a
 	return s.base.AskParent(ctx, req)
 }
 
+func (s serviceStub) ResumeAskParent(ctx context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
+	return s.base.ResumeAskParent(ctx, req)
+}
+
 func (s serviceStub) AnswerSubagent(ctx context.Context, req app.AnswerSubagentRequest) (app.SubagentCommandResponse, error) {
 	return s.base.AnswerSubagent(ctx, req)
 }
@@ -433,6 +437,10 @@ func (s *fixtureService) SendSubagent(_ context.Context, req app.SendSubagentReq
 
 func (s *fixtureService) AskParent(_ context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
 	return app.AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: "question_1", Answer: "answer"}, nil
+}
+
+func (s *fixtureService) ResumeAskParent(_ context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
+	return app.AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: req.QuestionID, Answer: "answer"}, nil
 }
 
 func (s *fixtureService) AnswerSubagent(_ context.Context, req app.AnswerSubagentRequest) (app.SubagentCommandResponse, error) {
@@ -1169,6 +1177,7 @@ func TestProtectedRoutesRequireAuthCookieInPasswordMode(t *testing.T) {
 		{name: "followup subagent", method: http.MethodPost, target: "/api/subagents/actor_1/followup"},
 		{name: "send subagent", method: http.MethodPost, target: "/api/subagents/actor_1/send"},
 		{name: "ask parent", method: http.MethodPost, target: "/api/subagents/actor_1/ask_parent"},
+		{name: "resume ask parent", method: http.MethodPost, target: "/api/subagents/actor_1/ask_parent/resume"},
 		{name: "answer subagent", method: http.MethodPost, target: "/api/subagents/actor_1/answer"},
 		{name: "abort subagent", method: http.MethodPost, target: "/api/subagents/actor_1/abort"},
 		{name: "close subagent", method: http.MethodPost, target: "/api/subagents/actor_1/close"},
