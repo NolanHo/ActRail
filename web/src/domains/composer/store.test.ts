@@ -69,14 +69,15 @@ describe("createComposerStore", () => {
   });
 
   it("executes slash commands through the command endpoint", async () => {
-    vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true } as never);
+vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "s2" } as never);
     const store = createComposerStore();
-    store.setDraft("s1", "/review current diff");
+    store.setDraft("s1", "/handoff now");
 
-    await store.submit("s1", "r1");
+    await store.submit("s1", "rt1");
 
-    expect(api.executeSessionCommand).toHaveBeenCalledWith("s1", { name: "review", args: "current diff" }, "r1");
+    expect(api.executeSessionCommand).toHaveBeenCalledWith("s1", { name: "handoff", args: "now" }, "rt1");
     expect(api.sendMessage).not.toHaveBeenCalled();
+    expect(store.getState().pendingBySessionId.s1[0]).toMatchObject({ text: "/handoff now", pending: true });
   });
 
   it("restores sending=false on failure without clearing the session draft", async () => {

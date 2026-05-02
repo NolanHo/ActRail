@@ -659,6 +659,7 @@ export interface ExecuteSessionCommandResponse {
   command?: string;
   message?: string;
   session_id?: string;
+  runtime_id?: string | null;
 }
 
 export interface AttachmentInjectResponse {

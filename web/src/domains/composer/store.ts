@@ -1,6 +1,8 @@
 import { api } from "../../lib/api";
 import type { MessageEvent } from "../../lib/types";
 
+const COMMAND_PATTERN = /^\/([^\s/]+)(?:\s+(.*))?$/;
+
 const COMPOSER_DRAFTS_STORAGE_KEY = "actrail.composerDrafts.v1";
 
 export interface PendingComposerMessage {
