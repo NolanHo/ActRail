@@ -71,13 +71,23 @@ describe("createComposerStore", () => {
   it("executes slash commands through the command endpoint", async () => {
 vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "s2" } as never);
     const store = createComposerStore();
-    store.setDraft("s1", "/handoff now");
+    store.setDraft("s1", "  /handoff now  ");
 
     await store.submit("s1", "rt1");
 
     expect(api.executeSessionCommand).toHaveBeenCalledWith("s1", { name: "handoff", args: "now" }, "rt1");
     expect(api.sendMessage).not.toHaveBeenCalled();
-    expect(store.getState().pendingBySessionId.s1[0]).toMatchObject({ text: "/handoff now", pending: true });
+    expect(store.getState().pendingBySessionId.s1[0]).toMatchObject({ text: "  /handoff now  ", pending: true });
+  });
+
+  it("trims normal prompts before dispatch", async () => {
+    vi.mocked(api.sendMessage).mockResolvedValue({ ok: true } as never);
+    const store = createComposerStore();
+    store.setDraft("s1", "  hello  ");
+
+    await store.submit("s1");
+
+    expect(api.sendMessage).toHaveBeenCalledWith("s1", "hello");
   });
 
   it("restores sending=false on failure without clearing the session draft", async () => {

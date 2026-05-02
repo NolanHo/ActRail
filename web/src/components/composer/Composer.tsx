@@ -35,11 +35,16 @@ function enterToSendEnabled() {
 }
 
 function getSlashDraftQuery(draft: string) {
-  if (!draft.startsWith("/") || /\s/.test(draft.slice(1))) {
+  const trimmed = draft.trimStart();
+  if (!trimmed.startsWith("/")) {
     return null;
   }
 
-  return draft.slice(1).toLowerCase();
+  return trimmed.slice(1).trimStart().split(/\s+/, 1)[0].toLowerCase();
+}
+
+function isSlashCommandDraft(draft: string) {
+  return draft.trimStart().startsWith("/");
 }
 
 function formatSlashCommandValue(commandName: string) {
@@ -345,6 +350,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const activeAttachmentCount = activeSessionId ? attachedFilesBySessionId[activeSessionId] ?? 0 : 0;
   const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi" && !supervisorEnabled);
   const slashQuery = getSlashDraftQuery(draft);
+  const slashCommandDraft = isSlashCommandDraft(draft);
   const todoSnapshot = useMemo(() => {
     if (!activeSessionId || activeSession?.agent_backend !== "pi") {
       return null;
@@ -542,7 +548,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
 
   useEffect(() => {
     setSlashMenuDismissed(false);
-  }, [activeSessionId, slashQuery]);
+  }, [activeSessionId, slashCommandDraft, slashQuery]);
 
   useEffect(() => {
     if (!compactMobile || !commandSheetRequestKey || !activeSessionId) {
@@ -880,7 +886,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
               </Button>
             ) : null}
             <input ref={fileInputRef} type="file" hidden tabIndex={-1} onChange={handleAttachChange} />
-            <div className="composerInputWrap flex-1">
+            <div className={cn("composerInputWrap flex-1", slashCommandDraft && "is-command") }>
               <Textarea
                 textareaRef={textareaRef}
                 value={draft}

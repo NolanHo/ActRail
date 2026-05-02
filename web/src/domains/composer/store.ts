@@ -213,11 +213,12 @@ export function createComposerStore(): ComposerStore {
       emit();
 
       try {
-        const response = text.trimStart().startsWith("/")
-          ? await api.executeSessionCommand(sessionId, parseSlashCommand(text), runtimeId)
+        const normalizedText = text.trim();
+        const response = normalizedText.startsWith("/")
+          ? await api.executeSessionCommand(sessionId, parseSlashCommand(normalizedText), runtimeId)
           : runtimeId
-            ? await api.sendMessage(sessionId, text, runtimeId)
-            : await api.sendMessage(sessionId, text);
+            ? await api.sendMessage(sessionId, normalizedText, runtimeId)
+            : await api.sendMessage(sessionId, normalizedText);
         const requestId = response && typeof response === "object" && typeof (response as { request_id?: unknown }).request_id === "string"
           ? String((response as { request_id?: unknown }).request_id)
           : "";
