@@ -42,8 +42,10 @@ jobs:
         env:
           PI_HOME: ${{ runner.temp }}/pi-home
         run: |
-          sudo mkdir -p /usr/local/go/bin
+          sudo mkdir -p /usr/local/go/bin /usr/local/bin
           sudo ln -sf "$(command -v go)" /usr/local/go/bin/go
+          sudo ln -sf /bin/true /usr/local/bin/pi
+          sudo ln -sf /bin/true /usr/local/bin/codex
           go test ./...
 
       - name: Web tests
