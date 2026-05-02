@@ -142,6 +142,7 @@ function normalizeCreateSessionPayload(payload: Record<string, unknown>) {
       : typeof payload.name === "string" && payload.name.trim()
         ? payload.name.trim()
         : undefined,
+    pi_agent_grpc: typeof payload.pi_agent_grpc === "boolean" ? payload.pi_agent_grpc : undefined,
   };
 }
 

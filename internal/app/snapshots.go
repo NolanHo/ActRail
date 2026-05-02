@@ -366,6 +366,20 @@ func (s *Stub) ProbeSessionState(ctx context.Context, req ProbeSessionStateReque
 		return ProbeSessionStateResponse{}, Invalid("runtime", "get_state probe requires Pi RPC runtime")
 	}
 	probeID := fmt.Sprintf("actrail-manual-state-%d", time.Now().UTC().UnixNano())
+	if record.runtime.piAgentGRPC != nil {
+		state, err := record.runtime.RequestPIRPCStateSnapshot(ctx)
+		if err != nil {
+			return ProbeSessionStateResponse{}, mapRuntimeControlError(err)
+		}
+		if err := s.applyRuntimeProjection(req.SessionID, runtimeProjection{piRPCState: state}); err != nil {
+			return ProbeSessionStateResponse{}, err
+		}
+		updated, err := s.lookupSession(req.SessionID)
+		if err != nil {
+			return ProbeSessionStateResponse{}, err
+		}
+		return ProbeSessionStateResponse{ProbeID: probeID, State: s.sessionStateResponse(updated)}, nil
+	}
 	if record.runtime.helper != nil {
 		s.notePIRPCStateProbeSent(req.SessionID, record.runtime.helper.generationID, probeID)
 	}

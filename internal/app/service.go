@@ -173,8 +173,9 @@ type LaunchConfig struct {
 }
 
 type NewSessionDefaults struct {
-	DefaultBackend string                           `json:"default_backend,omitempty"`
-	Backends       map[string]LaunchBackendDefaults `json:"backends,omitempty"`
+	DefaultBackend     string                           `json:"default_backend,omitempty"`
+	Backends           map[string]LaunchBackendDefaults `json:"backends,omitempty"`
+	PIAgentGRPCDefault bool                             `json:"pi_agent_grpc_default"`
 }
 
 type LaunchBackendDefaults struct {
@@ -267,6 +268,7 @@ type CreateSessionRequest struct {
 	ReasoningEffort *string `json:"reasoning_effort"`
 	ResumeSessionID *string `json:"resume_session_id"`
 	Title           *string `json:"title"`
+	PIAgentGRPC     *bool   `json:"pi_agent_grpc"`
 	Hidden          bool    `json:"-"`
 }
 
@@ -503,6 +505,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		Model:           optionalString(req.Model),
 		ReasoningEffort: optionalString(req.ReasoningEffort),
 		SessionPath:     sourcePath,
+		PIAgentGRPC:     createSessionUsesPIAgentGRPC(req, backend),
 	})
 	if err != nil {
 		_ = runtime.CleanupHelperArtifacts()
@@ -552,6 +555,10 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 			SuggestSubscriptions: []string{stream.String()},
 		},
 	}, nil
+}
+
+func createSessionUsesPIAgentGRPC(req CreateSessionRequest, backend session.Backend) bool {
+	return backend == session.BackendPI && req.PIAgentGRPC != nil && *req.PIAgentGRPC
 }
 
 func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {

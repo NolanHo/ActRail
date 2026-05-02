@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/piagentgrpc"
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
@@ -157,6 +158,10 @@ func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.B
 	}
 	if runtime.helper != nil {
 		go s.readRuntimeHelper(sessionID, backend, runtime.helper)
+		return
+	}
+	if runtime.piAgentGRPC != nil {
+		go s.readPIAgentGRPC(sessionID, runtime.piAgentGRPC)
 		return
 	}
 	if runtime.handle == nil {
@@ -524,6 +529,35 @@ func (s *Stub) readRuntimeOutput(sessionID session.SessionID, backend session.Ba
 	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
 	for scanner.Scan() {
 		_ = s.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine(scanner.Bytes()))
+	}
+}
+
+func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.Client) {
+	if s == nil || client == nil {
+		return
+	}
+	if state, err := client.GetState(context.Background()); err == nil {
+		_ = s.applyRuntimeProjection(sessionID, runtimeProjection{piRPCState: piRPCStateSnapshotFromGRPC(state)})
+	}
+	decoder := runtimeEventDecoder{backend: session.BackendPI}
+	_ = client.Subscribe(context.Background(), func(event piagentgrpc.Event) error {
+		if event.SessionBoundary != nil {
+			if state, err := client.GetState(context.Background()); err == nil {
+				_ = s.applyRuntimeProjection(sessionID, runtimeProjection{piRPCState: piRPCStateSnapshotFromGRPC(state)})
+			}
+			return nil
+		}
+		projection := decoder.decodeRuntimeLine(event.PayloadJSON)
+		return s.applyRuntimeProjection(sessionID, projection)
+	})
+}
+
+func piRPCStateSnapshotFromGRPC(state piagentgrpc.State) *piRPCStateSnapshot {
+	return &piRPCStateSnapshot{
+		ProbeID:             fmt.Sprintf("pi-agent-grpc-%d", time.Now().UTC().UnixNano()),
+		IsStreaming:         state.IsStreaming,
+		IsCompacting:        state.IsCompacting,
+		PendingMessageCount: state.PendingMessageCount,
 	}
 }
 

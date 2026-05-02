@@ -17,6 +17,7 @@ import (
 	"actrail/internal/adapters/agent"
 	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/iodclient"
+	"actrail/internal/adapters/piagentgrpc"
 	"actrail/internal/adapters/process"
 	"actrail/internal/domain/session"
 )
@@ -48,6 +49,8 @@ type RuntimeConfig struct {
 	ResolveIODHelperBinPath func() (string, error)
 	ResolveLaunchEnv        func(session.Backend, process.Environment) (process.Environment, error)
 	IODDialer               iodclient.Dialer
+	PIAgentGRPCDialer       piagentgrpc.Dialer
+	PIAgentGRPCTarget       string
 	IODRuntimeRoot          string
 	UseIODHelper            bool
 	NewGenerationID         func(session.SessionID) (iod.GenerationID, error)
@@ -62,6 +65,7 @@ type runtimeLaunchRequest struct {
 	Model           string
 	ReasoningEffort string
 	SessionPath     string
+	PIAgentGRPC     bool
 }
 
 type processRuntimeLauncher struct {
@@ -74,6 +78,8 @@ type processRuntimeLauncher struct {
 	iodRuntimeRoot          string
 	useIODHelper            bool
 	dialer                  iodclient.Dialer
+	piAgentGRPCDialer       piagentgrpc.Dialer
+	piAgentGRPCTarget       string
 	resolveLaunchEnv        func(session.Backend, process.Environment) (process.Environment, error)
 	env                     process.Environment
 	io                      process.IO
@@ -106,6 +112,7 @@ type sessionRuntime struct {
 	protocol             runtimeProtocol
 	codex                *codexRuntimeState
 	helper               *runtimeIODHelper
+	piAgentGRPC          *piagentgrpc.Client
 	helperBinding        *RuntimeHelperBinding
 	currentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
 }
@@ -316,6 +323,8 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 		iodRuntimeRoot:          iodRuntimeRoot,
 		useIODHelper:            cfg.UseIODHelper,
 		dialer:                  cfg.IODDialer,
+		piAgentGRPCDialer:       cfg.PIAgentGRPCDialer,
+		piAgentGRPCTarget:       cfg.PIAgentGRPCTarget,
 		resolveLaunchEnv:        resolveLaunchEnv,
 		env:                     env,
 		io:                      ioSpec,
@@ -391,10 +400,78 @@ func (l processRuntimeLauncher) Launch(ctx context.Context, req runtimeLaunchReq
 	if err := req.Backend.Validate(); err != nil {
 		return sessionRuntime{}, err
 	}
+	if req.PIAgentGRPC {
+		return l.launchPIAgentGRPC(ctx, req)
+	}
 	if l.useIODHelper {
 		return l.launchViaIODHelper(ctx, req)
 	}
 	return l.launchDirect(ctx, req)
+}
+
+func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runtimeLaunchRequest) (sessionRuntime, error) {
+	if req.Backend != session.BackendPI {
+		return sessionRuntime{}, fmt.Errorf("pi agent grpc requires pi backend")
+	}
+	target := strings.TrimSpace(l.piAgentGRPCTarget)
+	if target == "" {
+		target = piagentgrpc.TargetForSession(req.SessionID.String())
+	}
+	client := piagentgrpc.New(target, l.piAgentGRPCDialer)
+	launchReq := req
+	launchReq.PIAgentGRPC = true
+	launchSpec, err := l.childLaunchSpec(launchReq)
+	if err != nil {
+		return sessionRuntime{}, err
+	}
+	handle, err := l.runner.Start(ctx, launchSpec)
+	if err != nil {
+		_ = client.Close()
+		return sessionRuntime{}, err
+	}
+	if handle == nil {
+		_ = client.Close()
+		return sessionRuntime{}, fmt.Errorf("start pi agent grpc runtime %q: nil process handle", req.SessionID)
+	}
+	if err := l.waitForPIAgentGRPCReady(ctx, client); err != nil {
+		_ = handle.Kill()
+		_ = client.Close()
+		return sessionRuntime{}, err
+	}
+	return sessionRuntime{
+		launchSpec:           launchSpec,
+		handle:               handle,
+		protocol:             runtimeProtocolPIRPC,
+		piAgentGRPC:          client,
+		currentHelperBinding: l.currentHelperBinding,
+	}, nil
+}
+
+func (l processRuntimeLauncher) waitForPIAgentGRPCReady(ctx context.Context, client *piagentgrpc.Client) error {
+	readyCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		readyCtx, cancel = context.WithTimeout(ctx, helperReadyTimeout)
+		defer cancel()
+	}
+	ticker := time.NewTicker(helperReadyPollInterval)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		if err := client.Connect(readyCtx); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-readyCtx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("wait for pi agent grpc: %w", lastErr)
+			}
+			return readyCtx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (l processRuntimeLauncher) launchDirect(ctx context.Context, req runtimeLaunchRequest) (sessionRuntime, error) {
@@ -494,7 +571,15 @@ func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (proce
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
-	options, err := agent.NewOptionsWithSessionPath(req.Provider, req.Model, req.ReasoningEffort, req.SessionPath)
+	grpcSocketPath := ""
+	if req.PIAgentGRPC {
+		target := strings.TrimSpace(l.piAgentGRPCTarget)
+		if target == "" {
+			target = piagentgrpc.TargetForSession(req.SessionID.String())
+		}
+		grpcSocketPath = piagentgrpc.SocketPathForTarget(target)
+	}
+	options, err := agent.NewOptionsWithTransport(req.Provider, req.Model, req.ReasoningEffort, req.SessionPath, grpcSocketPath)
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
@@ -623,6 +708,17 @@ func (r sessionRuntime) CurrentHelperBinding(sessionID session.SessionID) (*Runt
 	return binding, nil
 }
 
+func (r sessionRuntime) RequestPIRPCStateSnapshot(ctx context.Context) (*piRPCStateSnapshot, error) {
+	if r.piAgentGRPC == nil {
+		return nil, errRuntimeInputUnavailable
+	}
+	state, err := r.piAgentGRPC.GetState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return piRPCStateSnapshotFromGRPC(state), nil
+}
+
 func (r sessionRuntime) RequestPIRPCState(ctx context.Context, id string) error {
 	if r.protocol != runtimeProtocolPIRPC {
 		return nil
@@ -630,6 +726,9 @@ func (r sessionRuntime) RequestPIRPCState(ctx context.Context, id string) error 
 	commandID := strings.TrimSpace(id)
 	if commandID == "" {
 		return fmt.Errorf("pi rpc state request id is required")
+	}
+	if r.piAgentGRPC != nil {
+		return nil
 	}
 	command := piRPCGetStateCommand{ID: commandID, Type: "get_state"}
 	if r.helper != nil {
@@ -676,6 +775,9 @@ func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
 		}
 		return r.helper.command(ctx, iod.CommandSend, json.RawMessage(strconv.Quote(payload)))
 	}
+	if r.piAgentGRPC != nil {
+		return r.piAgentGRPC.Prompt(ctx, payload)
+	}
 	if r.protocol == runtimeProtocolPIRPC {
 		return r.writeRPCCommand(ctx, piRPCPromptCommand{Type: "prompt", Message: payload})
 	}
@@ -703,6 +805,9 @@ func (r sessionRuntime) RespondUI(ctx context.Context, requestID, value string) 
 			return r.helper.command(ctx, iod.CommandUIResponseSubmit, encoded)
 		}
 		return r.helper.command(ctx, iod.CommandSend, json.RawMessage(strconv.Quote(payload)))
+	}
+	if r.piAgentGRPC != nil {
+		return errRuntimeInputUnavailable
 	}
 	if r.protocol == runtimeProtocolPIRPC {
 		return r.writeRPCCommand(ctx, piRPCExtensionUIResponseCommand{Type: "extension_ui_response", ID: resolvedID, Value: payload})
@@ -792,6 +897,9 @@ func (r sessionRuntime) Interrupt(ctx context.Context) error {
 	if r.helper != nil {
 		return r.helper.command(ctx, iod.CommandInterrupt, json.RawMessage(`{}`))
 	}
+	if r.piAgentGRPC != nil {
+		return r.piAgentGRPC.Abort(ctx)
+	}
 	if r.protocol == runtimeProtocolPIRPC {
 		return r.writeRPCCommand(ctx, piRPCAbortCommand{Type: "abort"})
 	}
@@ -811,6 +919,9 @@ func (r sessionRuntime) Kill(ctx context.Context) error {
 	if r.helper != nil {
 		return r.helper.shutdown(ctx)
 	}
+	if r.piAgentGRPC != nil {
+		_ = r.piAgentGRPC.Close()
+	}
 	if r.handle == nil {
 		return nil
 	}
@@ -823,6 +934,9 @@ func (r sessionRuntime) Kill(ctx context.Context) error {
 func (r sessionRuntime) PID() int {
 	if r.helper != nil && r.helper.childPID != nil {
 		return *r.helper.childPID
+	}
+	if r.piAgentGRPC != nil && r.handle != nil {
+		return r.handle.PID()
 	}
 	if r.handle == nil {
 		return 0

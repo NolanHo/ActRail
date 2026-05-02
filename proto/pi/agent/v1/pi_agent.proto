@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package pi.agent.v1;
+
+option go_package = "actrail/proto/pi/agent/v1;piagentv1";
+
+service PiAgent {
+  rpc GetState(GetStateRequest) returns (SessionState);
+  rpc Prompt(PromptRequest) returns (CommandAck);
+  rpc Steer(SteerRequest) returns (CommandAck);
+  rpc FollowUp(FollowUpRequest) returns (CommandAck);
+  rpc Abort(AbortRequest) returns (CommandAck);
+  rpc NewSession(NewSessionRequest) returns (SessionSwitchResult);
+  rpc GetMessages(GetMessagesRequest) returns (GetMessagesResponse);
+  rpc ReadBlob(ReadBlobRequest) returns (ReadBlobResponse);
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream EventBatch);
+}
+
+message GetStateRequest {}
+
+message GetMessagesRequest {
+  bool inline_payloads = 1;
+  uint32 inline_byte_limit = 2;
+}
+
+message ReadBlobRequest {
+  string blob_id = 1;
+  uint64 offset = 2;
+  uint32 limit = 3;
+}
+
+message ReadBlobResponse {
+  string blob_id = 1;
+  bytes data = 2;
+  uint64 offset = 3;
+  uint64 total_bytes = 4;
+  bool eof = 5;
+}
+
+message PromptRequest {
+  string message = 1;
+  repeated Image images = 2;
+  StreamingBehavior streaming_behavior = 3;
+}
+
+message SteerRequest {
+  string message = 1;
+  repeated Image images = 2;
+}
+
+message FollowUpRequest {
+  string message = 1;
+  repeated Image images = 2;
+}
+
+message AbortRequest {}
+
+message NewSessionRequest {
+  optional string parent_session = 1;
+}
+
+message SubscribeEventsRequest {
+  EventLevel level = 1;
+  uint32 batch_window_ms = 2;
+  uint32 max_batch_size = 3;
+  uint64 after_sequence = 4;
+  bool inline_payloads = 5;
+  uint32 inline_byte_limit = 6;
+}
+
+message Image {
+  string data = 1;
+  string mime_type = 2;
+}
+
+enum StreamingBehavior {
+  STREAMING_BEHAVIOR_UNSPECIFIED = 0;
+  STREAMING_BEHAVIOR_STEER = 1;
+  STREAMING_BEHAVIOR_FOLLOW_UP = 2;
+}
+
+enum EventLevel {
+  EVENT_LEVEL_SUMMARY = 0;
+  EVENT_LEVEL_NONE = 1;
+  EVENT_LEVEL_STATE = 2;
+  EVENT_LEVEL_FULL = 3;
+}
+
+message SessionState {
+  optional Model model = 1;
+  string thinking_level = 2;
+  bool is_streaming = 3;
+  bool is_compacting = 4;
+  string steering_mode = 5;
+  string follow_up_mode = 6;
+  optional string session_file = 7;
+  string session_id = 8;
+  optional string session_name = 9;
+  bool auto_compaction_enabled = 10;
+  uint32 message_count = 11;
+  uint32 pending_message_count = 12;
+}
+
+message Model {
+  string id = 1;
+  string name = 2;
+  string api = 3;
+  string provider = 4;
+  string base_url = 5;
+  bool reasoning = 6;
+  repeated string input = 7;
+  ModelCost cost = 8;
+  uint32 context_window = 9;
+  uint32 max_tokens = 10;
+}
+
+message ModelCost {
+  double input = 1;
+  double output = 2;
+  double cache_read = 3;
+  double cache_write = 4;
+}
+
+message CommandAck {}
+
+message SessionSwitchResult {
+  bool cancelled = 1;
+}
+
+message GetMessagesResponse {
+  repeated AgentMessage messages = 1;
+}
+
+message Payload {
+  bytes json = 1;
+  BlobRef blob = 2;
+}
+
+message BlobRef {
+  string blob_id = 1;
+  uint64 total_bytes = 2;
+}
+
+message AgentMessage {
+  string role = 1;
+  Payload payload = 2;
+}
+
+message EventBatch {
+  uint64 sequence = 1;
+  repeated Event events = 2;
+}
+
+message Event {
+  string type = 1;
+  Payload payload = 2;
+  SessionBoundary session_boundary = 3;
+  uint64 sequence = 4;
+}
+
+message SessionBoundary {
+  string session_id = 1;
+  optional string session_file = 2;
+  string reason = 3;
+}

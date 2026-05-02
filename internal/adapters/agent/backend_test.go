@@ -95,6 +95,21 @@ func TestPICommandArgsIncludeProviderModelThinking(t *testing.T) {
 	}
 }
 
+func TestPICommandArgsUseGRPCModeWithSocket(t *testing.T) {
+	opts, err := NewOptionsWithTransport("openai", "gpt-5.5", "high", "/tmp/session.jsonl", "/tmp/pi-agent/agent.sock")
+	if err != nil {
+		t.Fatalf("NewOptionsWithTransport() error = %v", err)
+	}
+	args, err := (piAdapter{}).CommandArgs(opts)
+	if err != nil {
+		t.Fatalf("CommandArgs() error = %v", err)
+	}
+	want := []string{"--mode", "grpc", "--grpc-socket", "/tmp/pi-agent/agent.sock", "--provider", "openai", "--model", "gpt-5.5", "--thinking", "high", "--session", "/tmp/session.jsonl"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
+	}
+}
+
 func TestCodexCommandArgsUseConfigOverrideForProvider(t *testing.T) {
 	opts, err := NewOptions("openrouter", "gpt-5", "")
 	if err != nil {

@@ -1212,6 +1212,7 @@ describe("NewSessionDialog", () => {
       model: "gpt-5.4",
       reasoning_effort: "high",
       resume_session_id: "history:pi:abc",
+      pi_agent_grpc: true,
     });
   });
 
@@ -1307,6 +1308,7 @@ describe("NewSessionDialog", () => {
       model: "gpt-5.4",
       reasoning_effort: "high",
       resume_session_id: undefined,
+      pi_agent_grpc: true,
     });
   });
 
@@ -1378,6 +1380,54 @@ describe("NewSessionDialog", () => {
       model: "gpt-5.4",
       reasoning_effort: "high",
       resume_session_id: undefined,
+      pi_agent_grpc: true,
     });
+  });
+
+  it("sends false when the Pi gRPC transport is disabled", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.createSession).mockResolvedValue({ session_id: "pi-iod", backend: "pi", ok: true } as any);
+    vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({ exists: true, will_create: false, git_repo: false, sessions: [] } as any);
+    const sessionsStore = createSessionsStore({
+      items: [],
+      activeSessionId: null,
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/tmp/pi-project"],
+      tmuxAvailable: false,
+      newSessionDefaults: {
+        default_backend: "pi",
+        pi_agent_grpc_default: true,
+        backends: {
+          pi: { provider_choice: "macaron", model: "gpt-5.4", reasoning_effort: "high" },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await flush();
+
+    const grpcCheckbox = root.querySelector('input[name="usePIAgentGRPC"]') as HTMLInputElement;
+    expect(grpcCheckbox.checked).toBe(true);
+    await setCheckboxValue(grpcCheckbox, false);
+    await flush();
+
+    const form = root.querySelector("form") as HTMLFormElement;
+    await submitForm(form);
+    await flush();
+
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      agent_backend: "pi",
+      pi_agent_grpc: false,
+    }));
   });
 });
