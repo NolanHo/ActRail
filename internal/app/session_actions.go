@@ -555,6 +555,9 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	}
 	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
 	_ = record.runtime.Kill(context.Background())
+	if record.runtime.helper != nil && s.helpers != nil {
+		s.helpers.Remove(record.identity.SessionID())
+	}
 	_ = record.runtime.CleanupHelperArtifacts()
 	previousRuntimeID, _ := record.identity.RuntimeID()
 	return updated, previousRuntimeID, nil

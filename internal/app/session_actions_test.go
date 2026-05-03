@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -544,6 +546,97 @@ func TestStubEditSessionIODModeSwitchWaitsForInputLock(t *testing.T) {
 	record.inputMu.Unlock()
 	if err := <-done; err != nil {
 		t.Fatalf("EditSession() error = %v", err)
+	}
+}
+
+func TestStubEditSessionSwitchToGRPCClearsHelperAttachment(t *testing.T) {
+	runner := &process.FakeRunner{}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID(session) error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_1777800090704767107")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	proof, err := iod.NewHelloProof(12345, nil, filepath.Join(t.TempDir(), "transport.wal"), filepath.Join(t.TempDir(), "io"), float64(time.Now().UTC().Unix()))
+	if err != nil {
+		t.Fatalf("NewHelloProof() error = %v", err)
+	}
+	manifest, err := iod.NewGenerationManifest(sessionID, generationID, proof)
+	if err != nil {
+		t.Fatalf("NewGenerationManifest() error = %v", err)
+	}
+	hello, err := iod.NewHelloPacket(sessionID, generationID, 1, manifest.HelloProof)
+	if err != nil {
+		t.Fatalf("NewHelloPacket() error = %v", err)
+	}
+	svc.helpers.replaceAll(map[session.SessionID]attachedHelper{
+		sessionID: {
+			Binding:  helperGenerationBinding{SessionID: sessionID, GenerationID: generationID},
+			Manifest: manifest,
+			Hello:    hello,
+			Client:   &iodclient.Client{},
+		},
+	}, nil)
+	bindingDir := t.TempDir()
+	svc.helperBindings = newHelperBindingStore(bindingDir)
+	if err := svc.bindCurrentGeneration(helperGenerationBinding{SessionID: sessionID, GenerationID: generationID}); err != nil {
+		t.Fatalf("bindCurrentGeneration() error = %v", err)
+	}
+
+	mode := "grpc"
+	grpcCfg := grpcRuntimeConfigForTest(t)
+	svc.launcher = newRuntimeLauncher(grpcCfg)
+	if _, err := svc.EditSession(context.Background(), EditSessionRequest{SessionID: sessionID, IODMode: StringPatch{Present: true, Value: &mode}}); err != nil {
+		t.Fatalf("EditSession() error = %v", err)
+	}
+	if _, ok := svc.helpers.Attachment(sessionID); ok {
+		t.Fatal("helpers.Attachment(grpc) ok = true, want cleared")
+	}
+	bindings, err := svc.helperBindings.Load()
+	if err != nil {
+		t.Fatalf("helperBindings.Load() error = %v", err)
+	}
+	if _, ok := bindings[sessionID]; ok {
+		t.Fatal("helper binding persisted after grpc switch")
+	}
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	runtime := svc.runtimeForSession(sessionID, session.BackendPI, record.runtime)
+	if runtime.piAgentGRPC == nil || runtime.helper != nil {
+		t.Fatalf("runtimeForSession() = helper:%v grpc:%v, want grpc only", runtime.helper, runtime.piAgentGRPC)
+	}
+}
+
+func grpcRuntimeConfigForTest(t *testing.T) RuntimeConfig {
+	t.Helper()
+	grpcServer := grpc.NewServer()
+	piagentv1.RegisterPiAgentServer(grpcServer, fakePiAgentServer{})
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
+	return RuntimeConfig{
+		Runner: &process.FakeRunner{},
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/custom-pi", nil
+		},
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		},
 	}
 }
 

@@ -1130,7 +1130,7 @@ func (s *Stub) runtimeForSession(sessionID session.SessionID, backend session.Ba
 	if backend == session.BackendCodex && runtime.codex == nil {
 		runtime.codex = newCodexRuntimeState(backend)
 	}
-	if runtime.helper != nil || s == nil || s.helpers == nil {
+	if runtime.helper != nil || runtime.piAgentGRPC != nil || runtime.handle != nil || s == nil || s.helpers == nil {
 		return runtime
 	}
 	attachment, ok := s.helpers.Attachment(sessionID)

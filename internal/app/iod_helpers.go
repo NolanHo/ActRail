@@ -211,8 +211,14 @@ func (s *Stub) bindCurrentGeneration(binding helperGenerationBinding) error {
 
 func (s *Stub) bindRuntimeCurrentGeneration(sessionID session.SessionID, runtime sessionRuntime) error {
 	binding, err := runtime.CurrentHelperBinding(sessionID)
-	if err != nil || binding == nil {
+	if err != nil {
 		return err
+	}
+	if binding == nil {
+		if s.helpers != nil {
+			s.helpers.Remove(sessionID)
+		}
+		return s.helperBindings.Delete(sessionID)
 	}
 	return s.bindCurrentGeneration(helperGenerationBinding{
 		SessionID:        sessionID,
