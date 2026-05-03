@@ -34,6 +34,7 @@ func newSessionActionFixtureForBackend(t *testing.T, backend string) (*Stub, *[]
 	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
 		handle := process.NewFakeHandle(spec)
 		handle.SetPID(321 + len(*handles))
+		handle.SetPTY(&fakePTY{})
 		*handles = append(*handles, handle)
 		return handle
 	}}
@@ -436,6 +437,14 @@ func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T
 	if oldSourcePath == "" {
 		t.Fatal("old importedSourcePath is empty")
 	}
+	if err := os.MkdirAll(filepath.Dir(oldSourcePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(old source dir) error = %v", err)
+	}
+	if err := os.WriteFile(oldSourcePath, []byte(`{"type":"session","version":3,"id":"pi-old","cwd":"/tmp/project"}
+{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"continue work"}]}}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(old source) error = %v", err)
+	}
 	oldHandle := (*handles)[0]
 
 	response, err := svc.HandoffSession(context.Background(), HandoffSessionRequest{SessionID: sessionID})
@@ -448,6 +457,12 @@ func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T
 	if response.PreviousSessionID != sessionID.String() || response.HistoryPath != oldSourcePath {
 		t.Fatalf("HandoffSession() previous/history = %q/%q, want %q/%q", response.PreviousSessionID, response.HistoryPath, sessionID, oldSourcePath)
 	}
+	if strings.TrimSpace(response.SidecarPath) == "" {
+		t.Fatal("HandoffSession().SidecarPath is empty")
+	}
+	if _, err := os.Stat(response.SidecarPath); err != nil {
+		t.Fatalf("Stat(SidecarPath) error = %v", err)
+	}
 	if response.SessionID == "" || response.RuntimeID == "" || response.SessionID == sessionID.String() {
 		t.Fatalf("HandoffSession() ids = %+v", response)
 	}
@@ -456,6 +471,10 @@ func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T
 	}
 	if len(*handles) != 2 {
 		t.Fatalf("len(handles) = %d, want 2", len(*handles))
+	}
+	promptWrites := (*handles)[1].PTY().(*fakePTY).Writes()
+	if len(promptWrites) != 1 || !strings.Contains(promptWrites[0], response.SidecarPath) || strings.Contains(promptWrites[0], oldSourcePath) {
+		t.Fatalf("handoff prompt writes = %#v, want sidecar path only", promptWrites)
 	}
 	newID, err := session.ParseSessionID(response.SessionID)
 	if err != nil {
@@ -474,6 +493,51 @@ func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T
 	}
 	if len(listed.Items) != 1 || listed.Items[0].SessionID != response.SessionID {
 		t.Fatalf("ListSessions() = %+v, want only new session %q", listed.Items, response.SessionID)
+	}
+}
+
+func TestHandoffSidecarStartsAfterLastCompactionAndMasksOldToolResults(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.jsonl")
+	body := `{"type":"message","id":"old-user","message":{"role":"user","content":[{"type":"text","text":"old user"}]}}
+{"type":"turn_end","id":"old-turn","toolResults":[{"toolCallId":"old-call","toolName":"read","content":[{"type":"text","text":"old result before compaction"}]}]}
+{"type":"compaction_end","reason":"manual","aborted":false,"result":{"summary":"compact","firstKeptEntryId":"after-compact","tokensBefore":100}}
+{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"first after compact"}]}}
+{"type":"message","id":"a1","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"read","arguments":{"path":"/tmp/a"}},{"type":"text","text":"assistant one","textSignature":"{\"phase\":\"final_answer\"}"}],"stopReason":"stop"}}
+{"type":"turn_end","id":"t1","toolResults":[{"toolCallId":"call-1","toolName":"read","content":[{"type":"text","text":"result one"}]}]}
+{"type":"message","id":"u2","message":{"role":"user","content":[{"type":"text","text":"second after compact"}]}}
+{"type":"turn_end","id":"t2","toolResults":[{"toolCallId":"call-2","toolName":"read","content":[{"type":"text","text":"result two"}]}]}
+{"type":"message","id":"u3","message":{"role":"user","content":[{"type":"text","text":"third after compact"}]}}
+`
+	if err := os.WriteFile(sourcePath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(source) error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID("s_1")
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	sidecar, err := buildSessionHandoffSidecar(sessionID, sourcePath, time.Unix(1760000000, 0).UTC())
+	if err != nil {
+		t.Fatalf("buildSessionHandoffSidecar() error = %v", err)
+	}
+	if !sidecar.StartsAfterCompact || sidecar.FirstSourceLine != 4 {
+		t.Fatalf("sidecar compact window = (%v, %d), want true/4", sidecar.StartsAfterCompact, sidecar.FirstSourceLine)
+	}
+	for _, entry := range sidecar.Entries {
+		if strings.Contains(entry.Text, "old user") || strings.Contains(entry.Text, "old result before compaction") {
+			t.Fatalf("sidecar includes pre-compaction entry: %+v", entry)
+		}
+	}
+	var masked, recent bool
+	for _, entry := range sidecar.Entries {
+		if entry.ToolCallID == "call-1" && entry.Masked && entry.OriginalSize == len("result one") {
+			masked = true
+		}
+		if entry.ToolCallID == "call-2" && !entry.Masked && entry.Text == "result two" {
+			recent = true
+		}
+	}
+	if !masked || !recent || sidecar.MaskedToolResults != 1 {
+		t.Fatalf("sidecar tool result masking = masked:%v recent:%v count:%d entries:%+v", masked, recent, sidecar.MaskedToolResults, sidecar.Entries)
 	}
 }
 

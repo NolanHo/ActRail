@@ -293,6 +293,7 @@ export interface DeleteSessionResponse {
 
 export interface HandoffSessionResponse extends CreateSessionResponse {
   history_path?: string;
+  sidecar_path?: string;
   previous_session_id?: string;
 }
 
@@ -658,6 +659,7 @@ export interface ExecuteSessionCommandResponse {
   command?: string;
   message?: string;
   session_id?: string;
+  runtime_id?: string | null;
 }
 
 export interface AttachmentInjectResponse {

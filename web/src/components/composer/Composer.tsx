@@ -35,11 +35,51 @@ function enterToSendEnabled() {
 }
 
 function getSlashDraftQuery(draft: string) {
-  if (!draft.startsWith("/") || /\s/.test(draft.slice(1))) {
+  const trimmed = draft.trimStart();
+  if (!trimmed.startsWith("/")) {
     return null;
   }
 
-  return draft.slice(1).toLowerCase();
+  return trimmed.slice(1).trimStart().split(/\s+/, 1)[0].toLowerCase();
+}
+
+function isSlashCommandDraft(draft: string) {
+  return draft.trimStart().startsWith("/");
+}
+
+function commandMenuNode({
+  commandsLoading,
+  highlightedCommandIndex,
+  menuRef,
+  visibleCommands,
+  onApply,
+}: {
+  commandsLoading: boolean;
+  highlightedCommandIndex: number;
+  menuRef?: preact.Ref<HTMLDivElement>;
+  visibleCommands: SessionCommand[];
+  onApply: (command: SessionCommand) => void;
+}) {
+  return (
+    <div ref={menuRef} className="composerCommandMenu" data-testid="composer-command-menu" onWheel={(event) => event.stopPropagation()}>
+      {commandsLoading ? <div className="composerCommandHint">Loading Pi commands...</div> : null}
+      {!commandsLoading
+        ? visibleCommands.map((command, index) => (
+          <button
+            key={command.name}
+            type="button"
+            className={cn("composerCommandItem", index === highlightedCommandIndex && "is-active")}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onApply(command)}
+          >
+            <span className="composerCommandName">/{command.name}</span>
+            {command.description ? <span className="composerCommandDescription">{command.description}</span> : null}
+            {command.source ? <span className="composerCommandSource">{command.source}</span> : null}
+          </button>
+        ))
+        : null}
+    </div>
+  );
 }
 
 function formatSlashCommandValue(commandName: string) {
@@ -318,6 +358,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const [commandsLoadingBySessionId, setCommandsLoadingBySessionId] = useState<Record<string, boolean>>({});
   const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
+  const commandMenuRef = useRef<HTMLDivElement | null>(null);
   const [attachedFilesBySessionId, setAttachedFilesBySessionId] = useState<Record<string, number>>({});
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [mobileWaitSubmitting, setMobileWaitSubmitting] = useState(false);
@@ -345,6 +386,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const activeAttachmentCount = activeSessionId ? attachedFilesBySessionId[activeSessionId] ?? 0 : 0;
   const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi" && !supervisorEnabled);
   const slashQuery = getSlashDraftQuery(draft);
+  const slashCommandDraft = isSlashCommandDraft(draft);
   const todoSnapshot = useMemo(() => {
     if (!activeSessionId || activeSession?.agent_backend !== "pi") {
       return null;
@@ -542,7 +584,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
 
   useEffect(() => {
     setSlashMenuDismissed(false);
-  }, [activeSessionId, slashQuery]);
+  }, [activeSessionId, slashCommandDraft, slashQuery]);
 
   useEffect(() => {
     if (!compactMobile || !commandSheetRequestKey || !activeSessionId) {
@@ -572,6 +614,20 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
     composerStoreApi.setDraft(activeSessionId, formatSlashCommandValue(command.name));
     setHighlightedCommandIndex(0);
   };
+  useEffect(() => {
+    const menu = commandMenuRef.current;
+    if (!menu || !visibleCommands.length) {
+      return;
+    }
+    const active = menu.querySelector<HTMLElement>(".composerCommandItem.is-active");
+    if (typeof active?.scrollIntoView === "function") {
+      active.scrollIntoView({ block: "nearest" });
+    }
+  }, [highlightedCommandIndex, visibleCommands.length]);
+
+  const commandMenu = commandMenuVisible && !compactMobile
+    ? commandMenuNode({ commandsLoading, highlightedCommandIndex, menuRef: commandMenuRef, visibleCommands, onApply: applySlashCommand })
+    : null;
 
   const clearAttachmentCount = (sessionId: string) => {
     setAttachedFilesBySessionId((value) => {
@@ -856,6 +912,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
         className="composerCard rounded-[1.5rem] border-border/70 bg-card/95 shadow-lg shadow-primary/5 backdrop-blur-sm"
       >
         <CardContent className="p-3 sm:p-4 space-y-2">
+          {commandMenu}
           {activeSessionSendBlocked && activeSessionSendBlockReason ? <div className="composerModelError">{activeSessionSendBlockReason}</div> : null}
           <form
             className={cn("composer composerShell flex items-end gap-2 border-t-0", draft.includes("\n") && "multiline")}
@@ -880,7 +937,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
               </Button>
             ) : null}
             <input ref={fileInputRef} type="file" hidden tabIndex={-1} onChange={handleAttachChange} />
-            <div className="composerInputWrap flex-1">
+            <div className={cn("composerInputWrap flex-1", slashCommandDraft && "is-command") }>
               <Textarea
                 textareaRef={textareaRef}
                 value={draft}
@@ -937,26 +994,6 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                 }}
                 disabled={sending || Boolean(activeWait)}
               />
-              {commandMenuVisible && !compactMobile ? (
-                <div className="composerCommandMenu" data-testid="composer-command-menu">
-                  {commandsLoading ? <div className="composerCommandHint">Loading Pi commands...</div> : null}
-                  {!commandsLoading
-                    ? visibleCommands.map((command, index) => (
-                      <button
-                        key={command.name}
-                        type="button"
-                        className={cn("composerCommandItem", index === highlightedCommandIndex && "is-active")}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => applySlashCommand(command)}
-                      >
-                        <span className="composerCommandName">/{command.name}</span>
-                        {command.description ? <span className="composerCommandDescription">{command.description}</span> : null}
-                        {command.source ? <span className="composerCommandSource">{command.source}</span> : null}
-                      </button>
-                    ))
-                    : null}
-                </div>
-              ) : null}
             </div>
             <div className={cn("composerControlsColumn", compactMobile && "compactMobile") }>
               <div className={cn("composerControlsRow", compactMobile && "compactMobile")}>

@@ -202,6 +202,7 @@ describe("api", () => {
         ok: true,
         previous_session_id: "sess-1",
         history_path: "/tmp/old.jsonl",
+        sidecar_path: "/tmp/sidecar.json",
         session: {
           session_id: "sess-2",
           runtime_id: "rt-2",
@@ -221,6 +222,7 @@ describe("api", () => {
       backend: "pi",
       previous_session_id: "sess-1",
       history_path: "/tmp/old.jsonl",
+      sidecar_path: "/tmp/sidecar.json",
       session_file_path: "/tmp/new.jsonl",
     }));
 
@@ -501,23 +503,24 @@ describe("api", () => {
     });
   });
 
-  it("executes a session command", async () => {
+  it("executes a session command through the runtime route", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => '{"ok":true,"command":"review","message":"executed by runtime"}',
+      text: async () => '{"ok":true,"command":"handoff","session_id":"sess-2","runtime_id":"rt-2"}',
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.executeSessionCommand("pi-session", { name: "review", args: "current diff" })).resolves.toEqual({
+    await expect(api.executeSessionCommand("sess-1", { name: "handoff", args: "now" }, "rt-1")).resolves.toEqual({
       ok: true,
-      command: "review",
-      message: "executed by runtime",
+      command: "handoff",
+      session_id: "sess-2",
+      runtime_id: "rt-2",
     });
-    expect(fetchMock).toHaveBeenCalledWith("api/sessions/pi-session/commands", expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/rt-1/commands", expect.objectContaining({
       method: "POST",
       headers: expect.objectContaining({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ name: "review", args: "current diff" }),
+      body: JSON.stringify({ name: "handoff", args: "now" }),
     }));
   });
 

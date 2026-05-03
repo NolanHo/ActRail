@@ -576,6 +576,35 @@ describe("Composer", () => {
     expect(textarea.value).toBe("/reload ");
   });
 
+  it("shows all commands for a slash draft", async () => {
+    const getSessionCommands = vi.spyOn(api, "getSessionCommands").mockResolvedValue({
+      commands: [
+        { name: "handoff", description: "Start a fresh runtime", source: "actrail" },
+        { name: "help", description: "Show runtime command help", source: "builtin" },
+      ],
+    });
+    renderComposer({ draft: "  /" });
+    const composerRoot = getRoot();
+
+    await flushEffects();
+    await act(async () => {
+      await getSessionCommands.mock.results[0]?.value;
+    });
+    await flushEffects();
+
+    expect(composerRoot.textContent).toContain("/handoff");
+    expect(composerRoot.textContent).toContain("/help");
+    expect(composerRoot.querySelector(".composerInputWrap.is-command")).not.toBeNull();
+  });
+
+  it("keeps command styling after a command argument is present", async () => {
+    renderComposer({ draft: "/handoff now" });
+
+    await flushEffects();
+
+    expect(getRoot().querySelector(".composerInputWrap.is-command")).not.toBeNull();
+  });
+
   it("shows built-in Pi slash commands like /name when provided by the backend", async () => {
     const getSessionCommands = vi.spyOn(api, "getSessionCommands").mockResolvedValue({
       commands: [

@@ -3052,7 +3052,7 @@ select {
   background: color-mix(in srgb, white 91%, var(--panel)) !important;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08) !important;
   backdrop-filter: none !important;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .composerCard > div {
@@ -3225,7 +3225,7 @@ select {
   min-height: 56px;
   display: flex;
   align-items: center;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 0.82rem;
 }
 
@@ -3259,17 +3259,25 @@ select {
   line-height: 1.45;
 }
 
+.composerInputWrap.is-command {
+  background: color-mix(in srgb, var(--legacy-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--legacy-accent) 42%, transparent);
+}
+
+.composerInputWrap.is-command .composerTextarea {
+  color: color-mix(in srgb, var(--legacy-accent) 58%, var(--text));
+  font-weight: 600;
+}
+
 .composerCommandMenu {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: calc(100% + 8px);
+  position: relative;
+  margin: 0 8px 8px;
   z-index: 12;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: min(42dvh, 320px);
-  overflow: auto;
+  max-height: min(54dvh, 520px);
+  overflow-y: auto;
   overscroll-behavior: contain;
   padding: 8px;
   border: 1px solid color-mix(in srgb, var(--legacy-border) 72%, white);
@@ -4346,11 +4354,6 @@ select {
     line-height: 20px;
     border-radius: 1.1rem;
     overflow-y: hidden;
-  }
-
-  .composerCommandMenu {
-    left: 0;
-    right: 0;
   }
 
   .sendButton {
