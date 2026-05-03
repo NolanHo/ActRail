@@ -942,12 +942,18 @@ func (r Router) editSession(w http.ResponseWriter, req *http.Request) {
 		writeAppError(w, err)
 		return
 	}
+	iodMode, err := stringPatch(body, "iod_mode")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
 	payload, err := r.app.EditSession(req.Context(), app.EditSessionRequest{
 		SessionID:           sessionID,
 		Name:                name,
 		PriorityOffset:      priorityOffset,
 		SnoozeUntil:         snoozeUntil,
 		DependencySessionID: dependencySessionID,
+		IODMode:             iodMode,
 	})
 	if err != nil {
 		writeAppError(w, err)

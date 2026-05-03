@@ -657,6 +657,7 @@ describe("SessionsPane", () => {
       priority_offset: 0,
       snooze_until: 0,
       dependency_session_id: "sess-2",
+      iod_mode: "std",
     });
     expect(api.saveSupervisorProvider).not.toHaveBeenCalled();
     expect(api.saveSessionSupervisor).not.toHaveBeenCalled();

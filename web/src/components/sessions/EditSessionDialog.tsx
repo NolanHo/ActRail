@@ -59,16 +59,19 @@ function initialFormState(session: SessionSummary | null) {
     customDate: nextCustom.customDate,
     customTime: nextCustom.customTime,
     dependencySessionId: String(session?.dependency_session_id || ""),
+    iodMode: session?.iod?.mode === "grpc" ? "grpc" : "std",
   };
 }
 
 export function EditSessionDialog({ open, session, sessions, onClose, onSaved }: EditSessionDialogProps) {
+  const transportSwitchDisabled = Boolean(session?.busy);
   const [sessionName, setSessionName] = useState(() => initialFormState(session).sessionName);
   const [priorityOffset, setPriorityOffset] = useState(() => initialFormState(session).priorityOffset);
   const [snoozeMode, setSnoozeMode] = useState<SnoozeMode>(() => initialFormState(session).snoozeMode);
   const [customDate, setCustomDate] = useState(() => initialFormState(session).customDate);
   const [customTime, setCustomTime] = useState(() => initialFormState(session).customTime);
   const [dependencySessionId, setDependencySessionId] = useState(() => initialFormState(session).dependencySessionId);
+  const [iodMode, setIodMode] = useState(() => initialFormState(session).iodMode);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -86,6 +89,7 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
     setCustomDate(next.customDate);
     setCustomTime(next.customTime);
     setDependencySessionId(next.dependencySessionId);
+    setIodMode(next.iodMode);
     setError("");
   }, [open, session?.session_id]);
 
@@ -195,6 +199,25 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
             <p className="text-xs text-muted-foreground">Dependent sessions stay behind their blocker in the sidebar.</p>
           </label>
 
+          {session?.agent_backend === "pi" && !session.historical ? (
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-foreground">Pi transport</span>
+              <select
+                name="iodMode"
+                className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                value={iodMode}
+                disabled={transportSwitchDisabled}
+                onChange={(event) => setIodMode(event.currentTarget.value)}
+              >
+                <option value="grpc">gRPC</option>
+                <option value="std">std</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {transportSwitchDisabled ? "Transport can only be changed while runtime is idle." : "Changing this relaunches the Pi runtime for this session."}
+              </p>
+            </label>
+          ) : null}
+
           {error ? <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
         </div>
 
@@ -226,6 +249,7 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
                   priority_offset: Number(priorityOffset.toFixed(2)),
                   snooze_until: snoozeUntil,
                   dependency_session_id: dependencySessionId || null,
+                  iod_mode: session.agent_backend === "pi" && !session.historical ? iodMode : undefined,
                 });
                 await onSaved();
                 onClose();

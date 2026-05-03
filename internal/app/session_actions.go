@@ -96,15 +96,17 @@ type EditSessionRequest struct {
 	PriorityOffset      Float64Patch
 	SnoozeUntil         Int64Patch
 	DependencySessionID StringPatch
+	IODMode             StringPatch
 }
 
 type EditSessionResponse struct {
-	OK                  bool    `json:"ok"`
-	Alias               string  `json:"alias,omitempty"`
-	PriorityOffset      float64 `json:"priority_offset,omitempty"`
-	SnoozeUntil         *int64  `json:"snooze_until,omitempty"`
-	DependencySessionID *string `json:"dependency_session_id,omitempty"`
-	Focused             bool    `json:"focused,omitempty"`
+	OK                  bool               `json:"ok"`
+	Alias               string             `json:"alias,omitempty"`
+	PriorityOffset      float64            `json:"priority_offset,omitempty"`
+	SnoozeUntil         *int64             `json:"snooze_until,omitempty"`
+	DependencySessionID *string            `json:"dependency_session_id,omitempty"`
+	Focused             bool               `json:"focused,omitempty"`
+	IOD                 *IODRuntimeSummary `json:"iod,omitempty"`
 }
 
 type SwitchSessionModelRequest struct {
@@ -270,7 +272,7 @@ func (s *Stub) FocusSession(_ context.Context, req FocusSessionRequest) (FocusSe
 	return FocusSessionResponse{OK: true, Focused: record.focused}, nil
 }
 
-func (s *Stub) EditSession(_ context.Context, req EditSessionRequest) (EditSessionResponse, error) {
+func (s *Stub) EditSession(ctx context.Context, req EditSessionRequest) (EditSessionResponse, error) {
 	target, err := s.lookupSession(req.SessionID)
 	if err != nil {
 		return EditSessionResponse{}, err
@@ -315,7 +317,24 @@ func (s *Stub) EditSession(_ context.Context, req EditSessionRequest) (EditSessi
 		}
 		nextDependency = &resolved
 	}
-	record, ok, err := s.registry.Update(req.SessionID, false, func(record *sessionRecord) error {
+	if req.IODMode.Present {
+		if req.IODMode.Value == nil {
+			return EditSessionResponse{}, Invalid("iod_mode", "iod_mode required")
+		}
+		mode := strings.TrimSpace(*req.IODMode.Value)
+		if mode != "grpc" && mode != "std" {
+			return EditSessionResponse{}, Invalid("iod_mode", "iod_mode must be grpc or std")
+		}
+		if mode != currentIODMode(target) {
+			if target.state.Busy() {
+				return EditSessionResponse{}, Conflict("iod mode can only be changed while runtime is idle")
+			}
+			if _, err := s.switchSessionIODMode(ctx, target, mode); err != nil {
+				return EditSessionResponse{}, err
+			}
+		}
+	}
+	record, ok, err := s.registry.Update(target.identity.SessionID(), false, func(record *sessionRecord) error {
 		if nextName != nil {
 			record.title = *nextName
 			record.alias = *nextName
@@ -414,86 +433,16 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 	if record.identity.Historical() {
 		return RestartSessionResponse{}, Unsupported("historical sessions cannot be restarted")
 	}
-	identity, _, ok, err := s.registry.ReserveRestartIdentity(req.SessionID)
+	updated, previousRuntimeID, err := s.replaceSessionRuntime(ctx, req.SessionID, record, record.runtime.UsesPIAgentGRPC())
 	if err != nil {
 		return RestartSessionResponse{}, err
 	}
-	if !ok {
-		return RestartSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
-	}
-	sourcePath := strings.TrimSpace(record.importedSourcePath)
-	if record.identity.Backend() == session.BackendPI && sourcePath == "" {
-		var err error
-		sourcePath, err = newPISessionSourcePath(record.cwd, identity.SessionID(), s.registry.now())
-		if err != nil {
-			return RestartSessionResponse{}, err
-		}
-	}
-	newRuntime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
-		SessionID:       identity.SessionID(),
-		Backend:         record.identity.Backend(),
-		CWD:             record.cwd,
-		Provider:        record.provider,
-		Model:           record.model,
-		ReasoningEffort: record.reasoningEffort,
-		SessionPath:     sourcePath,
-		PIAgentGRPC:     record.runtime.UsesPIAgentGRPC(),
-	})
-	if err != nil {
-		_ = newRuntime.CleanupHelperArtifacts()
-		return RestartSessionResponse{}, err
-	}
-	previousBinding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID())
-	if err != nil {
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
-		return RestartSessionResponse{}, err
-	}
-	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), newRuntime); err != nil {
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
-		return RestartSessionResponse{}, err
-	}
-	restoreBinding := func() {
-		if previousBinding != nil {
-			_ = s.bindCurrentGeneration(helperGenerationBinding{
-				SessionID:        record.identity.SessionID(),
-				GenerationID:     previousBinding.GenerationID,
-				LastReplayOffset: previousBinding.LastReplayOffset,
-			})
-			return
-		}
-		_ = s.helperBindings.Delete(record.identity.SessionID())
-	}
-	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
-		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
-		return RestartSessionResponse{}, err
-	}
-	updated, ok, err := s.registry.SwapRuntime(req.SessionID, identity, newRuntime, sourcePath)
-	if err != nil {
-		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
-		return RestartSessionResponse{}, err
-	}
-	if !ok {
-		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
-		return RestartSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
-	}
-	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
-	_ = record.runtime.Kill(context.Background())
-	_ = record.runtime.CleanupHelperArtifacts()
 	queue := queueSnapshotFromState(updated.state)
 	s.emitQueueState(updated.identity.SessionID(), queue)
 	s.emitSessionState(updated.identity.SessionID())
 	if updated.state.Queue().Len() > 0 {
 		s.scheduleQueuedDispatch(updated.identity.SessionID())
 	}
-	previousRuntimeID, _ := record.identity.RuntimeID()
 	currentRuntimeID, _ := updated.identity.RuntimeID()
 	var wsAttach *SessionAttachRequest
 	if stream, err := session.MainStream(updated.identity); err == nil {
@@ -511,6 +460,95 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 		Restarted:         true,
 		WSAttach:          wsAttach,
 	}, nil
+}
+
+func (s *Stub) switchSessionIODMode(ctx context.Context, record sessionRecord, mode string) (sessionRecord, error) {
+	if record.identity.Historical() {
+		return sessionRecord{}, Unsupported("historical sessions cannot switch iod mode")
+	}
+	if record.identity.Backend() != session.BackendPI {
+		return sessionRecord{}, Unsupported("iod mode is only available for pi backend")
+	}
+	updated, _, err := s.replaceSessionRuntime(ctx, record.identity.SessionID(), record, mode == "grpc")
+	return updated, err
+}
+
+func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.SessionID, record sessionRecord, usePIAgentGRPC bool) (sessionRecord, session.RuntimeID, error) {
+	identity, _, ok, err := s.registry.ReserveRestartIdentity(routeID)
+	if err != nil {
+		return sessionRecord{}, "", err
+	}
+	if !ok {
+		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
+	}
+	sourcePath := strings.TrimSpace(record.importedSourcePath)
+	if record.identity.Backend() == session.BackendPI && sourcePath == "" {
+		var err error
+		sourcePath, err = newPISessionSourcePath(record.cwd, identity.SessionID(), s.registry.now())
+		if err != nil {
+			return sessionRecord{}, "", err
+		}
+	}
+	newRuntime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
+		SessionID:       identity.SessionID(),
+		Backend:         record.identity.Backend(),
+		CWD:             record.cwd,
+		Provider:        record.provider,
+		Model:           record.model,
+		ReasoningEffort: record.reasoningEffort,
+		SessionPath:     sourcePath,
+		PIAgentGRPC:     usePIAgentGRPC,
+	})
+	if err != nil {
+		_ = newRuntime.CleanupHelperArtifacts()
+		return sessionRecord{}, "", err
+	}
+	previousBinding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID())
+	if err != nil {
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return sessionRecord{}, "", err
+	}
+	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), newRuntime); err != nil {
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return sessionRecord{}, "", err
+	}
+	restoreBinding := func() {
+		if previousBinding != nil {
+			_ = s.bindCurrentGeneration(helperGenerationBinding{
+				SessionID:        record.identity.SessionID(),
+				GenerationID:     previousBinding.GenerationID,
+				LastReplayOffset: previousBinding.LastReplayOffset,
+			})
+			return
+		}
+		_ = s.helperBindings.Delete(record.identity.SessionID())
+	}
+	if err := s.setRuntimeAgentRunning(routeID, false); err != nil {
+		restoreBinding()
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return sessionRecord{}, "", err
+	}
+	updated, ok, err := s.registry.SwapRuntime(routeID, identity, newRuntime, sourcePath)
+	if err != nil {
+		restoreBinding()
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return sessionRecord{}, "", err
+	}
+	if !ok {
+		restoreBinding()
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
+	}
+	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
+	_ = record.runtime.Kill(context.Background())
+	_ = record.runtime.CleanupHelperArtifacts()
+	previousRuntimeID, _ := record.identity.RuntimeID()
+	return updated, previousRuntimeID, nil
 }
 
 func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (HandoffSessionResponse, error) {
@@ -589,7 +627,25 @@ func editSessionResponseFromRecord(record sessionRecord) EditSessionResponse {
 		SnoozeUntil:         unixSecondsPtr(record.snoozeUntil),
 		DependencySessionID: sessionIDPtrString(record.dependencySessionID),
 		Focused:             record.focused,
+		IOD:                 iodSummaryForRuntime(record.runtime),
 	}
+}
+
+func currentIODMode(record sessionRecord) string {
+	if record.runtime.UsesPIAgentGRPC() {
+		return "grpc"
+	}
+	return "std"
+}
+
+func iodSummaryForRuntime(runtime sessionRuntime) *IODRuntimeSummary {
+	if runtime.piAgentGRPC != nil {
+		return grpcIODSummary()
+	}
+	if runtime.helper != nil {
+		return runtime.helper.iodSummary()
+	}
+	return nil
 }
 
 func firstUserMessage(transcript message.Transcript) string {

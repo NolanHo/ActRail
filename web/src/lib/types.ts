@@ -311,6 +311,7 @@ export interface EditSessionResponse extends RenameSessionResponse {
   snooze_until?: number | null;
   dependency_session_id?: string | null;
   focused?: boolean;
+  iod?: SessionSummary["iod"];
 }
 
 export interface FocusSessionResponse {

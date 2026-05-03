@@ -475,6 +475,78 @@ func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T
 	}
 }
 
+func TestStubEditSessionRejectsIODModeSwitchWhileBusy(t *testing.T) {
+	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
+	mode := "grpc"
+	_, err := svc.EditSession(context.Background(), EditSessionRequest{SessionID: sessionID, IODMode: StringPatch{Present: true, Value: &mode}})
+	if err == nil {
+		t.Fatal("EditSession() err = nil, want conflict")
+	}
+	appErr, ok := err.(*Error)
+	if !ok || appErr.Code != "conflict" {
+		t.Fatalf("EditSession() err = %T %[1]v, want conflict", err)
+	}
+}
+
+func TestStubEditSessionSwitchesIODMode(t *testing.T) {
+	runner := &process.FakeRunner{}
+	grpcServer := grpc.NewServer()
+	piagentv1.RegisterPiAgentServer(grpcServer, fakePiAgentServer{})
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
+
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner: runner,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/custom-pi", nil
+		},
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		},
+	})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID(session) error = %v", err)
+	}
+	mode := "grpc"
+	resp, err := svc.EditSession(context.Background(), EditSessionRequest{SessionID: sessionID, IODMode: StringPatch{Present: true, Value: &mode}})
+	if err != nil {
+		t.Fatalf("EditSession() error = %v", err)
+	}
+	if resp.IOD == nil || resp.IOD.Mode != "grpc" {
+		t.Fatalf("EditSession().IOD = %+v, want grpc", resp.IOD)
+	}
+	if len(runner.Starts) != 2 {
+		t.Fatalf("len(runner.Starts) = %d, want 2", len(runner.Starts))
+	}
+	args := runner.Starts[1].Command().Args()
+	wantPrefix := []string{"--mode", "grpc", "--grpc-socket", "/tmp/custom-pi-agent.sock"}
+	if len(args) < len(wantPrefix) || !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("restart args = %#v, want grpc prefix %#v", args, wantPrefix)
+	}
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	if record.runtime.piAgentGRPC == nil {
+		t.Fatal("record.runtime.piAgentGRPC = nil after mode switch")
+	}
+}
+
 func TestStubRestartSessionPreservesPIAgentGRPCMode(t *testing.T) {
 	runner := &process.FakeRunner{}
 	grpcServer := grpc.NewServer()
