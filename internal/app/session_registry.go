@@ -369,9 +369,6 @@ func (r *sessionRegistry) allocateIdentityLocked(backend session.Backend) (sessi
 }
 
 func (r *sessionRegistry) resolveLocked(routeID session.SessionID) (session.SessionID, sessionRecord, bool) {
-	if record, ok := r.sessions[routeID]; ok {
-		return routeID, record, true
-	}
 	token := routeID.String()
 	for actualID, record := range r.sessions {
 		runtimeID, ok := record.identity.RuntimeID()
@@ -381,6 +378,9 @@ func (r *sessionRegistry) resolveLocked(routeID session.SessionID) (session.Sess
 		if runtimeID.String() == token {
 			return actualID, record, true
 		}
+	}
+	if record, ok := r.sessions[routeID]; ok {
+		return routeID, record, true
 	}
 	return "", sessionRecord{}, false
 }

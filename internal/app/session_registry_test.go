@@ -7,6 +7,37 @@ import (
 	"actrail/internal/domain/session"
 )
 
+func TestSessionRegistryResolvePrefersRuntimeIDOverSessionID(t *testing.T) {
+	registry := newSessionRegistry(func() time.Time { return time.Unix(1760000000, 0).UTC() }, nil)
+	firstIdentity, err := session.NewLiveIdentity("s_1", "r_2", "t_1", "pi")
+	if err != nil {
+		t.Fatalf("NewLiveIdentity(first) error = %v", err)
+	}
+	secondIdentity, err := session.NewLiveIdentity("r_2", "r_3", "t_2", "pi")
+	if err != nil {
+		t.Fatalf("NewLiveIdentity(second) error = %v", err)
+	}
+	first, err := registry.Create(sessionCreateSpec{Backend: session.BackendPI, Identity: &firstIdentity, CWD: "/tmp/first"})
+	if err != nil {
+		t.Fatalf("Create(first) error = %v", err)
+	}
+	second, err := registry.Create(sessionCreateSpec{Backend: session.BackendPI, Identity: &secondIdentity, CWD: "/tmp/second"})
+	if err != nil {
+		t.Fatalf("Create(second) error = %v", err)
+	}
+	runtimeID, ok := first.identity.RuntimeID()
+	if !ok {
+		t.Fatal("first.identity.RuntimeID() ok = false")
+	}
+	actualID, resolved, ok := registry.resolveLocked(session.SessionID(runtimeID.String()))
+	if !ok {
+		t.Fatal("resolveLocked(runtime) ok = false")
+	}
+	if actualID != first.identity.SessionID() || resolved.identity.SessionID() != first.identity.SessionID() {
+		t.Fatalf("resolveLocked(runtime) = (%q, %q), want first session %q; second session %q", actualID, resolved.identity.SessionID(), first.identity.SessionID(), second.identity.SessionID())
+	}
+}
+
 func TestSessionRegistryCreateStoresLiveSessionState(t *testing.T) {
 	now := time.Unix(1760000000, 0).UTC()
 	registry := newSessionRegistry(func() time.Time { return now })
