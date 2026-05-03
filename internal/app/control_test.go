@@ -103,6 +103,20 @@ func TestEnqueueAcceptsEndedSessionAndCancelClearsPersistedQueue(t *testing.T) {
 	}
 }
 
+func TestDispatchQueuedPromptSkipsBrokenTransport(t *testing.T) {
+	svc, sessionID, _, pty := newControlFixture(t)
+	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "queued"}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{State: SessionTransportStateBroken, Reason: "stale runtime"}); err != nil || !ok {
+		t.Fatalf("SetTransport() = (_, %v, %v), want ok", ok, err)
+	}
+	svc.dispatchQueuedPrompt(sessionID)
+	if writes := pty.Writes(); len(writes) != 0 {
+		t.Fatalf("pty writes = %#v, want none", writes)
+	}
+}
+
 func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	svc, sessionID, handle, pty := newControlFixture(t)
 

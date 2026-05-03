@@ -603,6 +603,32 @@ func TestStubEditSessionSwitchesIODMode(t *testing.T) {
 	}
 }
 
+func TestStubRestartSessionWaitsForInputLock(t *testing.T) {
+	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	record.inputMu.Lock()
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
+		done <- err
+	}()
+	<-started
+	select {
+	case err := <-done:
+		t.Fatalf("RestartSession returned before input lock released: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	record.inputMu.Unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+}
+
 func TestStubRestartSessionPreservesPIAgentGRPCMode(t *testing.T) {
 	runner := &process.FakeRunner{}
 	grpcServer := grpc.NewServer()

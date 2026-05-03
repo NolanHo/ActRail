@@ -30,6 +30,10 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			return nil
 		}
 		queued := items[0]
+		if err := transportControlError(sessionTransportSnapshot(record)); err != nil {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
+			return nil
+		}
 		if err := record.runtime.SendPrompt(context.Background(), queued.Text()); err != nil {
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil

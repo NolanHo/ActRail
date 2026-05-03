@@ -431,15 +431,16 @@ func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (Del
 }
 
 func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (RestartSessionResponse, error) {
-	record, err := s.lookupSession(req.SessionID)
-	if err != nil {
-		return RestartSessionResponse{}, err
-	}
-	if record.identity.Historical() {
-		return RestartSessionResponse{}, Unsupported("historical sessions cannot be restarted")
-	}
-	updated, previousRuntimeID, err := s.replaceSessionRuntime(ctx, req.SessionID, record, record.runtime.UsesPIAgentGRPC())
-	if err != nil {
+	var updated sessionRecord
+	var previousRuntimeID session.RuntimeID
+	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
+		if record.identity.Historical() {
+			return Unsupported("historical sessions cannot be restarted")
+		}
+		var err error
+		updated, previousRuntimeID, err = s.replaceSessionRuntime(ctx, req.SessionID, record, record.runtime.UsesPIAgentGRPC())
+		return err
+	}); err != nil {
 		return RestartSessionResponse{}, err
 	}
 	queue := queueSnapshotFromState(updated.state)
