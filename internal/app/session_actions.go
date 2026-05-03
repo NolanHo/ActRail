@@ -437,6 +437,7 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 		Model:           record.model,
 		ReasoningEffort: record.reasoningEffort,
 		SessionPath:     sourcePath,
+		PIAgentGRPC:     record.runtime.UsesPIAgentGRPC(),
 	})
 	if err != nil {
 		_ = newRuntime.CleanupHelperArtifacts()

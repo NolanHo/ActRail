@@ -687,6 +687,10 @@ func copyIntPtr(raw *int) *int {
 	return &copied
 }
 
+func (r sessionRuntime) UsesPIAgentGRPC() bool {
+	return r.piAgentGRPC != nil
+}
+
 func (r sessionRuntime) CurrentHelperBinding(sessionID session.SessionID) (*RuntimeHelperBinding, error) {
 	if r.helperBinding != nil {
 		resolved := *r.helperBinding
