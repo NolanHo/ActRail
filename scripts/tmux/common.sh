@@ -102,7 +102,7 @@ frontend_url() {
 }
 
 backend_command() {
-  printf '%s\n' "cd \"${REPO_ROOT}\" && export ACTRAIL_HOST=\"${BACKEND_HOST}\" ACTRAIL_PORT=\"${BACKEND_PORT}\" ACTRAIL_IOD_BIN=\"${IOD_HELPER_BIN}\" && \"${GO_BIN}\" build -o \"${SUPPORT_BIN_DIR}/actrail-server\" ./cmd/actrail-server && exec \"${SUPPORT_BIN_DIR}/actrail-server\""
+  printf '%s\n' "cd \"${REPO_ROOT}\" && export ACTRAIL_HOST=\"${BACKEND_HOST}\" ACTRAIL_PORT=\"${BACKEND_PORT}\" ACTRAIL_IOD_BIN=\"${IOD_HELPER_BIN}\" PATH=\"$(dirname \"${GO_BIN}\"):${PATH}\" && \"${GO_BIN}\" build -o \"${SUPPORT_BIN_DIR}/actrail-server\" ./cmd/actrail-server && exec \"${SUPPORT_BIN_DIR}/actrail-server\""
 }
 
 frontend_command() {
