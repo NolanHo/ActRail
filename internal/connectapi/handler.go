@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"actrail/internal/app"
 	"actrail/internal/domain/session"
+	"go.uber.org/zap"
 )
 
 const (
@@ -27,6 +27,7 @@ type Handler struct {
 	controller app.SessionController
 	broker     *Broker
 	now        func() time.Time
+	logger     *zap.Logger
 }
 
 type SessionIdentity struct {
@@ -57,11 +58,27 @@ type connectError struct {
 	Message string `json:"message"`
 }
 
-func NewHandler(controller app.SessionController, broker *Broker) *Handler {
+type HandlerOption func(*Handler)
+
+func WithLogger(logger *zap.Logger) HandlerOption {
+	return func(h *Handler) {
+		if logger != nil {
+			h.logger = logger
+		}
+	}
+}
+
+func NewHandler(controller app.SessionController, broker *Broker, opts ...HandlerOption) *Handler {
 	if broker == nil {
 		broker = NewBroker(defaultBrokerLimit)
 	}
-	return &Handler{controller: controller, broker: broker, now: time.Now}
+	h := &Handler{controller: controller, broker: broker, now: time.Now, logger: zap.NewNop()}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -116,11 +133,11 @@ func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method
 	payload, err := h.dispatchCommand(req.Context(), method, sessionID, body)
 	if err != nil {
 		status := statusForCommandError(err)
-		slog.Info("connect command", "method", method, "status", status, "latency_ms", time.Since(started).Milliseconds(), "error", err.Error())
+		h.logger.Info("connect command", zap.String("method", method), zap.Int("status", status), zap.Int64("latency_ms", time.Since(started).Milliseconds()), zap.Error(err))
 		writeConnectError(w, status, codeForCommandError(err), err.Error())
 		return
 	}
-	slog.Info("connect command", "method", method, "status", http.StatusOK, "latency_ms", time.Since(started).Milliseconds())
+	h.logger.Info("connect command", zap.String("method", method), zap.Int("status", http.StatusOK), zap.Int64("latency_ms", time.Since(started).Milliseconds()))
 	if proto {
 		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(payload))
 		return

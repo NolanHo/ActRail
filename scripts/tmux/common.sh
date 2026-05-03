@@ -104,7 +104,7 @@ frontend_url() {
 backend_command() {
   local go_dir
   go_dir=$(dirname "${GO_BIN}")
-  printf '%s\n' "cd \"${REPO_ROOT}\" && export ACTRAIL_HOST=\"${BACKEND_HOST}\" ACTRAIL_PORT=\"${BACKEND_PORT}\" ACTRAIL_IOD_BIN=\"${IOD_HELPER_BIN}\" PATH=\"${go_dir}:${PATH}\" && \"${GO_BIN}\" build -o \"${SUPPORT_BIN_DIR}/actrail-server\" ./cmd/actrail-server && exec \"${SUPPORT_BIN_DIR}/actrail-server\""
+  printf '%s\n' "cd \"${REPO_ROOT}\" && export ACTRAIL_HOST=\"${BACKEND_HOST}\" ACTRAIL_PORT=\"${BACKEND_PORT}\" ACTRAIL_IOD_BIN=\"${IOD_HELPER_BIN}\" ACTRAIL_OTEL_ENDPOINT=\"${ACTRAIL_OTEL_ENDPOINT:-}\" ACTRAIL_OTEL_PROTOCOL=\"${ACTRAIL_OTEL_PROTOCOL:-grpc}\" ACTRAIL_OTEL_INSECURE=\"${ACTRAIL_OTEL_INSECURE:-true}\" PATH=\"${go_dir}:${PATH}\" && \"${GO_BIN}\" build -o \"${SUPPORT_BIN_DIR}/actrail-server\" ./cmd/actrail-server && exec \"${SUPPORT_BIN_DIR}/actrail-server\""
 }
 
 frontend_command() {
