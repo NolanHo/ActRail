@@ -505,6 +505,9 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		SessionPath:     sourcePath,
 		PIAgentGRPC:     usePIAgentGRPC,
 	})
+	if sourcePath != "" && sourcePath == strings.TrimSpace(record.importedSourcePath) {
+		sourcePath = ""
+	}
 	if err != nil {
 		_ = newRuntime.CleanupHelperArtifacts()
 		return sessionRecord{}, "", err
