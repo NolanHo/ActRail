@@ -34,7 +34,10 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil
 		}
-		if err := record.runtime.SendPrompt(context.Background(), queued.Text()); err != nil {
+		if err := record.runtime.SendPromptWithStaleCheck(context.Background(), queued.Text(), func() bool {
+			current, err := s.lookupSession(sessionID)
+			return err != nil || !sameRuntime(record, current)
+		}); err != nil {
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil
 		}

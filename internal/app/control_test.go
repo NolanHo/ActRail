@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -114,6 +115,26 @@ func TestDispatchQueuedPromptSkipsBrokenTransport(t *testing.T) {
 	svc.dispatchQueuedPrompt(sessionID)
 	if writes := pty.Writes(); len(writes) != 0 {
 		t.Fatalf("pty writes = %#v, want none", writes)
+	}
+}
+
+func TestSendPromptStaleCheckRunsInsideHelperCommandWindow(t *testing.T) {
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolPIRPC,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+		},
+	}
+	called := false
+	err := runtime.SendPromptWithStaleCheck(context.Background(), "prompt", func() bool {
+		called = true
+		return true
+	})
+	if !called {
+		t.Fatal("stale check was not called")
+	}
+	if !errors.Is(err, errRuntimeChanged) {
+		t.Fatalf("SendPromptWithStaleCheck() error = %v, want errRuntimeChanged", err)
 	}
 }
 

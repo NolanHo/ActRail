@@ -746,6 +746,14 @@ func (r sessionRuntime) RequestPIRPCState(ctx context.Context, id string) error 
 }
 
 func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
+	return r.sendPrompt(ctx, text, nil)
+}
+
+func (r sessionRuntime) SendPromptWithStaleCheck(ctx context.Context, text string, stale func() bool) error {
+	return r.sendPrompt(ctx, text, stale)
+}
+
+func (r sessionRuntime) sendPrompt(ctx context.Context, text string, stale func() bool) error {
 	payload := strings.TrimSpace(text)
 	if payload == "" {
 		return fmt.Errorf("runtime prompt is required")
@@ -770,6 +778,9 @@ func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
 		return r.writeCodexCommand(ctx, request)
 	}
 	if r.helper != nil {
+		if stale != nil && stale() {
+			return errRuntimeChanged
+		}
 		if r.protocol == runtimeProtocolPIRPC {
 			encoded, err := json.Marshal(piRPCPromptCommand{Type: "prompt", Message: payload})
 			if err != nil {

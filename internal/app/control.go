@@ -101,9 +101,12 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 			return err
 		}
 		if !sameRuntime(record, current) {
-			return Conflict("session runtime changed before send; retry with current session state")
+			return errRuntimeChanged
 		}
-		if err := record.runtime.SendPrompt(ctx, text); err != nil {
+		if err := record.runtime.SendPromptWithStaleCheck(ctx, text, func() bool {
+			current, err := s.lookupSession(req.SessionID)
+			return err != nil || !sameRuntime(record, current)
+		}); err != nil {
 			_ = s.emitRuntimeControlDiagnostic(req.SessionID, "send", err)
 			return mapRuntimeControlError(err)
 		}
@@ -376,6 +379,8 @@ func (s *Stub) emitRuntimeControlDiagnostic(sessionID session.SessionID, operati
 	return nil
 }
 
+var errRuntimeChanged = errors.New("session runtime changed before send; retry with current session state")
+
 func sameRuntime(a, b sessionRecord) bool {
 	aRuntimeID, aOK := a.identity.RuntimeID()
 	bRuntimeID, bOK := b.identity.RuntimeID()
@@ -386,6 +391,9 @@ func sameRuntime(a, b sessionRecord) bool {
 }
 
 func mapRuntimeControlError(err error) error {
+	if errors.Is(err, errRuntimeChanged) {
+		return Conflict(errRuntimeChanged.Error())
+	}
 	if errors.Is(err, errRuntimeInputUnavailable) {
 		return Conflict("session runtime input is unavailable")
 	}
