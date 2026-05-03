@@ -66,6 +66,7 @@ type runtimeLaunchRequest struct {
 	ReasoningEffort string
 	SessionPath     string
 	PIAgentGRPC     bool
+	AttachOnly      bool
 }
 
 type processRuntimeLauncher struct {
@@ -115,6 +116,7 @@ type sessionRuntime struct {
 	piAgentGRPC          *piagentgrpc.Client
 	helperBinding        *RuntimeHelperBinding
 	currentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
+	serverOwned          bool
 }
 
 type codexRuntimeState struct {
@@ -424,17 +426,30 @@ func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runti
 	if err != nil {
 		return sessionRuntime{}, err
 	}
-	handle, err := l.runner.Start(ctx, launchSpec)
-	if err != nil {
-		_ = client.Close()
-		return sessionRuntime{}, err
+	if !req.AttachOnly {
+		launchSpec, err = detachedPipeLaunchSpec(launchSpec)
+		if err != nil {
+			return sessionRuntime{}, err
+		}
 	}
-	if handle == nil {
-		_ = client.Close()
-		return sessionRuntime{}, fmt.Errorf("start pi agent grpc runtime %q: nil process handle", req.SessionID)
+	var handle process.Handle
+	serverOwned := false
+	if !req.AttachOnly {
+		handle, err = l.runner.Start(ctx, launchSpec)
+		if err != nil {
+			_ = client.Close()
+			return sessionRuntime{}, err
+		}
+		if handle == nil {
+			_ = client.Close()
+			return sessionRuntime{}, fmt.Errorf("start pi agent grpc runtime %q: nil process handle", req.SessionID)
+		}
+		serverOwned = true
 	}
 	if err := l.waitForPIAgentGRPCReady(ctx, client); err != nil {
-		_ = handle.Kill()
+		if handle != nil {
+			_ = handle.Kill()
+		}
 		_ = client.Close()
 		return sessionRuntime{}, err
 	}
@@ -444,6 +459,7 @@ func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runti
 		protocol:             runtimeProtocolPIRPC,
 		piAgentGRPC:          client,
 		currentHelperBinding: l.currentHelperBinding,
+		serverOwned:          serverOwned,
 	}, nil
 }
 
@@ -595,6 +611,14 @@ func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (proce
 		return process.LaunchSpec{}, err
 	}
 	return l.catalog.LaunchSpec(launchReq)
+}
+
+func detachedPipeLaunchSpec(spec process.LaunchSpec) (process.LaunchSpec, error) {
+	ioSpec, err := process.PipeIO(process.LogPaths{})
+	if err != nil {
+		return process.LaunchSpec{}, err
+	}
+	return process.NewLaunchSpec(spec.Command(), spec.CWD().String(), spec.Environment(), ioSpec, process.Detached())
 }
 
 func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helperBinPath string, generationID iod.GenerationID, childLaunchSpec process.LaunchSpec) (process.LaunchSpec, error) {
@@ -937,7 +961,7 @@ func (r sessionRuntime) Kill(ctx context.Context) error {
 	if r.piAgentGRPC != nil {
 		_ = r.piAgentGRPC.Close()
 	}
-	if r.handle == nil {
+	if r.handle == nil || !r.serverOwned {
 		return nil
 	}
 	if err := r.handle.Kill(); err != nil {
@@ -950,7 +974,7 @@ func (r sessionRuntime) PID() int {
 	if r.helper != nil && r.helper.childPID != nil {
 		return *r.helper.childPID
 	}
-	if r.piAgentGRPC != nil && r.handle != nil {
+	if r.piAgentGRPC != nil && r.handle != nil && r.serverOwned {
 		return r.handle.PID()
 	}
 	if r.handle == nil {

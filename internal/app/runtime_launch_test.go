@@ -159,6 +159,12 @@ func TestCreateSessionLaunchesPIAgentGRPCWhenRequested(t *testing.T) {
 	if len(runner.Starts) != 1 {
 		t.Fatalf("len(runner.Starts) = %d, want 1", len(runner.Starts))
 	}
+	if !runner.Starts[0].Detached() {
+		t.Fatal("grpc launch Detached() = false, want true so server restart does not kill runtime")
+	}
+	if runner.Starts[0].IO().Mode() != process.IOModePipes {
+		t.Fatalf("grpc launch IO mode = %q, want %q so server-owned PTY close does not kill runtime", runner.Starts[0].IO().Mode(), process.IOModePipes)
+	}
 	args := runner.Starts[0].Command().Args()
 	wantPrefix := []string{"--mode", "grpc", "--grpc-socket", "/tmp/custom-pi-agent.sock"}
 	if !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) {

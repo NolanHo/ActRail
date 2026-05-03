@@ -74,7 +74,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 			stub.runtimeAgentRunning[record.identity.SessionID()] = true
 		}
 	}
-	if err := stub.reattachSurvivingHelpers(context.Background()); err != nil {
+	if err := stub.reattachSurvivingRuntimes(context.Background()); err != nil {
 		_ = catalog.Close()
 		return nil, err
 	}

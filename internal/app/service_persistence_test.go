@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,10 @@ import (
 	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
+	piagentv1 "actrail/proto/pi/agent/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 )
 
 func persistentTestConfig(t *testing.T) config.Config {
@@ -322,6 +327,72 @@ func TestPersistentStubColdStartRehydratesLiveSessionState(t *testing.T) {
 	}
 	if !record.runtimeAgentRunning {
 		t.Fatal("persisted runtimeAgentRunning = false, want true")
+	}
+}
+
+func TestPersistentStubReattachesRunningPIAgentGRPCWithoutStartingNewProcess(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	server := &fakePiAgentServer{}
+	grpcServer := grpc.NewServer()
+	piagentv1.RegisterPiAgentServer(grpcServer, server)
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
+
+	runner := &process.FakeRunner{}
+	runtimeCfg := RuntimeConfig{
+		Runner:            runner,
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		},
+		ResolveBinPath: func(session.Backend) (string, error) { return "/tmp/custom-pi", nil },
+	}
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, runtimeCfg)
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	useGRPC := true
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir(), PIAgentGRPC: &useGRPC})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	if len(runner.Starts) != 1 {
+		t.Fatalf("len(runner.Starts) = %d, want initial start only", len(runner.Starts))
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, runtimeCfg)
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
+	}
+	if len(runner.Starts) != 1 {
+		t.Fatalf("len(runner.Starts) = %d, want no restart on server rehydrate", len(runner.Starts))
+	}
+	record, err := rehydrated.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	if record.runtime.piAgentGRPC == nil {
+		t.Fatal("rehydrated runtime.piAgentGRPC = nil, want reattached client")
+	}
+	if record.runtime.handle != nil {
+		t.Fatalf("rehydrated runtime.handle = %+v, want nil attach-only runtime", record.runtime.handle)
+	}
+	if !record.runtimeAgentRunning {
+		t.Fatal("rehydrated runtimeAgentRunning = false, want persisted running state")
 	}
 }
 
