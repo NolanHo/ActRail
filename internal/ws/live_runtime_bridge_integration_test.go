@@ -91,7 +91,7 @@ func TestLiveRuntimeBridgePublishesAssistantReplyPathOverWebSocketAndMessages(t 
 	svc, cfg, server, cookie := newLiveBridgeServer(t, &process.FakeRunner{NextHandle: handle})
 	defer server.Close()
 
-	created, err := svc.CreateSession(context.Background(), app.CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), app.CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -198,7 +198,7 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 	svc, cfg, server, cookie := newLiveBridgeServer(t, &process.FakeRunner{NextHandle: handle})
 	defer server.Close()
 
-	created, err := svc.CreateSession(context.Background(), app.CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), app.CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -556,3 +556,5 @@ func mustSessionID(t *testing.T, raw string) session.SessionID {
 	}
 	return id
 }
+
+func boolPtr(value bool) *bool { return &value }

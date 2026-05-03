@@ -508,6 +508,7 @@ func (l processRuntimeLauncher) launchDirect(ctx context.Context, req runtimeLau
 		protocol:             runtimeProtocolForBackend(req.Backend),
 		codex:                newCodexRuntimeState(req.Backend),
 		currentHelperBinding: l.currentHelperBinding,
+		serverOwned:          true,
 	}, nil
 }
 
@@ -579,6 +580,7 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 			resolved := *binding
 			return &resolved, nil
 		},
+		serverOwned: true,
 	}, verifyLaunchMatchesManifest(paths, manifest)
 }
 

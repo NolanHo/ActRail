@@ -40,7 +40,11 @@ func newSessionActionFixtureForBackend(t *testing.T, backend string) (*Stub, *[]
 	}}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
 	cwd := t.TempDir()
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: backend, CWD: cwd})
+	req := CreateSessionRequest{AgentBackend: backend, CWD: cwd}
+	if strings.EqualFold(backend, "pi") {
+		req.PIAgentGRPC = boolPtr(false)
+	}
+	created, err := svc.CreateSession(context.Background(), req)
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -57,7 +61,7 @@ func newSessionActionFixtureForBackend(t *testing.T, backend string) (*Stub, *[]
 
 func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	svc, handle, sessionID, _ := newSessionActionFixture(t)
-	depCreated, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	depCreated, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession(dependency) error = %v", err)
 	}
@@ -181,6 +185,7 @@ func TestStubCreateSessionCanResumeListedPISessionCandidate(t *testing.T) {
 	resumeID := sessionID.String()
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
 		AgentBackend:    "pi",
+		PIAgentGRPC:     boolPtr(false),
 		CWD:             record.cwd,
 		ResumeSessionID: &resumeID,
 	})
@@ -208,7 +213,7 @@ func TestStubCreateSessionCanResumeListedPISessionCandidate(t *testing.T) {
 func TestStubSessionResumeCandidatesAndRuntimeRouteLookup(t *testing.T) {
 	svc, _, sessionID, runtimeRoute := newSessionActionFixture(t)
 	otherDir := t.TempDir()
-	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: otherDir}); err != nil {
+	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: otherDir}); err != nil {
 		t.Fatalf("CreateSession(other) error = %v", err)
 	}
 	if _, ok, err := svc.registry.AppendMessage(sessionID, "user", "message", "Investigate backlog"); err != nil || !ok {
@@ -311,7 +316,7 @@ func TestStubSessionResumeCandidatesUseUpdatedTimeDescendingForDemotedSessions(t
 	svc := newStub(cfg, func() time.Time { return now })
 	cwd := t.TempDir()
 	for i := 0; i < 3; i++ {
-		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd}); err != nil {
+		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: cwd}); err != nil {
 			t.Fatalf("CreateSession(%d) error = %v", i, err)
 		}
 	}
@@ -366,7 +371,7 @@ func TestStubSessionResumeCandidatesUseUpdatedTimeTieBreaker(t *testing.T) {
 	svc := newStub(cfg, func() time.Time { return now })
 	cwd := t.TempDir()
 	for i := 0; i < 2; i++ {
-		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd}); err != nil {
+		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: cwd}); err != nil {
 			t.Fatalf("CreateSession(%d) error = %v", i, err)
 		}
 	}
@@ -580,7 +585,7 @@ func TestStubEditSessionIODModeSwitchWaitsForInputLock(t *testing.T) {
 			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		},
 	})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -616,7 +621,7 @@ func TestStubEditSessionIODModeSwitchWaitsForInputLock(t *testing.T) {
 func TestStubEditSessionSwitchToGRPCClearsHelperAttachment(t *testing.T) {
 	runner := &process.FakeRunner{}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -727,7 +732,7 @@ func TestStubEditSessionSwitchesIODMode(t *testing.T) {
 			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		},
 	})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -761,7 +766,7 @@ func TestStubEditSessionSwitchesIODMode(t *testing.T) {
 }
 
 func TestStubRestartSessionWaitsForInputLock(t *testing.T) {
-	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
+	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "codex")
 	record, err := svc.lookupSession(sessionID)
 	if err != nil {
 		t.Fatalf("lookupSession() error = %v", err)
@@ -786,7 +791,7 @@ func TestStubRestartSessionWaitsForInputLock(t *testing.T) {
 	}
 }
 
-func TestStubRestartSessionPreservesPIAgentGRPCMode(t *testing.T) {
+func TestStubRestartSessionDefaultsPIToGRPC(t *testing.T) {
 	runner := &process.FakeRunner{}
 	grpcServer := grpc.NewServer()
 	piagentv1.RegisterPiAgentServer(grpcServer, fakePiAgentServer{})
@@ -809,8 +814,7 @@ func TestStubRestartSessionPreservesPIAgentGRPCMode(t *testing.T) {
 			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		},
 	})
-	useGRPC := true
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir(), PIAgentGRPC: &useGRPC})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -851,8 +855,64 @@ func TestStubRestartSessionPreservesPIAgentGRPCMode(t *testing.T) {
 	}
 }
 
+func TestStubRestartSessionConvertsStdPIToGRPC(t *testing.T) {
+	runner := &process.FakeRunner{}
+	grpcServer := grpc.NewServer()
+	piagentv1.RegisterPiAgentServer(grpcServer, fakePiAgentServer{})
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
+
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner: runner,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/custom-pi", nil
+		},
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		},
+	})
+	useGRPC := false
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir(), PIAgentGRPC: &useGRPC})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+	if !restarted.OK || restarted.Session == nil {
+		t.Fatalf("RestartSession() = %+v, want session", restarted)
+	}
+	if len(runner.Starts) != 2 {
+		t.Fatalf("len(runner.Starts) = %d, want std start plus grpc restart", len(runner.Starts))
+	}
+	args := runner.Starts[1].Command().Args()
+	wantPrefix := []string{"--mode", "grpc", "--grpc-socket", "/tmp/custom-pi-agent.sock"}
+	if len(args) < len(wantPrefix) || !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("restart args = %#v, want grpc prefix %#v", args, wantPrefix)
+	}
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	if record.runtime.piAgentGRPC == nil {
+		t.Fatal("record.runtime.piAgentGRPC = nil after std restart")
+	}
+}
+
 func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T) {
-	svc, handles, sessionID, runtimeID := newSessionActionFixtureForBackend(t, "pi")
+	svc, handles, sessionID, runtimeID := newSessionActionFixtureForBackend(t, "codex")
 	if len(*handles) != 1 {
 		t.Fatalf("len(handles) = %d, want 1", len(*handles))
 	}

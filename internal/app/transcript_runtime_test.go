@@ -90,7 +90,7 @@ func TestSessionRegistryTranscriptMutationsSyncState(t *testing.T) {
 func TestStubSessionMessagesReturnsEmptyHistoryForKnownSession(t *testing.T) {
 	cfg := config.Load()
 	svc := newStub(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() })
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -121,7 +121,7 @@ func TestStubTranscriptWriterFeedsSessionStateAndHistory(t *testing.T) {
 	cfg := config.Load()
 	now := time.Unix(1760000000, 0).UTC()
 	svc := newStub(cfg, func() time.Time { return now })
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

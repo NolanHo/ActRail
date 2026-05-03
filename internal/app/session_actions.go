@@ -439,7 +439,7 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 			return Unsupported("historical sessions cannot be restarted")
 		}
 		var err error
-		updated, previousRuntimeID, err = s.replaceSessionRuntime(ctx, req.SessionID, record, record.runtime.UsesPIAgentGRPC())
+		updated, previousRuntimeID, err = s.replaceSessionRuntime(ctx, req.SessionID, record, restartSessionUsesPIAgentGRPC(record))
 		return err
 	}); err != nil {
 		return RestartSessionResponse{}, err
@@ -478,6 +478,10 @@ func (s *Stub) switchSessionIODMode(ctx context.Context, record sessionRecord, m
 	}
 	updated, _, err := s.replaceSessionRuntime(ctx, record.identity.SessionID(), record, mode == "grpc")
 	return updated, err
+}
+
+func restartSessionUsesPIAgentGRPC(record sessionRecord) bool {
+	return record.identity.Backend() == session.BackendPI
 }
 
 func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.SessionID, record sessionRecord, usePIAgentGRPC bool) (sessionRecord, session.RuntimeID, error) {
@@ -591,6 +595,7 @@ func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (H
 	if title == "" {
 		title = strings.TrimSpace(record.title)
 	}
+	useGRPC := record.runtime.UsesPIAgentGRPC()
 	created, err := s.CreateSession(ctx, CreateSessionRequest{
 		AgentBackend:    record.identity.Backend().String(),
 		CWD:             record.cwd,
@@ -598,6 +603,7 @@ func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (H
 		Model:           stringPtr(record.model),
 		ReasoningEffort: stringPtr(record.reasoningEffort),
 		Title:           stringPtr(title),
+		PIAgentGRPC:     &useGRPC,
 	})
 	if err != nil {
 		return HandoffSessionResponse{}, err

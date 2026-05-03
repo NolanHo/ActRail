@@ -325,9 +325,8 @@ export const api = {
       return response;
     });
   },
-  restartSession(sessionId: string, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
-    return postJson<RestartSessionResponse>(`/api/sessions/${routeId}/restart`, {}).then((response) => {
+  restartSession(sessionId: string, _runtimeId?: string | null) {
+    return postJson<RestartSessionResponse>(`/api/sessions/${String(sessionId || "").trim()}/restart`, {}).then((response) => {
       if (response.session && typeof response.session === "object") {
         return {
           ...response,

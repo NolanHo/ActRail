@@ -237,8 +237,7 @@ export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: 
   const restartSession = async (session: SessionSummary) => {
     setActionError("");
     try {
-      const runtimeId = getSessionRuntimeId(session);
-      const response = await api.restartSession(session.session_id, runtimeId);
+      const response = await api.restartSession(session.session_id);
       await selectCreatedSession(response);
       await sessionsStoreApi.refreshBootstrap();
     } catch (error) {

@@ -54,7 +54,7 @@ func newControlFixture(t *testing.T) (*Stub, session.SessionID, *process.FakeHan
 	handle.SetPTY(pty)
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -285,7 +285,7 @@ func TestSendAndUIResponseReturnConflictWithoutRuntimeInput(t *testing.T) {
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

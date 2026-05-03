@@ -154,7 +154,7 @@ func TestCreateSessionConsumesPIRuntimeOutputIntoStateAndTranscript(t *testing.T
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
 
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -237,7 +237,7 @@ func TestCreateSessionConsumesPIRPCRuntimeOutputIntoStateTranscriptAndEvents(t *
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
 
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -316,7 +316,7 @@ func TestFinalAssistantCommitSuppressesDuplicateTurnCompleted(t *testing.T) {
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -360,7 +360,7 @@ func TestPIRPCGetStateControlsBusyWithoutAgentEvents(t *testing.T) {
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
 
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -409,7 +409,7 @@ func TestPIRPCActivityEventMarksIdleSessionBusy(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -449,7 +449,7 @@ func TestPIRPCCompactionEventsCommitPiEventMessages(t *testing.T) {
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -501,7 +501,7 @@ func TestPIRPCTurnCompletedClearsBusyAfterPromptLatch(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -536,7 +536,7 @@ func TestPIRPCBusyHoldIgnoresEarlyIdleGetState(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -619,7 +619,7 @@ func TestPIRPCIdleHoldIgnoresStaleBusyGetStateAfterCompletion(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -660,7 +660,7 @@ func TestIODTransportResetRequiredEmitsDiagnosticMessage(t *testing.T) {
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -758,7 +758,7 @@ func newPIRPCStateFailureFixture(t *testing.T) (*Stub, session.SessionID, iod.Ge
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -966,7 +966,7 @@ func TestCreateSessionConsumesHelperBackedPIReplayAndLiveOutputIntoStateTranscri
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
 
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -975,8 +975,7 @@ func TestCreateSessionConsumesHelperBackedPIReplayAndLiveOutputIntoStateTranscri
 		t.Fatalf("ParseSessionID() error = %v", err)
 	}
 
-	record, ok := svc.registry.Lookup(sessionID)
-	if !ok {
+	if _, ok := svc.registry.Lookup(sessionID); !ok {
 		t.Fatalf("Lookup(%q) ok = false", sessionID)
 	}
 	clientConn, serverConn := net.Pipe()
@@ -1006,7 +1005,7 @@ func TestCreateSessionConsumesHelperBackedPIReplayAndLiveOutputIntoStateTranscri
 	}, nil)
 	defer svc.helpers.replaceAll(nil, nil)
 
-	runtime := svc.runtimeForSession(sessionID, session.BackendPI, record.runtime)
+	runtime := svc.runtimeForSession(sessionID, session.BackendPI, sessionRuntime{})
 	svc.startRuntimeIngest(sessionID, session.BackendPI, runtime)
 
 	enc := json.NewEncoder(serverConn)
@@ -1137,7 +1136,7 @@ func TestCreateSessionConsumesHelperBackedCodexReplayAndLiveOutputIntoStateTrans
 	}, nil)
 	defer svc.helpers.replaceAll(nil, nil)
 
-	runtime := svc.runtimeForSession(sessionID, session.BackendCodex, record.runtime)
+	runtime := svc.runtimeForSession(sessionID, session.BackendCodex, sessionRuntime{})
 	svc.startRuntimeIngest(sessionID, session.BackendCodex, runtime)
 
 	enc := json.NewEncoder(serverConn)

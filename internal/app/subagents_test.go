@@ -46,7 +46,7 @@ func TestPersistentStubResumeAskParentAfterRestart(t *testing.T) {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
 	cwd := t.TempDir()
-	parent, err := created.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd})
+	parent, err := created.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: cwd})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -113,7 +113,7 @@ func TestPersistentStubRehydratesSubagentActorsAndEvents(t *testing.T) {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
 	cwd := t.TempDir()
-	parent, err := created.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd})
+	parent, err := created.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: cwd})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -155,7 +155,7 @@ func TestPersistentStubRehydratesSubagentActorsAndEvents(t *testing.T) {
 
 func TestSpawnSubagentCreatesChildSessionAndActor(t *testing.T) {
 	s := newStub(config.Load(), time.Now)
-	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/repo"})
+	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/repo"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -177,7 +177,7 @@ func TestSpawnSubagentCreatesChildSessionAndActor(t *testing.T) {
 
 func TestSpawnSubagentHidesChildSessionFromSessionList(t *testing.T) {
 	s := newStub(config.Load(), time.Now)
-	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/repo"})
+	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/repo"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -208,7 +208,7 @@ func TestCloseSubagentKillsChildRuntimeWithoutDeletingHistory(t *testing.T) {
 		return h
 	}}
 	s := NewStubForTest(config.Load(), time.Now, RuntimeConfig{Runner: runner})
-	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/repo"})
+	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/repo"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

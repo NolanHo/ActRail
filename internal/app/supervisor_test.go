@@ -44,7 +44,7 @@ func TestSupervisorProviderReadDoesNotReturnAPIKey(t *testing.T) {
 
 func TestSessionSupervisorDefaultsUseMaxConsecutiveInjectionsTen(t *testing.T) {
 	svc := newSupervisorTestStub(time.Unix(1760000000, 0).UTC())
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -76,7 +76,7 @@ func TestSessionSupervisorRejectsNonPIBackend(t *testing.T) {
 func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
 	now := time.Unix(1760000000, 0).UTC()
 	svc := newSupervisorTestStub(now)
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -143,7 +143,7 @@ func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
 
 func TestRunSupervisorOnceRejectsAssistantWithoutPIMessageEventID(t *testing.T) {
 	svc := newSupervisorTestStub(time.Unix(1760000000, 0).UTC())
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -167,7 +167,7 @@ func TestRunSupervisorOnceRejectsAssistantWithoutPIMessageEventID(t *testing.T) 
 
 func TestUpdateSessionSupervisorPersistsConfig(t *testing.T) {
 	svc := newSupervisorTestStub(time.Unix(1760000000, 0).UTC())
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

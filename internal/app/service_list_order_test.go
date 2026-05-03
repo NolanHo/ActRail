@@ -116,7 +116,7 @@ func TestStubListSessionsDemotesBlockedAndSnoozedPriority(t *testing.T) {
 	now := time.Unix(1760000000, 0).UTC()
 	svc := newStub(cfg, func() time.Time { return now })
 	for _, cwd := range []string{"/tmp/active", "/tmp/blocked", "/tmp/snoozed"} {
-		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd}); err != nil {
+		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: cwd}); err != nil {
 			t.Fatalf("CreateSession(%q) error = %v", cwd, err)
 		}
 	}

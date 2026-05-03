@@ -194,6 +194,33 @@ describe("api", () => {
     }));
   });
 
+  it("posts restart to the durable session route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        ok: true,
+        session_id: "sess-1",
+        runtime_id: "rt-2",
+        previous_runtime_id: "rt-1",
+        restarted: true,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.restartSession("sess-1", "rt-1")).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      session_id: "sess-1",
+      runtime_id: "rt-2",
+      previous_runtime_id: "rt-1",
+    }));
+
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/sess-1/restart", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({}),
+    }));
+  });
+
   it("posts handoff and flattens the session envelope", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

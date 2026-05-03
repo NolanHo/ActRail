@@ -211,7 +211,7 @@ describe("SessionsPane", () => {
     await click(confirmButton!);
     await flush();
 
-    expect(api.restartSession).toHaveBeenCalledWith("sess-1", null);
+    expect(api.restartSession).toHaveBeenCalledWith("sess-1");
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-1");
   });
 
@@ -419,7 +419,7 @@ describe("SessionsPane", () => {
     await click(confirmButton!);
     await flush();
 
-    expect(api.restartSession).toHaveBeenCalledWith("sess-1", "rt-1");
+    expect(api.restartSession).toHaveBeenCalledWith("sess-1");
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-1");
   });
 
@@ -452,7 +452,7 @@ describe("SessionsPane", () => {
     await click(confirmButton!);
     await flush();
 
-    expect(api.restartSession).toHaveBeenCalledWith("sess-9", "rt-9");
+    expect(api.restartSession).toHaveBeenCalledWith("sess-9");
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-9");
   });
 

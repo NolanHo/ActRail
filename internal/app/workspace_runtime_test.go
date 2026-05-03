@@ -89,7 +89,7 @@ func TestStubWorkspaceReturnsNotFoundAndRejectsEscapingPaths(t *testing.T) {
 
 func createWorkspaceSession(t *testing.T, svc *Stub, cwd string) session.SessionID {
 	t.Helper()
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: cwd})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

@@ -21,6 +21,7 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	model := "gpt-test"
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
 		AgentBackend: "PI",
+		PIAgentGRPC:  boolPtr(false),
 		CWD:          "/root/code/ActRail",
 		Provider:     &provider,
 		Model:        &model,
@@ -146,7 +147,7 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 func TestStubListSessionsUsesAttachedHelperForTransportSnapshot(t *testing.T) {
 	cfg := config.Load()
 	svc := newStub(cfg, time.Now)
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/docs"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/docs"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -193,7 +194,7 @@ func TestStubListSessionsUsesStablePagination(t *testing.T) {
 	now := time.Unix(1760000000, 0).UTC()
 	svc := newStub(cfg, func() time.Time { return now })
 	for _, cwd := range []string{"/tmp/one", "/tmp/two", "/tmp/three"} {
-		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: cwd}); err != nil {
+		if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: cwd}); err != nil {
 			t.Fatalf("CreateSession(%q) error = %v", cwd, err)
 		}
 	}
@@ -235,6 +236,7 @@ func TestStubCreateSessionReturnsNotFoundForUnknownResumeSession(t *testing.T) {
 
 	_, err := svc.CreateSession(context.Background(), CreateSessionRequest{
 		AgentBackend:    "pi",
+		PIAgentGRPC:     boolPtr(false),
 		CWD:             "/root/code/ActRail",
 		ResumeSessionID: &resume,
 	})

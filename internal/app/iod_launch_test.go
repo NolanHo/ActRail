@@ -275,7 +275,7 @@ func TestCreateSessionRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest() error = %v", err)
 	}
-	_, err = svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	_, err = svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err == nil {
 		t.Fatal("CreateSession() error = nil, want helper launch failure")
 	}
@@ -425,7 +425,11 @@ func createIODBackedSessionForBackend(t *testing.T, svc *Stub, cfg config.Config
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatalf("MkdirAll(%q) error = %v", cwd, err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: backend, CWD: cwd})
+	req := CreateSessionRequest{AgentBackend: backend, CWD: cwd}
+	if strings.EqualFold(backend, "pi") {
+		req.PIAgentGRPC = boolPtr(false)
+	}
+	created, err := svc.CreateSession(context.Background(), req)
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

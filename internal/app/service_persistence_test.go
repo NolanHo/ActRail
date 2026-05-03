@@ -150,6 +150,7 @@ func TestPersistentStubColdStartRehydratesSessionCatalog(t *testing.T) {
 	}
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
 		AgentBackend:    "pi",
+		PIAgentGRPC:     boolPtr(false),
 		CWD:             cwd,
 		Provider:        &provider,
 		Model:           &model,
@@ -403,7 +404,7 @@ func TestPersistentStubColdStartRehydratesQueuedPromptExactlyOnce(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/queue-project"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/queue-project"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -464,7 +465,7 @@ func TestPersistentStubColdStartRehydratesWorkspaceBrowserState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: rootDir})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: rootDir})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -794,7 +795,7 @@ func TestPersistentStubColdStartImportedPIMetadataEditsDoNotChangeProvenanceDeci
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest() error = %v", err)
 	}
-	dependency, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/workspace/dependency"})
+	dependency, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/workspace/dependency"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -857,10 +858,10 @@ func TestPersistentStubColdStartRehydratesRecentCwdsAndCwdGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/project-a"}); err != nil {
+	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/project-a"}); err != nil {
 		t.Fatalf("CreateSession(project-a) error = %v", err)
 	}
-	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/project-b"}); err != nil {
+	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/project-b"}); err != nil {
 		t.Fatalf("CreateSession(project-b) error = %v", err)
 	}
 	label := "Project A"
@@ -893,7 +894,7 @@ func TestPersistentStubDeleteArchivesSessionRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest() error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/archive-me"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/archive-me"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

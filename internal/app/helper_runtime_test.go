@@ -32,7 +32,7 @@ func TestHelperDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/helper-discovery"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/helper-discovery"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestStartupHealthMarksMissingHelperEnded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/missing-helper"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/missing-helper"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -106,7 +106,7 @@ func TestStartupHealthMarksUndialableHelperEnded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/undialable-helper"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/undialable-helper"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -135,7 +135,7 @@ func TestServerReattach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/server-reattach"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/server-reattach"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -305,7 +305,7 @@ func TestStaleHelperFence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/stale-fence"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/stale-fence"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -355,7 +355,7 @@ func TestCorruptManifestSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/corrupt-manifest-skipped"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/corrupt-manifest-skipped"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -395,7 +395,7 @@ func TestReplayCursorNotAdvancedOnCorruptTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/replay-corrupt-tail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/replay-corrupt-tail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -424,7 +424,7 @@ func TestReplayCursorNotAdvancedOnReplayGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
 	}
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/tmp/replay-gap"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/tmp/replay-gap"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

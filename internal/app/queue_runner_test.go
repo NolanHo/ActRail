@@ -94,7 +94,7 @@ func TestCancelQueueWaitsForQueuedDispatchCriticalSection(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	handle.SetPTY(pty)
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: &process.FakeRunner{NextHandle: handle}})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

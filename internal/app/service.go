@@ -559,7 +559,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 }
 
 func createSessionUsesPIAgentGRPC(req CreateSessionRequest, backend session.Backend) bool {
-	return backend == session.BackendPI && req.PIAgentGRPC != nil && *req.PIAgentGRPC
+	return backend == session.BackendPI && (req.PIAgentGRPC == nil || *req.PIAgentGRPC)
 }
 
 func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {

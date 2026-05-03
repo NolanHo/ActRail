@@ -71,6 +71,7 @@ func TestCreateSessionLaunchesRuntimeThroughInjectedCatalogAndRunner(t *testing.
 
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
 		AgentBackend: "pi",
+		PIAgentGRPC:  boolPtr(false),
 		CWD:          "/root/code/ActRail",
 	})
 	if err != nil {
@@ -115,7 +116,7 @@ func TestCreateSessionLaunchesRuntimeThroughInjectedCatalogAndRunner(t *testing.
 	}
 }
 
-func TestCreateSessionLaunchesPIAgentGRPCWhenRequested(t *testing.T) {
+func TestCreateSessionDefaultsPIAgentToGRPC(t *testing.T) {
 	catalog := agent.DefaultCatalog()
 	runner := &process.FakeRunner{}
 	grpcServer := grpc.NewServer()
@@ -141,11 +142,9 @@ func TestCreateSessionLaunchesPIAgentGRPCWhenRequested(t *testing.T) {
 			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		},
 	})
-	useGRPC := true
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
 		AgentBackend: "pi",
 		CWD:          "/root/code/ActRail",
-		PIAgentGRPC:  &useGRPC,
 	})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
@@ -196,12 +195,40 @@ func TestCreateSessionLaunchesPIAgentGRPCWhenRequested(t *testing.T) {
 	}
 }
 
+func TestCreateSessionCanOptOutOfPIAgentGRPC(t *testing.T) {
+	runner := &process.FakeRunner{}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	useGRPC := false
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir(), PIAgentGRPC: &useGRPC})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatalf("Lookup(%q) ok = false", sessionID)
+	}
+	if record.runtime.piAgentGRPC != nil {
+		t.Fatal("record.runtime.piAgentGRPC != nil, want std/IOD mode")
+	}
+	if record.runtime.helper == nil && record.runtime.handle == nil {
+		t.Fatal("record.runtime has no std transport")
+	}
+	if created.Session.TransportState != string(SessionTransportStateAttached) {
+		t.Fatalf("CreateSession().Session.TransportState = %q, want attached", created.Session.TransportState)
+	}
+}
+
 func TestCreateSessionDoesNotStoreMetadataWhenLaunchFails(t *testing.T) {
 	runner := &process.FakeRunner{StartErr: context.DeadlineExceeded}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
 
 	_, err := svc.CreateSession(context.Background(), CreateSessionRequest{
 		AgentBackend: "pi",
+		PIAgentGRPC:  boolPtr(false),
 		CWD:          "/root/code/ActRail",
 	})
 	if err == nil {
