@@ -1209,6 +1209,44 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("Exit Code");
   });
 
+  it("labels slash command input and assistant output", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-command", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-command": [
+            { role: "user", text: "/name actrail", ts: 1_777_000_000 },
+            { role: "assistant", text: "actrail", ts: 1_777_000_004 },
+          ],
+        },
+        offsetsBySessionId: { "sess-command": 2 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const userSurface = root.querySelector('[data-testid="message-surface"][data-kind="user"]') as HTMLElement | null;
+    const assistantSurface = root.querySelector('[data-testid="message-surface"][data-kind="assistant"]') as HTMLElement | null;
+    expect(userSurface?.textContent).toContain("Command");
+    expect(root.querySelector('[data-testid="command-input"]')?.textContent).toContain("/name actrail");
+    expect(userSurface?.querySelector('[data-testid="command-output"]')).toBeNull();
+    expect(assistantSurface?.querySelector('[data-testid="command-output"]')?.textContent).toContain("actrail");
+    expect(userSurface?.textContent).not.toContain("You");
+    expect(root.querySelectorAll('[data-testid="message-surface"][data-kind="assistant"]')).toHaveLength(1);
+  });
+
   it("renders assistant turn metadata and counts extension ui requests as operations", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-meta", loading: false, newSessionDefaults: null },

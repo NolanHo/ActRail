@@ -1044,13 +1044,16 @@ function ChatMessageCard({
   kind,
   options,
   turnMeta,
+  commandOutput,
 }: {
   event: MessageEvent;
   kind: "user" | "assistant";
   options: MarkdownRenderOptions;
   turnMeta?: AssistantTurnMeta;
+  commandOutput?: boolean;
 }) {
-  const label = kind === "user" ? "You" : "Assistant";
+  const executedCommand = executedCommandText(event);
+  const label = kind === "user" ? executedCommand ? "Command" : "You" : "Assistant";
   const text = contentTextFromMessage(event);
   const summary = kind === "user" ? pendingUserSummary(event) : undefined;
   const [copied, setCopied] = useState(false);
@@ -1079,7 +1082,8 @@ function ChatMessageCard({
   return (
     <MessageSurface kind={kind}>
       {renderCardHeader(kind, label, summary, event.ts)}
-      {renderRichText(text, "messageBody", options)}
+      {executedCommand ? <CommandIOBlock label="Input" value={executedCommand} options={options} /> : null}
+      {kind === "assistant" && commandOutput ? <CommandIOBlock label="Output" value={text} options={options} /> : executedCommand ? null : renderRichText(text, "messageBody", options)}
       {kind === "assistant" && turnMeta ? <AssistantTurnMetaCard meta={turnMeta} /> : null}
       {kind === "assistant" && Array.isArray(event.supervisor_runs) && event.supervisor_runs.length ? (
         <div className="supervisorRunStack" data-testid="supervisor-run-stack">
@@ -1099,6 +1103,29 @@ function ChatMessageCard({
         </button>
       </div>
     </MessageSurface>
+  );
+}
+
+function executedCommandText(event: MessageEvent): string {
+  if (event.role !== "user") {
+    return "";
+  }
+  const text = firstNonEmptyText(event.text);
+  if (!text.startsWith("/")) {
+    return "";
+  }
+  return text;
+}
+
+function CommandIOBlock({ label, value, options }: { label: "Input" | "Output"; value: string; options: MarkdownRenderOptions }) {
+  if (!value.trim()) {
+    return null;
+  }
+  return (
+    <section className="commandIOBlock" data-testid={`command-${label.toLowerCase()}`}>
+      <div className="commandIOLabel">{label}</div>
+      {renderRichText(value, "messageBody commandIOBody", options)}
+    </section>
   );
 }
 
@@ -1176,8 +1203,8 @@ function MessageSurface({
   );
 }
 
-function renderChatCard(event: MessageEvent, kind: "user" | "assistant", options: MarkdownRenderOptions, turnMeta?: AssistantTurnMeta) {
-  return <ChatMessageCard event={event} kind={kind} options={options} turnMeta={turnMeta} />;
+function renderChatCard(event: MessageEvent, kind: "user" | "assistant", options: MarkdownRenderOptions, turnMeta?: AssistantTurnMeta, commandOutput?: boolean) {
+  return <ChatMessageCard event={event} kind={kind} options={options} turnMeta={turnMeta} commandOutput={commandOutput} />;
 }
 
 function shouldAllowFuzzyAskUserMatch(messages: MessageEvent[], index: number) {
@@ -1963,6 +1990,23 @@ function isTurnErrorOperation(event: MessageEvent): boolean {
   return kind === "error" || (kind === "tool_result" && event.is_error === true);
 }
 
+function commandOutputByAssistantIndex(messages: MessageEvent[]): Set<number> {
+  const result = new Set<number>();
+  let waitingForCommandOutput = false;
+  for (let index = 0; index < messages.length; index += 1) {
+    const event = messages[index];
+    if (event.role === "user") {
+      waitingForCommandOutput = Boolean(executedCommandText(event));
+      continue;
+    }
+    if (waitingForCommandOutput && event.role === "assistant" && event.streaming !== true) {
+      result.add(index);
+      waitingForCommandOutput = false;
+    }
+  }
+  return result;
+}
+
 function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, AssistantTurnMeta> {
   const result = new Map<number, AssistantTurnMeta>();
   let lastUserIndex = -1;
@@ -2551,11 +2595,12 @@ function renderConversationEvent(
   allowFuzzyLiveMatch = true,
   allowLegacyFallback = false,
   turnMeta?: AssistantTurnMeta,
+  commandOutput?: boolean,
 ) {
   switch (kind) {
     case "user":
     case "assistant":
-      return renderChatCard(event, kind, options, kind === "assistant" ? turnMeta : undefined);
+      return renderChatCard(event, kind, options, kind === "assistant" ? turnMeta : undefined, kind === "assistant" ? commandOutput : undefined);
     case "ask_user":
       return renderAskUserCard(event, sessionId, runtimeId, options, allowFuzzyLiveMatch, allowLegacyFallback);
     case "wait":
@@ -2785,6 +2830,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     [activeSessionIsPi, pendingMessages, persistedMessages],
   );
   const assistantTurnMetaByIndex = useMemo(() => buildAssistantTurnMeta(messages), [messages]);
+  const commandOutputByIndex = useMemo(() => commandOutputByAssistantIndex(messages), [messages]);
   const lastMessage = messages[messages.length - 1] ?? null;
   const latestMessageScrollKey = useMemo(() => (lastMessage
     ? [
@@ -2807,6 +2853,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     allowLegacyFallback: boolean;
     messageIndex: number;
     turnMeta?: AssistantTurnMeta;
+    commandOutput?: boolean;
   }>>((out, message, index) => {
     const kind = eventKind(message);
     const traceKind = compactTraceKind(message);
@@ -2847,9 +2894,10 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       allowLegacyFallback: kind === "ask_user" ? allowLegacyAskUserFallback : false,
       messageIndex: index,
       turnMeta: kind === "assistant" ? assistantTurnMetaByIndex.get(index) : undefined,
+      commandOutput: kind === "assistant" ? commandOutputByIndex.has(index) : undefined,
     });
     return out;
-  }, []), [allowLegacyAskUserFallback, assistantTurnMetaByIndex, messages]);
+  }, []), [allowLegacyAskUserFallback, assistantTurnMetaByIndex, commandOutputByIndex, messages]);
   const sectionRef = useRef<HTMLElement | null>(null);
   const historyAnchorRef = useRef<{ key: string; top: number } | null>(null);
   const scrollModeRef = useRef<"bottom" | "preserve" | null>(null);
@@ -3098,6 +3146,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                           row.allowFuzzyLiveMatch,
                           row.allowLegacyFallback,
                           row.turnMeta,
+                          row.commandOutput,
                         )}
                     </div>
                   </Fragment>
