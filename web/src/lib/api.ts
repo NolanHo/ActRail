@@ -271,7 +271,7 @@ export const api = {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return getJson<SessionCommandsResponse>(`/api/sessions/${routeId}/commands`, signal);
   },
-executeSessionCommand(sessionId: string, payload: { name?: string; command?: string; args?: string }, runtimeId?: string | null) {
+  executeSessionCommand(sessionId: string, payload: { name?: string; command?: string; args?: string }, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return postJson<ExecuteSessionCommandResponse>(`/api/sessions/${routeId}/commands`, payload);
   },
