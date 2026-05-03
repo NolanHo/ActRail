@@ -221,7 +221,9 @@ export function AppShell() {
     }
     const items: ConversationStatusItem[] = [];
     if (activeSession.agent_backend) {
-      items.push({ label: "Backend", value: activeSession.agent_backend });
+      const mode = typeof activeSession.iod?.mode === "string" ? activeSession.iod.mode.trim() : "";
+      const backend = mode ? `${activeSession.agent_backend}/${mode}` : activeSession.agent_backend;
+      items.push({ label: "Backend", value: backend });
     }
     if (activeModel) {
       items.push({ label: "Model", value: activeModel });

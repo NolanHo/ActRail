@@ -1921,6 +1921,8 @@ describe("AppShell", () => {
     });
     await flush();
 
+    expect(getRoot().textContent).toContain("Backend");
+    expect(getRoot().textContent).toContain("pi/grpc");
     expect(getRoot().textContent).toContain("iod");
     expect(getRoot().textContent).toContain("8b8b042 2026-05-02 grpc");
   });
