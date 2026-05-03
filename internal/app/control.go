@@ -116,7 +116,7 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 			pollPIState = true
 			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 				s.holdPIRPCBusy(req.SessionID, record.runtime.helper.generationID)
-				s.startPIRPCStartupProbe(req.SessionID, record.runtime.helper.generationID)
+				s.kickPIRPCStateProbe(req.SessionID, record.runtime.helper.generationID)
 			}
 		}
 		s.awaitRuntimeTurnStart(ctx, record.runtime)

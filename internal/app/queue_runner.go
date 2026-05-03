@@ -48,7 +48,7 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 				busyOnSend = true
 				s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
-				s.startPIRPCStartupProbe(sessionID, record.runtime.helper.generationID)
+				s.kickPIRPCStateProbe(sessionID, record.runtime.helper.generationID)
 			}
 		}
 		item, state, ok, err := s.registry.ActivateQueuedWithBusy(sessionID, queued.ID(), busyOnSend)

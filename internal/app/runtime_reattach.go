@@ -66,11 +66,11 @@ func piAgentGRPCTransportSnapshot() SessionTransportSnapshot {
 }
 
 func shouldReattachPIAgentGRPC(record sessionRecord) bool {
-	if !record.runtimeAgentRunning || record.identity.Backend() != session.BackendPI || record.identity.Historical() {
+	if record.identity.Backend() != session.BackendPI || record.identity.Historical() || record.transport.ResetRequired {
 		return false
 	}
-	if record.runtime.UsesPIAgentGRPC() {
+	if record.runtimeAgentRunning || record.runtime.UsesPIAgentGRPC() || record.transport.State == SessionTransportStateAttached {
 		return true
 	}
-	return record.transport.State == SessionTransportStateAttached
+	return record.transport.State == SessionTransportStateEnded && record.transport.Reason == "helper_binding_missing"
 }

@@ -460,7 +460,7 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 	}
 	return RestartSessionResponse{
 		OK:                true,
-		Session:           createdSessionFromRecord(updated),
+		Session:           s.createdSessionFromRecord(updated),
 		SessionID:         updated.identity.SessionID().String(),
 		RuntimeID:         currentRuntimeID.String(),
 		PreviousRuntimeID: previousRuntimeID.String(),

@@ -39,6 +39,9 @@ export function sessionTransportHealth(session: SessionSummary, historical: bool
   if (session.has_unread_assistant === true) {
     return "unread";
   }
+  if (session.probing === true) {
+    return "unknown";
+  }
   if (availableTransportStates.has(state)) {
     return "healthy";
   }

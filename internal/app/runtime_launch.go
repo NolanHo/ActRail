@@ -29,6 +29,7 @@ type runtimeCatalog interface {
 type runtimeLauncher interface {
 	Launch(context.Context, runtimeLaunchRequest) (sessionRuntime, error)
 	AttachPIAgentGRPC(context.Context, runtimeLaunchRequest) (sessionRuntime, error)
+	PIAgentGRPCTarget(session.SessionID) string
 }
 
 type RuntimeHelperBinding struct {
@@ -417,14 +418,19 @@ func (l processRuntimeLauncher) AttachPIAgentGRPC(ctx context.Context, req runti
 	return l.launchPIAgentGRPC(ctx, req)
 }
 
+func (l processRuntimeLauncher) PIAgentGRPCTarget(sessionID session.SessionID) string {
+	target := strings.TrimSpace(l.piAgentGRPCTarget)
+	if target != "" {
+		return target
+	}
+	return piagentgrpc.TargetForSession(sessionID.String())
+}
+
 func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runtimeLaunchRequest) (sessionRuntime, error) {
 	if req.Backend != session.BackendPI {
 		return sessionRuntime{}, fmt.Errorf("pi agent grpc requires pi backend")
 	}
-	target := strings.TrimSpace(l.piAgentGRPCTarget)
-	if target == "" {
-		target = piagentgrpc.TargetForSession(req.SessionID.String())
-	}
+	target := l.PIAgentGRPCTarget(req.SessionID)
 	client := piagentgrpc.New(target, l.piAgentGRPCDialer)
 	launchReq := req
 	launchReq.PIAgentGRPC = true
@@ -592,11 +598,7 @@ func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (proce
 	}
 	grpcSocketPath := ""
 	if req.PIAgentGRPC {
-		target := strings.TrimSpace(l.piAgentGRPCTarget)
-		if target == "" {
-			target = piagentgrpc.TargetForSession(req.SessionID.String())
-		}
-		grpcSocketPath = piagentgrpc.SocketPathForTarget(target)
+		grpcSocketPath = piagentgrpc.SocketPathForTarget(l.PIAgentGRPCTarget(req.SessionID))
 	}
 	options, err := agent.NewOptionsWithTransport(req.Provider, req.Model, req.ReasoningEffort, req.SessionPath, grpcSocketPath)
 	if err != nil {

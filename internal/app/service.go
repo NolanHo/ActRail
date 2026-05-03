@@ -217,6 +217,7 @@ type SessionSummary struct {
 	Focused             bool                       `json:"focused,omitempty"`
 	QueueLen            int                        `json:"queue_len,omitempty"`
 	TransportState      string                     `json:"transport_state,omitempty"`
+	Probing             bool                       `json:"probing,omitempty"`
 	ResetRequired       bool                       `json:"reset_required,omitempty"`
 	TransportReason     string                     `json:"transport_reason,omitempty"`
 	LastUpdatedTS       float64                    `json:"last_updated_ts"`
@@ -279,6 +280,10 @@ type CreateSessionResponse struct {
 	WSAttach *SessionAttachRequest `json:"ws_attach,omitempty"`
 }
 
+func createdSessionFromRecord(record sessionRecord) *CreatedSession {
+	return (&Stub{}).createdSessionFromRecord(record)
+}
+
 type EditCwdGroupRequest struct {
 	CWD       string  `json:"cwd"`
 	Label     *string `json:"label,omitempty"`
@@ -303,6 +308,7 @@ type CreatedSession struct {
 	Busy            bool   `json:"busy"`
 	Focused         bool   `json:"focused,omitempty"`
 	TransportState  string `json:"transport_state,omitempty"`
+	Probing         bool   `json:"probing,omitempty"`
 	ResetRequired   bool   `json:"reset_required,omitempty"`
 	TransportReason string `json:"transport_reason,omitempty"`
 	SessionFilePath string `json:"session_file_path,omitempty"`
@@ -555,7 +561,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}
 	return CreateSessionResponse{
 		OK:      true,
-		Session: createdSessionFromRecord(record),
+		Session: s.createdSessionFromRecord(record),
 		WSAttach: &SessionAttachRequest{
 			SessionID:            record.identity.SessionID().String(),
 			SuggestSubscriptions: []string{stream.String()},
@@ -593,6 +599,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		Focused:             record.focused,
 		QueueLen:            record.state.Queue().Len(),
 		TransportState:      transport.State.String(),
+		Probing:             s.sessionProbing(record),
 		ResetRequired:       transport.ResetRequired,
 		TransportReason:     transport.Reason,
 		LastUpdatedTS:       timestampSeconds(updatedAt),
@@ -629,7 +636,7 @@ func (s *Stub) iodRuntimeSummary(record sessionRecord) *IODRuntimeSummary {
 	if record.identity.Backend() != session.BackendPI || record.identity.Historical() {
 		return nil
 	}
-	if record.runtime.piAgentGRPC != nil {
+	if record.runtime.piAgentGRPC != nil || shouldReattachPIAgentGRPC(record) {
 		return grpcIODSummary()
 	}
 	if helper := record.runtime.helper; helper != nil {
@@ -643,7 +650,7 @@ func (s *Stub) iodRuntimeSummary(record sessionRecord) *IODRuntimeSummary {
 	return nil
 }
 
-func createdSessionFromRecord(record sessionRecord) *CreatedSession {
+func (s *Stub) createdSessionFromRecord(record sessionRecord) *CreatedSession {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
 	transport := sessionTransportSnapshot(record)
@@ -658,6 +665,7 @@ func createdSessionFromRecord(record sessionRecord) *CreatedSession {
 		Busy:            record.state.Busy(),
 		Focused:         record.focused,
 		TransportState:  transport.State.String(),
+		Probing:         s.sessionProbing(record),
 		ResetRequired:   transport.ResetRequired,
 		TransportReason: transport.Reason,
 		SessionFilePath: record.importedSourcePath,

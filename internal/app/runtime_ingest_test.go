@@ -592,6 +592,9 @@ func TestPIRPCActiveTurnIgnoresIdleGetState(t *testing.T) {
 	if !state.Busy {
 		t.Fatalf("SessionState().Busy = false, want true during active turn")
 	}
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateFastPollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() = %s, want %s during active turn", got, piRPCStateFastPollInterval)
+	}
 }
 
 func TestPIRPCGetStateTimeoutsDoNotEmitUserVisibleWarnings(t *testing.T) {
@@ -615,7 +618,7 @@ func TestPIRPCGetStateTimeoutsDoNotEmitUserVisibleWarnings(t *testing.T) {
 	}
 }
 
-func TestPIRPCIdleHoldIgnoresStaleBusyGetStateAfterCompletion(t *testing.T) {
+func TestPIRPCSettlingPollsFastUntilGetStateReportsIdle(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
@@ -627,7 +630,7 @@ func TestPIRPCIdleHoldIgnoresStaleBusyGetStateAfterCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSessionID() error = %v", err)
 	}
-	generationID, err := iod.NewGenerationID("g_rpc_state_idle_hold")
+	generationID, err := iod.NewGenerationID("g_rpc_state_settling")
 	if err != nil {
 		t.Fatalf("NewGenerationID() error = %v", err)
 	}
@@ -640,17 +643,23 @@ func TestPIRPCIdleHoldIgnoresStaleBusyGetStateAfterCompletion(t *testing.T) {
 		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
 	}
 	svc.holdPIRPCIdle(sessionID, generationID)
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateFastPollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() = %s, want %s during settling", got, piRPCStateFastPollInterval)
+	}
 
 	decoder := runtimeEventDecoder{backend: session.BackendPI}
-	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"id":"stale-busy","type":"response","command":"get_state","success":true,"data":{"isStreaming":true,"isCompacting":false,"pendingMessageCount":0}}`))); err != nil {
-		t.Fatalf("applyRuntimeProjection(get_state busy) error = %v", err)
+	if err := svc.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine([]byte(`{"id":"settled-idle","type":"response","command":"get_state","success":true,"data":{"isStreaming":false,"isCompacting":false,"pendingMessageCount":0}}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(get_state idle) error = %v", err)
 	}
 	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
 	if state.Busy {
-		t.Fatalf("SessionState().Busy = true, want false during idle hold")
+		t.Fatalf("SessionState().Busy = true, want false after idle get_state")
+	}
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateIdlePollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() = %s, want %s after idle get_state", got, piRPCStateIdlePollInterval)
 	}
 }
 
@@ -787,7 +796,7 @@ func newPIRPCStateFailureFixture(t *testing.T) (*Stub, session.SessionID, iod.Ge
 	return svc, sessionID, generationID
 }
 
-func TestNextPIRPCStatePollIntervalUsesBusyIntervalForPendingProbe(t *testing.T) {
+func TestNextPIRPCStatePollIntervalUsesCadencePhases(t *testing.T) {
 	sessionID, err := session.ParseSessionID("s_rpc_state_pending")
 	if err != nil {
 		t.Fatalf("ParseSessionID() error = %v", err)
@@ -804,12 +813,20 @@ func TestNextPIRPCStatePollIntervalUsesBusyIntervalForPendingProbe(t *testing.T)
 		},
 	}}
 
-	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateBusyPollInterval {
-		t.Fatalf("nextPIRPCStatePollInterval() = %s, want %s", got, piRPCStateBusyPollInterval)
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateFastPollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() = %s, want %s", got, piRPCStateFastPollInterval)
 	}
-	svc.startPIRPCStartupProbe(sessionID, generationID)
-	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateStartupPollInterval {
-		t.Fatalf("nextPIRPCStatePollInterval() after startup = %s, want %s", got, piRPCStateStartupPollInterval)
+	svc.piRPCStates[sessionID] = piRPCStateCache{GenerationID: generationID, LastState: &piRPCStateSnapshot{ProbeID: "busy", IsStreaming: true}}
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateBusyPollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() after busy get_state = %s, want %s", got, piRPCStateBusyPollInterval)
+	}
+	svc.holdPIRPCIdle(sessionID, generationID)
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateFastPollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() during settling = %s, want %s", got, piRPCStateFastPollInterval)
+	}
+	svc.holdPIRPCBusy(sessionID, generationID)
+	if got := svc.nextPIRPCStatePollInterval(sessionID, generationID); got != piRPCStateFastPollInterval {
+		t.Fatalf("nextPIRPCStatePollInterval() during active turn = %s, want %s", got, piRPCStateFastPollInterval)
 	}
 }
 

@@ -1,6 +1,10 @@
 package app
 
-import "strings"
+import (
+	"strings"
+
+	"actrail/internal/domain/session"
+)
 
 type SessionTransportState string
 
@@ -32,8 +36,20 @@ func (s *Stub) sessionTransportSnapshot(record sessionRecord) SessionTransportSn
 	return sessionTransportSnapshot(record)
 }
 
+func (s *Stub) sessionProbing(record sessionRecord) bool {
+	return sessionProbing(record)
+}
+
+func sessionProbing(record sessionRecord) bool {
+	return !record.identity.Historical() && record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && !record.transport.ResetRequired && !record.state.Busy()
+}
+
 func sessionTransportSnapshot(record sessionRecord) SessionTransportSnapshot {
 	snapshot := record.transport
+	if shouldReattachPIAgentGRPC(record) {
+		snapshot.State = SessionTransportStateAttached
+		snapshot.Reason = ""
+	}
 	if snapshot.State == SessionTransportStateAttached && !record.identity.Historical() && record.runtime.helper == nil && record.runtime.piAgentGRPC == nil && record.runtime.handle == nil {
 		snapshot.State = SessionTransportStateEnded
 		if snapshot.Reason == "" {

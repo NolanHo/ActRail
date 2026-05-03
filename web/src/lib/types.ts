@@ -181,6 +181,7 @@ export interface SessionSummary {
   has_unread_assistant?: boolean;
   queue_len?: number;
   transport_state?: string | null;
+  probing?: boolean;
   reset_required?: boolean;
   transport_reason?: string | null;
   updated_ts?: number;

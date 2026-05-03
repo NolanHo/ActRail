@@ -18,15 +18,13 @@ import (
 )
 
 const (
-	maxRuntimeLineBytes           = 1 << 20
-	piRPCStateIdlePollInterval    = 30 * time.Second
-	piRPCStateBusyPollInterval    = 3 * time.Second
-	piRPCStateStartupPollInterval = 1 * time.Second
-	piRPCStatePollTimeout         = 2 * time.Second
-	piRPCStateMaxFailures         = 3
-	piRPCBusyHoldDuration         = 30 * time.Second
-	piRPCStartupProbeDuration     = 10 * time.Second
-	piRPCIdleHoldDuration         = 3 * time.Second
+	maxRuntimeLineBytes        = 1 << 20
+	piRPCStateIdlePollInterval = time.Minute
+	piRPCStateFastPollInterval = time.Second
+	piRPCStateBusyPollInterval = 10 * time.Second
+	piRPCStatePollTimeout      = 2 * time.Second
+	piRPCStateMaxFailures      = 3
+	piRPCBusyHoldDuration      = 30 * time.Second
 )
 
 var runtimeHelperProjectors sync.Map
@@ -82,6 +80,7 @@ type piRPCStateCache struct {
 	StartupProbeUntil    time.Time
 	IdleHoldUntil        time.Time
 	ActiveTurn           bool
+	SettlingUntilIdle    bool
 	KickSeq              uint64
 }
 
@@ -253,11 +252,10 @@ func (s *Stub) nextPIRPCStatePollInterval(sessionID session.SessionID, generatio
 	if cache.GenerationID != generationID {
 		return piRPCStateIdlePollInterval
 	}
-	now := time.Now().UTC()
-	if cache.ActiveTurn && now.Before(cache.StartupProbeUntil) {
-		return piRPCStateStartupPollInterval
+	if cache.PendingProbeID != "" || cache.ActiveTurn || cache.SettlingUntilIdle {
+		return piRPCStateFastPollInterval
 	}
-	if cache.PendingProbeID != "" || cache.ActiveTurn || (cache.LastState != nil && cache.LastState.Busy()) {
+	if cache.LastState != nil && cache.LastState.Busy() {
 		return piRPCStateBusyPollInterval
 	}
 	return piRPCStateIdlePollInterval
@@ -421,6 +419,7 @@ func (s *Stub) holdPIRPCBusy(sessionID session.SessionID, generationID iod.Gener
 	}
 	cache.GenerationID = generationID
 	cache.ActiveTurn = true
+	cache.SettlingUntilIdle = false
 	until := time.Now().UTC().Add(piRPCBusyHoldDuration)
 	if cache.BusyHoldUntil.Before(until) {
 		cache.BusyHoldUntil = until
@@ -429,7 +428,7 @@ func (s *Stub) holdPIRPCBusy(sessionID session.SessionID, generationID iod.Gener
 	s.piRPCStates[sessionID] = cache
 }
 
-func (s *Stub) startPIRPCStartupProbe(sessionID session.SessionID, generationID iod.GenerationID) {
+func (s *Stub) kickPIRPCStateProbe(sessionID session.SessionID, generationID iod.GenerationID) {
 	if s == nil || generationID == "" {
 		return
 	}
@@ -443,11 +442,6 @@ func (s *Stub) startPIRPCStartupProbe(sessionID session.SessionID, generationID 
 		cache = piRPCStateCache{GenerationID: generationID}
 	}
 	cache.GenerationID = generationID
-	cache.ActiveTurn = true
-	until := time.Now().UTC().Add(piRPCStartupProbeDuration)
-	if cache.StartupProbeUntil.Before(until) {
-		cache.StartupProbeUntil = until
-	}
 	cache.KickSeq++
 	s.piRPCStates[sessionID] = cache
 }
@@ -489,10 +483,8 @@ func (s *Stub) holdPIRPCIdle(sessionID session.SessionID, generationID iod.Gener
 	cache.ActiveTurn = false
 	cache.StartupProbeUntil = time.Time{}
 	cache.BusyHoldUntil = time.Time{}
-	until := time.Now().UTC().Add(piRPCIdleHoldDuration)
-	if cache.IdleHoldUntil.Before(until) {
-		cache.IdleHoldUntil = until
-	}
+	cache.SettlingUntilIdle = true
+	cache.KickSeq++
 	s.piRPCStates[sessionID] = cache
 }
 
@@ -503,7 +495,22 @@ func (s *Stub) piRPCIdleHeld(sessionID session.SessionID, generationID iod.Gener
 	s.piRPCStateMu.Lock()
 	defer s.piRPCStateMu.Unlock()
 	cache := s.piRPCStates[sessionID]
-	return cache.GenerationID == generationID && time.Now().UTC().Before(cache.IdleHoldUntil)
+	return cache.GenerationID == generationID && cache.SettlingUntilIdle
+}
+
+func (s *Stub) finishPIRPCSettling(sessionID session.SessionID, generationID iod.GenerationID) {
+	if s == nil || generationID == "" {
+		return
+	}
+	s.piRPCStateMu.Lock()
+	defer s.piRPCStateMu.Unlock()
+	cache := s.piRPCStates[sessionID]
+	if cache.GenerationID != generationID {
+		return
+	}
+	cache.SettlingUntilIdle = false
+	cache.IdleHoldUntil = time.Time{}
+	s.piRPCStates[sessionID] = cache
 }
 
 func runtimeOutputSources(runtime sessionRuntime) []io.Reader {
@@ -969,6 +976,9 @@ func (s *Stub) applyPIRPCState(sessionID session.SessionID, state piRPCStateSnap
 		if busy && !s.isRuntimeAgentRunning(sessionID) && s.piRPCIdleHeld(sessionID, generationID) {
 			return nil
 		}
+		if !busy {
+			s.finishPIRPCSettling(sessionID, generationID)
+		}
 	}
 	if err := s.setRuntimeAgentRunning(sessionID, busy); err != nil {
 		return err
@@ -1150,6 +1160,7 @@ func (s *Stub) markRuntimeActiveFromPIEvent(sessionID session.SessionID) error {
 	}
 	if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 		s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
+		s.kickPIRPCStateProbe(sessionID, record.runtime.helper.generationID)
 	}
 	if err := s.setRuntimeAgentRunning(sessionID, true); err != nil {
 		return err
