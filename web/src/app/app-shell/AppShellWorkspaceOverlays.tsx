@@ -78,8 +78,8 @@ export function AppShellWorkspaceOverlays({
             <DialogHeader className="workspaceDialogHeader">
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-1">
-                  <DialogTitle id="workspace-dialog-title">Workspace</DialogTitle>
-                  <p className="text-sm text-muted-foreground">Inspect waits, session metadata, queue state, tracked files, diagnostics, and UI requests.</p>
+                  <DialogTitle id="workspace-dialog-title">Metadata</DialogTitle>
+                  <p className="text-sm text-muted-foreground">Inspect session metadata, queue state, tracked files, diagnostics, and UI requests.</p>
                 </div>
                 <Button type="button" variant="ghost" size="sm" onClick={onCloseWorkspace}>Close</Button>
               </div>

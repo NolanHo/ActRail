@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { FileIcon, HarnessIcon, InsightIcon, MenuIcon, SessionsIcon, StopIcon, TodoListIcon, WorkspaceIcon } from "./icons";
+import { FileIcon, MenuIcon, MetadataIcon, ProbeIcon, SessionsIcon, StopIcon, SupervisorIcon } from "./icons";
 
 export interface ConversationStatusItem {
   label: string;
@@ -24,8 +24,6 @@ interface AppShellToolbarProps {
   onOpenFiles(): void;
   onOpenHarness(): void;
   onOpenSessions(): void;
-  onOpenInsight(): void;
-  onOpenWaits(): void;
   onOpenWorkspace(): void;
 }
 
@@ -44,8 +42,6 @@ export function AppShellToolbar({
   onOpenFiles,
   onOpenHarness,
   onOpenSessions,
-  onOpenInsight,
-  onOpenWaits,
   onOpenWorkspace,
 }: AppShellToolbarProps) {
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
@@ -105,16 +101,16 @@ export function AppShellToolbar({
         variant={mobileMenu ? "ghost" : "outline"}
         size={mobileMenu ? "sm" : "icon"}
         className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Insight"
-        title="Insight"
+        aria-label="Metadata"
+        title="Metadata"
         disabled={!activeSessionId}
         onClick={() => {
           closeMobileToolsMenu();
-          onOpenInsight();
+          onOpenWorkspace();
         }}
       >
-        <InsightIcon />
-        {mobileMenu ? <span>Insight</span> : null}
+        <MetadataIcon />
+        {mobileMenu ? <span>Metadata</span> : null}
       </Button>
       <Button
         type="button"
@@ -132,38 +128,6 @@ export function AppShellToolbar({
         <FileIcon />
         {mobileMenu ? <span>Files</span> : null}
       </Button>
-      <Button
-        type="button"
-        variant={mobileMenu ? "ghost" : "outline"}
-        size={mobileMenu ? "sm" : "icon"}
-        className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Waiting Inbox"
-        title="Waiting Inbox"
-        disabled={!activeSessionId}
-        onClick={() => {
-          closeMobileToolsMenu();
-          onOpenWaits();
-        }}
-      >
-        <TodoListIcon />
-        {mobileMenu ? <span>Waiting Inbox</span> : null}
-      </Button>
-      <Button
-        type="button"
-        variant={mobileMenu ? "ghost" : "outline"}
-        size={mobileMenu ? "sm" : "icon"}
-        className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Workspace"
-        title="Workspace"
-        disabled={!activeSessionId}
-        onClick={() => {
-          closeMobileToolsMenu();
-          onOpenWorkspace();
-        }}
-      >
-        <WorkspaceIcon />
-        {mobileMenu ? <span>Workspace</span> : null}
-      </Button>
       {canProbeRuntime ? (
         <Button
           type="button"
@@ -178,7 +142,8 @@ export function AppShellToolbar({
             onProbeRuntime?.();
           }}
         >
-          {probingRuntime ? "Probing" : "Probe"}
+          <ProbeIcon />
+          {mobileMenu ? <span>{probingRuntime ? "Probing" : "Probe"}</span> : null}
         </Button>
       ) : null}
       {showInterruptAction ? (
@@ -214,7 +179,7 @@ export function AppShellToolbar({
           onOpenHarness();
         }}
       >
-        <HarnessIcon />
+        <SupervisorIcon />
         {mobileMenu ? <span>Supervisor</span> : null}
       </Button>
     </>

@@ -292,16 +292,6 @@ function findButtonByAriaLabel(label: string) {
   return getRoot().querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
 }
 
-function requireButtonByText(label: string) {
-  const button = findButtonByText(label);
-
-  if (!button) {
-    throw new Error(`Button containing \"${label}\" not found`);
-  }
-
-  return button;
-}
-
 function getToolbarTodoAnchor() {
   return getRoot().querySelector(".conversationToolbar .todoToolbarAnchor");
 }
@@ -448,9 +438,8 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("No session selected");
     expect(getRoot().querySelector(".mobileSheetTrigger")).toBeNull();
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
-    expect(findButtonByAriaLabel("Insight")).not.toBeNull();
+    expect(findButtonByAriaLabel("Metadata")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")).not.toBeNull();
-    expect(findButtonByAriaLabel("Workspace")).not.toBeNull();
     expect(findButtonByAriaLabel("Supervisor")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt (Esc)")).not.toBeNull();
 
@@ -478,7 +467,7 @@ describe("AppShell", () => {
       expect(findButtonByText("Sessions")).not.toBeNull();
       expect(findButtonByText("Read")).not.toBeNull();
       expect(findButtonByText("Chat")).not.toBeNull();
-      expect(findButtonByText("Workspace")).toBeUndefined();
+      expect(findButtonByText("Metadata")).toBeUndefined();
       expect(findButtonByText("Settings")).toBeUndefined();
       expect(findButtonByAriaLabel("Conversation tools")).toBeNull();
       expect(getRoot().querySelector('[data-testid="sessions-surface"]')).not.toBeNull();
@@ -495,9 +484,8 @@ describe("AppShell", () => {
     await flush();
 
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
-    expect(findButtonByAriaLabel("Insight")?.querySelector("svg")).not.toBeNull();
+    expect(findButtonByAriaLabel("Metadata")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")?.querySelector("svg")).not.toBeNull();
-    expect(findButtonByAriaLabel("Workspace")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Supervisor")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt (Esc)")?.querySelector("svg")).not.toBeNull();
   });
@@ -580,12 +568,12 @@ describe("AppShell", () => {
     }
   });
 
-  it("opens workspace details in a dialog from the toolbar", async () => {
+  it("opens metadata details in a dialog from the toolbar", async () => {
     await import("../components/workspace/SessionWorkspace");
     renderAppShell({ diagnostics: { status: "ok" } });
     await flush();
 
-    const button = findButtonByAriaLabel("Workspace");
+    const button = findButtonByAriaLabel("Metadata");
     expect(button).not.toBeNull();
 
     act(() => {
@@ -619,7 +607,7 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      expect(findButtonByText("Workspace")).toBeUndefined();
+      expect(findButtonByText("Metadata")).toBeUndefined();
       expect(findButtonByText("Settings")).toBeUndefined();
       expect(findButtonByText("Waits")).toBeUndefined();
       expect(findButtonByText("Command")).toBeUndefined();
@@ -707,12 +695,12 @@ describe("AppShell", () => {
     }
   });
 
-  it("opens the insight workspace from the toolbar", async () => {
+  it("opens metadata from the toolbar", async () => {
     await import("../components/workspace/SessionWorkspace");
     renderAppShell({ diagnostics: { status: "ok" } });
     await flush();
 
-    const button = findButtonByAriaLabel("Insight");
+    const button = findButtonByAriaLabel("Metadata");
     expect(button).not.toBeNull();
 
     act(() => {
@@ -720,7 +708,7 @@ describe("AppShell", () => {
     });
     await flushLazy();
 
-    expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Insight");
+    expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Metadata");
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Context Usage");
   });
 
@@ -1766,7 +1754,7 @@ describe("AppShell", () => {
     renderAppShell({ diagnostics: { status: "ok" } });
 
     act(() => {
-      findButtonByAriaLabel("Workspace")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      findButtonByAriaLabel("Metadata")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     await flushLazy();
 
@@ -1774,19 +1762,19 @@ describe("AppShell", () => {
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Diagnostics");
   });
 
-  it("keeps Workspace available while diagnostics are shown in the dialog", async () => {
+  it("keeps Metadata available while diagnostics are shown in the dialog", async () => {
     renderAppShell({ diagnostics: { status: "ok" } });
 
-    const workspaceButton = findButtonByAriaLabel("Workspace");
-    expect(workspaceButton).not.toBeNull();
-    expect(workspaceButton?.disabled).toBe(false);
+    const metadataButton = findButtonByAriaLabel("Metadata");
+    expect(metadataButton).not.toBeNull();
+    expect(metadataButton?.disabled).toBe(false);
 
     act(() => {
-      workspaceButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      metadataButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     await flushLazy();
 
-    expect(getRoot().textContent).toContain("Workspace");
+    expect(getRoot().textContent).toContain("Metadata");
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Diagnostics");
   });
 
@@ -1829,7 +1817,7 @@ describe("AppShell", () => {
     await flush();
 
     act(() => {
-      findButtonByAriaLabel("Workspace")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      findButtonByAriaLabel("Metadata")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     await flushLazy();
 
@@ -1882,26 +1870,9 @@ describe("AppShell", () => {
     expect(getRoot().textContent).not.toContain("No pending requests");
     expect(getRoot().textContent).not.toContain("Todo list");
 
-    act(() => {
-      requireButtonByText("Diagnostics").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    await flush();
-
     expect(getRoot().textContent).toContain("Session Status");
     expect(getRoot().textContent).toContain("Queued follow-up");
-
-    act(() => {
-      requireButtonByText("Files").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    await flush();
-
     expect(getRoot().textContent).toContain("fresh-notes.md");
-
-    act(() => {
-      requireButtonByText("UI Requests").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    await flush();
-
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Fresh request");
     expect(getRoot().querySelector("[data-testid='workspace-dialog']")?.textContent).toContain("Visible again");
     expect(getRoot().textContent).not.toContain("Old request");

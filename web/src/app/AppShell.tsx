@@ -28,7 +28,7 @@ import { getSessionRuntimeId } from "../lib/session-identity";
 import { getSessionDisplayName } from "../lib/session-display";
 import { applyUserDisplaySettings, readUserDisplaySettings, writeUserDisplaySettings } from "../lib/user-settings";
 
-type WorkspaceTab = "insight" | "overview" | "wait" | "waiting-inbox" | "requests" | "metadata" | "diagnostics" | "queue" | "files" | "supervisor";
+type WorkspaceTab = "metadata";
 
 function formatTokenK(value: number) {
   const normalized = Math.max(0, Math.round(value));
@@ -113,7 +113,7 @@ export function AppShell() {
     generatingBySessionId?: Record<string, boolean>;
     contextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
   };
-  const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
+  const { sessionId: sessionUiSessionId } = useSessionUiStore();
   const waitsState = useWaitsStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
@@ -123,7 +123,7 @@ export function AppShell() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
   const [harnessOpen, setHarnessOpen] = useState(false);
-  const [workspaceInitialTab, setWorkspaceInitialTab] = useState<WorkspaceTab>("insight");
+  const [workspaceInitialTab, setWorkspaceInitialTab] = useState<WorkspaceTab>("metadata");
   const [fileViewerPath, setFileViewerPath] = useState("");
   const [fileViewerLine, setFileViewerLine] = useState<number | null>(null);
   const [fileViewerMode, setFileViewerMode] = useState<FileViewMode | null>(null);
@@ -201,17 +201,9 @@ export function AppShell() {
   const activeTitle = activeSession
     ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
     : "No session selected";
-  const activeSessionDiagnostics = sessionUiSessionId === activeSessionId && diagnostics && typeof diagnostics === "object"
-    ? diagnostics as { model?: unknown; reasoning_effort?: unknown; context_usage?: unknown }
-    : null;
-  const diagnosticsModel = typeof activeSessionDiagnostics?.model === "string" ? activeSessionDiagnostics.model.trim() : "";
-  const diagnosticsReasoningEffort = typeof activeSessionDiagnostics?.reasoning_effort === "string" ? activeSessionDiagnostics.reasoning_effort.trim() : "";
-  const diagnosticsContextUsage = activeSessionDiagnostics?.context_usage && typeof activeSessionDiagnostics.context_usage === "object"
-    ? activeSessionDiagnostics.context_usage as { used_tokens?: number; total_tokens?: number; percent_used?: number }
-    : null;
-  const activeModel = diagnosticsModel || (typeof activeSession?.model === "string" ? activeSession.model.trim() : "");
-  const activeReasoningEffort = diagnosticsReasoningEffort || (typeof activeSession?.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "");
-  const activeContextUsageLabel = activeSessionId ? contextUsageStatusLabel(contextUsageBySessionId?.[activeSessionId] ?? diagnosticsContextUsage) : "";
+  const activeModel = typeof activeSession?.model === "string" ? activeSession.model.trim() : "";
+  const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "";
+  const activeContextUsageLabel = activeSessionId ? contextUsageStatusLabel(contextUsageBySessionId?.[activeSessionId]) : "";
   const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
     ? Math.max(0, Math.round(activeSession.queue_len))
     : 0;
@@ -431,7 +423,7 @@ export function AppShell() {
   useEffect(() => {
     setFileViewerOpen(false);
     setHarnessOpen(false);
-    setWorkspaceInitialTab("insight");
+    setWorkspaceInitialTab("metadata");
   }, [activeSessionId]);
 
   const shellClassName = useMemo(() => ["appShell", "editorialShell", "withGlobalNav"].join(" "), []);
@@ -444,18 +436,9 @@ export function AppShell() {
     ) : <EmptyDetailsWorkspace />
   );
 
-  const openWorkspace = (initialTab: WorkspaceTab = "overview") => {
+  const openWorkspace = (initialTab: WorkspaceTab = "metadata") => {
     setWorkspaceInitialTab(initialTab);
     setWorkspaceOpen(true);
-  };
-
-  const openWaitWorkspace = () => {
-    if (activeWait && activeSessionId) {
-      waitsStoreApi.openWait({ ...activeWait, session_id: activeWait.session_id || activeSessionId });
-      openWorkspace("wait");
-      return;
-    }
-    openWorkspace("waiting-inbox");
   };
 
   const probeActiveSessionState = async () => {
@@ -622,11 +605,9 @@ export function AppShell() {
                     void probeActiveSessionState();
                   }}
                   onOpenFiles={() => openFileViewer()}
-                  onOpenHarness={() => openWorkspace("supervisor")}
+                  onOpenHarness={() => setHarnessOpen(true)}
                   onOpenSessions={() => setSidebarOpen(true)}
-                  onOpenInsight={() => openWorkspace("insight")}
-                  onOpenWaits={openWaitWorkspace}
-                  onOpenWorkspace={() => openWorkspace("overview")}
+                  onOpenWorkspace={() => openWorkspace("metadata")}
                 />
                 <ConversationPane
                   key={activeSessionId || "no-session"}
@@ -649,7 +630,7 @@ export function AppShell() {
         fileViewerOpen={fileViewerOpen}
         fileViewerPath={fileViewerPath}
         fileViewerRequestKey={fileViewerRequestKey}
-        harnessOpen={harnessOpen || (workspaceOpen && workspaceInitialTab === "supervisor")}
+        harnessOpen={harnessOpen}
         harnessSupported={harnessSupported}
         newSessionOpen={newSessionOpen}
         sessionsRail={renderSessionsRail()}
@@ -715,9 +696,6 @@ export function AppShell() {
         onCloseSidebar={() => setSidebarOpen(false)}
         onCloseWorkspace={() => {
           setWorkspaceOpen(false);
-          if (workspaceInitialTab === "supervisor") {
-            setWorkspaceInitialTab("overview");
-          }
         }}
       />
     </>

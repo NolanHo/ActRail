@@ -27,33 +27,33 @@ export function StopIcon() {
 
 export function FileIcon() {
   return (
-    <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
-      <path d="M14 2v6h6" />
+    <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 3h8l4 4v14H6z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 13h6" />
+      <path d="M9 17h4" />
     </svg>
   );
 }
 
-export function TodoListIcon() {
+export function MetadataIcon() {
   return (
     <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 6h11" />
-      <path d="M9 12h11" />
-      <path d="M9 18h11" />
-      <path d="m4 6 1.5 1.5L8 5" />
-      <path d="m4 12 1.5 1.5L8 11" />
-      <path d="m4 18 1.5 1.5L8 17" />
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M8 9h8" />
+      <path d="M8 13h5" />
+      <path d="M8 17h8" />
     </svg>
   );
 }
 
-export function InsightIcon() {
+export function ProbeIcon() {
   return (
     <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 19h16" />
-      <path d="M7 16V9" />
-      <path d="M12 16V5" />
-      <path d="M17 16v-4" />
+      <circle cx="11" cy="11" r="5" />
+      <path d="m15 15 5 5" />
+      <path d="M11 8v6" />
+      <path d="M8 11h6" />
     </svg>
   );
 }
@@ -71,23 +71,12 @@ export function SessionsIcon() {
   );
 }
 
-export function WorkspaceIcon() {
+export function SupervisorIcon() {
   return (
     <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="4" width="18" height="16" rx="2.5" />
-      <path d="M9 4v16" />
-      <path d="M13 9h4" />
-      <path d="M13 13h4" />
-      <path d="M13 17h3" />
-    </svg>
-  );
-}
-
-export function HarnessIcon() {
-  return (
-    <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 12h3l2-4 3 8 2-4h6" />
-      <path d="M12 21a9 9 0 1 0-9-9" />
+      <path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z" />
+      <path d="M9 12h6" />
+      <path d="M12 9v6" />
     </svg>
   );
 }
