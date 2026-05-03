@@ -22,12 +22,15 @@ interface SessionCardProps {
 
 type SessionHealth = "healthy" | "working" | "unhealthy" | "unread" | "unknown";
 
-function sessionTransportHealth(session: SessionSummary, historical: boolean): SessionHealth {
+const unavailableTransportStates = new Set(["broken", "ended", "silent", "stalled"]);
+const availableTransportStates = new Set(["", "attached", "idle", "ready", "running"]);
+
+export function sessionTransportHealth(session: SessionSummary, historical: boolean): SessionHealth {
   if (historical) {
     return "unknown";
   }
-  const state = String(session.transport_state || "").trim();
-  if (session.reset_required === true || state === "broken" || state === "ended" || state === "silent" || state === "stalled") {
+  const state = String(session.transport_state || "").trim().toLowerCase();
+  if (session.reset_required === true || unavailableTransportStates.has(state)) {
     return "unhealthy";
   }
   if (session.busy === true) {
@@ -36,10 +39,10 @@ function sessionTransportHealth(session: SessionSummary, historical: boolean): S
   if (session.has_unread_assistant === true) {
     return "unread";
   }
-  if (state === "attached" || state === "") {
+  if (availableTransportStates.has(state)) {
     return "healthy";
   }
-  return "unhealthy";
+  return "unknown";
 }
 
 function sessionHealthLabel(health: SessionHealth) {

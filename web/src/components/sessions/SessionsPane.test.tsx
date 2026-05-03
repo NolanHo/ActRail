@@ -169,6 +169,8 @@ describe("SessionsPane", () => {
         { session_id: "sess-1", alias: "Alive", agent_backend: "pi", transport_state: "attached" },
         { session_id: "sess-2", alias: "Busy", agent_backend: "pi", transport_state: "attached", busy: true },
         { session_id: "sess-3", alias: "Dead", agent_backend: "pi", transport_state: "ended" },
+        { session_id: "sess-4", alias: "Runtime idle", agent_backend: "pi", transport_state: "idle", busy: false },
+        { session_id: "sess-5", alias: "Unexpected", agent_backend: "pi", transport_state: "paused", busy: false },
       ],
       activeSessionId: "sess-1",
       loading: false,
@@ -185,6 +187,10 @@ describe("SessionsPane", () => {
     expect(dots[1]?.getAttribute("title")).toBe("working");
     expect(dots[2]?.classList.contains("unhealthy")).toBe(true);
     expect(dots[2]?.getAttribute("title")).toBe("restart session required");
+    expect(dots[3]?.classList.contains("healthy")).toBe(true);
+    expect(dots[3]?.getAttribute("title")).toBe("ready");
+    expect(dots[4]?.classList.contains("unknown")).toBe(true);
+    expect(dots[4]?.getAttribute("title")).toBe("backend health unknown");
     expect(root?.querySelector<HTMLButtonElement>('button[aria-label="More session actions"]')).not.toBeNull();
     expect(root?.querySelector<HTMLButtonElement>('button[aria-label="Start Pi..."]')).toBeNull();
   });

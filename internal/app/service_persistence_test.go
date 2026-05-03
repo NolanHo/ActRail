@@ -375,6 +375,9 @@ func TestPersistentStubReattachesRunningPIAgentGRPCWithoutStartingNewProcess(t *
 	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, false); err != nil || !ok {
+		t.Fatalf("SetBusy(false) = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
 	if err := svc.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -398,6 +401,19 @@ func TestPersistentStubReattachesRunningPIAgentGRPCWithoutStartingNewProcess(t *
 	}
 	if !record.runtimeAgentRunning {
 		t.Fatal("rehydrated runtimeAgentRunning = false, want persisted running state")
+	}
+	listed, err := rehydrated.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
+	}
+	if listed.Items[0].Busy {
+		t.Fatalf("ListSessions().Items[0].Busy = true, want idle runtime")
+	}
+	if listed.Items[0].TransportState != SessionTransportStateAttached.String() || listed.Items[0].ResetRequired {
+		t.Fatalf("ListSessions().Items[0] transport = (%q, reset=%v), want attached without reset", listed.Items[0].TransportState, listed.Items[0].ResetRequired)
 	}
 }
 
