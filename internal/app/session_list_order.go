@@ -76,9 +76,6 @@ func importedPISourceActivityAt(record sessionRecord) time.Time {
 	if !importedPIDetachedUsesSourceActivity(record) {
 		return time.Time{}
 	}
-	if !record.importedHasLegacySessionUIState {
-		return time.Time{}
-	}
 	sourcePath := strings.TrimSpace(record.importedSourcePath)
 	info, err := os.Stat(sourcePath)
 	if err != nil {

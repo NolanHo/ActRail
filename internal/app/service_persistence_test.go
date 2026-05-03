@@ -520,22 +520,22 @@ func TestPersistentStubColdStartResumeCandidatesUseImportedPISourceActivity(t *t
 	cwd := "/workspace/shared"
 	seedImportedPIDetachedSessions(t, cfg, now,
 		importedPIDetachedFixture{
-			SessionID:               "imported-pi-1",
-			CWD:                     cwd,
-			Title:                   "Imported Pi 1",
-			UpdatedAt:               now.Add(-10 * time.Minute),
-			ActivityAt:              now.Add(-10 * time.Minute),
-			SourcePath:              olderSourcePath,
-			HasLegacySessionUIState: true,
+			SessionID:  "imported-pi-1",
+			CWD:        cwd,
+			Title:      "Imported Pi 1",
+			Alias:      "Imported sidebar 1",
+			UpdatedAt:  now.Add(-10 * time.Minute),
+			ActivityAt: now.Add(-10 * time.Minute),
+			SourcePath: olderSourcePath,
 		},
 		importedPIDetachedFixture{
-			SessionID:               "imported-pi-2",
-			CWD:                     cwd,
-			Title:                   "Imported Pi 2",
-			UpdatedAt:               now.Add(-3 * time.Hour),
-			ActivityAt:              now.Add(-3 * time.Hour),
-			SourcePath:              newerSourcePath,
-			HasLegacySessionUIState: true,
+			SessionID:  "imported-pi-2",
+			CWD:        cwd,
+			Title:      "Imported Pi 2",
+			Alias:      "Imported sidebar 2",
+			UpdatedAt:  now.Add(-3 * time.Hour),
+			ActivityAt: now.Add(-3 * time.Hour),
+			SourcePath: newerSourcePath,
 		},
 	)
 
@@ -648,13 +648,13 @@ func TestPersistentStubColdStartSessionDetailsUsesImportedPIDisplayTimestamp(t *
 	recordedUpdatedAt := now.Add(-5 * time.Minute)
 	recordedActivityAt := now.Add(-2 * time.Hour)
 	seedImportedPIDetachedSessions(t, cfg, now, importedPIDetachedFixture{
-		SessionID:               "imported-pi-1",
-		CWD:                     "/workspace/details",
-		Title:                   "Imported Pi",
-		UpdatedAt:               recordedUpdatedAt,
-		ActivityAt:              recordedActivityAt,
-		SourcePath:              sourcePath,
-		HasLegacySessionUIState: true,
+		SessionID:  "imported-pi-1",
+		CWD:        "/workspace/details",
+		Title:      "Imported Pi",
+		Alias:      "Imported sidebar",
+		UpdatedAt:  recordedUpdatedAt,
+		ActivityAt: recordedActivityAt,
+		SourcePath: sourcePath,
 	})
 
 	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
@@ -685,7 +685,7 @@ func TestPersistentStubColdStartSessionDetailsUsesImportedPIDisplayTimestamp(t *
 	}
 }
 
-func TestPersistentStubColdStartImportedPIWithLegacyUIStateUsesSourceActivityAcrossViews(t *testing.T) {
+func TestPersistentStubColdStartImportedPIWithSidebarMetadataUsesSourceActivityAcrossViews(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sourceActivity := now.Add(-20 * time.Minute)
@@ -693,13 +693,13 @@ func TestPersistentStubColdStartImportedPIWithLegacyUIStateUsesSourceActivityAcr
 	cwd := "/workspace/provenance-true"
 	sourcePath := writeImportedPISourceFile(t, t.TempDir(), "imported-pi.jsonl", sourceActivity)
 	seedImportedPIDetachedSessions(t, cfg, now, importedPIDetachedFixture{
-		SessionID:               "imported-pi-1",
-		CWD:                     cwd,
-		Title:                   "Imported Pi",
-		UpdatedAt:               recordedUpdatedAt,
-		ActivityAt:              recordedUpdatedAt,
-		SourcePath:              sourcePath,
-		HasLegacySessionUIState: true,
+		SessionID:  "imported-pi-1",
+		CWD:        cwd,
+		Title:      "Imported Pi",
+		Alias:      "Imported sidebar",
+		UpdatedAt:  recordedUpdatedAt,
+		ActivityAt: recordedUpdatedAt,
+		SourcePath: sourcePath,
 	})
 
 	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
@@ -779,7 +779,7 @@ func TestPersistentStubColdStartImportedPIWithoutLegacyUIStateUsesPersistedUpdat
 	}
 }
 
-func TestPersistentStubColdStartImportedPIMetadataEditsDoNotChangeProvenanceDecision(t *testing.T) {
+func TestPersistentStubColdStartImportedPIMetadataEditsChangeDisplayTimestamp(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sourceActivity := now.Add(2 * time.Hour)
@@ -840,7 +840,7 @@ func TestPersistentStubColdStartImportedPIMetadataEditsDoNotChangeProvenanceDeci
 	if err != nil {
 		t.Fatalf("SessionDetails() error = %v", err)
 	}
-	want := timestampSeconds(now)
+	want := timestampSeconds(sourceActivity)
 	if listedItem.LastUpdatedTS != want || listedItem.UpdatedTS != want {
 		t.Fatalf("ListSessions() timestamps after restart = (%v, %v), want %v", listedItem.LastUpdatedTS, listedItem.UpdatedTS, want)
 	}
@@ -849,9 +849,6 @@ func TestPersistentStubColdStartImportedPIMetadataEditsDoNotChangeProvenanceDeci
 	}
 	if details.LastUpdatedTS != want {
 		t.Fatalf("SessionDetails().LastUpdatedTS after restart = %v, want %v", details.LastUpdatedTS, want)
-	}
-	if details.LastUpdatedTS == timestampSeconds(sourceActivity) {
-		t.Fatalf("SessionDetails().LastUpdatedTS = %v, want persisted updatedAt instead of source activity %v", details.LastUpdatedTS, timestampSeconds(sourceActivity))
 	}
 }
 

@@ -525,6 +525,10 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		return CreateSessionResponse{}, err
 	}
 	bindingSaved = true
+	transport := SessionTransportSnapshot{}
+	if runtime.UsesPIAgentGRPC() {
+		transport = piAgentGRPCTransportSnapshot()
+	}
 	record, err := s.registry.Create(sessionCreateSpec{
 		Identity:         &identity,
 		Backend:          backend,
@@ -538,6 +542,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		BackendSessionID: resumeBackendSessionID,
 		SourceConfidence: map[bool]string{true: sourceConfidenceExact, false: sourceConfidenceProvisional}[resumeBackendSessionID != ""],
 		Runtime:          runtime,
+		Transport:        transport,
 	})
 	if err != nil {
 		rollbackRuntime()

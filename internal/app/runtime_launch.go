@@ -28,6 +28,7 @@ type runtimeCatalog interface {
 
 type runtimeLauncher interface {
 	Launch(context.Context, runtimeLaunchRequest) (sessionRuntime, error)
+	AttachPIAgentGRPC(context.Context, runtimeLaunchRequest) (sessionRuntime, error)
 }
 
 type RuntimeHelperBinding struct {
@@ -409,6 +410,12 @@ func (l processRuntimeLauncher) Launch(ctx context.Context, req runtimeLaunchReq
 		return l.launchViaIODHelper(ctx, req)
 	}
 	return l.launchDirect(ctx, req)
+}
+
+func (l processRuntimeLauncher) AttachPIAgentGRPC(ctx context.Context, req runtimeLaunchRequest) (sessionRuntime, error) {
+	req.PIAgentGRPC = true
+	req.AttachOnly = true
+	return l.launchPIAgentGRPC(ctx, req)
 }
 
 func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runtimeLaunchRequest) (sessionRuntime, error) {

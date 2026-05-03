@@ -2,92 +2,41 @@ package app
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
 )
 
-func TestPersistentStubListSessionsPrefersImportedPISourceActivityWhenLegacyUIStateWasImported(t *testing.T) {
+func TestPersistentStubListSessionsUseImportedPISourceActivityWithSidebarMetadata(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sourceDir := t.TempDir()
-	olderSourcePath := filepath.Join(sourceDir, "imported-pi-1.jsonl")
-	newerSourcePath := filepath.Join(sourceDir, "imported-pi-2.jsonl")
-	for _, path := range []string{olderSourcePath, newerSourcePath} {
-		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
-			t.Fatalf("WriteFile(%q) error = %v", path, err)
-		}
-	}
 	olderActivity := time.Unix(1759992800, 0).UTC()
 	newerActivity := time.Unix(1759996400, 0).UTC()
-	if err := os.Chtimes(olderSourcePath, olderActivity, olderActivity); err != nil {
-		t.Fatalf("Chtimes(%q) error = %v", olderSourcePath, err)
-	}
-	if err := os.Chtimes(newerSourcePath, newerActivity, newerActivity); err != nil {
-		t.Fatalf("Chtimes(%q) error = %v", newerSourcePath, err)
-	}
+	olderSourcePath := writeImportedPISourceFile(t, sourceDir, "imported-pi-1.jsonl", olderActivity)
+	newerSourcePath := writeImportedPISourceFile(t, sourceDir, "imported-pi-2.jsonl", newerActivity)
 
-	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
-	if err != nil {
-		t.Fatalf("OpenSessionCatalog() error = %v", err)
-	}
-	defer func() { _ = catalog.Close() }()
-	createdAt := now.Add(-48 * time.Hour)
-	if err := catalog.ReplaceImportBundle(context.Background(), sqlitestore.ImportBundle{
-		Sessions: []sqlitestore.SessionSnapshotRow{
-			{
-				Session: sqlitestore.SessionRow{
-					SessionID:  "imported-pi-1",
-					Backend:    "pi",
-					CWD:        "/workspace/older",
-					Title:      "Imported Pi 1",
-					CreatedAt:  createdAt,
-					UpdatedAt:  now.Add(-30 * time.Minute),
-					ActivityAt: now.Add(-30 * time.Minute),
-				},
-				Queue: []sqlitestore.QueueItemRow{},
-				Workspace: sqlitestore.WorkspaceStateRow{
-					OpenPaths:    []string{},
-					HistoryItems: []sqlitestore.WorkspaceHistoryItemRow{},
-				},
-			},
-			{
-				Session: sqlitestore.SessionRow{
-					SessionID:  "imported-pi-2",
-					Backend:    "pi",
-					CWD:        "/workspace/newer",
-					Title:      "Imported Pi 2",
-					CreatedAt:  createdAt,
-					UpdatedAt:  now.Add(-90 * time.Minute),
-					ActivityAt: now.Add(-90 * time.Minute),
-				},
-				Queue: []sqlitestore.QueueItemRow{},
-				Workspace: sqlitestore.WorkspaceStateRow{
-					OpenPaths:    []string{},
-					HistoryItems: []sqlitestore.WorkspaceHistoryItemRow{},
-				},
-			},
+	seedImportedPIDetachedSessions(t, cfg, now,
+		importedPIDetachedFixture{
+			SessionID:  "imported-pi-1",
+			CWD:        "/workspace/older",
+			Title:      "Imported Pi 1",
+			Alias:      "Pinned older",
+			UpdatedAt:  now.Add(-30 * time.Minute),
+			ActivityAt: now.Add(-30 * time.Minute),
+			SourcePath: olderSourcePath,
 		},
-		SessionSourceRefs: []sqlitestore.SessionSourceRefRow{
-			{SessionID: "imported-pi-1", Backend: "pi", SourcePath: olderSourcePath, HasLegacySessionUIState: true},
-			{SessionID: "imported-pi-2", Backend: "pi", SourcePath: newerSourcePath, HasLegacySessionUIState: true},
+		importedPIDetachedFixture{
+			SessionID:  "imported-pi-2",
+			CWD:        "/workspace/newer",
+			Title:      "Imported Pi 2",
+			Alias:      "Pinned newer",
+			UpdatedAt:  now.Add(-90 * time.Minute),
+			ActivityAt: now.Add(-90 * time.Minute),
+			SourcePath: newerSourcePath,
 		},
-		AppState:          sqlitestore.AppStateRow{RecentCwds: []string{}, CwdGroups: []sqlitestore.CwdGroupRow{}},
-		HiddenSessionKeys: []sqlitestore.HiddenSessionKeyRow{},
-		AppKV:             []sqlitestore.AppKVRow{},
-		Warnings:          []sqlitestore.MigrationWarningRow{},
-		Provenance: sqlitestore.ImportProvenanceRow{
-			Source:      "fixture",
-			SnapshotAt:  now,
-			DetailsJSON: `{"fixture":"display-order"}`,
-		},
-	}); err != nil {
-		t.Fatalf("ReplaceImportBundle() error = %v", err)
-	}
+	)
 
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
 	if err != nil {
@@ -121,24 +70,23 @@ func TestPersistentStubListSessionsUsePersistedUpdatedAtWithoutImportedPISidebar
 	newerSourcePath := writeImportedPISourceFile(t, sourceDir, "imported-pi-2.jsonl", newerActivity)
 	firstUpdatedAt := now.Add(-10 * time.Minute)
 	secondUpdatedAt := now.Add(-3 * time.Hour)
+
 	seedImportedPIDetachedSessions(t, cfg, now,
 		importedPIDetachedFixture{
-			SessionID:               "imported-pi-1",
-			CWD:                     "/workspace/older",
-			Title:                   "Imported Pi 1",
-			UpdatedAt:               firstUpdatedAt,
-			ActivityAt:              firstUpdatedAt,
-			SourcePath:              olderSourcePath,
-			HasLegacySessionUIState: true,
+			SessionID:  "imported-pi-1",
+			CWD:        "/workspace/older",
+			Title:      "Imported Pi 1",
+			UpdatedAt:  firstUpdatedAt,
+			ActivityAt: firstUpdatedAt,
+			SourcePath: olderSourcePath,
 		},
 		importedPIDetachedFixture{
-			SessionID:               "imported-pi-2",
-			CWD:                     "/workspace/newer",
-			Title:                   "Imported Pi 2",
-			UpdatedAt:               secondUpdatedAt,
-			ActivityAt:              secondUpdatedAt,
-			SourcePath:              newerSourcePath,
-			HasLegacySessionUIState: true,
+			SessionID:  "imported-pi-2",
+			CWD:        "/workspace/newer",
+			Title:      "Imported Pi 2",
+			UpdatedAt:  secondUpdatedAt,
+			ActivityAt: secondUpdatedAt,
+			SourcePath: newerSourcePath,
 		},
 	)
 

@@ -41,6 +41,7 @@ type sessionCreateSpec struct {
 	BackendSessionID string
 	SourceConfidence string
 	Runtime          sessionRuntime
+	Transport        SessionTransportSnapshot
 }
 
 type sessionRecord struct {
@@ -128,6 +129,7 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 		importedBackendSessionID: strings.TrimSpace(spec.BackendSessionID),
 		importedSourceConfidence: normalizeSourceConfidence(spec.SourceConfidence),
 		runtime:                  spec.Runtime,
+		transport:                spec.Transport,
 		inputMu:                  &sync.Mutex{},
 	}
 	cp := copySessionRecord(record)
@@ -278,6 +280,10 @@ func (r *sessionRegistry) SetSourceBinding(sessionID session.SessionID, backendS
 }
 
 func (r *sessionRegistry) SwapRuntime(routeID session.SessionID, identity session.Identity, runtime sessionRuntime, sourcePath string) (sessionRecord, bool, error) {
+	transport := SessionTransportSnapshot{}
+	if runtime.UsesPIAgentGRPC() {
+		transport = piAgentGRPCTransportSnapshot()
+	}
 	if err := identity.Validate(); err != nil {
 		return sessionRecord{}, true, err
 	}
@@ -310,7 +316,7 @@ func (r *sessionRegistry) SwapRuntime(routeID session.SessionID, identity sessio
 	record.updatedAt = now
 	record.activityAt = now
 	record.uiRequest = nil
-	record.transport = SessionTransportSnapshot{}
+	record.transport = transport
 	record.resumeCursors = SessionResumeCursors{}
 	record.transcript.DiscardPartialAssistantTurn()
 	if err := syncSessionRecordStateWithQueue(&record, false, record.state.Queue()); err != nil {

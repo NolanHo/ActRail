@@ -8,59 +8,44 @@ import (
 )
 
 func (s *Stub) reattachSurvivingRuntimes(ctx context.Context) error {
-	if err := s.reattachSurvivingHelpers(ctx); err != nil {
+	if err := s.reattachSurvivingPIAgentGRPCRuntimes(ctx); err != nil {
 		return err
 	}
-	return s.reattachSurvivingPIAgentGRPCRuntimes(ctx)
+	return s.reattachSurvivingHelpers(ctx)
 }
 
 func (s *Stub) reattachSurvivingPIAgentGRPCRuntimes(ctx context.Context) error {
-	if s == nil || s.registry == nil {
+	if s == nil || s.launcher == nil {
 		return nil
 	}
 	for _, record := range s.registry.List() {
-		if record.identity.Historical() || record.identity.Backend() != session.BackendPI {
+		if !shouldReattachPIAgentGRPC(record) {
 			continue
 		}
-		if record.transport.State == SessionTransportStateBroken {
-			continue
-		}
-		if record.runtime.helper != nil || record.runtime.piAgentGRPC != nil {
-			continue
-		}
-		if record.runtime.handle != nil {
-			continue
-		}
-		if !record.runtimeAgentRunning && !record.state.Busy() {
-			continue
-		}
-		attached, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
+		attached, err := s.launcher.AttachPIAgentGRPC(ctx, runtimeLaunchRequest{
 			SessionID:       record.identity.SessionID(),
 			Backend:         record.identity.Backend(),
 			CWD:             record.cwd,
 			Provider:        record.provider,
 			Model:           record.model,
 			ReasoningEffort: record.reasoningEffort,
-			SessionPath:     record.importedSourcePath,
 			PIAgentGRPC:     true,
 			AttachOnly:      true,
 		})
 		if err != nil {
-			if record.state.Busy() {
-				if _, ok, markErr := s.registry.MarkRuntimeCompleted(record.identity.SessionID()); markErr != nil {
-					return markErr
-				} else if !ok {
-					return fmt.Errorf("session %q not found while clearing grpc startup busy state", record.identity.SessionID())
-				}
+			if _, ok, markErr := s.registry.MarkRuntimeCompleted(record.identity.SessionID()); markErr != nil {
+				return markErr
+			} else if !ok {
+				return fmt.Errorf("session %q not found while marking grpc runtime ended", record.identity.SessionID())
 			}
-			if err := s.setRuntimeAgentRunning(record.identity.SessionID(), false); err != nil {
-				return err
-			}
+			s.runtimeAgentMu.Lock()
+			s.runtimeAgentRunning[record.identity.SessionID()] = false
+			s.runtimeAgentMu.Unlock()
 			continue
 		}
-		updated, ok, err := s.registry.Update(record.identity.SessionID(), false, func(record *sessionRecord) error {
-			record.runtime = attached
-			record.transport = SessionTransportSnapshot{State: SessionTransportStateAttached, Reason: "grpc_reattached"}
+		updated, ok, err := s.registry.Update(record.identity.SessionID(), false, func(next *sessionRecord) error {
+			next.runtime = attached
+			next.transport = piAgentGRPCTransportSnapshot()
 			return nil
 		})
 		if err != nil {
@@ -74,4 +59,18 @@ func (s *Stub) reattachSurvivingPIAgentGRPCRuntimes(ctx context.Context) error {
 		s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), attached)
 	}
 	return nil
+}
+
+func piAgentGRPCTransportSnapshot() SessionTransportSnapshot {
+	return SessionTransportSnapshot{State: SessionTransportStateAttached, GenerationID: "pi_agent_grpc", Reason: "pi_agent_grpc"}
+}
+
+func shouldReattachPIAgentGRPC(record sessionRecord) bool {
+	if !record.runtimeAgentRunning || record.identity.Backend() != session.BackendPI || record.identity.Historical() {
+		return false
+	}
+	if record.runtime.UsesPIAgentGRPC() {
+		return true
+	}
+	return record.transport.State == SessionTransportStateAttached
 }
