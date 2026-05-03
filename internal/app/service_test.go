@@ -183,6 +183,9 @@ func TestStubListSessionsUsesAttachedHelperForTransportSnapshot(t *testing.T) {
 	if listed.Items[0].TransportState != SessionTransportStateAttached.String() || listed.Items[0].GenerationID != generationID.String() {
 		t.Fatalf("ListSessions().Items[0] transport = (%q, %q), want attached %q", listed.Items[0].TransportState, listed.Items[0].GenerationID, generationID)
 	}
+	if listed.Items[0].IOD == nil || listed.Items[0].IOD.Mode != "std" {
+		t.Fatalf("ListSessions().Items[0].IOD = %+v, want std mode", listed.Items[0].IOD)
+	}
 }
 
 func TestStubListSessionsUsesStablePagination(t *testing.T) {

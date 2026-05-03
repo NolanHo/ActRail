@@ -240,6 +240,7 @@ type IODRuntimeSummary struct {
 	BuildDate string  `json:"build_date,omitempty"`
 	GitSHA    string  `json:"git_sha,omitempty"`
 	StartTS   float64 `json:"start_ts,omitempty"`
+	Mode      string  `json:"mode"`
 }
 
 type ListSessionsRequest struct {
@@ -622,6 +623,9 @@ func lastAssistantMessageTimestamp(record sessionRecord) float64 {
 func (s *Stub) iodRuntimeSummary(record sessionRecord) *IODRuntimeSummary {
 	if record.identity.Backend() != session.BackendPI || record.identity.Historical() {
 		return nil
+	}
+	if record.runtime.piAgentGRPC != nil {
+		return grpcIODSummary()
 	}
 	if helper := record.runtime.helper; helper != nil {
 		return helper.iodSummary()

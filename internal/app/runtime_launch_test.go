@@ -178,6 +178,16 @@ func TestCreateSessionLaunchesPIAgentGRPCWhenRequested(t *testing.T) {
 	if record.runtime.piAgentGRPC == nil {
 		t.Fatal("record.runtime.piAgentGRPC = nil")
 	}
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
+	}
+	if listed.Items[0].IOD == nil || listed.Items[0].IOD.Mode != "grpc" {
+		t.Fatalf("ListSessions().Items[0].IOD = %+v, want grpc mode", listed.Items[0].IOD)
+	}
 }
 
 func TestCreateSessionDoesNotStoreMetadataWhenLaunchFails(t *testing.T) {

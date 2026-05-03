@@ -189,6 +189,7 @@ export interface SessionSummary {
     build_date?: string;
     git_sha?: string;
     start_ts?: number;
+    mode?: "grpc" | "std" | string;
   } | null;
   git_branch?: string | null;
   model?: string | null;
