@@ -117,7 +117,6 @@ type sessionRuntime struct {
 	piAgentGRPC          *piagentgrpc.Client
 	helperBinding        *RuntimeHelperBinding
 	currentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
-	serverOwned          bool
 }
 
 type codexRuntimeState struct {
@@ -440,7 +439,6 @@ func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runti
 		}
 	}
 	var handle process.Handle
-	serverOwned := false
 	if !req.AttachOnly {
 		handle, err = l.runner.Start(ctx, launchSpec)
 		if err != nil {
@@ -451,7 +449,6 @@ func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runti
 			_ = client.Close()
 			return sessionRuntime{}, fmt.Errorf("start pi agent grpc runtime %q: nil process handle", req.SessionID)
 		}
-		serverOwned = true
 	}
 	if err := l.waitForPIAgentGRPCReady(ctx, client); err != nil {
 		if handle != nil {
@@ -466,7 +463,6 @@ func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runti
 		protocol:             runtimeProtocolPIRPC,
 		piAgentGRPC:          client,
 		currentHelperBinding: l.currentHelperBinding,
-		serverOwned:          serverOwned,
 	}, nil
 }
 
@@ -515,7 +511,6 @@ func (l processRuntimeLauncher) launchDirect(ctx context.Context, req runtimeLau
 		protocol:             runtimeProtocolForBackend(req.Backend),
 		codex:                newCodexRuntimeState(req.Backend),
 		currentHelperBinding: l.currentHelperBinding,
-		serverOwned:          true,
 	}, nil
 }
 
@@ -587,7 +582,6 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 			resolved := *binding
 			return &resolved, nil
 		},
-		serverOwned: true,
 	}, verifyLaunchMatchesManifest(paths, manifest)
 }
 
@@ -970,7 +964,7 @@ func (r sessionRuntime) Kill(ctx context.Context) error {
 	if r.piAgentGRPC != nil {
 		_ = r.piAgentGRPC.Close()
 	}
-	if r.handle == nil || !r.serverOwned {
+	if r.handle == nil {
 		return nil
 	}
 	if err := r.handle.Kill(); err != nil {
@@ -983,7 +977,7 @@ func (r sessionRuntime) PID() int {
 	if r.helper != nil && r.helper.childPID != nil {
 		return *r.helper.childPID
 	}
-	if r.piAgentGRPC != nil && r.handle != nil && r.serverOwned {
+	if r.piAgentGRPC != nil && r.handle != nil {
 		return r.handle.PID()
 	}
 	if r.handle == nil {
