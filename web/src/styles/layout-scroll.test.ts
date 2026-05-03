@@ -182,6 +182,7 @@ describe("conversation layout scroll guards", () => {
   it("keeps the mobile composer and shell sizing rules scoped to the 880px media block", () => {
     const mobileRules = mediaBody(css, "(max-width: 880px)");
     const mobileShellRule = ruleBody(mobileRules, ".appShell.editorialShell");
+    const mobileGlobalNavShellRule = ruleBody(mobileRules, ".appShell.editorialShell.withGlobalNav");
     const mobileStackRule = ruleBody(mobileRules, ".composerStack");
     const mobileNavRule = ruleBody(css, ".mobileBottomNav");
     const mobilePanelRule = ruleBody(mobileRules, ".composerTodoPanel");
@@ -191,6 +192,7 @@ describe("conversation layout scroll guards", () => {
 
     expect(mobileShellRule).toContain("grid-template-columns: 1fr;");
     expect(mobileShellRule).toContain("top: var(--visualViewportOffsetTop, 0px);");
+    expect(mobileGlobalNavShellRule).toContain("grid-template-columns: 1fr;");
     expect(mobileStackRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom));");
     expect(mobileStackRule).not.toContain("--keyboardBottom");
     expect(mobileNavRule).toContain("padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom));");

@@ -3837,6 +3837,10 @@ select {
     gap: 0;
   }
 
+  .appShell.editorialShell.withGlobalNav {
+    grid-template-columns: 1fr;
+  }
+
   .appShell.legacyShell {
     grid-template-columns: 1fr;
     padding: 0.75rem;
