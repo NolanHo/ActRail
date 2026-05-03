@@ -195,6 +195,7 @@ function renderAppShell({
     agent_backend: string;
     busy: boolean;
     focused?: boolean;
+    iod?: { build_date?: string; git_sha?: string; start_ts?: number; mode?: string } | null;
   }>;
   liveBusyBySessionId?: Record<string, boolean>;
   messages?: Record<string, unknown[]>;
@@ -1906,6 +1907,22 @@ describe("AppShell", () => {
     expect(getRoot().textContent).not.toContain("Old request");
     expect(getToolbarTodoAnchor()).toBeNull();
     expect(getToolbarTodoButton()).toBeNull();
+  });
+
+  it("shows Pi runtime transport mode in the IOD status", async () => {
+    renderAppShell({
+      items: [{
+        session_id: "sess-1",
+        alias: "gRPC shell",
+        agent_backend: "pi",
+        busy: false,
+        iod: { git_sha: "8b8b042", build_date: "2026-05-02", mode: "grpc" },
+      }],
+    });
+    await flush();
+
+    expect(getRoot().textContent).toContain("iod");
+    expect(getRoot().textContent).toContain("8b8b042 2026-05-02 grpc");
   });
 
   it("does not reintroduce a toolbar todo control when the active backend changes", async () => {

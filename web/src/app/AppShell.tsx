@@ -233,7 +233,8 @@ export function AppShell() {
       items.push({ label: "Context", value: activeContextUsageLabel });
     }
     if (activeSession.iod) {
-      const version = [activeSession.iod.git_sha, activeSession.iod.build_date].filter(Boolean).join(" ");
+      const mode = typeof activeSession.iod.mode === "string" ? activeSession.iod.mode.trim() : "";
+      const version = [activeSession.iod.git_sha, activeSession.iod.build_date, mode].filter(Boolean).join(" ");
       if (version) {
         items.push({ label: "iod", value: version });
       }

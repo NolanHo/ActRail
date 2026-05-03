@@ -10,6 +10,7 @@ func (h *runtimeIODHelper) iodSummary() *IODRuntimeSummary {
 		BuildDate: h.buildDate,
 		GitSHA:    h.gitSHA,
 		StartTS:   h.startTS,
+		Mode:      "std",
 	}
 }
 
@@ -21,5 +22,10 @@ func iodSummaryFromHello(hello iod.HelloPacket) *IODRuntimeSummary {
 		BuildDate: hello.IODBuildDate,
 		GitSHA:    hello.IODGitSHA,
 		StartTS:   hello.StartTS,
+		Mode:      "std",
 	}
+}
+
+func grpcIODSummary() *IODRuntimeSummary {
+	return &IODRuntimeSummary{Mode: "grpc"}
 }
