@@ -96,6 +96,13 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 			_ = s.emitRuntimeControlDiagnostic(req.SessionID, "prepare_send", err)
 			return mapRuntimeControlError(err)
 		}
+		current, err := s.lookupSession(req.SessionID)
+		if err != nil {
+			return err
+		}
+		if !sameRuntime(record, current) {
+			return Conflict("session runtime changed before send; retry with current session state")
+		}
 		if err := record.runtime.SendPrompt(ctx, text); err != nil {
 			_ = s.emitRuntimeControlDiagnostic(req.SessionID, "send", err)
 			return mapRuntimeControlError(err)
@@ -367,6 +374,15 @@ func (s *Stub) emitRuntimeControlDiagnostic(sessionID session.SessionID, operati
 	}
 	s.emitMessageCommit(sessionID, "", committed)
 	return nil
+}
+
+func sameRuntime(a, b sessionRecord) bool {
+	aRuntimeID, aOK := a.identity.RuntimeID()
+	bRuntimeID, bOK := b.identity.RuntimeID()
+	if aOK && bOK {
+		return aRuntimeID == bRuntimeID
+	}
+	return a.runtime.helper == b.runtime.helper && a.runtime.piAgentGRPC == b.runtime.piAgentGRPC && a.runtime.handle == b.runtime.handle
 }
 
 func mapRuntimeControlError(err error) error {

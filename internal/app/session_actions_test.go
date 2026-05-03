@@ -491,6 +491,62 @@ func TestStubEditSessionRejectsIODModeSwitchWhileBusy(t *testing.T) {
 	}
 }
 
+func TestStubEditSessionIODModeSwitchWaitsForInputLock(t *testing.T) {
+	runner := &process.FakeRunner{}
+	grpcServer := grpc.NewServer()
+	piagentv1.RegisterPiAgentServer(grpcServer, fakePiAgentServer{})
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
+
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner: runner,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/custom-pi", nil
+		},
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		},
+	})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID(session) error = %v", err)
+	}
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	record.inputMu.Lock()
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	mode := "grpc"
+	go func() {
+		close(started)
+		_, err := svc.EditSession(context.Background(), EditSessionRequest{SessionID: sessionID, IODMode: StringPatch{Present: true, Value: &mode}})
+		done <- err
+	}()
+	<-started
+	select {
+	case err := <-done:
+		t.Fatalf("EditSession returned before input lock released: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	record.inputMu.Unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("EditSession() error = %v", err)
+	}
+}
+
 func TestStubEditSessionSwitchesIODMode(t *testing.T) {
 	runner := &process.FakeRunner{}
 	grpcServer := grpc.NewServer()

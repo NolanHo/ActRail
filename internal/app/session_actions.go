@@ -325,13 +325,18 @@ func (s *Stub) EditSession(ctx context.Context, req EditSessionRequest) (EditSes
 		if mode != "grpc" && mode != "std" {
 			return EditSessionResponse{}, Invalid("iod_mode", "iod_mode must be grpc or std")
 		}
-		if mode != currentIODMode(target) {
-			if target.state.Busy() {
-				return EditSessionResponse{}, Conflict("iod mode can only be changed while runtime is idle")
+		if err := s.withSessionInputLock(req.SessionID, func(locked sessionRecord) error {
+			target = locked
+			if mode == currentIODMode(locked) {
+				return nil
 			}
-			if _, err := s.switchSessionIODMode(ctx, target, mode); err != nil {
-				return EditSessionResponse{}, err
+			if locked.state.Busy() {
+				return Conflict("iod mode can only be changed while runtime is idle")
 			}
+			_, err := s.switchSessionIODMode(ctx, locked, mode)
+			return err
+		}); err != nil {
+			return EditSessionResponse{}, err
 		}
 	}
 	record, ok, err := s.registry.Update(target.identity.SessionID(), false, func(record *sessionRecord) error {
