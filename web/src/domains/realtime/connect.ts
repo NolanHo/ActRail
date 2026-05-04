@@ -87,6 +87,13 @@ function decodePayloadBytes(raw: Uint8Array) {
   return json ? JSON.parse(json) as Record<string, unknown> : {};
 }
 
+async function readJson<T>(response: Response): Promise<T> {
+  if (typeof response.json === "function") {
+    return await response.json() as T;
+  }
+  return JSON.parse(await response.text()) as T;
+}
+
 function bodyForCommandProto(command: RealtimeCommand, method: string) {
   const payload = command.payload || {};
   const session = sessionFromPayload(payload);
@@ -273,7 +280,7 @@ export async function fetchConnectSessionState(config: ConnectTransportConfig, o
     const body = toBinary(SessionStateRequestSchema, create(SessionStateRequestSchema, { session: { sessionId: options.sessionId } }));
     const response = await fetch(apiPath(url), {
       method: "POST",
-      headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
       body,
       signal: options.signal,
     });
@@ -291,7 +298,7 @@ export async function fetchConnectSessionState(config: ConnectTransportConfig, o
   if (!response.ok) {
     throw new HttpError(await response.text(), response.status);
   }
-  return decodePayloadJson((await response.json() as { payloadJson?: string }).payloadJson) as LiveSessionResponse;
+  return decodePayloadJson((await readJson<{ payloadJson?: string }>(response)).payloadJson) as LiveSessionResponse;
 }
 
 export async function fetchConnectSessionMessages(config: ConnectTransportConfig, options: ConnectMessagesOptions): Promise<MessagesResponse> {
@@ -313,7 +320,7 @@ export async function fetchConnectSessionMessages(config: ConnectTransportConfig
     }));
     const response = await fetch(apiPath(url), {
       method: "POST",
-      headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
       body,
       signal: options.signal,
     });
@@ -342,5 +349,5 @@ export async function fetchConnectSessionMessages(config: ConnectTransportConfig
   if (!response.ok) {
     throw new HttpError(await response.text(), response.status);
   }
-  return await response.json() as MessagesResponse;
+  return await readJson<MessagesResponse>(response);
 }

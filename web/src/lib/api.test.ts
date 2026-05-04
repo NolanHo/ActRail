@@ -337,7 +337,7 @@ describe("api", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/SessionMessages", expect.objectContaining({
       method: "POST",
-      headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
     }));
   });
 
@@ -429,7 +429,7 @@ describe("api", () => {
     await expect(api.getLiveSession("session-1", 4)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/SessionState", expect.objectContaining({
       method: "POST",
-      headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
     }));
   });
 
@@ -458,7 +458,7 @@ describe("api", () => {
       "api/connect/actrail.v1.SessionCommandService/SessionState",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+        headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
       }),
     );
   });
@@ -490,7 +490,7 @@ describe("api", () => {
       "api/connect/actrail.v1.SessionCommandService/SessionState",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+        headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
       }),
     );
   });

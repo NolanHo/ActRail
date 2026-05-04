@@ -20,6 +20,18 @@ if session_exists; then
   exit 1
 fi
 
+backend_url=$(backend_health_url)
+frontend_root=$(frontend_url)
+
+if "${CURL_BIN}" -fsS -o /dev/null "${backend_url}" 2>/dev/null; then
+  echo "backend port already has a live server: ${backend_url}" >&2
+  exit 1
+fi
+if "${CURL_BIN}" -fsS -o /dev/null "${frontend_root}" 2>/dev/null; then
+  echo "frontend port already has a live server: ${frontend_root}" >&2
+  exit 1
+fi
+
 backend_shell=$(tmux_window_command "$(backend_command)")
 frontend_shell=$(tmux_window_command "$(frontend_command)")
 
@@ -27,9 +39,6 @@ frontend_shell=$(tmux_window_command "$(frontend_command)")
 "${TMUX_BIN}" set-option -t "${SESSION_NAME}" remain-on-exit on
 "${TMUX_BIN}" new-window -t "${SESSION_NAME}" -n frontend "${frontend_shell}"
 "${TMUX_BIN}" select-window -t "${SESSION_NAME}:backend"
-
-backend_url=$(backend_health_url)
-frontend_root=$(frontend_url)
 
 if ! wait_for_http "${backend_url}"; then
   echo "backend did not become ready: ${backend_url}" >&2
