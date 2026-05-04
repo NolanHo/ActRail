@@ -325,6 +325,50 @@ func (x *RespondUIRequest) GetValue() string {
 	return ""
 }
 
+type SessionStateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Session       *SessionIdentity       `protobuf:"bytes,1,opt,name=session,proto3" json:"session,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionStateRequest) Reset() {
+	*x = SessionStateRequest{}
+	mi := &file_actrail_v1_transport_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionStateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionStateRequest) ProtoMessage() {}
+
+func (x *SessionStateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_actrail_v1_transport_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionStateRequest.ProtoReflect.Descriptor instead.
+func (*SessionStateRequest) Descriptor() ([]byte, []int) {
+	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SessionStateRequest) GetSession() *SessionIdentity {
+	if x != nil {
+		return x.Session
+	}
+	return nil
+}
+
 type CommandResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PayloadJson   []byte                 `protobuf:"bytes,1,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
@@ -334,7 +378,7 @@ type CommandResponse struct {
 
 func (x *CommandResponse) Reset() {
 	*x = CommandResponse{}
-	mi := &file_actrail_v1_transport_proto_msgTypes[6]
+	mi := &file_actrail_v1_transport_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -346,7 +390,7 @@ func (x *CommandResponse) String() string {
 func (*CommandResponse) ProtoMessage() {}
 
 func (x *CommandResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_actrail_v1_transport_proto_msgTypes[6]
+	mi := &file_actrail_v1_transport_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -359,7 +403,7 @@ func (x *CommandResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandResponse.ProtoReflect.Descriptor instead.
 func (*CommandResponse) Descriptor() ([]byte, []int) {
-	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{6}
+	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *CommandResponse) GetPayloadJson() []byte {
@@ -378,7 +422,7 @@ type SubscribeRequest struct {
 
 func (x *SubscribeRequest) Reset() {
 	*x = SubscribeRequest{}
-	mi := &file_actrail_v1_transport_proto_msgTypes[7]
+	mi := &file_actrail_v1_transport_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -390,7 +434,7 @@ func (x *SubscribeRequest) String() string {
 func (*SubscribeRequest) ProtoMessage() {}
 
 func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_actrail_v1_transport_proto_msgTypes[7]
+	mi := &file_actrail_v1_transport_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -403,7 +447,7 @@ func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeRequest) Descriptor() ([]byte, []int) {
-	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{7}
+	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SubscribeRequest) GetAfterEventId() uint64 {
@@ -426,7 +470,7 @@ type EventEnvelope struct {
 
 func (x *EventEnvelope) Reset() {
 	*x = EventEnvelope{}
-	mi := &file_actrail_v1_transport_proto_msgTypes[8]
+	mi := &file_actrail_v1_transport_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -438,7 +482,7 @@ func (x *EventEnvelope) String() string {
 func (*EventEnvelope) ProtoMessage() {}
 
 func (x *EventEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_actrail_v1_transport_proto_msgTypes[8]
+	mi := &file_actrail_v1_transport_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -451,7 +495,7 @@ func (x *EventEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventEnvelope.ProtoReflect.Descriptor instead.
 func (*EventEnvelope) Descriptor() ([]byte, []int) {
-	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{8}
+	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *EventEnvelope) GetId() uint64 {
@@ -507,7 +551,7 @@ type SessionMessagesRequest struct {
 
 func (x *SessionMessagesRequest) Reset() {
 	*x = SessionMessagesRequest{}
-	mi := &file_actrail_v1_transport_proto_msgTypes[9]
+	mi := &file_actrail_v1_transport_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -519,7 +563,7 @@ func (x *SessionMessagesRequest) String() string {
 func (*SessionMessagesRequest) ProtoMessage() {}
 
 func (x *SessionMessagesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_actrail_v1_transport_proto_msgTypes[9]
+	mi := &file_actrail_v1_transport_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -532,7 +576,7 @@ func (x *SessionMessagesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionMessagesRequest.ProtoReflect.Descriptor instead.
 func (*SessionMessagesRequest) Descriptor() ([]byte, []int) {
-	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{9}
+	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SessionMessagesRequest) GetSessionId() string {
@@ -617,7 +661,7 @@ type SessionMessagesResponse struct {
 
 func (x *SessionMessagesResponse) Reset() {
 	*x = SessionMessagesResponse{}
-	mi := &file_actrail_v1_transport_proto_msgTypes[10]
+	mi := &file_actrail_v1_transport_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -629,7 +673,7 @@ func (x *SessionMessagesResponse) String() string {
 func (*SessionMessagesResponse) ProtoMessage() {}
 
 func (x *SessionMessagesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_actrail_v1_transport_proto_msgTypes[10]
+	mi := &file_actrail_v1_transport_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -642,7 +686,7 @@ func (x *SessionMessagesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionMessagesResponse.ProtoReflect.Descriptor instead.
 func (*SessionMessagesResponse) Descriptor() ([]byte, []int) {
-	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{10}
+	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SessionMessagesResponse) GetEventsJson() [][]byte {
@@ -698,7 +742,9 @@ const file_actrail_v1_transport_proto_rawDesc = "" +
 	"\asession\x18\x01 \x01(\v2\x1b.actrail.v1.SessionIdentityR\asession\x12\x1f\n" +
 	"\vresponse_to\x18\x02 \x01(\tR\n" +
 	"responseTo\x12\x14\n" +
-	"\x05value\x18\x03 \x01(\tR\x05value\"4\n" +
+	"\x05value\x18\x03 \x01(\tR\x05value\"L\n" +
+	"\x13SessionStateRequest\x125\n" +
+	"\asession\x18\x01 \x01(\v2\x1b.actrail.v1.SessionIdentityR\asession\"4\n" +
 	"\x0fCommandResponse\x12!\n" +
 	"\fpayload_json\x18\x01 \x01(\fR\vpayloadJson\"8\n" +
 	"\x10SubscribeRequest\x12$\n" +
@@ -734,13 +780,14 @@ const file_actrail_v1_transport_proto_rawDesc = "" +
 	"\btail_seq\x18\x02 \x01(\x04R\atailSeq\x12\x19\n" +
 	"\bhas_more\x18\x03 \x01(\bR\ahasMore\x12+\n" +
 	"\x0fnext_before_seq\x18\x04 \x01(\x04H\x00R\rnextBeforeSeq\x88\x01\x01B\x12\n" +
-	"\x10_next_before_seq2\xd1\x03\n" +
+	"\x10_next_before_seq2\x9f\x04\n" +
 	"\x15SessionCommandService\x12<\n" +
 	"\x04Send\x12\x17.actrail.v1.SendRequest\x1a\x1b.actrail.v1.CommandResponse\x12B\n" +
 	"\aEnqueue\x12\x1a.actrail.v1.EnqueueRequest\x1a\x1b.actrail.v1.CommandResponse\x12J\n" +
 	"\vCancelQueue\x12\x1e.actrail.v1.CancelQueueRequest\x1a\x1b.actrail.v1.CommandResponse\x12F\n" +
 	"\tInterrupt\x12\x1c.actrail.v1.InterruptRequest\x1a\x1b.actrail.v1.CommandResponse\x12F\n" +
-	"\tRespondUI\x12\x1c.actrail.v1.RespondUIRequest\x1a\x1b.actrail.v1.CommandResponse\x12Z\n" +
+	"\tRespondUI\x12\x1c.actrail.v1.RespondUIRequest\x1a\x1b.actrail.v1.CommandResponse\x12L\n" +
+	"\fSessionState\x12\x1f.actrail.v1.SessionStateRequest\x1a\x1b.actrail.v1.CommandResponse\x12Z\n" +
 	"\x0fSessionMessages\x12\".actrail.v1.SessionMessagesRequest\x1a#.actrail.v1.SessionMessagesResponse2V\n" +
 	"\fEventService\x12F\n" +
 	"\tSubscribe\x12\x1c.actrail.v1.SubscribeRequest\x1a\x19.actrail.v1.EventEnvelope0\x01B$Z\"actrail/proto/actrail/v1;actrailv1b\x06proto3"
@@ -757,7 +804,7 @@ func file_actrail_v1_transport_proto_rawDescGZIP() []byte {
 	return file_actrail_v1_transport_proto_rawDescData
 }
 
-var file_actrail_v1_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_actrail_v1_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_actrail_v1_transport_proto_goTypes = []any{
 	(*SessionIdentity)(nil),         // 0: actrail.v1.SessionIdentity
 	(*SendRequest)(nil),             // 1: actrail.v1.SendRequest
@@ -765,11 +812,12 @@ var file_actrail_v1_transport_proto_goTypes = []any{
 	(*CancelQueueRequest)(nil),      // 3: actrail.v1.CancelQueueRequest
 	(*InterruptRequest)(nil),        // 4: actrail.v1.InterruptRequest
 	(*RespondUIRequest)(nil),        // 5: actrail.v1.RespondUIRequest
-	(*CommandResponse)(nil),         // 6: actrail.v1.CommandResponse
-	(*SubscribeRequest)(nil),        // 7: actrail.v1.SubscribeRequest
-	(*EventEnvelope)(nil),           // 8: actrail.v1.EventEnvelope
-	(*SessionMessagesRequest)(nil),  // 9: actrail.v1.SessionMessagesRequest
-	(*SessionMessagesResponse)(nil), // 10: actrail.v1.SessionMessagesResponse
+	(*SessionStateRequest)(nil),     // 6: actrail.v1.SessionStateRequest
+	(*CommandResponse)(nil),         // 7: actrail.v1.CommandResponse
+	(*SubscribeRequest)(nil),        // 8: actrail.v1.SubscribeRequest
+	(*EventEnvelope)(nil),           // 9: actrail.v1.EventEnvelope
+	(*SessionMessagesRequest)(nil),  // 10: actrail.v1.SessionMessagesRequest
+	(*SessionMessagesResponse)(nil), // 11: actrail.v1.SessionMessagesResponse
 }
 var file_actrail_v1_transport_proto_depIdxs = []int32{
 	0,  // 0: actrail.v1.SendRequest.session:type_name -> actrail.v1.SessionIdentity
@@ -777,25 +825,28 @@ var file_actrail_v1_transport_proto_depIdxs = []int32{
 	0,  // 2: actrail.v1.CancelQueueRequest.session:type_name -> actrail.v1.SessionIdentity
 	0,  // 3: actrail.v1.InterruptRequest.session:type_name -> actrail.v1.SessionIdentity
 	0,  // 4: actrail.v1.RespondUIRequest.session:type_name -> actrail.v1.SessionIdentity
-	1,  // 5: actrail.v1.SessionCommandService.Send:input_type -> actrail.v1.SendRequest
-	2,  // 6: actrail.v1.SessionCommandService.Enqueue:input_type -> actrail.v1.EnqueueRequest
-	3,  // 7: actrail.v1.SessionCommandService.CancelQueue:input_type -> actrail.v1.CancelQueueRequest
-	4,  // 8: actrail.v1.SessionCommandService.Interrupt:input_type -> actrail.v1.InterruptRequest
-	5,  // 9: actrail.v1.SessionCommandService.RespondUI:input_type -> actrail.v1.RespondUIRequest
-	9,  // 10: actrail.v1.SessionCommandService.SessionMessages:input_type -> actrail.v1.SessionMessagesRequest
-	7,  // 11: actrail.v1.EventService.Subscribe:input_type -> actrail.v1.SubscribeRequest
-	6,  // 12: actrail.v1.SessionCommandService.Send:output_type -> actrail.v1.CommandResponse
-	6,  // 13: actrail.v1.SessionCommandService.Enqueue:output_type -> actrail.v1.CommandResponse
-	6,  // 14: actrail.v1.SessionCommandService.CancelQueue:output_type -> actrail.v1.CommandResponse
-	6,  // 15: actrail.v1.SessionCommandService.Interrupt:output_type -> actrail.v1.CommandResponse
-	6,  // 16: actrail.v1.SessionCommandService.RespondUI:output_type -> actrail.v1.CommandResponse
-	10, // 17: actrail.v1.SessionCommandService.SessionMessages:output_type -> actrail.v1.SessionMessagesResponse
-	8,  // 18: actrail.v1.EventService.Subscribe:output_type -> actrail.v1.EventEnvelope
-	12, // [12:19] is the sub-list for method output_type
-	5,  // [5:12] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	0,  // 5: actrail.v1.SessionStateRequest.session:type_name -> actrail.v1.SessionIdentity
+	1,  // 6: actrail.v1.SessionCommandService.Send:input_type -> actrail.v1.SendRequest
+	2,  // 7: actrail.v1.SessionCommandService.Enqueue:input_type -> actrail.v1.EnqueueRequest
+	3,  // 8: actrail.v1.SessionCommandService.CancelQueue:input_type -> actrail.v1.CancelQueueRequest
+	4,  // 9: actrail.v1.SessionCommandService.Interrupt:input_type -> actrail.v1.InterruptRequest
+	5,  // 10: actrail.v1.SessionCommandService.RespondUI:input_type -> actrail.v1.RespondUIRequest
+	6,  // 11: actrail.v1.SessionCommandService.SessionState:input_type -> actrail.v1.SessionStateRequest
+	10, // 12: actrail.v1.SessionCommandService.SessionMessages:input_type -> actrail.v1.SessionMessagesRequest
+	8,  // 13: actrail.v1.EventService.Subscribe:input_type -> actrail.v1.SubscribeRequest
+	7,  // 14: actrail.v1.SessionCommandService.Send:output_type -> actrail.v1.CommandResponse
+	7,  // 15: actrail.v1.SessionCommandService.Enqueue:output_type -> actrail.v1.CommandResponse
+	7,  // 16: actrail.v1.SessionCommandService.CancelQueue:output_type -> actrail.v1.CommandResponse
+	7,  // 17: actrail.v1.SessionCommandService.Interrupt:output_type -> actrail.v1.CommandResponse
+	7,  // 18: actrail.v1.SessionCommandService.RespondUI:output_type -> actrail.v1.CommandResponse
+	7,  // 19: actrail.v1.SessionCommandService.SessionState:output_type -> actrail.v1.CommandResponse
+	11, // 20: actrail.v1.SessionCommandService.SessionMessages:output_type -> actrail.v1.SessionMessagesResponse
+	9,  // 21: actrail.v1.EventService.Subscribe:output_type -> actrail.v1.EventEnvelope
+	14, // [14:22] is the sub-list for method output_type
+	6,  // [6:14] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_actrail_v1_transport_proto_init() }
@@ -803,15 +854,15 @@ func file_actrail_v1_transport_proto_init() {
 	if File_actrail_v1_transport_proto != nil {
 		return
 	}
-	file_actrail_v1_transport_proto_msgTypes[9].OneofWrappers = []any{}
 	file_actrail_v1_transport_proto_msgTypes[10].OneofWrappers = []any{}
+	file_actrail_v1_transport_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_actrail_v1_transport_proto_rawDesc), len(file_actrail_v1_transport_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

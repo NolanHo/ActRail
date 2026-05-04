@@ -20,6 +20,7 @@ import (
 
 type controllerStub struct {
 	sendReq     app.SendRequest
+	stateReq    app.SessionStateRequest
 	messagesReq app.SessionMessagesRequest
 }
 
@@ -38,6 +39,10 @@ func (s *controllerStub) Interrupt(context.Context, app.InterruptRequest) (app.I
 }
 func (s *controllerStub) RespondUI(context.Context, app.UIResponseRequest) (app.UIResponseResponse, error) {
 	return app.UIResponseResponse{}, nil
+}
+func (s *controllerStub) SessionState(_ context.Context, req app.SessionStateRequest) (app.SessionStateResponse, error) {
+	s.stateReq = req
+	return app.SessionStateResponse{Busy: true, TailSeq: 3}, nil
 }
 func (s *controllerStub) SessionMessages(_ context.Context, req app.SessionMessagesRequest) (app.SessionMessagesResponse, error) {
 	s.messagesReq = req
@@ -128,6 +133,32 @@ func TestEventServiceSubscribeWritesProtoEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(string(event.GetPayloadJson()), `"busy":true`) {
 		t.Fatalf("payload_json = %s", string(event.GetPayloadJson()))
+	}
+}
+
+func TestSessionStateProto(t *testing.T) {
+	stub := &controllerStub{}
+	h := NewHandler(stub, NewBroker(100), nil)
+	body, err := proto.Marshal(&actrailv1.SessionStateRequest{Session: &actrailv1.SessionIdentity{SessionId: "sess-1"}})
+	if err != nil {
+		t.Fatalf("marshal session state proto: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, connectBasePath+sessionCommandService+"/SessionState", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/connect+proto")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if stub.stateReq.SessionID.String() != "sess-1" {
+		t.Fatalf("state req = %+v", stub.stateReq)
+	}
+	var response actrailv1.CommandResponse
+	if err := proto.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !strings.Contains(string(response.GetPayloadJson()), `"tail_seq":3`) {
+		t.Fatalf("payload_json = %s", string(response.GetPayloadJson()))
 	}
 }
 

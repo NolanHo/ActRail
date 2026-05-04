@@ -10,6 +10,7 @@ service SessionCommandService {
   rpc CancelQueue(CancelQueueRequest) returns (CommandResponse);
   rpc Interrupt(InterruptRequest) returns (CommandResponse);
   rpc RespondUI(RespondUIRequest) returns (CommandResponse);
+  rpc SessionState(SessionStateRequest) returns (CommandResponse);
   rpc SessionMessages(SessionMessagesRequest) returns (SessionMessagesResponse);
 }
 
@@ -44,6 +45,10 @@ message RespondUIRequest {
   SessionIdentity session = 1;
   string response_to = 2;
   string value = 3;
+}
+
+message SessionStateRequest {
+  SessionIdentity session = 1;
 }
 
 message CommandResponse {

@@ -1,5 +1,5 @@
 import { sendRealtimeCommand } from "../domains/realtime/client";
-import { fetchConnectSessionMessages, type ConnectTransportConfig } from "../domains/realtime/connect";
+import { fetchConnectSessionMessages, fetchConnectSessionState, type ConnectTransportConfig } from "../domains/realtime/connect";
 import { getJson, postJson } from "./http";
 import { getSessionRouteId } from "./session-identity";
 import type {
@@ -266,8 +266,11 @@ export const api = {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return postJson<WaitLifecycleResponse>(`/api/sessions/${routeId}/waits/${encodeURIComponent(waitId)}/cancel`, {});
   },
-  getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
+  getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
+    if (connectConfig !== false && connectConfig !== null) {
+      return fetchConnectSessionState(connectConfig, { sessionId: routeId, signal });
+    }
     return getJson<LiveSessionResponse>(`/api/sessions/${routeId}/state`, signal);
   },
   probeSessionState(sessionId: string, runtimeId?: string | null) {

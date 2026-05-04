@@ -77,6 +77,24 @@ func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	if !renamed.OK || renamed.Alias != "Renamed task" {
 		t.Fatalf("RenameSession() = %+v", renamed)
 	}
+	deletedName := "Deleted duplicate"
+	deletedCreated, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir(), Title: &deletedName})
+	if err != nil {
+		t.Fatalf("CreateSession(deleted duplicate) error = %v", err)
+	}
+	deletedID, err := session.ParseSessionID(deletedCreated.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID(deleted duplicate) error = %v", err)
+	}
+	if _, err := svc.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: deletedID}); err != nil {
+		t.Fatalf("DeleteSession(deleted duplicate) error = %v", err)
+	}
+	if _, err := svc.RenameSession(context.Background(), RenameSessionRequest{SessionID: sessionID, Name: deletedName}); err != nil {
+		t.Fatalf("RenameSession(deleted duplicate name) error = %v", err)
+	}
+	if _, err := svc.RenameSession(context.Background(), RenameSessionRequest{SessionID: sessionID, Name: "Renamed task"}); err != nil {
+		t.Fatalf("RenameSession(restore name) error = %v", err)
+	}
 
 	focused, err := svc.FocusSession(context.Background(), FocusSessionRequest{SessionID: sessionID, Focused: true})
 	if err != nil {

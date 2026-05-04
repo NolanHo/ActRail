@@ -196,6 +196,9 @@ func (h *Handler) dispatchCommand(ctx context.Context, method string, sessionID 
 		}
 		res, err := h.controller.RespondUI(ctx, app.UIResponseRequest{SessionID: sessionID, ResponseTo: body.responseTo(), Value: value})
 		return marshalPayload(res, err)
+	case "SessionState":
+		res, err := h.controller.SessionState(ctx, app.SessionStateRequest{SessionID: sessionID})
+		return marshalPayload(res, err)
 	default:
 		return nil, fmt.Errorf("unknown command method %q", method)
 	}

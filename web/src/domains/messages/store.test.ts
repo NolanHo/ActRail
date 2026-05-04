@@ -31,7 +31,7 @@ describe("createMessagesStore", () => {
 
     await store.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 3000, undefined, true);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 3000, undefined, true, undefined, 0);
     expect(snapshots).toEqual([
       { loading: true, messages: [] },
       { loading: false, messages: [{ id: "m1" }, { id: "m2" }] },
@@ -82,9 +82,9 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s2");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true, undefined, undefined, undefined, 3000, undefined, true);
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true, undefined, undefined, undefined, 3000, undefined, true);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 1, undefined, 3000, undefined, true);
+    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true, undefined, undefined, undefined, 3000, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true, undefined, undefined, undefined, 3000, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 1, undefined, 3000, undefined, true, undefined, 0);
     expect(store.getState()).toEqual({
       bySessionId: {
         s1: [{ id: "m1" }, { id: "m2" }],
@@ -168,7 +168,7 @@ describe("createMessagesStore", () => {
     const pollPromise = store.poll("s1");
 
     expect(api.listMessages).toHaveBeenCalledTimes(1);
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 3000, undefined, true);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 3000, undefined, true, undefined, 0);
 
     resolveFirst!({ events: [{ id: "m1" }], offset: 1 });
     await Promise.all([initialPromise, pollPromise]);
@@ -179,18 +179,18 @@ describe("createMessagesStore", () => {
 
   it("keeps transcript cardinality stable across repeated snapshot polls with stable ids", async () => {
     vi.mocked(api.listMessages)
-      .mockResolvedValueOnce({ events: [{ id: "m1" }], offset: 1 } as never)
-      .mockResolvedValueOnce({ events: [{ id: "m1" }, { id: "m2" }], offset: 2 } as never)
-      .mockResolvedValueOnce({ events: [{ id: "m1" }, { id: "m2" }], offset: 2 } as never);
+      .mockResolvedValueOnce({ events: [{ id: "m1", role: "user", seq: 1 }], offset: 1 } as never)
+      .mockResolvedValueOnce({ events: [{ id: "m1", role: "user", seq: 1 }, { id: "m2", seq: 2 }], offset: 2 } as never)
+      .mockResolvedValueOnce({ events: [{ id: "m1", role: "user", seq: 1 }, { id: "m2", seq: 2 }], offset: 2 } as never);
     const store = createMessagesStore();
 
     await store.loadInitial("s1");
     await store.poll("s1");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1, undefined, 3000, undefined, true);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 2, undefined, 3000, undefined, true);
-    expect(store.getState().bySessionId.s1).toEqual([{ id: "m1" }, { id: "m2" }]);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1, undefined, 3000, undefined, true, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 2, undefined, 3000, undefined, true, undefined, 1);
+    expect(store.getState().bySessionId.s1).toEqual([{ id: "m1", role: "user", seq: 1 }, { id: "m2", seq: 2 }]);
   });
 
   it("replaces snapshot pages that do not expose a stable merge key", async () => {
@@ -332,7 +332,7 @@ describe("createMessagesStore", () => {
   it("prepends older replay pages and tracks the next history cursor", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({
-        events: [{ id: "m2" }, { id: "m3" }],
+        events: [{ id: "m2", role: "user", seq: 1 }, { id: "m3", seq: 2 }],
         offset: 4,
         has_older: true,
         next_before: 2,
@@ -348,8 +348,8 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s1");
     await store.loadOlder("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", true, undefined, undefined, 2, 3000, undefined, true);
-    expect(store.getState().bySessionId.s1).toEqual([{ id: "m0" }, { id: "m1" }, { id: "m2" }, { id: "m3" }]);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", true, undefined, undefined, 2, 3000, undefined, true, undefined, 1);
+    expect(store.getState().bySessionId.s1).toEqual([{ id: "m0" }, { id: "m1" }, { id: "m2", role: "user", seq: 1 }, { id: "m3", seq: 2 }]);
     expect(store.getState().hasOlderBySessionId.s1).toBe(false);
     expect(store.getState().olderBeforeBySessionId.s1).toBe(0);
   });
@@ -357,7 +357,7 @@ describe("createMessagesStore", () => {
   it("keeps fetching older pages until one visible conversation message is found", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({
-        events: [{ id: "m2", role: "assistant", text: "current" }],
+        events: [{ id: "m2", role: "user", text: "current", seq: 1 }],
         offset: 3,
         has_older: true,
         next_before: 2,
@@ -382,13 +382,13 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s1");
     await store.loadOlder("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", true, undefined, undefined, 2, 3000, undefined, true);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", true, undefined, undefined, 4, 3000, undefined, true);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", true, undefined, undefined, 2, 3000, undefined, true, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", true, undefined, undefined, 4, 3000, undefined, true, undefined, 1);
     expect(store.getState().bySessionId.s1).toEqual([
       { id: "m1", role: "user", text: "anchor" },
       { id: "tool-1", type: "tool", name: "read" },
       { id: "tool-2", type: "tool_result", text: "ok" },
-      { id: "m2", role: "assistant", text: "current" },
+      { id: "m2", role: "user", text: "current", seq: 1 },
     ]);
     expect(store.getState().hasOlderBySessionId.s1).toBe(false);
     expect(store.getState().olderBeforeBySessionId.s1).toBe(0);

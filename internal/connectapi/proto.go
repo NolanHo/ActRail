@@ -47,6 +47,12 @@ func decodeCommandRequestProto(method string, data []byte) (commandRequest, erro
 		out.Session = sessionIdentityFromProto(req.GetSession())
 		out.ResponseTo = req.GetResponseTo()
 		out.Value = []byte(req.GetValue())
+	case "SessionState":
+		var req actrailv1.SessionStateRequest
+		if err := proto.Unmarshal(data, &req); err != nil {
+			return commandRequest{}, err
+		}
+		out.Session = sessionIdentityFromProto(req.GetSession())
 	default:
 		return commandRequest{}, fmt.Errorf("unknown command method %q", method)
 	}

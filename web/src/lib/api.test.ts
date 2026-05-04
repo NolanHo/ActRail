@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { create, toBinary } from "@bufbuild/protobuf";
 import { sendRealtimeCommand } from "../domains/realtime/client";
-import { SessionMessagesResponseSchema } from "../gen/actrail/v1/transport_pb";
+import { CommandResponseSchema, SessionMessagesResponseSchema } from "../gen/actrail/v1/transport_pb";
 import { api } from "./api";
 import { getJson, HttpError, subscribeUnauthorized } from "./http";
 import type { LiveSessionResponse, MessagesResponse, SessionBootstrapResponse, SessionDetailsResponse, SessionUiStateResponse, SessionsResponse, WorkspaceResponse } from "./types";
@@ -407,7 +407,7 @@ describe("api", () => {
     });
   });
 
-  it("requests session state snapshots", async () => {
+  it("requests session state snapshots through Connect proto by default", async () => {
     const payload: LiveSessionResponse = {
       ok: true,
       session_id: "session-1",
@@ -416,18 +416,21 @@ describe("api", () => {
       events: [{ id: "m2" }],
       requests: [{ id: "r1", method: "select" }],
     };
+    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, {
+      payloadJson: new TextEncoder().encode(JSON.stringify(payload)),
+    }));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify(payload),
+      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getLiveSession("session-1", 4)).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/state", {
-      headers: { Accept: "application/json" },
-      signal: undefined,
-    });
+    expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/SessionState", expect.objectContaining({
+      method: "POST",
+      headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+    }));
   });
 
   it("requests session state snapshots when compatibility cursors are provided", async () => {
@@ -440,20 +443,23 @@ describe("api", () => {
       requests_version: "v1",
       requests: [{ id: "r1", method: "select" }],
     };
+    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, {
+      payloadJson: new TextEncoder().encode(JSON.stringify(payload)),
+    }));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify(payload),
+      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.getLiveSession("session-1", 4, "v1")).resolves.toEqual(payload);
+    await expect(api.getLiveSession("session-1", 4, "v1", undefined, undefined, undefined, undefined)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith(
-      "api/sessions/session-1/state",
-      {
-        headers: { Accept: "application/json" },
-        signal: undefined,
-      },
+      "api/connect/actrail.v1.SessionCommandService/SessionState",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+      }),
     );
   });
 
@@ -469,20 +475,23 @@ describe("api", () => {
       requests_version: "v1",
       requests: [{ id: "r1", method: "select" }],
     };
+    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, {
+      payloadJson: new TextEncoder().encode(JSON.stringify(payload)),
+    }));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify(payload),
+      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getLiveSession("session-1", 4, "v1", undefined, 2, undefined, 7)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith(
-      "api/sessions/session-1/state",
-      {
-        headers: { Accept: "application/json" },
-        signal: undefined,
-      },
+      "api/connect/actrail.v1.SessionCommandService/SessionState",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+      }),
     );
   });
 

@@ -65,6 +65,42 @@ func TestPISessionSourcePathsDoNotInferFromSessionTitle(t *testing.T) {
 	}
 }
 
+func TestSessionMessagesDefersOnlyToolEventsBeforeLatestTurn(t *testing.T) {
+	items := []SessionMessage{
+		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},
+		{Seq: 2, Kind: "tool", Type: "tool", Text: "old tool", EventID: "old-tool", ToolCallID: "call-old", Details: map[string]any{"arg": "old"}},
+		{Seq: 3, Kind: "tool_result", Type: "tool_result", Text: "old result", EventID: "old-result", ToolCallID: "call-old", Details: map[string]any{"result": "old"}},
+		{Seq: 4, Role: "assistant", Kind: "message", Text: "old answer"},
+		{Seq: 5, Role: "user", Kind: "message", Text: "latest prompt"},
+		{Seq: 6, Kind: "tool", Type: "tool", Text: "latest tool", EventID: "new-tool", ToolCallID: "call-new", Details: map[string]any{"arg": "new"}},
+		{Seq: 7, Kind: "tool_result", Type: "tool_result", Text: "latest result", EventID: "new-result", ToolCallID: "call-new", Details: map[string]any{"result": "new"}},
+	}
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Deferred: true})
+	if len(response.Items) != len(items) {
+		t.Fatalf("len(response.Items) = %d, want %d", len(response.Items), len(items))
+	}
+	if response.Items[1].Text != "" || response.Items[1].Details["deferred"] != true || response.Items[2].Text != "" || response.Items[2].Details["deferred"] != true {
+		t.Fatalf("old tool details = %+v %+v, want deferred", response.Items[1], response.Items[2])
+	}
+	if response.Items[5].Text != "latest tool" || response.Items[6].Text != "latest result" {
+		t.Fatalf("latest tool details = %+v %+v, want hydrated", response.Items[5], response.Items[6])
+	}
+}
+
+func TestSessionMessagesByIDReturnsDeferredToolDetails(t *testing.T) {
+	items := []SessionMessage{
+		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},
+		{Seq: 2, Kind: "tool", Type: "tool", Text: "old tool", EventID: "old-tool", ToolCallID: "call-old", Details: map[string]any{"arg": "old"}},
+		{Seq: 3, Role: "user", Kind: "message", Text: "latest prompt"},
+	}
+	if msg, ok := findSessionMessageByID(items, "old-tool", ""); !ok || msg.Text != "old tool" || msg.Details["arg"] != "old" {
+		t.Fatalf("find by event = %+v, %v", msg, ok)
+	}
+	if msg, ok := findSessionMessageByID(items, "", "call-old"); !ok || msg.Text != "old tool" || msg.Details["arg"] != "old" {
+		t.Fatalf("find by tool_call_id = %+v, %v", msg, ok)
+	}
+}
+
 func TestImportedSessionMessagesUsePIEntryIDAsEventID(t *testing.T) {
 	items, err := importedSessionMessagesFromJSONLBytes("fixture.jsonl", []byte(`{"type":"message","id":"entry-a","parentId":"entry-user","message":{"role":"assistant","content":[{"type":"text","text":"answer","textSignature":"sig"}],"stopReason":"stop"}}
 {"type":"turn_end","id":"entry-turn","toolResults":[{"role":"toolResult","toolCallId":"call-1","toolName":"read","content":[{"type":"text","text":"result"}],"isError":false}]}

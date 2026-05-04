@@ -64,6 +64,7 @@ function initialFormState(session: SessionSummary | null) {
 }
 
 export function EditSessionDialog({ open, session, sessions, onClose, onSaved }: EditSessionDialogProps) {
+  const canEditIODMode = session?.agent_backend === "pi" && !session.historical && session.iod != null;
   const transportSwitchDisabled = Boolean(session?.busy);
   const [sessionName, setSessionName] = useState(() => initialFormState(session).sessionName);
   const [priorityOffset, setPriorityOffset] = useState(() => initialFormState(session).priorityOffset);
@@ -199,7 +200,7 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
             <p className="text-xs text-muted-foreground">Dependent sessions stay behind their blocker in the sidebar.</p>
           </label>
 
-          {session?.agent_backend === "pi" && !session.historical ? (
+          {canEditIODMode ? (
             <label className="block space-y-2">
               <span className="text-sm font-medium text-foreground">Pi transport</span>
               <select
@@ -249,7 +250,7 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
                   priority_offset: Number(priorityOffset.toFixed(2)),
                   snooze_until: snoozeUntil,
                   dependency_session_id: dependencySessionId || null,
-                  iod_mode: session.agent_backend === "pi" && !session.historical ? iodMode : undefined,
+                  iod_mode: canEditIODMode ? iodMode : undefined,
                 });
                 await onSaved();
                 onClose();

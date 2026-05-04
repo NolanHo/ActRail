@@ -5,6 +5,16 @@ const HISTORY_PAGE_SIZE = 3000;
 
 const MACHINE_TRACE_TYPES = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 
+function activeTurnStartSeq(events: MessageEvent[]) {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const seq = events[i]?.seq;
+    if (events[i]?.role === "user" && typeof seq === "number" && Number.isFinite(seq) && seq > 0) {
+      return Math.floor(seq);
+    }
+  }
+  return 0;
+}
+
 function normalizeMessagePage(data: Awaited<ReturnType<typeof api.listMessages>>) {
   const events = Array.isArray(data.items)
     ? data.items
@@ -254,7 +264,8 @@ export function createMessagesStore(): MessagesStore {
 
       try {
         const after = init ? undefined : state.offsetsBySessionId[sessionId];
-        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, after, undefined, HISTORY_PAGE_SIZE, undefined, true));
+        const activeSeq = init ? 0 : activeTurnStartSeq(state.bySessionId[sessionId] ?? []);
+        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, after, undefined, HISTORY_PAGE_SIZE, undefined, true, undefined, activeSeq));
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }
@@ -346,7 +357,7 @@ export function createMessagesStore(): MessagesStore {
       let foundAnchor = false;
 
       while ((nextBefore > 0 || hasOlder) && !foundAnchor) {
-        const data = normalizeMessagePage(await api.listMessages(sessionId, true, undefined, undefined, nextBefore, limit, undefined, true));
+        const data = normalizeMessagePage(await api.listMessages(sessionId, true, undefined, undefined, nextBefore, limit, undefined, true, undefined, activeTurnStartSeq(state.bySessionId[sessionId] ?? [])));
         if (loadId !== currentOlderLoadIds[sessionId]) {
           return;
         }

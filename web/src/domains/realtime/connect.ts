@@ -8,11 +8,12 @@ import {
   RespondUIRequestSchema,
   SendRequestSchema,
   SessionMessagesRequestSchema,
+  SessionStateRequestSchema,
   SessionMessagesResponseSchema,
   SubscribeRequestSchema,
 } from "../../gen/actrail/v1/transport_pb";
 import { HttpError } from "../../lib/http";
-import type { MessagesResponse, RealtimeEnvelope } from "../../lib/types";
+import type { LiveSessionResponse, MessagesResponse, RealtimeEnvelope } from "../../lib/types";
 import type { RealtimeCommand } from "./client";
 
 const COMMAND_SERVICE = "actrail.v1.SessionCommandService";
@@ -244,6 +245,10 @@ export interface ConnectMessagesOptions {
   signal?: AbortSignal;
 }
 
+function payloadResponseFromProto<T>(bytes: Uint8Array): T {
+  return decodePayloadBytes(fromBinary(CommandResponseSchema, bytes).payloadJson) as T;
+}
+
 function messageResponseFromProto(data: ReturnType<typeof fromBinary<typeof SessionMessagesResponseSchema>>): MessagesResponse {
   const items = data.eventsJson.map((raw) => decodePayloadBytes(raw) as never);
   return {
@@ -253,6 +258,40 @@ function messageResponseFromProto(data: ReturnType<typeof fromBinary<typeof Sess
     has_more: data.hasMore,
     next_before_seq: data.nextBeforeSeq === undefined ? undefined : Number(data.nextBeforeSeq),
   };
+}
+
+export interface ConnectSessionStateOptions {
+  sessionId: string;
+  signal?: AbortSignal;
+}
+
+export async function fetchConnectSessionState(config: ConnectTransportConfig, options: ConnectSessionStateOptions): Promise<LiveSessionResponse> {
+  const basePath = config.basePath || "/api/connect";
+  const wireFormat = config.wireFormat === "json" ? "json" : "proto";
+  const url = servicePath(basePath, COMMAND_SERVICE, "SessionState");
+  if (wireFormat === "proto") {
+    const body = toBinary(SessionStateRequestSchema, create(SessionStateRequestSchema, { session: { sessionId: options.sessionId } }));
+    const response = await fetch(apiPath(url), {
+      method: "POST",
+      headers: { "Content-Type": "application/proto", Accept: "application/proto" },
+      body,
+      signal: options.signal,
+    });
+    if (!response.ok) {
+      throw new HttpError(await response.text(), response.status);
+    }
+    return payloadResponseFromProto<LiveSessionResponse>(new Uint8Array(await response.arrayBuffer()));
+  }
+  const response = await fetch(apiPath(url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ session: { session_id: options.sessionId } }),
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    throw new HttpError(await response.text(), response.status);
+  }
+  return decodePayloadJson((await response.json() as { payloadJson?: string }).payloadJson) as LiveSessionResponse;
 }
 
 export async function fetchConnectSessionMessages(config: ConnectTransportConfig, options: ConnectMessagesOptions): Promise<MessagesResponse> {
