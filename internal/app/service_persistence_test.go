@@ -1041,6 +1041,18 @@ func TestPersistentStubDeleteArchivesSessionRow(t *testing.T) {
 	if all[0].ArchivedAt == nil {
 		t.Fatal("archived row ArchivedAt = nil")
 	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, fakeRuntimeConfig())
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
+	}
+	rehydratedList, err := rehydrated.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("rehydrated.ListSessions() error = %v", err)
+	}
+	if len(rehydratedList.Items) != 0 {
+		t.Fatalf("len(rehydrated.ListSessions().Items) = %d, want 0 archived rows skipped", len(rehydratedList.Items))
+	}
 }
 
 func TestPersistentStubSessionMessagesInvalidatesPISourceCacheWhenFileGrows(t *testing.T) {

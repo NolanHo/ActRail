@@ -338,6 +338,9 @@ func loadPersistedSessions(store sessionStore) ([]sessionRecord, error) {
 	}
 	records := make([]sessionRecord, 0, len(snapshots))
 	for _, snapshot := range snapshots {
+		if snapshot.Session.ArchivedAt != nil {
+			continue
+		}
 		record, err := sessionRecordFromDurableSnapshot(snapshot)
 		if err != nil {
 			return nil, fmt.Errorf("rehydrate session %q: %w", snapshot.Session.SessionID, err)
