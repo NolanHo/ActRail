@@ -3,9 +3,13 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"actrail/internal/domain/session"
 )
+
+const piAgentGRPCReattachTimeout = 500 * time.Millisecond
 
 func (s *Stub) reattachSurvivingRuntimes(ctx context.Context) error {
 	if err := s.reattachSurvivingPIAgentGRPCRuntimes(ctx); err != nil {
@@ -22,7 +26,8 @@ func (s *Stub) reattachSurvivingPIAgentGRPCRuntimes(ctx context.Context) error {
 		if !shouldReattachPIAgentGRPC(record) {
 			continue
 		}
-		attached, err := s.launcher.AttachPIAgentGRPC(ctx, runtimeLaunchRequest{
+		attachCtx, cancel := context.WithTimeout(ctx, piAgentGRPCReattachTimeout)
+		attached, err := s.launcher.AttachPIAgentGRPC(attachCtx, runtimeLaunchRequest{
 			SessionID:       record.identity.SessionID(),
 			Backend:         record.identity.Backend(),
 			CWD:             record.cwd,
@@ -32,15 +37,11 @@ func (s *Stub) reattachSurvivingPIAgentGRPCRuntimes(ctx context.Context) error {
 			PIAgentGRPC:     true,
 			AttachOnly:      true,
 		})
+		cancel()
 		if err != nil {
-			if _, ok, markErr := s.registry.MarkRuntimeCompleted(record.identity.SessionID()); markErr != nil {
+			if markErr := s.markPIAgentGRPCReattachFailed(record.identity.SessionID(), record.transport.GenerationID, "pi_agent_grpc_unavailable"); markErr != nil {
 				return markErr
-			} else if !ok {
-				return fmt.Errorf("session %q not found while marking grpc runtime ended", record.identity.SessionID())
 			}
-			s.runtimeAgentMu.Lock()
-			s.runtimeAgentRunning[record.identity.SessionID()] = false
-			s.runtimeAgentMu.Unlock()
 			continue
 		}
 		updated, ok, err := s.registry.Update(record.identity.SessionID(), false, func(next *sessionRecord) error {
@@ -63,6 +64,29 @@ func (s *Stub) reattachSurvivingPIAgentGRPCRuntimes(ctx context.Context) error {
 
 func piAgentGRPCTransportSnapshot() SessionTransportSnapshot {
 	return SessionTransportSnapshot{State: SessionTransportStateAttached, GenerationID: "pi_agent_grpc", Reason: "pi_agent_grpc"}
+}
+
+func (s *Stub) markPIAgentGRPCReattachFailed(sessionID session.SessionID, generationID, reason string) error {
+	if _, ok, err := s.registry.MarkRuntimeCompleted(sessionID); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("session %q not found while marking grpc runtime ended", sessionID)
+	}
+	_, ok, err := s.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID: strings.TrimSpace(generationID),
+		State:        SessionTransportStateEnded,
+		Reason:       strings.TrimSpace(reason),
+	})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("session %q not found while marking grpc transport ended", sessionID)
+	}
+	s.runtimeAgentMu.Lock()
+	s.runtimeAgentRunning[sessionID] = false
+	s.runtimeAgentMu.Unlock()
+	return nil
 }
 
 func shouldReattachPIAgentGRPC(record sessionRecord) bool {

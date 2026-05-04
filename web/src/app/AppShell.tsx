@@ -294,8 +294,10 @@ export function AppShell() {
     }
     if (activeSession.reset_required === true || activeSession.transport_state === "broken") {
       items.push({ label: "Runtime", value: "broken", tone: "error" });
-    } else if (activeSession.transport_state === "stalled") {
-      items.push({ label: "Runtime", value: "stalled", tone: "error" });
+    } else if (activeSession.transport_state === "ended") {
+      items.push({ label: "Runtime", value: "ended", tone: "error" });
+    } else if (activeSession.transport_state === "silent" || activeSession.transport_state === "stalled") {
+      items.push({ label: "Runtime", value: activeSession.transport_state, tone: "error" });
     } else if (activeSession.pending_startup === true) {
       items.push({ label: "Runtime", value: "starting", tone: "attention" });
     } else if (activeSessionGenerating) {

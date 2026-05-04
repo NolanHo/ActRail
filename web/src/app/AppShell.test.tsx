@@ -199,6 +199,8 @@ function renderAppShell({
     busy: boolean;
     focused?: boolean;
     iod?: { build_date?: string; git_sha?: string; start_ts?: number; mode?: string } | null;
+    transport_state?: string | null;
+    reset_required?: boolean;
   }>;
   liveBusyBySessionId?: Record<string, boolean>;
   messages?: Record<string, unknown[]>;
@@ -840,6 +842,15 @@ describe("AppShell", () => {
     await flush();
 
     expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+  });
+
+  it("shows ended transport state instead of idle in the active runtime chip", async () => {
+    renderAppShell({ items: [{ session_id: "sess-1", alias: "Dead shell", agent_backend: "pi", busy: false, transport_state: "ended" }] });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip?.textContent).toContain("ended");
+    expect(runtimeChip?.textContent).not.toContain("idle");
   });
 
   it("hides the interrupt toolbar action when the active session is idle", async () => {
