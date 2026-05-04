@@ -13,6 +13,11 @@ import (
 	"actrail/internal/domain/session"
 )
 
+func testSpawnSubagentRequest(parentSessionID, name, role, cwd string) SpawnSubagentRequest {
+	useGRPC := false
+	return SpawnSubagentRequest{ParentSessionID: parentSessionID, Name: name, Role: role, AgentBackend: "pi", CWD: cwd, PIAgentGRPC: &useGRPC}
+}
+
 func TestListSubagentsEmptyUntilRuntimeBackendCreatesActors(t *testing.T) {
 	s := NewStubForTest(config.Load(), time.Now, RuntimeConfig{})
 	res, err := s.ListSubagents(context.Background(), ListSubagentsRequest{})
@@ -50,7 +55,7 @@ func TestPersistentStubResumeAskParentAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	spawned, err := created.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", AgentBackend: "pi", CWD: cwd})
+	spawned, err := created.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "", cwd))
 	if err != nil {
 		t.Fatalf("SpawnSubagent() error = %v", err)
 	}
@@ -117,7 +122,7 @@ func TestPersistentStubRehydratesSubagentActorsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	spawned, err := created.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", Role: "review", AgentBackend: "pi", CWD: cwd})
+	spawned, err := created.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "review", cwd))
 	if err != nil {
 		t.Fatalf("SpawnSubagent() error = %v", err)
 	}
@@ -147,7 +152,7 @@ func TestPersistentStubRehydratesSubagentActorsAndEvents(t *testing.T) {
 	if len(events.Events) != 3 || events.Events[0].Type != "subagent.started" || events.Events[2].Type != "subagent.prompt" {
 		t.Fatalf("events = %+v, want started, turn_started, prompt", events.Events)
 	}
-	again, err := rehydrated.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", AgentBackend: "pi", CWD: cwd})
+	again, err := rehydrated.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "", cwd))
 	if err == nil || again.OK {
 		t.Fatalf("SpawnSubagent duplicate = %+v, %v, want conflict", again, err)
 	}
@@ -159,7 +164,7 @@ func TestSpawnSubagentCreatesChildSessionAndActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	res, err := s.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", Role: "review", AgentBackend: "pi", CWD: "/repo"})
+	res, err := s.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "review", "/repo"))
 	if err != nil {
 		t.Fatalf("SpawnSubagent() error = %v", err)
 	}
@@ -181,7 +186,7 @@ func TestSpawnSubagentHidesChildSessionFromSessionList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	spawned, err := s.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", AgentBackend: "pi", CWD: "/repo"})
+	spawned, err := s.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "", "/repo"))
 	if err != nil {
 		t.Fatalf("SpawnSubagent() error = %v", err)
 	}
@@ -212,7 +217,7 @@ func TestCloseSubagentKillsChildRuntimeWithoutDeletingHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	spawned, err := s.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: parent.Session.SessionID, Name: "reviewer", AgentBackend: "pi", CWD: "/repo"})
+	spawned, err := s.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "", "/repo"))
 	if err != nil {
 		t.Fatalf("SpawnSubagent() error = %v", err)
 	}
@@ -236,7 +241,7 @@ func TestCloseSubagentKillsChildRuntimeWithoutDeletingHistory(t *testing.T) {
 
 func TestSpawnSubagentRejectsMissingParentSession(t *testing.T) {
 	s := newStub(config.Load(), time.Now)
-	_, err := s.SpawnSubagent(context.Background(), SpawnSubagentRequest{ParentSessionID: "missing", Name: "reviewer", AgentBackend: "pi", CWD: "/repo"})
+	_, err := s.SpawnSubagent(context.Background(), testSpawnSubagentRequest("missing", "reviewer", "", "/repo"))
 	var appErr *Error
 	if !errors.As(err, &appErr) || appErr.Code != "not_found" {
 		t.Fatalf("SpawnSubagent() error = %v, want not_found", err)

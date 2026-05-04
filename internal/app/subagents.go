@@ -93,6 +93,7 @@ type SpawnSubagentRequest struct {
 	Model           *string `json:"model"`
 	Provider        *string `json:"provider"`
 	InitialPrompt   string  `json:"initial_prompt"`
+	PIAgentGRPC     *bool   `json:"pi_agent_grpc"`
 }
 
 type PromptSubagentRequest struct {
@@ -266,7 +267,7 @@ func (s *Stub) SpawnSubagent(ctx context.Context, req SpawnSubagentRequest) (Sub
 		cwd = "."
 	}
 	title := name
-	created, err := s.CreateSession(ctx, CreateSessionRequest{AgentBackend: backend, CWD: cwd, Model: req.Model, Provider: req.Provider, Title: &title, Hidden: true})
+	created, err := s.CreateSession(ctx, CreateSessionRequest{AgentBackend: backend, CWD: cwd, Model: req.Model, Provider: req.Provider, Title: &title, PIAgentGRPC: req.PIAgentGRPC, Hidden: true})
 	if err != nil {
 		return SubagentCommandResponse{}, err
 	}
