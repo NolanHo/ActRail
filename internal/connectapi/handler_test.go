@@ -83,8 +83,8 @@ func TestSessionCommandServiceSendAcceptsProto(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", res.Code, res.Body.String())
 	}
-	if got := res.Header().Get("Content-Type"); got != "application/connect+proto" {
-		t.Fatalf("Content-Type = %q, want application/connect+proto", got)
+	if got := res.Header().Get("Content-Type"); got != "application/proto" {
+		t.Fatalf("Content-Type = %q, want application/proto", got)
 	}
 	if controller.sendReq.SessionID != session.SessionID("s_123") || controller.sendReq.Text != "hello" {
 		t.Fatalf("send req = %+v", controller.sendReq)
@@ -149,7 +149,7 @@ func TestSessionMessagesProto(t *testing.T) {
 	if stub.messagesReq.SessionID.String() != "sess-1" || stub.messagesReq.AfterSeq == nil || *stub.messagesReq.AfterSeq != 4 || !stub.messagesReq.Deferred || stub.messagesReq.ActiveTurnStartSeq != 10 {
 		t.Fatalf("messages req = %+v", stub.messagesReq)
 	}
-	if got := res.Header().Get("Content-Type"); !strings.Contains(got, "application/connect+proto") {
+	if got := res.Header().Get("Content-Type"); !strings.Contains(got, "application/proto") {
 		t.Fatalf("Content-Type = %q", got)
 	}
 	var response actrailv1.SessionMessagesResponse

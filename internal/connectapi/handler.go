@@ -356,7 +356,7 @@ func writeConnectJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func writeConnectProto(w http.ResponseWriter, status int, payload []byte) {
-	w.Header().Set("Content-Type", "application/connect+proto")
+	w.Header().Set("Content-Type", "application/proto")
 	w.WriteHeader(status)
 	_, _ = w.Write(payload)
 }

@@ -337,7 +337,7 @@ describe("api", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/SessionMessages", expect.objectContaining({
       method: "POST",
-      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+      headers: { "Content-Type": "application/proto", Accept: "application/proto" },
     }));
   });
 

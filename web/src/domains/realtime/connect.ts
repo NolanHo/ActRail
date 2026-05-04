@@ -274,7 +274,7 @@ export async function fetchConnectSessionMessages(config: ConnectTransportConfig
     }));
     const response = await fetch(apiPath(url), {
       method: "POST",
-      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+      headers: { "Content-Type": "application/proto", Accept: "application/proto" },
       body,
       signal: options.signal,
     });

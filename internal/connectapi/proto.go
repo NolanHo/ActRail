@@ -95,7 +95,8 @@ func encodeEventEnvelopeProto(event EventEnvelope) []byte {
 }
 
 func requestWantsProto(contentType string) bool {
-	return strings.Contains(strings.ToLower(contentType), "application/connect+proto")
+	value := strings.ToLower(contentType)
+	return strings.Contains(value, "application/connect+proto") || strings.Contains(value, "application/proto")
 }
 
 func readProtoBody(r io.Reader) ([]byte, error) {
