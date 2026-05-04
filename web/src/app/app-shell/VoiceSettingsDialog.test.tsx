@@ -28,12 +28,19 @@ describe("VoiceSettingsDialog", () => {
         replySoundEnabled={false}
         status=""
         themeMode="light"
+        supervisorProviderApiKeyDraft=""
+        supervisorProviderBaseUrlDraft=""
+        supervisorProviderModelDraft=""
+        supervisorProviderStatus=""
         voiceApiKeyDraft=""
         voiceBaseUrlDraft=""
         onChangeEnterToSend={() => undefined}
         onChangeNarrationEnabled={() => undefined}
         onChangeReplySoundEnabled={() => undefined}
         onChangeThemeMode={() => undefined}
+        onChangeSupervisorProviderApiKey={() => undefined}
+        onChangeSupervisorProviderBaseUrl={() => undefined}
+        onChangeSupervisorProviderModel={() => undefined}
         onChangeVoiceApiKey={() => undefined}
         onChangeVoiceBaseUrl={() => undefined}
         onClose={() => undefined}
@@ -85,6 +92,10 @@ describe("VoiceSettingsDialog", () => {
           connectPath: "/api/connect",
           wireFormat: "json",
         }}
+        supervisorProviderApiKeyDraft=""
+        supervisorProviderBaseUrlDraft=""
+        supervisorProviderModelDraft=""
+        supervisorProviderStatus=""
         voiceApiKeyDraft=""
         voiceBaseUrlDraft=""
         onChangeEnterToSend={() => undefined}
@@ -93,6 +104,9 @@ describe("VoiceSettingsDialog", () => {
         onChangeThemeMode={() => undefined}
         onChangeTransportOptIn={onChangeTransportOptIn}
         onChangeConnectWireFormat={onChangeConnectWireFormat}
+        onChangeSupervisorProviderApiKey={() => undefined}
+        onChangeSupervisorProviderBaseUrl={() => undefined}
+        onChangeSupervisorProviderModel={() => undefined}
         onChangeVoiceApiKey={() => undefined}
         onChangeVoiceBaseUrl={() => undefined}
         onClose={() => undefined}
@@ -146,12 +160,19 @@ describe("VoiceSettingsDialog", () => {
         replySoundEnabled={false}
         status=""
         themeMode="light"
+        supervisorProviderApiKeyDraft=""
+        supervisorProviderBaseUrlDraft=""
+        supervisorProviderModelDraft=""
+        supervisorProviderStatus=""
         voiceApiKeyDraft=""
         voiceBaseUrlDraft=""
         onChangeEnterToSend={() => undefined}
         onChangeNarrationEnabled={() => undefined}
         onChangeReplySoundEnabled={() => undefined}
         onChangeThemeMode={onChangeThemeMode}
+        onChangeSupervisorProviderApiKey={() => undefined}
+        onChangeSupervisorProviderBaseUrl={() => undefined}
+        onChangeSupervisorProviderModel={() => undefined}
         onChangeVoiceApiKey={() => undefined}
         onChangeVoiceBaseUrl={() => undefined}
         onClose={onClose}

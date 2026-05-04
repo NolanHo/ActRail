@@ -730,7 +730,7 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Choose a file from the session.");
   });
 
-  it("opens supervisor from the toolbar and saves supervisor settings", async () => {
+  it("opens supervisor from the toolbar and saves session supervisor settings", async () => {
     const { api } = await import("../lib/api");
     renderAppShell();
     await flush();
@@ -743,10 +743,11 @@ describe("AppShell", () => {
     });
     await flushLazy();
 
-    expect(api.getSupervisorProvider).toHaveBeenCalled();
+    expect(api.getSupervisorProvider).not.toHaveBeenCalled();
     expect(api.getSessionSupervisor).toHaveBeenCalledWith("sess-1");
     expect(getRoot().textContent).toContain("Supervisor");
-    expect(getRoot().textContent).toContain("Global model");
+    expect(getRoot().textContent).toContain("Session policy");
+    expect(getRoot().textContent).not.toContain("Global model");
 
     const saveButton = findButtonByText("Save");
     expect(saveButton).not.toBeNull();
@@ -755,7 +756,7 @@ describe("AppShell", () => {
     });
     await flush();
 
-    expect(api.saveSupervisorProvider).toHaveBeenCalledWith(expect.objectContaining({ model: "model-a" }));
+    expect(api.saveSupervisorProvider).not.toHaveBeenCalled();
     expect(api.saveSessionSupervisor).toHaveBeenCalledWith("sess-1", expect.objectContaining({ enabled: true, goal: "Keep going" }));
   });
 
@@ -842,6 +843,7 @@ describe("AppShell", () => {
   });
 
   it("opens announcement settings when announcements are enabled without credentials", async () => {
+    const { api } = await import("../lib/api");
     renderAppShell();
     await flush();
 
@@ -855,6 +857,8 @@ describe("AppShell", () => {
 
     expect(getRoot().textContent).toContain("OpenAI-compatible API base URL");
     expect(getRoot().textContent).toContain("OpenAI-compatible API key");
+    expect(getRoot().textContent).toContain("Supervisor global model");
+    expect(api.getSupervisorProvider).toHaveBeenCalled();
 
     act(() => {
       Array.from(getRoot().querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((item) => item.textContent === "Behavior")?.click();
@@ -871,6 +875,29 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Theme");
     expect(getRoot().textContent).toContain("Paper-like surfaces with cobalt markdown accents.");
     expect(getRoot().textContent).toContain("Ink surfaces with brighter markdown contrast for long sessions.");
+  });
+
+  it("saves supervisor global model from settings", async () => {
+    const { api } = await import("../lib/api");
+    renderAppShell();
+    await flush();
+
+    const button = getRoot().querySelector<HTMLButtonElement>('[aria-label="Announcements off"]');
+    expect(button).not.toBeNull();
+
+    act(() => {
+      button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    const saveButton = findButtonByText("Save");
+    expect(saveButton).not.toBeNull();
+    act(() => {
+      saveButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(api.saveSupervisorProvider).toHaveBeenCalledWith(expect.objectContaining({ model: "model-a" }));
   });
 
   it("persists the selected theme mode from settings", async () => {

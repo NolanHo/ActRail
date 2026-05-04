@@ -136,6 +136,10 @@ export function AppShell() {
   const [displaySettingsDraft, setDisplaySettingsDraft] = useState(() => readUserDisplaySettings());
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [runtimeProbePending, setRuntimeProbePending] = useState(false);
+  const [supervisorProviderBaseUrlDraft, setSupervisorProviderBaseUrlDraft] = useState("");
+  const [supervisorProviderModelDraft, setSupervisorProviderModelDraft] = useState("");
+  const [supervisorProviderApiKeyDraft, setSupervisorProviderApiKeyDraft] = useState("");
+  const [supervisorProviderStatus, setSupervisorProviderStatus] = useState("");
   const voiceSupported = bootstrapCapabilities?.voice !== false;
   const harnessSupported = bootstrapCapabilities?.harness !== false;
   const notificationsSupported = bootstrapCapabilities?.notifications !== false;
@@ -172,11 +176,49 @@ export function AppShell() {
   }, [displaySettings, liveSessionStoreApi]);
 
   useEffect(() => {
-    if (voiceSettingsOpen) {
-      setDisplaySettingsDraft(displaySettings);
+    if (!voiceSettingsOpen) {
+      return;
     }
+    let cancelled = false;
+    setDisplaySettingsDraft(displaySettings);
+    setSupervisorProviderStatus("Loading supervisor provider...");
+    api.getSupervisorProvider()
+      .then((provider) => {
+        if (cancelled) return;
+        setSupervisorProviderBaseUrlDraft(provider.base_url || "");
+        setSupervisorProviderModelDraft(provider.model || "");
+        setSupervisorProviderApiKeyDraft("");
+        setSupervisorProviderStatus(provider.api_key_configured ? "Supervisor API key configured" : "Supervisor API key missing");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setSupervisorProviderStatus(error instanceof Error ? error.message : "Unable to load supervisor provider");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [displaySettings, voiceSettingsOpen]);
 
+  const saveSettings = async () => {
+    setDisplaySettings(displaySettingsDraft);
+    writeUserDisplaySettings(displaySettingsDraft);
+    const saveVoice = saveVoiceSettings();
+    setSupervisorProviderStatus("Saving supervisor provider...");
+    try {
+      const provider = await api.saveSupervisorProvider({
+        base_url: supervisorProviderBaseUrlDraft,
+        model: supervisorProviderModelDraft,
+        ...(supervisorProviderApiKeyDraft.trim() ? { api_key: supervisorProviderApiKeyDraft.trim() } : {}),
+      });
+      setSupervisorProviderBaseUrlDraft(provider.base_url || "");
+      setSupervisorProviderModelDraft(provider.model || "");
+      setSupervisorProviderApiKeyDraft("");
+      setSupervisorProviderStatus(provider.api_key_configured ? "Supervisor API key configured" : "Supervisor API key missing");
+    } catch (error) {
+      setSupervisorProviderStatus(error instanceof Error ? error.message : "Unable to save supervisor provider");
+    }
+    await saveVoice;
+  };
   useEffect(() => {
     if (!activeSessionId) return;
     suppressedReplySoundSessionIdsRef.current.add(activeSessionId);
@@ -655,6 +697,10 @@ export function AppShell() {
             conversationFontSizePxDraft={displaySettingsDraft.conversationFontSizePx}
             composerFontSizePxDraft={displaySettingsDraft.composerFontSizePx}
             bufferAssistantOutputDraft={displaySettingsDraft.bufferAssistantOutput}
+            supervisorProviderApiKeyDraft={supervisorProviderApiKeyDraft}
+            supervisorProviderBaseUrlDraft={supervisorProviderBaseUrlDraft}
+            supervisorProviderModelDraft={supervisorProviderModelDraft}
+            supervisorProviderStatus={supervisorProviderStatus}
             voiceApiKeyDraft={voiceApiKeyDraft}
             voiceBaseUrlDraft={voiceBaseUrlDraft}
             onChangeEnterToSend={setEnterToSendDraft}
@@ -672,13 +718,14 @@ export function AppShell() {
             onChangeConversationFontSizePx={(value) => setDisplaySettingsDraft((current) => ({ ...current, conversationFontSizePx: value }))}
             onChangeComposerFontSizePx={(value) => setDisplaySettingsDraft((current) => ({ ...current, composerFontSizePx: value }))}
             onChangeBufferAssistantOutput={(value) => setDisplaySettingsDraft((current) => ({ ...current, bufferAssistantOutput: value }))}
+            onChangeSupervisorProviderApiKey={setSupervisorProviderApiKeyDraft}
+            onChangeSupervisorProviderBaseUrl={setSupervisorProviderBaseUrlDraft}
+            onChangeSupervisorProviderModel={setSupervisorProviderModelDraft}
             onChangeVoiceApiKey={setVoiceApiKeyDraft}
             onChangeVoiceBaseUrl={setVoiceBaseUrlDraft}
             onClose={closeVoiceSettings}
             onSave={() => {
-              setDisplaySettings(displaySettingsDraft);
-              writeUserDisplaySettings(displaySettingsDraft);
-              void saveVoiceSettings();
+              void saveSettings();
             }}
             onTestProvider={() => {
               void testVoiceProvider();

@@ -22,10 +22,6 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
   const [goal, setGoal] = useState("");
   const [acceptanceCriteria, setAcceptanceCriteria] = useState("");
   const [contextFilesText, setContextFilesText] = useState("");
-  const [providerBaseUrl, setProviderBaseUrl] = useState("");
-  const [providerModel, setProviderModel] = useState("");
-  const [providerApiKey, setProviderApiKey] = useState("");
-  const [providerStatus, setProviderStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
@@ -42,14 +38,9 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
     let cancelled = false;
     setLoading(true);
     setStatus("");
-    setProviderStatus("Loading provider settings...");
-    Promise.all([api.getSupervisorProvider(), api.getSessionSupervisor(sessionId)])
-      .then(([provider, supervisor]) => {
+    api.getSessionSupervisor(sessionId)
+      .then((supervisor) => {
         if (cancelled) return;
-        setProviderBaseUrl(provider.base_url || "");
-        setProviderModel(provider.model || "");
-        setProviderApiKey("");
-        setProviderStatus(provider.api_key_configured ? "API key configured" : "API key missing");
         setEnabled(supervisor.enabled === true);
         setIdleAfterMinutes(String(supervisor.idle_after_minutes ?? 5));
         setMaxConsecutiveInjections(String(supervisor.max_consecutive_injections ?? 10));
@@ -83,11 +74,6 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
     setSaving(true);
     setStatus("Saving...");
     try {
-      await api.saveSupervisorProvider({
-        base_url: providerBaseUrl,
-        model: providerModel,
-        ...(providerApiKey.trim() ? { api_key: providerApiKey.trim() } : {}),
-      });
       await api.saveSessionSupervisor(sessionId, {
         enabled,
         idle_after_minutes: Math.max(1, Math.round(Number(idleAfterMinutes) || 1)),
@@ -118,34 +104,12 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
           <div className="flex items-start justify-between gap-3">
             <div>
               <DialogTitle id="harness-dialog-title">Supervisor</DialogTitle>
-              <p className="text-sm text-muted-foreground">Configure global supervisor model settings and this session's supervisor policy.</p>
+              <p className="text-sm text-muted-foreground">Configure this session's supervisor policy.</p>
             </div>
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
           </div>
         </DialogHeader>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6 pt-2">
-          <section className="space-y-3 rounded-2xl border border-border/70 bg-background/80 p-4">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Global model</h3>
-              <p className="text-xs text-muted-foreground">Shared across sessions.</p>
-            </div>
-            <div className="fieldGrid twoCol">
-              <label className="fieldBlock">
-                <span className="fieldLabel">Base URL</span>
-                <Input value={providerBaseUrl} onInput={(event) => setProviderBaseUrl(event.currentTarget.value)} placeholder="https://api.openai.com/v1" />
-              </label>
-              <label className="fieldBlock">
-                <span className="fieldLabel">Model</span>
-                <Input value={providerModel} onInput={(event) => setProviderModel(event.currentTarget.value)} placeholder="gpt-5" />
-              </label>
-            </div>
-            <label className="fieldBlock">
-              <span className="fieldLabel">API key</span>
-              <Input type="password" value={providerApiKey} onInput={(event) => setProviderApiKey(event.currentTarget.value)} placeholder="Leave blank to keep existing key" />
-            </label>
-            {providerStatus ? <p className="text-xs text-muted-foreground">{providerStatus}</p> : null}
-          </section>
-
           <section className="space-y-3 rounded-2xl border border-border/70 bg-background/80 p-4">
             <div>
               <h3 className="text-sm font-semibold text-foreground">Session policy</h3>

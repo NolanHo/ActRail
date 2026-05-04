@@ -23,6 +23,10 @@ interface VoiceSettingsDialogProps {
   status: string;
   themeMode: ThemeMode;
   transportStatus?: RealtimeTransportStatus;
+  supervisorProviderApiKeyDraft: string;
+  supervisorProviderBaseUrlDraft: string;
+  supervisorProviderModelDraft: string;
+  supervisorProviderStatus: string;
   voiceApiKeyDraft: string;
   voiceBaseUrlDraft: string;
   onChangeEnterToSend(value: boolean): void;
@@ -34,6 +38,9 @@ interface VoiceSettingsDialogProps {
   onChangeThemeMode(value: ThemeMode): void;
   onChangeTransportOptIn?(value: boolean): void;
   onChangeConnectWireFormat?(value: ConnectWireFormat): void;
+  onChangeSupervisorProviderApiKey(value: string): void;
+  onChangeSupervisorProviderBaseUrl(value: string): void;
+  onChangeSupervisorProviderModel(value: string): void;
   onChangeVoiceApiKey(value: string): void;
   onChangeVoiceBaseUrl(value: string): void;
   onClose(): void;
@@ -54,6 +61,10 @@ export function VoiceSettingsDialog({
   status,
   themeMode,
   transportStatus,
+  supervisorProviderApiKeyDraft,
+  supervisorProviderBaseUrlDraft,
+  supervisorProviderModelDraft,
+  supervisorProviderStatus,
   voiceApiKeyDraft,
   voiceBaseUrlDraft,
   onChangeEnterToSend,
@@ -65,6 +76,9 @@ export function VoiceSettingsDialog({
   onChangeThemeMode,
   onChangeTransportOptIn,
   onChangeConnectWireFormat,
+  onChangeSupervisorProviderApiKey,
+  onChangeSupervisorProviderBaseUrl,
+  onChangeSupervisorProviderModel,
   onChangeVoiceApiKey,
   onChangeVoiceBaseUrl,
   onClose,
@@ -87,35 +101,79 @@ export function VoiceSettingsDialog({
           {status ? <p className="fieldHint voiceSettingsStatus">{status}</p> : null}
           <Tabs defaultValue="provider" className="gap-4">
             <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
-              <TabsTrigger value="provider">Provider</TabsTrigger>
+              <TabsTrigger value="provider">Providers</TabsTrigger>
               <TabsTrigger value="behavior">Behavior</TabsTrigger>
               <TabsTrigger value="display">Display</TabsTrigger>
               <TabsTrigger value="status">Status</TabsTrigger>
             </TabsList>
 
             <TabsContent value="provider" className="space-y-4">
-              <label className="fieldBlock">
-                <span className="fieldLabel">OpenAI-compatible API base URL</span>
-                <input
-                  value={voiceBaseUrlDraft}
-                  onInput={(event) => onChangeVoiceBaseUrl(event.currentTarget.value)}
-                  onChange={(event) => onChangeVoiceBaseUrl(event.currentTarget.value)}
-                  placeholder="https://api.openai.com/v1"
-                />
-              </label>
-              <label className="fieldBlock">
-                <span className="fieldLabel">OpenAI-compatible API key</span>
-                <input
-                  value={voiceApiKeyDraft}
-                  onInput={(event) => onChangeVoiceApiKey(event.currentTarget.value)}
-                  onChange={(event) => onChangeVoiceApiKey(event.currentTarget.value)}
-                  placeholder="sk-..."
-                  type="password"
-                />
-              </label>
-              <div className="formActions">
-                <Button type="button" variant="outline" onClick={onTestProvider}>Test Provider</Button>
-              </div>
+              <section className="space-y-3 rounded-2xl border border-border/70 bg-background/80 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Announcements provider</h3>
+                  <p className="text-xs text-muted-foreground">Used for voice narration and notification audio.</p>
+                </div>
+                <label className="fieldBlock">
+                  <span className="fieldLabel">OpenAI-compatible API base URL</span>
+                  <input
+                    value={voiceBaseUrlDraft}
+                    onInput={(event) => onChangeVoiceBaseUrl(event.currentTarget.value)}
+                    onChange={(event) => onChangeVoiceBaseUrl(event.currentTarget.value)}
+                    placeholder="https://api.openai.com/v1"
+                  />
+                </label>
+                <label className="fieldBlock">
+                  <span className="fieldLabel">OpenAI-compatible API key</span>
+                  <input
+                    value={voiceApiKeyDraft}
+                    onInput={(event) => onChangeVoiceApiKey(event.currentTarget.value)}
+                    onChange={(event) => onChangeVoiceApiKey(event.currentTarget.value)}
+                    placeholder="sk-..."
+                    type="password"
+                  />
+                </label>
+                <div className="formActions">
+                  <Button type="button" variant="outline" onClick={onTestProvider}>Test Provider</Button>
+                </div>
+              </section>
+
+              <section className="space-y-3 rounded-2xl border border-border/70 bg-background/80 p-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Supervisor global model</h3>
+                  <p className="text-xs text-muted-foreground">Shared across sessions.</p>
+                </div>
+                <div className="fieldGrid twoCol">
+                  <label className="fieldBlock">
+                    <span className="fieldLabel">Base URL</span>
+                    <input
+                      value={supervisorProviderBaseUrlDraft}
+                      onInput={(event) => onChangeSupervisorProviderBaseUrl(event.currentTarget.value)}
+                      onChange={(event) => onChangeSupervisorProviderBaseUrl(event.currentTarget.value)}
+                      placeholder="https://api.openai.com/v1"
+                    />
+                  </label>
+                  <label className="fieldBlock">
+                    <span className="fieldLabel">Model</span>
+                    <input
+                      value={supervisorProviderModelDraft}
+                      onInput={(event) => onChangeSupervisorProviderModel(event.currentTarget.value)}
+                      onChange={(event) => onChangeSupervisorProviderModel(event.currentTarget.value)}
+                      placeholder="gpt-5"
+                    />
+                  </label>
+                </div>
+                <label className="fieldBlock">
+                  <span className="fieldLabel">API key</span>
+                  <input
+                    value={supervisorProviderApiKeyDraft}
+                    onInput={(event) => onChangeSupervisorProviderApiKey(event.currentTarget.value)}
+                    onChange={(event) => onChangeSupervisorProviderApiKey(event.currentTarget.value)}
+                    placeholder="Leave blank to keep existing key"
+                    type="password"
+                  />
+                </label>
+                {supervisorProviderStatus ? <p className="fieldHint voiceSettingsStatus">{supervisorProviderStatus}</p> : null}
+              </section>
             </TabsContent>
 
             <TabsContent value="behavior" className="space-y-4">
