@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 10
+const currentSchemaVersion = 11
 
 const tsLayout = time.RFC3339Nano
 
@@ -426,6 +426,61 @@ var migrations = []migration{
 				return err
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 10, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 11,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS scheduler_settings (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					idle_before_delivery_seconds INTEGER NOT NULL DEFAULT 30,
+					updated_at TEXT NOT NULL
+				)`,
+				`CREATE TABLE IF NOT EXISTS scheduler_items (
+					item_id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					kind TEXT NOT NULL,
+					source_ref TEXT NOT NULL DEFAULT '',
+					title TEXT NOT NULL DEFAULT '',
+					message TEXT NOT NULL DEFAULT '',
+					due_at TEXT NOT NULL,
+					state TEXT NOT NULL,
+					created_by TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				)`,
+				`CREATE INDEX IF NOT EXISTS scheduler_items_due_idx ON scheduler_items(state, due_at, session_id)`,
+				`CREATE TABLE IF NOT EXISTS inbox_items (
+					item_id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					source TEXT NOT NULL,
+					source_id TEXT NOT NULL DEFAULT '',
+					title TEXT NOT NULL DEFAULT '',
+					message TEXT NOT NULL DEFAULT '',
+					priority INTEGER NOT NULL DEFAULT 0,
+					due_at TEXT NOT NULL,
+					state TEXT NOT NULL,
+					blocked_reason TEXT NOT NULL DEFAULT '',
+					delivered_message_id TEXT NOT NULL DEFAULT '',
+					error TEXT NOT NULL DEFAULT '',
+					claimed_at TEXT,
+					delivered_at TEXT,
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				)`,
+				`CREATE INDEX IF NOT EXISTS inbox_items_session_state_idx ON inbox_items(session_id, state, due_at, priority DESC)`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO scheduler_settings(id, idle_before_delivery_seconds, updated_at) VALUES(1, 30, ?) ON CONFLICT(id) DO NOTHING`, time.Now().UTC().Format(tsLayout)); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 11, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},

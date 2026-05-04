@@ -54,6 +54,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
 		waitStore:           catalog,
 		supervisorStore:     catalog,
+		schedulerStore:      catalog,
 		subagents:           newSubagentRegistry(now, catalog),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},

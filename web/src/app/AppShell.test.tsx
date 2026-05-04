@@ -64,6 +64,9 @@ vi.mock("../lib/api", () => ({
     saveSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.test/v1", model: "model-a", api_key_configured: true, complete: true }),
     getSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0, goal: "Keep going", acceptance_criteria: "", context_files: [] }),
     saveSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0, goal: "Keep going", acceptance_criteria: "", context_files: [] }),
+    getScheduler: vi.fn().mockResolvedValue({ ok: true, settings: { idle_before_delivery_seconds: 30 }, items: [], inbox: [] }),
+    saveSchedulerSettings: vi.fn().mockResolvedValue({ idle_before_delivery_seconds: 30 }),
+    getSessionInbox: vi.fn().mockResolvedValue({ ok: true, items: [] }),
     interruptSession: vi.fn().mockResolvedValue({ ok: true }),
     probeSessionState: vi.fn().mockResolvedValue({ probe_id: "probe_1", state: { busy: false, queue: { items: [] }, tail_seq: 0, resume_cursors: {} } }),
     logout: vi.fn().mockResolvedValue({ ok: true }),
@@ -435,12 +438,13 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Log out");
     expect(findButtonByAriaLabel("Sessions view")).not.toBeNull();
     expect(findButtonByAriaLabel("Subagents view")).not.toBeNull();
+    expect(findButtonByAriaLabel("Scheduler view")).not.toBeNull();
     expect(getRoot().textContent).toContain("No session selected");
     expect(getRoot().querySelector(".mobileSheetTrigger")).toBeNull();
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
     expect(findButtonByAriaLabel("Metadata")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")).not.toBeNull();
-    expect(findButtonByAriaLabel("Supervisor")).not.toBeNull();
+    expect(findButtonByAriaLabel("Inbox")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt (Esc)")).not.toBeNull();
 
   });
@@ -486,7 +490,7 @@ describe("AppShell", () => {
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
     expect(findButtonByAriaLabel("Metadata")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")?.querySelector("svg")).not.toBeNull();
-    expect(findButtonByAriaLabel("Supervisor")?.querySelector("svg")).not.toBeNull();
+    expect(findButtonByAriaLabel("Inbox")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt (Esc)")?.querySelector("svg")).not.toBeNull();
   });
 
@@ -559,13 +563,46 @@ describe("AppShell", () => {
 
       expect(getRoot().textContent).toContain("Display and voice");
       expect(findButtonByText("File viewer")).toBeUndefined();
-      expect(findButtonByText("Supervisor")).toBeUndefined();
+      expect(findButtonByText("Inbox")).toBeUndefined();
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
         value: originalMatchMedia,
       });
     }
+  });
+
+
+  it("switches to the global Scheduler view", async () => {
+    const { api } = await import("../lib/api");
+    renderAppShell({ diagnostics: { status: "ok" } });
+    await flush();
+
+    act(() => {
+      findButtonByAriaLabel("Scheduler view")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(api.getScheduler).toHaveBeenCalledWith(100);
+    expect(getRoot().textContent).toContain("Scheduler");
+    expect(getRoot().textContent).toContain("Idle before delivery");
+    expect(getRoot().textContent).toContain("Scheduled items");
+  });
+
+  it("opens active session inbox from the toolbar", async () => {
+    const { api } = await import("../lib/api");
+    renderAppShell({ diagnostics: { status: "ok" } });
+    await flush();
+
+    const button = findButtonByAriaLabel("Inbox");
+    expect(button).not.toBeNull();
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(api.getSessionInbox).toHaveBeenCalledWith("sess-1", 100);
+    expect(getRoot().textContent).toContain("Pending and delivered scheduler messages");
   });
 
   it("opens metadata details in a dialog from the toolbar", async () => {
@@ -728,36 +765,6 @@ describe("AppShell", () => {
     expect(api.getFiles).toHaveBeenCalledWith("sess-1", undefined, expect.any(AbortSignal));
     expect(getRoot().textContent).toContain("File viewer");
     expect(getRoot().textContent).toContain("Choose a file from the session.");
-  });
-
-  it("opens supervisor from the toolbar and saves session supervisor settings", async () => {
-    const { api } = await import("../lib/api");
-    renderAppShell();
-    await flush();
-
-    const button = findButtonByAriaLabel("Supervisor");
-    expect(button).not.toBeNull();
-
-    act(() => {
-      button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    await flushLazy();
-
-    expect(api.getSupervisorProvider).not.toHaveBeenCalled();
-    expect(api.getSessionSupervisor).toHaveBeenCalledWith("sess-1");
-    expect(getRoot().textContent).toContain("Supervisor");
-    expect(getRoot().textContent).toContain("Session policy");
-    expect(getRoot().textContent).not.toContain("Global model");
-
-    const saveButton = findButtonByText("Save");
-    expect(saveButton).not.toBeNull();
-    act(() => {
-      saveButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    await flush();
-
-    expect(api.saveSupervisorProvider).not.toHaveBeenCalled();
-    expect(api.saveSessionSupervisor).toHaveBeenCalledWith("sess-1", expect.objectContaining({ enabled: true, goal: "Keep going" }));
   });
 
   it("shows persisted title in the active header before first user message", async () => {

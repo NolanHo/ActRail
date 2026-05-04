@@ -71,12 +71,12 @@ export function SessionsIcon() {
   );
 }
 
-export function SupervisorIcon() {
+export function InboxIcon() {
   return (
     <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z" />
-      <path d="M9 12h6" />
-      <path d="M12 9v6" />
+      <path d="M4 5h16v14H4z" />
+      <path d="M4 14h4l2 3h4l2-3h4" />
+      <path d="M8 9h8" />
     </svg>
   );
 }

@@ -28,7 +28,9 @@ import type {
   SessionResumeCandidatesResponse,
   SessionBootstrapResponse,
   SessionCommandsResponse,
+  SchedulerSnapshotResponse,
   SessionDetailsResponse,
+  SessionInboxResponse,
   SessionUiStateResponse,
   SessionsResponse,
   SessionSupervisorSnapshot,
@@ -406,6 +408,25 @@ export const api = {
   },
   runSupervisorOnce(sessionId: string, dryRun = true) {
     return postJson<SupervisorRunOnceResponse>(`/api/sessions/${sessionId}/supervisor/run-once`, { dry_run: dryRun });
+  },
+  getScheduler(limit?: number) {
+    const query = new URLSearchParams();
+    if (typeof limit === "number") {
+      query.set("limit", String(limit));
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return getJson<SchedulerSnapshotResponse>(`/api/scheduler${suffix}`);
+  },
+  saveSchedulerSettings(payload: { idle_before_delivery_seconds?: number }) {
+    return postJson<SchedulerSnapshotResponse["settings"]>(`/api/scheduler/settings`, payload);
+  },
+  getSessionInbox(sessionId: string, limit?: number) {
+    const query = new URLSearchParams();
+    if (typeof limit === "number") {
+      query.set("limit", String(limit));
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return getJson<SessionInboxResponse>(`/api/sessions/${sessionId}/inbox${suffix}`);
   },
   logout() {
     return postJson<LogoutResponse>(`/api/logout`, {});

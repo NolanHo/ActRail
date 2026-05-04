@@ -298,6 +298,22 @@ func (s serviceStub) RunSupervisorOnce(ctx context.Context, req app.SupervisorRu
 	return s.base.RunSupervisorOnce(ctx, req)
 }
 
+func (s serviceStub) SchedulerSnapshot(ctx context.Context, req app.SchedulerSnapshotRequest) (app.SchedulerSnapshotResponse, error) {
+	return s.base.SchedulerSnapshot(ctx, req)
+}
+
+func (s serviceStub) UpdateSchedulerSettings(ctx context.Context, req app.UpdateSchedulerSettingsRequest) (app.SchedulerSettings, error) {
+	return s.base.UpdateSchedulerSettings(ctx, req)
+}
+
+func (s serviceStub) SessionInbox(ctx context.Context, req app.SessionInboxRequest) (app.SessionInboxResponse, error) {
+	return s.base.SessionInbox(ctx, req)
+}
+
+func (s serviceStub) SetAlarm(ctx context.Context, req app.SetAlarmRequest) (app.SetAlarmResponse, error) {
+	return s.base.SetAlarm(ctx, req)
+}
+
 type fixtureService struct {
 	listReq           app.ListSessionsRequest
 	createReq         app.CreateSessionRequest
@@ -323,6 +339,10 @@ type fixtureService struct {
 	supervisorEditReq app.UpdateSessionSupervisorRequest
 	supervisorRunsReq app.SupervisorRunsRequest
 	supervisorOnceReq app.SupervisorRunOnceRequest
+	schedulerReq      app.SchedulerSnapshotRequest
+	schedulerSetReq   app.UpdateSchedulerSettingsRequest
+	inboxReq          app.SessionInboxRequest
+	alarmReq          app.SetAlarmRequest
 }
 
 func (s *fixtureService) Bootstrap(_ context.Context, _ app.BootstrapRequest) app.BootstrapSnapshot {
@@ -754,6 +774,30 @@ func (s *fixtureService) SupervisorRuns(_ context.Context, req app.SupervisorRun
 func (s *fixtureService) RunSupervisorOnce(_ context.Context, req app.SupervisorRunOnceRequest) (app.SupervisorRunOnceResponse, error) {
 	s.supervisorOnceReq = req
 	return app.SupervisorRunOnceResponse{OK: true, Run: app.SupervisorRunSummary{RunID: "supervisor_2", AnchorAssistantEventID: "pi:message:a2", Status: "stop", Reason: "dry run"}}, nil
+}
+
+func (s *fixtureService) SchedulerSnapshot(_ context.Context, req app.SchedulerSnapshotRequest) (app.SchedulerSnapshotResponse, error) {
+	s.schedulerReq = req
+	return app.SchedulerSnapshotResponse{OK: true, Settings: app.SchedulerSettings{IdleBeforeDeliverySeconds: 30}, Items: []app.SchedulerItem{}, Inbox: []app.InboxItem{}}, nil
+}
+
+func (s *fixtureService) UpdateSchedulerSettings(_ context.Context, req app.UpdateSchedulerSettingsRequest) (app.SchedulerSettings, error) {
+	s.schedulerSetReq = req
+	idle := 30
+	if req.IdleBeforeDeliverySeconds != nil {
+		idle = *req.IdleBeforeDeliverySeconds
+	}
+	return app.SchedulerSettings{IdleBeforeDeliverySeconds: idle}, nil
+}
+
+func (s *fixtureService) SessionInbox(_ context.Context, req app.SessionInboxRequest) (app.SessionInboxResponse, error) {
+	s.inboxReq = req
+	return app.SessionInboxResponse{OK: true, Items: []app.InboxItem{{ItemID: "inbox_1", SessionID: req.SessionID.String(), Source: "alarm", Title: "Alarm Response", State: "pending"}}}, nil
+}
+
+func (s *fixtureService) SetAlarm(_ context.Context, req app.SetAlarmRequest) (app.SetAlarmResponse, error) {
+	s.alarmReq = req
+	return app.SetAlarmResponse{OK: true, Alarm: app.SchedulerItem{ItemID: "alarm_1", SessionID: req.SessionID.String(), Kind: "alarm", Title: "Alarm Response", Message: req.Message, State: "scheduled"}}, nil
 }
 
 func newTestRouter(cfg config.Config, svc app.Service) http.Handler {

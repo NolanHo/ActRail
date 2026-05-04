@@ -5,7 +5,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { NewSessionDialog } from "../../components/new-session/NewSessionDialog";
 import { FileViewerDialog } from "../../components/workspace/FileViewerDialog";
 import type { FileViewMode } from "../../components/workspace/FileViewerDialog";
-import { HarnessDialog } from "../../components/workspace/HarnessDialog";
+import { InboxDialog } from "../../components/workspace/InboxDialog";
 
 interface AppShellWorkspaceOverlaysProps {
   activeSessionId: string | null;
@@ -15,7 +15,7 @@ interface AppShellWorkspaceOverlaysProps {
   fileViewerOpen: boolean;
   fileViewerPath: string;
   fileViewerRequestKey: number;
-  harnessOpen: boolean;
+  inboxOpen: boolean;
   newSessionOpen: boolean;
   sessionsRail: ComponentChildren;
   sidebarOpen: boolean;
@@ -23,7 +23,7 @@ interface AppShellWorkspaceOverlaysProps {
   workspaceDetails: ComponentChildren;
   workspaceOpen: boolean;
   onCloseFileViewer(): void;
-  onCloseHarness(): void;
+  onCloseInbox(): void;
   onCloseNewSession(): void;
   onCloseSidebar(): void;
   onCloseWorkspace(): void;
@@ -37,7 +37,7 @@ export function AppShellWorkspaceOverlays({
   fileViewerOpen,
   fileViewerPath,
   fileViewerRequestKey,
-  harnessOpen,
+  inboxOpen,
   newSessionOpen,
   sessionsRail,
   sidebarOpen,
@@ -45,7 +45,7 @@ export function AppShellWorkspaceOverlays({
   workspaceDetails,
   workspaceOpen,
   onCloseFileViewer,
-  onCloseHarness,
+  onCloseInbox,
   onCloseNewSession,
   onCloseSidebar,
   onCloseWorkspace,
@@ -99,7 +99,7 @@ export function AppShellWorkspaceOverlays({
         openRequestKey={fileViewerRequestKey}
         onClose={onCloseFileViewer}
       />
-      <HarnessDialog open={harnessOpen} sessionId={activeSessionId} runtimeId={activeSessionRuntimeId} onClose={onCloseHarness} />
+      <InboxDialog open={inboxOpen} sessionId={activeSessionId} onClose={onCloseInbox} />
       <NewSessionDialog open={newSessionOpen} onClose={onCloseNewSession} />
     </>
   );
