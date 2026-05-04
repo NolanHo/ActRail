@@ -150,6 +150,56 @@ export interface SupervisorProviderResponse {
   complete: boolean;
 }
 
+export interface SchedulerSettings {
+  idle_before_delivery_seconds: number;
+  updated_ts?: number;
+}
+
+export interface SchedulerItem {
+  item_id: string;
+  session_id: string;
+  kind: string;
+  source_ref?: string;
+  title?: string;
+  message?: string;
+  due_ts: number;
+  state: string;
+  created_by?: string;
+  created_ts: number;
+  updated_ts: number;
+}
+
+export interface InboxItem {
+  item_id: string;
+  session_id: string;
+  source: string;
+  source_id?: string;
+  title?: string;
+  message?: string;
+  priority?: number;
+  due_ts: number;
+  state: string;
+  blocked_reason?: string;
+  delivered_message_id?: string;
+  error?: string;
+  claimed_ts?: number;
+  delivered_ts?: number;
+  created_ts: number;
+  updated_ts: number;
+}
+
+export interface SchedulerSnapshotResponse {
+  ok?: boolean;
+  settings: SchedulerSettings;
+  items: SchedulerItem[];
+  inbox: InboxItem[];
+}
+
+export interface SessionInboxResponse {
+  ok?: boolean;
+  items: InboxItem[];
+}
+
 export interface SupervisorRunsResponse {
   ok?: boolean;
   runs: SupervisorRunSummary[];

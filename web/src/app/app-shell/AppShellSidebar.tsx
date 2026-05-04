@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { SessionsPane } from "../../components/sessions/SessionsPane";
 import { SubagentsRail } from "../../components/subagents/SubagentsView";
 
-export type DesktopGlobalView = "sessions" | "subagents";
+export type DesktopGlobalView = "sessions" | "subagents" | "scheduler";
 
 interface GlobalNavRailProps {
   activeView: DesktopGlobalView;
@@ -16,6 +16,17 @@ function GlobalSessionsIcon() {
       <rect x="5" y="4" width="14" height="5" rx="1.8" />
       <rect x="5" y="10" width="14" height="5" rx="1.8" />
       <rect x="5" y="16" width="14" height="4" rx="1.8" />
+    </svg>
+  );
+}
+
+function GlobalSchedulerIcon() {
+  return (
+    <svg className="globalNavIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="7" />
+      <path d="M12 8v4l3 2" />
+      <path d="M7 4 5 6" />
+      <path d="m17 4 2 2" />
     </svg>
   );
 }
@@ -62,6 +73,16 @@ export function GlobalNavRail({
         >
           <GlobalSubagentsIcon />
         </Button>
+        <Button
+          type="button"
+          variant={activeView === "scheduler" ? "default" : "outline"}
+          className="globalNavButton"
+          aria-label="Scheduler view"
+          title="Scheduler"
+          onClick={() => onViewChange("scheduler")}
+        >
+          <GlobalSchedulerIcon />
+        </Button>
       </div>
     </nav>
   );
@@ -86,7 +107,7 @@ export function AppShellSidebar({
 }: AppShellSidebarProps) {
   return (
     <>
-      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : <SubagentsRail selectedActorId={activeSubagentId} onSelect={onSubagentSelect} />}
+      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "subagents" ? <SubagentsRail selectedActorId={activeSubagentId} onSelect={onSubagentSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Scheduler</h2></div></header><p className="text-sm text-muted-foreground">Manage alarms, supervisor preset activity, and inbox delivery.</p></div>}
       <footer className="sidebarFooter">
         <Button type="button" variant="outline" className="footerAction"><span className="buttonGlyph">?</span><span>Help</span></Button>
         <Button type="button" variant="outline" className="footerAction" onClick={onOpenSettings}><span className="buttonGlyph">ST</span><span>Settings</span></Button>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { FileIcon, MenuIcon, MetadataIcon, ProbeIcon, SessionsIcon, StopIcon, SupervisorIcon } from "./icons";
+import { FileIcon, InboxIcon, MenuIcon, MetadataIcon, ProbeIcon, SessionsIcon, StopIcon } from "./icons";
 
 export interface ConversationStatusItem {
   label: string;
@@ -22,7 +22,7 @@ interface AppShellToolbarProps {
   onInterrupt(): void;
   onProbeRuntime?(): void;
   onOpenFiles(): void;
-  onOpenHarness(): void;
+  onOpenInbox(): void;
   onOpenSessions(): void;
   onOpenWorkspace(): void;
 }
@@ -40,7 +40,7 @@ export function AppShellToolbar({
   onInterrupt,
   onProbeRuntime,
   onOpenFiles,
-  onOpenHarness,
+  onOpenInbox,
   onOpenSessions,
   onOpenWorkspace,
 }: AppShellToolbarProps) {
@@ -171,16 +171,16 @@ export function AppShellToolbar({
         variant={mobileMenu ? "ghost" : "outline"}
         size={mobileMenu ? "sm" : "icon"}
         className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Supervisor"
-        title="Supervisor"
+        aria-label="Inbox"
+        title="Inbox"
         disabled={!activeSessionId}
         onClick={() => {
           closeMobileToolsMenu();
-          onOpenHarness();
+          onOpenInbox();
         }}
       >
-        <SupervisorIcon />
-        {mobileMenu ? <span>Supervisor</span> : null}
+        <InboxIcon />
+        {mobileMenu ? <span>Inbox</span> : null}
       </Button>
     </>
   );

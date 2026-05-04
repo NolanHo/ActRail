@@ -8,6 +8,7 @@ import type { FileViewMode } from "../components/workspace/FileViewerDialog";
 import { AppShellSidebar, GlobalNavRail, type DesktopGlobalView } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
+import { SchedulerView } from "../components/scheduler/SchedulerView";
 import { mockSubagents, SubagentsThreadView } from "../components/subagents/SubagentsView";
 import { MobileShell } from "./app-shell/MobileShell";
 import { VoiceSettingsDialog } from "./app-shell/VoiceSettingsDialog";
@@ -122,7 +123,7 @@ export function AppShell() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
-  const [harnessOpen, setHarnessOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [workspaceInitialTab, setWorkspaceInitialTab] = useState<WorkspaceTab>("metadata");
   const [fileViewerPath, setFileViewerPath] = useState("");
   const [fileViewerLine, setFileViewerLine] = useState<number | null>(null);
@@ -463,7 +464,7 @@ export function AppShell() {
 
   useEffect(() => {
     setFileViewerOpen(false);
-    setHarnessOpen(false);
+    setInboxOpen(false);
     setWorkspaceInitialTab("metadata");
   }, [activeSessionId]);
 
@@ -646,7 +647,7 @@ export function AppShell() {
                     void probeActiveSessionState();
                   }}
                   onOpenFiles={() => openFileViewer()}
-                  onOpenHarness={() => setHarnessOpen(true)}
+                  onOpenInbox={() => setInboxOpen(true)}
                   onOpenSessions={() => setSidebarOpen(true)}
                   onOpenWorkspace={() => openWorkspace("metadata")}
                 />
@@ -657,8 +658,10 @@ export function AppShell() {
                 <ConversationStateTray />
                 <Composer />
               </section>
-            ) : (
+            ) : desktopGlobalView === "subagents" ? (
               <SubagentsThreadView selectedActorId={selectedSubagentId} />
+            ) : (
+              <SchedulerView />
             )}
           </>
         )}
@@ -671,7 +674,7 @@ export function AppShell() {
         fileViewerOpen={fileViewerOpen}
         fileViewerPath={fileViewerPath}
         fileViewerRequestKey={fileViewerRequestKey}
-        harnessOpen={harnessOpen}
+        inboxOpen={inboxOpen}
         newSessionOpen={newSessionOpen}
         sessionsRail={renderSessionsRail()}
         sidebarOpen={sidebarOpen}
@@ -736,7 +739,7 @@ export function AppShell() {
         workspaceDetails={renderWorkspaceDetails()}
         workspaceOpen={workspaceOpen}
         onCloseFileViewer={closeFileViewer}
-        onCloseHarness={() => setHarnessOpen(false)}
+        onCloseInbox={() => setInboxOpen(false)}
         onCloseNewSession={() => setNewSessionOpen(false)}
         onCloseSidebar={() => setSidebarOpen(false)}
         onCloseWorkspace={() => {
