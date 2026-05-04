@@ -19,7 +19,8 @@ import (
 )
 
 type controllerStub struct {
-	sendReq app.SendRequest
+	sendReq     app.SendRequest
+	messagesReq app.SessionMessagesRequest
 }
 
 func (s *controllerStub) Send(_ context.Context, req app.SendRequest) (app.SendResponse, error) {
@@ -37,6 +38,10 @@ func (s *controllerStub) Interrupt(context.Context, app.InterruptRequest) (app.I
 }
 func (s *controllerStub) RespondUI(context.Context, app.UIResponseRequest) (app.UIResponseResponse, error) {
 	return app.UIResponseResponse{}, nil
+}
+func (s *controllerStub) SessionMessages(_ context.Context, req app.SessionMessagesRequest) (app.SessionMessagesResponse, error) {
+	s.messagesReq = req
+	return app.SessionMessagesResponse{Items: []app.SessionMessage{{Seq: 1, Role: "user", Kind: "message", Text: "hello"}}, TailSeq: 1}, nil
 }
 
 func TestSessionCommandServiceSendMapsToController(t *testing.T) {
@@ -123,5 +128,35 @@ func TestEventServiceSubscribeWritesProtoEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(string(event.GetPayloadJson()), `"busy":true`) {
 		t.Fatalf("payload_json = %s", string(event.GetPayloadJson()))
+	}
+}
+
+func TestSessionMessagesProto(t *testing.T) {
+	stub := &controllerStub{}
+	h := NewHandler(stub, NewBroker(100), nil)
+	after := uint64(4)
+	body, err := proto.Marshal(&actrailv1.SessionMessagesRequest{SessionId: "sess-1", AfterSeq: &after, Limit: 20, Init: true, Deferred: true, ActiveTurnStartSeq: 10})
+	if err != nil {
+		t.Fatalf("marshal session messages proto: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, connectBasePath+sessionCommandService+"/SessionMessages", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/connect+proto")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if stub.messagesReq.SessionID.String() != "sess-1" || stub.messagesReq.AfterSeq == nil || *stub.messagesReq.AfterSeq != 4 || !stub.messagesReq.Deferred || stub.messagesReq.ActiveTurnStartSeq != 10 {
+		t.Fatalf("messages req = %+v", stub.messagesReq)
+	}
+	if got := res.Header().Get("Content-Type"); !strings.Contains(got, "application/connect+proto") {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	var response actrailv1.SessionMessagesResponse
+	if err := proto.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response.TailSeq != 1 || len(response.EventsJson) != 1 {
+		t.Fatalf("response = %+v", response)
 	}
 }

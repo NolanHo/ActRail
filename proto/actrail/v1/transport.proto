@@ -10,6 +10,7 @@ service SessionCommandService {
   rpc CancelQueue(CancelQueueRequest) returns (CommandResponse);
   rpc Interrupt(InterruptRequest) returns (CommandResponse);
   rpc RespondUI(RespondUIRequest) returns (CommandResponse);
+  rpc SessionMessages(SessionMessagesRequest) returns (SessionMessagesResponse);
 }
 
 service EventService {
@@ -59,4 +60,24 @@ message EventEnvelope {
   string stream = 3;
   int64 unix_millis = 4;
   bytes payload_json = 5;
+}
+
+message SessionMessagesRequest {
+  string session_id = 1;
+  optional uint64 after_seq = 2;
+  optional uint64 before_seq = 3;
+  int32 limit = 4;
+  bool init = 5;
+  bool deferred = 6;
+  uint64 active_turn_start_seq = 7;
+  bool include_tool_details = 8;
+  string event_id = 9;
+  string tool_call_id = 10;
+}
+
+message SessionMessagesResponse {
+  repeated bytes events_json = 1;
+  uint64 tail_seq = 2;
+  bool has_more = 3;
+  optional uint64 next_before_seq = 4;
 }

@@ -1,4 +1,5 @@
 import { sendRealtimeCommand } from "../domains/realtime/client";
+import { fetchConnectSessionMessages, type ConnectTransportConfig } from "../domains/realtime/connect";
 import { getJson, postJson } from "./http";
 import { getSessionRouteId } from "./session-identity";
 import type {
@@ -201,7 +202,7 @@ export const api = {
     const response = await getJson<SessionDetailsResponse & { session?: Record<string, unknown> | null }>(`/api/sessions/${routeId}/details`, signal);
     return normalizeSessionDetailsResponse(response);
   },
-  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null, deferred = false) {
+  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null, deferred = false, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }, activeTurnStartSeq = 0, includeToolDetails = false, eventId = "", toolCallId = "") {
     const query = new URLSearchParams();
     if (init) {
       query.set("init", "1");
@@ -219,8 +220,23 @@ export const api = {
     if (deferred) {
       query.set("deferred", "1");
     }
-    const suffix = query.size ? `?${query.toString()}` : "";
     const routeId = getSessionRouteId(sessionId, runtimeId);
+    if (connectConfig !== false && connectConfig !== null) {
+      return fetchConnectSessionMessages(connectConfig, { sessionId: routeId, after, before, limit, init, deferred, activeTurnStartSeq, includeToolDetails, eventId, toolCallId, signal });
+    }
+    if (activeTurnStartSeq > 0) {
+      query.set("active_turn_start_seq", String(activeTurnStartSeq));
+    }
+    if (includeToolDetails) {
+      query.set("include_tool_details", "1");
+    }
+    if (eventId) {
+      query.set("event_id", eventId);
+    }
+    if (toolCallId) {
+      query.set("tool_call_id", toolCallId);
+    }
+    const suffix = query.size ? `?${query.toString()}` : "";
     return getJson<MessagesResponse>(`/api/sessions/${routeId}/messages${suffix}`, signal);
   },
   getSessionUiState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {

@@ -2318,12 +2318,16 @@ function CompactionDetail({ compaction }: { compaction: Record<string, unknown> 
 async function hydrateDeferredToolEvent(event: MessageEvent) {
   const sessionId = typeof event.session_id === "string" ? event.session_id : "";
   const seq = typeof event.seq === "number" ? event.seq : 0;
-  if (!sessionId || !seq) {
+  const eventId = typeof event.event_id === "string" ? event.event_id : "";
+  const toolCallId = typeof event.tool_call_id === "string" ? event.tool_call_id : "";
+  if (!sessionId || (!seq && !eventId && !toolCallId)) {
     return event;
   }
-  const page = await api.listMessages(sessionId, true, undefined, undefined, seq + 1, 1, undefined, false);
+  const page = eventId || toolCallId
+    ? await api.listMessages(sessionId, true, undefined, undefined, undefined, 1, undefined, false, undefined, 0, true, eventId, toolCallId)
+    : await api.listMessages(sessionId, true, undefined, undefined, seq + 1, 1, undefined, false);
   const items = Array.isArray(page.items) ? page.items : Array.isArray(page.events) ? page.events : [];
-  return items.find((item) => item.seq === seq) ?? event;
+  return items.find((item) => (eventId && item.event_id === eventId) || (toolCallId && item.tool_call_id === toolCallId) || item.seq === seq) ?? event;
 }
 
 function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {

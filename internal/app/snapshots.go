@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type SessionDetailsRequest struct {
@@ -50,12 +53,16 @@ type SessionCapabilitySnapshot struct {
 }
 
 type SessionMessagesRequest struct {
-	SessionID session.SessionID
-	AfterSeq  *uint64
-	BeforeSeq *uint64
-	Limit     int
-	Init      bool
-	Deferred  bool
+	SessionID          session.SessionID
+	AfterSeq           *uint64
+	BeforeSeq          *uint64
+	Limit              int
+	Init               bool
+	Deferred           bool
+	ActiveTurnStartSeq uint64
+	IncludeToolDetails bool
+	EventID            string
+	ToolCallID         string
 }
 
 type SessionMessage struct {
@@ -287,15 +294,33 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 }
 
 func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) (SessionMessagesResponse, error) {
+	ctx, span := otel.Tracer("actrail/app").Start(ctx, "app.SessionMessages")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("session.id", req.SessionID.String()),
+		attribute.Int("messages.limit", req.Limit),
+		attribute.Bool("messages.init", req.Init),
+		attribute.Bool("messages.deferred", req.Deferred),
+	)
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
 		return SessionMessagesResponse{}, err
+	}
+	if item, ok := s.messageByID(ctx, record, req); ok {
+		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), SessionMessagesResponse{Items: []SessionMessage{item}, TailSeq: item.Seq}), nil
+	}
+	if sessionMessageIDRequested(req) {
+		return SessionMessagesResponse{TailSeq: record.transcript.TailSeq().Uint64()}, nil
 	}
 	if response, ok, err := s.loadPIAuthoritativeHistory(ctx, record, s.cfg.Storage.DataDir, req); ok {
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
 	}
 	if response, ok, err := s.loadDetachedImportedPIHistory(ctx, record, req); ok {
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
+	}
+	activeTurnStartSeq := req.ActiveTurnStartSeq
+	if activeTurnStartSeq == 0 {
+		activeTurnStartSeq = activeTurnStartSeqForCommitted(record.transcript.History(nil, 0).Items())
 	}
 	if req.AfterSeq != nil {
 		page := record.transcript.History(nil, 0)
@@ -306,7 +331,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		}
 		for _, item := range items {
 			if item.Seq().Uint64() > *req.AfterSeq {
-				msg := sessionMessageForRequest(item, req, record.transcript.TailSeq().Uint64())
+				msg := sessionMessageForRequest(item, req, record.transcript.TailSeq().Uint64(), activeTurnStartSeq)
 				msg.SessionID = record.identity.SessionID().String()
 				response.Items = append(response.Items, msg)
 			}
@@ -321,7 +346,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		TailSeq: record.transcript.TailSeq().Uint64(),
 	}
 	for _, item := range items {
-		msg := sessionMessageForRequest(item, req, record.transcript.TailSeq().Uint64())
+		msg := sessionMessageForRequest(item, req, record.transcript.TailSeq().Uint64(), activeTurnStartSeq)
 		msg.SessionID = record.identity.SessionID().String()
 		response.Items = append(response.Items, msg)
 	}
@@ -332,21 +357,94 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 	return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
 }
 
-func sessionMessageForRequest(item message.CommittedMessage, req SessionMessagesRequest, tailSeq uint64) SessionMessage {
-	msg := sessionMessageFromCommitted(item)
-	if !req.Deferred || !deferToolMessageBody(msg, tailSeq) {
+func sessionMessageForRequest(item message.CommittedMessage, req SessionMessagesRequest, tailSeq uint64, activeTurnStartSeq uint64) SessionMessage {
+	return deferSessionMessageForRequest(sessionMessageFromCommitted(item), req, tailSeq, activeTurnStartSeq)
+}
+
+func deferSessionMessageForRequest(msg SessionMessage, req SessionMessagesRequest, tailSeq uint64, activeTurnStartSeq uint64) SessionMessage {
+	if !req.Deferred || !deferToolMessageBody(msg, tailSeq, activeTurnStartSeq, req.IncludeToolDetails) {
 		return msg
 	}
 	msg.Text = ""
-	msg.Details = nil
+	msg.Details = deferredToolDetails(msg)
 	return msg
 }
 
-func deferToolMessageBody(msg SessionMessage, tailSeq uint64) bool {
+func sessionMessageIDRequested(req SessionMessagesRequest) bool {
+	return strings.TrimSpace(req.EventID) != "" || strings.TrimSpace(req.ToolCallID) != ""
+}
+
+func (s *Stub) messageByID(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessage, bool) {
+	eventID := strings.TrimSpace(req.EventID)
+	toolCallID := strings.TrimSpace(req.ToolCallID)
+	if eventID == "" && toolCallID == "" {
+		return SessionMessage{}, false
+	}
+	if items, ok, _, err := s.loadPIAuthoritativeHistoryItems(ctx, record, s.cfg.Storage.DataDir); ok && err == nil {
+		if msg, ok := findSessionMessageByID(items, eventID, toolCallID); ok {
+			msg.SessionID = record.identity.SessionID().String()
+			return msg, true
+		}
+	}
+	for _, item := range record.transcript.History(nil, 0).Items() {
+		msg := sessionMessageFromCommitted(item)
+		if eventID != "" && msg.EventID == eventID || toolCallID != "" && msg.ToolCallID == toolCallID {
+			msg.SessionID = record.identity.SessionID().String()
+			return msg, true
+		}
+	}
+	return SessionMessage{}, false
+}
+
+func findSessionMessageByID(items []SessionMessage, eventID string, toolCallID string) (SessionMessage, bool) {
+	for _, item := range items {
+		if eventID != "" && item.EventID == eventID || toolCallID != "" && item.ToolCallID == toolCallID {
+			return item, true
+		}
+	}
+	return SessionMessage{}, false
+}
+
+func activeTurnStartSeqForCommitted(items []message.CommittedMessage) uint64 {
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Role().String() == "user" {
+			return items[i].Seq().Uint64()
+		}
+	}
+	return 0
+}
+
+func activeTurnStartSeqForMessages(items []SessionMessage) uint64 {
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Role == "user" {
+			return items[i].Seq
+		}
+	}
+	return 0
+}
+
+func deferToolMessageBody(msg SessionMessage, tailSeq uint64, activeTurnStartSeq uint64, includeToolDetails bool) bool {
 	if msg.Kind != "tool" && msg.Kind != "tool_result" && msg.Type != "tool" && msg.Type != "tool_result" {
 		return false
 	}
+	if includeToolDetails {
+		return false
+	}
+	if activeTurnStartSeq > 0 {
+		return msg.Seq < activeTurnStartSeq
+	}
 	return msg.Seq+4 < tailSeq
+}
+
+func deferredToolDetails(msg SessionMessage) map[string]any {
+	details := map[string]any{"deferred": true}
+	if msg.ToolCallID != "" {
+		details["tool_call_id"] = msg.ToolCallID
+	}
+	if msg.EventID != "" {
+		details["event_id"] = msg.EventID
+	}
+	return details
 }
 
 func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (SessionStateResponse, error) {

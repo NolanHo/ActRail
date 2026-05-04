@@ -489,6 +489,190 @@ func (x *EventEnvelope) GetPayloadJson() []byte {
 	return nil
 }
 
+type SessionMessagesRequest struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SessionId          string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AfterSeq           *uint64                `protobuf:"varint,2,opt,name=after_seq,json=afterSeq,proto3,oneof" json:"after_seq,omitempty"`
+	BeforeSeq          *uint64                `protobuf:"varint,3,opt,name=before_seq,json=beforeSeq,proto3,oneof" json:"before_seq,omitempty"`
+	Limit              int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Init               bool                   `protobuf:"varint,5,opt,name=init,proto3" json:"init,omitempty"`
+	Deferred           bool                   `protobuf:"varint,6,opt,name=deferred,proto3" json:"deferred,omitempty"`
+	ActiveTurnStartSeq uint64                 `protobuf:"varint,7,opt,name=active_turn_start_seq,json=activeTurnStartSeq,proto3" json:"active_turn_start_seq,omitempty"`
+	IncludeToolDetails bool                   `protobuf:"varint,8,opt,name=include_tool_details,json=includeToolDetails,proto3" json:"include_tool_details,omitempty"`
+	EventId            string                 `protobuf:"bytes,9,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	ToolCallId         string                 `protobuf:"bytes,10,opt,name=tool_call_id,json=toolCallId,proto3" json:"tool_call_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *SessionMessagesRequest) Reset() {
+	*x = SessionMessagesRequest{}
+	mi := &file_actrail_v1_transport_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionMessagesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionMessagesRequest) ProtoMessage() {}
+
+func (x *SessionMessagesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_actrail_v1_transport_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionMessagesRequest.ProtoReflect.Descriptor instead.
+func (*SessionMessagesRequest) Descriptor() ([]byte, []int) {
+	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SessionMessagesRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SessionMessagesRequest) GetAfterSeq() uint64 {
+	if x != nil && x.AfterSeq != nil {
+		return *x.AfterSeq
+	}
+	return 0
+}
+
+func (x *SessionMessagesRequest) GetBeforeSeq() uint64 {
+	if x != nil && x.BeforeSeq != nil {
+		return *x.BeforeSeq
+	}
+	return 0
+}
+
+func (x *SessionMessagesRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *SessionMessagesRequest) GetInit() bool {
+	if x != nil {
+		return x.Init
+	}
+	return false
+}
+
+func (x *SessionMessagesRequest) GetDeferred() bool {
+	if x != nil {
+		return x.Deferred
+	}
+	return false
+}
+
+func (x *SessionMessagesRequest) GetActiveTurnStartSeq() uint64 {
+	if x != nil {
+		return x.ActiveTurnStartSeq
+	}
+	return 0
+}
+
+func (x *SessionMessagesRequest) GetIncludeToolDetails() bool {
+	if x != nil {
+		return x.IncludeToolDetails
+	}
+	return false
+}
+
+func (x *SessionMessagesRequest) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *SessionMessagesRequest) GetToolCallId() string {
+	if x != nil {
+		return x.ToolCallId
+	}
+	return ""
+}
+
+type SessionMessagesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EventsJson    [][]byte               `protobuf:"bytes,1,rep,name=events_json,json=eventsJson,proto3" json:"events_json,omitempty"`
+	TailSeq       uint64                 `protobuf:"varint,2,opt,name=tail_seq,json=tailSeq,proto3" json:"tail_seq,omitempty"`
+	HasMore       bool                   `protobuf:"varint,3,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	NextBeforeSeq *uint64                `protobuf:"varint,4,opt,name=next_before_seq,json=nextBeforeSeq,proto3,oneof" json:"next_before_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionMessagesResponse) Reset() {
+	*x = SessionMessagesResponse{}
+	mi := &file_actrail_v1_transport_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionMessagesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionMessagesResponse) ProtoMessage() {}
+
+func (x *SessionMessagesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_actrail_v1_transport_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionMessagesResponse.ProtoReflect.Descriptor instead.
+func (*SessionMessagesResponse) Descriptor() ([]byte, []int) {
+	return file_actrail_v1_transport_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *SessionMessagesResponse) GetEventsJson() [][]byte {
+	if x != nil {
+		return x.EventsJson
+	}
+	return nil
+}
+
+func (x *SessionMessagesResponse) GetTailSeq() uint64 {
+	if x != nil {
+		return x.TailSeq
+	}
+	return 0
+}
+
+func (x *SessionMessagesResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
+}
+
+func (x *SessionMessagesResponse) GetNextBeforeSeq() uint64 {
+	if x != nil && x.NextBeforeSeq != nil {
+		return *x.NextBeforeSeq
+	}
+	return 0
+}
+
 var File_actrail_v1_transport_proto protoreflect.FileDescriptor
 
 const file_actrail_v1_transport_proto_rawDesc = "" +
@@ -525,13 +709,39 @@ const file_actrail_v1_transport_proto_rawDesc = "" +
 	"\x06stream\x18\x03 \x01(\tR\x06stream\x12\x1f\n" +
 	"\vunix_millis\x18\x04 \x01(\x03R\n" +
 	"unixMillis\x12!\n" +
-	"\fpayload_json\x18\x05 \x01(\fR\vpayloadJson2\xf5\x02\n" +
+	"\fpayload_json\x18\x05 \x01(\fR\vpayloadJson\"\x82\x03\n" +
+	"\x16SessionMessagesRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12 \n" +
+	"\tafter_seq\x18\x02 \x01(\x04H\x00R\bafterSeq\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"before_seq\x18\x03 \x01(\x04H\x01R\tbeforeSeq\x88\x01\x01\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x12\n" +
+	"\x04init\x18\x05 \x01(\bR\x04init\x12\x1a\n" +
+	"\bdeferred\x18\x06 \x01(\bR\bdeferred\x121\n" +
+	"\x15active_turn_start_seq\x18\a \x01(\x04R\x12activeTurnStartSeq\x120\n" +
+	"\x14include_tool_details\x18\b \x01(\bR\x12includeToolDetails\x12\x19\n" +
+	"\bevent_id\x18\t \x01(\tR\aeventId\x12 \n" +
+	"\ftool_call_id\x18\n" +
+	" \x01(\tR\n" +
+	"toolCallIdB\f\n" +
+	"\n" +
+	"_after_seqB\r\n" +
+	"\v_before_seq\"\xb1\x01\n" +
+	"\x17SessionMessagesResponse\x12\x1f\n" +
+	"\vevents_json\x18\x01 \x03(\fR\n" +
+	"eventsJson\x12\x19\n" +
+	"\btail_seq\x18\x02 \x01(\x04R\atailSeq\x12\x19\n" +
+	"\bhas_more\x18\x03 \x01(\bR\ahasMore\x12+\n" +
+	"\x0fnext_before_seq\x18\x04 \x01(\x04H\x00R\rnextBeforeSeq\x88\x01\x01B\x12\n" +
+	"\x10_next_before_seq2\xd1\x03\n" +
 	"\x15SessionCommandService\x12<\n" +
 	"\x04Send\x12\x17.actrail.v1.SendRequest\x1a\x1b.actrail.v1.CommandResponse\x12B\n" +
 	"\aEnqueue\x12\x1a.actrail.v1.EnqueueRequest\x1a\x1b.actrail.v1.CommandResponse\x12J\n" +
 	"\vCancelQueue\x12\x1e.actrail.v1.CancelQueueRequest\x1a\x1b.actrail.v1.CommandResponse\x12F\n" +
 	"\tInterrupt\x12\x1c.actrail.v1.InterruptRequest\x1a\x1b.actrail.v1.CommandResponse\x12F\n" +
-	"\tRespondUI\x12\x1c.actrail.v1.RespondUIRequest\x1a\x1b.actrail.v1.CommandResponse2V\n" +
+	"\tRespondUI\x12\x1c.actrail.v1.RespondUIRequest\x1a\x1b.actrail.v1.CommandResponse\x12Z\n" +
+	"\x0fSessionMessages\x12\".actrail.v1.SessionMessagesRequest\x1a#.actrail.v1.SessionMessagesResponse2V\n" +
 	"\fEventService\x12F\n" +
 	"\tSubscribe\x12\x1c.actrail.v1.SubscribeRequest\x1a\x19.actrail.v1.EventEnvelope0\x01B$Z\"actrail/proto/actrail/v1;actrailv1b\x06proto3"
 
@@ -547,17 +757,19 @@ func file_actrail_v1_transport_proto_rawDescGZIP() []byte {
 	return file_actrail_v1_transport_proto_rawDescData
 }
 
-var file_actrail_v1_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_actrail_v1_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_actrail_v1_transport_proto_goTypes = []any{
-	(*SessionIdentity)(nil),    // 0: actrail.v1.SessionIdentity
-	(*SendRequest)(nil),        // 1: actrail.v1.SendRequest
-	(*EnqueueRequest)(nil),     // 2: actrail.v1.EnqueueRequest
-	(*CancelQueueRequest)(nil), // 3: actrail.v1.CancelQueueRequest
-	(*InterruptRequest)(nil),   // 4: actrail.v1.InterruptRequest
-	(*RespondUIRequest)(nil),   // 5: actrail.v1.RespondUIRequest
-	(*CommandResponse)(nil),    // 6: actrail.v1.CommandResponse
-	(*SubscribeRequest)(nil),   // 7: actrail.v1.SubscribeRequest
-	(*EventEnvelope)(nil),      // 8: actrail.v1.EventEnvelope
+	(*SessionIdentity)(nil),         // 0: actrail.v1.SessionIdentity
+	(*SendRequest)(nil),             // 1: actrail.v1.SendRequest
+	(*EnqueueRequest)(nil),          // 2: actrail.v1.EnqueueRequest
+	(*CancelQueueRequest)(nil),      // 3: actrail.v1.CancelQueueRequest
+	(*InterruptRequest)(nil),        // 4: actrail.v1.InterruptRequest
+	(*RespondUIRequest)(nil),        // 5: actrail.v1.RespondUIRequest
+	(*CommandResponse)(nil),         // 6: actrail.v1.CommandResponse
+	(*SubscribeRequest)(nil),        // 7: actrail.v1.SubscribeRequest
+	(*EventEnvelope)(nil),           // 8: actrail.v1.EventEnvelope
+	(*SessionMessagesRequest)(nil),  // 9: actrail.v1.SessionMessagesRequest
+	(*SessionMessagesResponse)(nil), // 10: actrail.v1.SessionMessagesResponse
 }
 var file_actrail_v1_transport_proto_depIdxs = []int32{
 	0,  // 0: actrail.v1.SendRequest.session:type_name -> actrail.v1.SessionIdentity
@@ -570,15 +782,17 @@ var file_actrail_v1_transport_proto_depIdxs = []int32{
 	3,  // 7: actrail.v1.SessionCommandService.CancelQueue:input_type -> actrail.v1.CancelQueueRequest
 	4,  // 8: actrail.v1.SessionCommandService.Interrupt:input_type -> actrail.v1.InterruptRequest
 	5,  // 9: actrail.v1.SessionCommandService.RespondUI:input_type -> actrail.v1.RespondUIRequest
-	7,  // 10: actrail.v1.EventService.Subscribe:input_type -> actrail.v1.SubscribeRequest
-	6,  // 11: actrail.v1.SessionCommandService.Send:output_type -> actrail.v1.CommandResponse
-	6,  // 12: actrail.v1.SessionCommandService.Enqueue:output_type -> actrail.v1.CommandResponse
-	6,  // 13: actrail.v1.SessionCommandService.CancelQueue:output_type -> actrail.v1.CommandResponse
-	6,  // 14: actrail.v1.SessionCommandService.Interrupt:output_type -> actrail.v1.CommandResponse
-	6,  // 15: actrail.v1.SessionCommandService.RespondUI:output_type -> actrail.v1.CommandResponse
-	8,  // 16: actrail.v1.EventService.Subscribe:output_type -> actrail.v1.EventEnvelope
-	11, // [11:17] is the sub-list for method output_type
-	5,  // [5:11] is the sub-list for method input_type
+	9,  // 10: actrail.v1.SessionCommandService.SessionMessages:input_type -> actrail.v1.SessionMessagesRequest
+	7,  // 11: actrail.v1.EventService.Subscribe:input_type -> actrail.v1.SubscribeRequest
+	6,  // 12: actrail.v1.SessionCommandService.Send:output_type -> actrail.v1.CommandResponse
+	6,  // 13: actrail.v1.SessionCommandService.Enqueue:output_type -> actrail.v1.CommandResponse
+	6,  // 14: actrail.v1.SessionCommandService.CancelQueue:output_type -> actrail.v1.CommandResponse
+	6,  // 15: actrail.v1.SessionCommandService.Interrupt:output_type -> actrail.v1.CommandResponse
+	6,  // 16: actrail.v1.SessionCommandService.RespondUI:output_type -> actrail.v1.CommandResponse
+	10, // 17: actrail.v1.SessionCommandService.SessionMessages:output_type -> actrail.v1.SessionMessagesResponse
+	8,  // 18: actrail.v1.EventService.Subscribe:output_type -> actrail.v1.EventEnvelope
+	12, // [12:19] is the sub-list for method output_type
+	5,  // [5:12] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
 	5,  // [5:5] is the sub-list for extension extendee
 	0,  // [0:5] is the sub-list for field type_name
@@ -589,13 +803,15 @@ func file_actrail_v1_transport_proto_init() {
 	if File_actrail_v1_transport_proto != nil {
 		return
 	}
+	file_actrail_v1_transport_proto_msgTypes[9].OneofWrappers = []any{}
+	file_actrail_v1_transport_proto_msgTypes[10].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_actrail_v1_transport_proto_rawDesc), len(file_actrail_v1_transport_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

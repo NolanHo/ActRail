@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file actrail/v1/transport.proto.
  */
 export const file_actrail_v1_transport: GenFile = /*@__PURE__*/
-  fileDesc("ChphY3RyYWlsL3YxL3RyYW5zcG9ydC5wcm90bxIKYWN0cmFpbC52MSI5Cg9TZXNzaW9uSWRlbnRpdHkSEgoKc2Vzc2lvbl9pZBgBIAEoCRISCgpydW50aW1lX2lkGAIgASgJIkkKC1NlbmRSZXF1ZXN0EiwKB3Nlc3Npb24YASABKAsyGy5hY3RyYWlsLnYxLlNlc3Npb25JZGVudGl0eRIMCgR0ZXh0GAIgASgJIkwKDkVucXVldWVSZXF1ZXN0EiwKB3Nlc3Npb24YASABKAsyGy5hY3RyYWlsLnYxLlNlc3Npb25JZGVudGl0eRIMCgR0ZXh0GAIgASgJIkIKEkNhbmNlbFF1ZXVlUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiQAoQSW50ZXJydXB0UmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiZAoQUmVzcG9uZFVJUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkSEwoLcmVzcG9uc2VfdG8YAiABKAkSDQoFdmFsdWUYAyABKAkiJwoPQ29tbWFuZFJlc3BvbnNlEhQKDHBheWxvYWRfanNvbhgBIAEoDCIqChBTdWJzY3JpYmVSZXF1ZXN0EhYKDmFmdGVyX2V2ZW50X2lkGAEgASgEImQKDUV2ZW50RW52ZWxvcGUSCgoCaWQYASABKAQSDAoEdHlwZRgCIAEoCRIOCgZzdHJlYW0YAyABKAkSEwoLdW5peF9taWxsaXMYBCABKAMSFAoMcGF5bG9hZF9qc29uGAUgASgMMvUCChVTZXNzaW9uQ29tbWFuZFNlcnZpY2USPAoEU2VuZBIXLmFjdHJhaWwudjEuU2VuZFJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJCCgdFbnF1ZXVlEhouYWN0cmFpbC52MS5FbnF1ZXVlUmVxdWVzdBobLmFjdHJhaWwudjEuQ29tbWFuZFJlc3BvbnNlEkoKC0NhbmNlbFF1ZXVlEh4uYWN0cmFpbC52MS5DYW5jZWxRdWV1ZVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJGCglJbnRlcnJ1cHQSHC5hY3RyYWlsLnYxLkludGVycnVwdFJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJGCglSZXNwb25kVUkSHC5hY3RyYWlsLnYxLlJlc3BvbmRVSVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZTJWCgxFdmVudFNlcnZpY2USRgoJU3Vic2NyaWJlEhwuYWN0cmFpbC52MS5TdWJzY3JpYmVSZXF1ZXN0GhkuYWN0cmFpbC52MS5FdmVudEVudmVsb3BlMAFCJFoiYWN0cmFpbC9wcm90by9hY3RyYWlsL3YxO2FjdHJhaWx2MWIGcHJvdG8z");
+  fileDesc("ChphY3RyYWlsL3YxL3RyYW5zcG9ydC5wcm90bxIKYWN0cmFpbC52MSI5Cg9TZXNzaW9uSWRlbnRpdHkSEgoKc2Vzc2lvbl9pZBgBIAEoCRISCgpydW50aW1lX2lkGAIgASgJIkkKC1NlbmRSZXF1ZXN0EiwKB3Nlc3Npb24YASABKAsyGy5hY3RyYWlsLnYxLlNlc3Npb25JZGVudGl0eRIMCgR0ZXh0GAIgASgJIkwKDkVucXVldWVSZXF1ZXN0EiwKB3Nlc3Npb24YASABKAsyGy5hY3RyYWlsLnYxLlNlc3Npb25JZGVudGl0eRIMCgR0ZXh0GAIgASgJIkIKEkNhbmNlbFF1ZXVlUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiQAoQSW50ZXJydXB0UmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiZAoQUmVzcG9uZFVJUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkSEwoLcmVzcG9uc2VfdG8YAiABKAkSDQoFdmFsdWUYAyABKAkiJwoPQ29tbWFuZFJlc3BvbnNlEhQKDHBheWxvYWRfanNvbhgBIAEoDCIqChBTdWJzY3JpYmVSZXF1ZXN0EhYKDmFmdGVyX2V2ZW50X2lkGAEgASgEImQKDUV2ZW50RW52ZWxvcGUSCgoCaWQYASABKAQSDAoEdHlwZRgCIAEoCRIOCgZzdHJlYW0YAyABKAkSEwoLdW5peF9taWxsaXMYBCABKAMSFAoMcGF5bG9hZF9qc29uGAUgASgMIo4CChZTZXNzaW9uTWVzc2FnZXNSZXF1ZXN0EhIKCnNlc3Npb25faWQYASABKAkSFgoJYWZ0ZXJfc2VxGAIgASgESACIAQESFwoKYmVmb3JlX3NlcRgDIAEoBEgBiAEBEg0KBWxpbWl0GAQgASgFEgwKBGluaXQYBSABKAgSEAoIZGVmZXJyZWQYBiABKAgSHQoVYWN0aXZlX3R1cm5fc3RhcnRfc2VxGAcgASgEEhwKFGluY2x1ZGVfdG9vbF9kZXRhaWxzGAggASgIEhAKCGV2ZW50X2lkGAkgASgJEhQKDHRvb2xfY2FsbF9pZBgKIAEoCUIMCgpfYWZ0ZXJfc2VxQg0KC19iZWZvcmVfc2VxIoQBChdTZXNzaW9uTWVzc2FnZXNSZXNwb25zZRITCgtldmVudHNfanNvbhgBIAMoDBIQCgh0YWlsX3NlcRgCIAEoBBIQCghoYXNfbW9yZRgDIAEoCBIcCg9uZXh0X2JlZm9yZV9zZXEYBCABKARIAIgBAUISChBfbmV4dF9iZWZvcmVfc2VxMtEDChVTZXNzaW9uQ29tbWFuZFNlcnZpY2USPAoEU2VuZBIXLmFjdHJhaWwudjEuU2VuZFJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJCCgdFbnF1ZXVlEhouYWN0cmFpbC52MS5FbnF1ZXVlUmVxdWVzdBobLmFjdHJhaWwudjEuQ29tbWFuZFJlc3BvbnNlEkoKC0NhbmNlbFF1ZXVlEh4uYWN0cmFpbC52MS5DYW5jZWxRdWV1ZVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJGCglJbnRlcnJ1cHQSHC5hY3RyYWlsLnYxLkludGVycnVwdFJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJGCglSZXNwb25kVUkSHC5hY3RyYWlsLnYxLlJlc3BvbmRVSVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJaCg9TZXNzaW9uTWVzc2FnZXMSIi5hY3RyYWlsLnYxLlNlc3Npb25NZXNzYWdlc1JlcXVlc3QaIy5hY3RyYWlsLnYxLlNlc3Npb25NZXNzYWdlc1Jlc3BvbnNlMlYKDEV2ZW50U2VydmljZRJGCglTdWJzY3JpYmUSHC5hY3RyYWlsLnYxLlN1YnNjcmliZVJlcXVlc3QaGS5hY3RyYWlsLnYxLkV2ZW50RW52ZWxvcGUwAUIkWiJhY3RyYWlsL3Byb3RvL2FjdHJhaWwvdjE7YWN0cmFpbHYxYgZwcm90bzM");
 
 /**
  * @generated from message actrail.v1.SessionIdentity
@@ -211,6 +211,100 @@ export const EventEnvelopeSchema: GenMessage<EventEnvelope> = /*@__PURE__*/
   messageDesc(file_actrail_v1_transport, 8);
 
 /**
+ * @generated from message actrail.v1.SessionMessagesRequest
+ */
+export type SessionMessagesRequest = Message<"actrail.v1.SessionMessagesRequest"> & {
+  /**
+   * @generated from field: string session_id = 1;
+   */
+  sessionId: string;
+
+  /**
+   * @generated from field: optional uint64 after_seq = 2;
+   */
+  afterSeq?: bigint | undefined;
+
+  /**
+   * @generated from field: optional uint64 before_seq = 3;
+   */
+  beforeSeq?: bigint | undefined;
+
+  /**
+   * @generated from field: int32 limit = 4;
+   */
+  limit: number;
+
+  /**
+   * @generated from field: bool init = 5;
+   */
+  init: boolean;
+
+  /**
+   * @generated from field: bool deferred = 6;
+   */
+  deferred: boolean;
+
+  /**
+   * @generated from field: uint64 active_turn_start_seq = 7;
+   */
+  activeTurnStartSeq: bigint;
+
+  /**
+   * @generated from field: bool include_tool_details = 8;
+   */
+  includeToolDetails: boolean;
+
+  /**
+   * @generated from field: string event_id = 9;
+   */
+  eventId: string;
+
+  /**
+   * @generated from field: string tool_call_id = 10;
+   */
+  toolCallId: string;
+};
+
+/**
+ * Describes the message actrail.v1.SessionMessagesRequest.
+ * Use `create(SessionMessagesRequestSchema)` to create a new message.
+ */
+export const SessionMessagesRequestSchema: GenMessage<SessionMessagesRequest> = /*@__PURE__*/
+  messageDesc(file_actrail_v1_transport, 9);
+
+/**
+ * @generated from message actrail.v1.SessionMessagesResponse
+ */
+export type SessionMessagesResponse = Message<"actrail.v1.SessionMessagesResponse"> & {
+  /**
+   * @generated from field: repeated bytes events_json = 1;
+   */
+  eventsJson: Uint8Array[];
+
+  /**
+   * @generated from field: uint64 tail_seq = 2;
+   */
+  tailSeq: bigint;
+
+  /**
+   * @generated from field: bool has_more = 3;
+   */
+  hasMore: boolean;
+
+  /**
+   * @generated from field: optional uint64 next_before_seq = 4;
+   */
+  nextBeforeSeq?: bigint | undefined;
+};
+
+/**
+ * Describes the message actrail.v1.SessionMessagesResponse.
+ * Use `create(SessionMessagesResponseSchema)` to create a new message.
+ */
+export const SessionMessagesResponseSchema: GenMessage<SessionMessagesResponse> = /*@__PURE__*/
+  messageDesc(file_actrail_v1_transport, 10);
+
+/**
  * @generated from service actrail.v1.SessionCommandService
  */
 export const SessionCommandService: GenService<{
@@ -253,6 +347,14 @@ export const SessionCommandService: GenService<{
     methodKind: "unary";
     input: typeof RespondUIRequestSchema;
     output: typeof CommandResponseSchema;
+  },
+  /**
+   * @generated from rpc actrail.v1.SessionCommandService.SessionMessages
+   */
+  sessionMessages: {
+    methodKind: "unary";
+    input: typeof SessionMessagesRequestSchema;
+    output: typeof SessionMessagesResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_actrail_v1_transport, 0);

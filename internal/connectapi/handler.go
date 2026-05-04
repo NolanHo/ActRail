@@ -14,7 +14,11 @@ import (
 
 	"actrail/internal/app"
 	"actrail/internal/domain/session"
+	actrailv1 "actrail/proto/actrail/v1"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -31,8 +35,10 @@ type Handler struct {
 }
 
 type SessionIdentity struct {
-	SessionID string `json:"sessionId"`
-	RuntimeID string `json:"runtimeId,omitempty"`
+	SessionID    string `json:"sessionId"`
+	SessionIDRaw string `json:"session_id"`
+	RuntimeID    string `json:"runtimeId,omitempty"`
+	RuntimeIDRaw string `json:"runtime_id,omitempty"`
 }
 
 type commandRequest struct {
@@ -51,6 +57,26 @@ type commandResponse struct {
 type subscribeRequest struct {
 	AfterEventID    uint64 `json:"afterEventId"`
 	AfterEventIDRaw uint64 `json:"after_event_id"`
+}
+
+type sessionMessagesRequest struct {
+	Session               SessionIdentity `json:"session"`
+	SessionRaw            SessionIdentity `json:"session_identity"`
+	AfterSeq              *uint64         `json:"afterSeq"`
+	AfterSeqRaw           *uint64         `json:"after_seq"`
+	BeforeSeq             *uint64         `json:"beforeSeq"`
+	BeforeSeqRaw          *uint64         `json:"before_seq"`
+	Limit                 int             `json:"limit"`
+	Init                  bool            `json:"init"`
+	Deferred              bool            `json:"deferred"`
+	ActiveTurnStartSeq    uint64          `json:"activeTurnStartSeq"`
+	ActiveTurnStartSeqRaw uint64          `json:"active_turn_start_seq"`
+	IncludeToolDetails    bool            `json:"includeToolDetails"`
+	IncludeToolDetailsRaw bool            `json:"include_tool_details"`
+	EventID               string          `json:"eventId"`
+	EventIDRaw            string          `json:"event_id"`
+	ToolCallID            string          `json:"toolCallId"`
+	ToolCallIDRaw         string          `json:"tool_call_id"`
 }
 
 type connectError struct {
@@ -94,6 +120,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	switch parts[0] {
 	case sessionCommandService:
+		if parts[1] == "SessionMessages" {
+			h.handleSessionMessages(w, req)
+			return
+		}
 		h.handleCommand(w, req, parts[1])
 	case eventService:
 		h.handleEvent(w, req, parts[1])
@@ -240,15 +270,28 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 	}
 }
 
-func (r commandRequest) sessionID() (session.SessionID, error) {
+func (r sessionMessagesRequest) sessionID() (session.SessionID, error) {
 	identity := r.Session
-	if strings.TrimSpace(identity.SessionID) == "" {
+	if strings.TrimSpace(identity.SessionID) == "" && strings.TrimSpace(identity.SessionIDRaw) == "" {
 		identity = r.SessionRaw
 	}
-	if strings.TrimSpace(identity.SessionID) == "" {
+	value := firstString(identity.SessionID, identity.SessionIDRaw)
+	if strings.TrimSpace(value) == "" {
 		return "", fmt.Errorf("session.sessionId is required")
 	}
-	return session.ParseSessionID(identity.SessionID)
+	return session.ParseSessionID(value)
+}
+
+func (r commandRequest) sessionID() (session.SessionID, error) {
+	identity := r.Session
+	if strings.TrimSpace(identity.SessionID) == "" && strings.TrimSpace(identity.SessionIDRaw) == "" {
+		identity = r.SessionRaw
+	}
+	value := firstString(identity.SessionID, identity.SessionIDRaw)
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("session.sessionId is required")
+	}
+	return session.ParseSessionID(value)
 }
 
 func (r commandRequest) responseTo() string {
@@ -345,4 +388,133 @@ func codeForCommandError(err error) string {
 		return appErr.Code
 	}
 	return "internal"
+}
+
+func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request) {
+	ctx, span := otel.Tracer("actrail/connect").Start(req.Context(), "connect.SessionMessages")
+	defer span.End()
+	if h.controller == nil {
+		writeConnectError(w, http.StatusServiceUnavailable, "unavailable", "session controller unavailable")
+		return
+	}
+	protoMode := requestWantsProto(req.Header.Get("Content-Type"))
+	body, err := decodeSessionMessagesRequest(req, protoMode)
+	if err != nil {
+		writeConnectError(w, http.StatusBadRequest, "invalid_argument", err.Error())
+		return
+	}
+	sessionID, err := body.sessionID()
+	if err != nil {
+		writeConnectError(w, http.StatusBadRequest, "invalid_argument", err.Error())
+		return
+	}
+	span.SetAttributes(
+		attribute.String("session.id", sessionID.String()),
+		attribute.Int("messages.limit", body.Limit),
+		attribute.Bool("messages.init", body.Init),
+		attribute.Bool("messages.deferred", body.Deferred),
+	)
+	payload, err := h.controller.SessionMessages(ctx, app.SessionMessagesRequest{
+		SessionID:          sessionID,
+		AfterSeq:           firstUint64(body.AfterSeq, body.AfterSeqRaw),
+		BeforeSeq:          firstUint64(body.BeforeSeq, body.BeforeSeqRaw),
+		Limit:              body.Limit,
+		Init:               body.Init,
+		Deferred:           body.Deferred,
+		ActiveTurnStartSeq: firstNonZeroUint64(body.ActiveTurnStartSeq, body.ActiveTurnStartSeqRaw),
+		IncludeToolDetails: body.IncludeToolDetails || body.IncludeToolDetailsRaw,
+		EventID:            firstString(body.EventID, body.EventIDRaw),
+		ToolCallID:         firstString(body.ToolCallID, body.ToolCallIDRaw),
+	})
+	if err != nil {
+		writeConnectError(w, statusForCommandError(err), codeForCommandError(err), err.Error())
+		return
+	}
+	if protoMode {
+		writeConnectProto(w, http.StatusOK, encodeSessionMessagesResponseProto(payload))
+		return
+	}
+	writeConnectJSON(w, http.StatusOK, payload)
+}
+
+func decodeSessionMessagesRequest(req *http.Request, protoMode bool) (sessionMessagesRequest, error) {
+	if !protoMode {
+		var body sessionMessagesRequest
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			return sessionMessagesRequest{}, fmt.Errorf("invalid json")
+		}
+		return body, nil
+	}
+	data, err := readProtoBody(req.Body)
+	if err != nil {
+		return sessionMessagesRequest{}, fmt.Errorf("invalid protobuf")
+	}
+	var msg actrailv1.SessionMessagesRequest
+	if err := proto.Unmarshal(data, &msg); err != nil {
+		return sessionMessagesRequest{}, fmt.Errorf("invalid protobuf")
+	}
+	body := sessionMessagesRequest{
+		Session:            SessionIdentity{SessionID: msg.SessionId},
+		Limit:              int(msg.Limit),
+		Init:               msg.Init,
+		Deferred:           msg.Deferred,
+		ActiveTurnStartSeq: msg.ActiveTurnStartSeq,
+		IncludeToolDetails: msg.IncludeToolDetails,
+		EventID:            msg.EventId,
+		ToolCallID:         msg.ToolCallId,
+	}
+	if msg.AfterSeq != nil {
+		v := msg.GetAfterSeq()
+		body.AfterSeq = &v
+	}
+	if msg.BeforeSeq != nil {
+		v := msg.GetBeforeSeq()
+		body.BeforeSeq = &v
+	}
+	return body, nil
+}
+
+func encodeSessionMessagesResponseProto(response app.SessionMessagesResponse) []byte {
+	msg := &actrailv1.SessionMessagesResponse{
+		TailSeq: response.TailSeq,
+		HasMore: response.HasMore,
+	}
+	if response.NextBeforeSeq != nil {
+		v := *response.NextBeforeSeq
+		msg.NextBeforeSeq = &v
+	}
+	for _, event := range response.Items {
+		data, err := json.Marshal(event)
+		if err == nil {
+			msg.EventsJson = append(msg.EventsJson, data)
+		}
+	}
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstUint64(a, b *uint64) *uint64 {
+	if a != nil {
+		return a
+	}
+	return b
+}
+
+func firstNonZeroUint64(a, b uint64) uint64 {
+	if a != 0 {
+		return a
+	}
+	return b
 }

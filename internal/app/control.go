@@ -17,6 +17,7 @@ type SessionController interface {
 	CancelQueue(context.Context, CancelQueueRequest) (CancelQueueResponse, error)
 	Interrupt(context.Context, InterruptRequest) (InterruptResponse, error)
 	RespondUI(context.Context, UIResponseRequest) (UIResponseResponse, error)
+	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)
 }
 
 // SessionUIRequestWriter exposes runtime-side UI request state mutation.

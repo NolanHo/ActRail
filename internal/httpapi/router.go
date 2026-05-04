@@ -14,6 +14,8 @@ import (
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
 	"actrail/internal/httpapi/authn"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type Router struct {
@@ -501,6 +503,9 @@ func (r Router) sessionDetails(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
+	ctx, span := otel.Tracer("actrail/http").Start(req.Context(), "http.sessionMessages")
+	defer span.End()
+	req = req.WithContext(ctx)
 	sessionID, ok := routeSessionID(w, req)
 	if !ok {
 		return
@@ -530,13 +535,35 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 		writeAppError(w, err)
 		return
 	}
+	activeTurnStartSeq, err := queryUint(req, "active_turn_start_seq")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	includeToolDetails, err := queryBool(req, "include_tool_details")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	eventID := strings.TrimSpace(req.URL.Query().Get("event_id"))
+	toolCallID := strings.TrimSpace(req.URL.Query().Get("tool_call_id"))
+	span.SetAttributes(
+		attribute.String("session.id", sessionID.String()),
+		attribute.Int("messages.limit", limit),
+		attribute.Bool("messages.init", init),
+		attribute.Bool("messages.deferred", deferred),
+	)
 	payload, err := r.app.SessionMessages(req.Context(), app.SessionMessagesRequest{
-		SessionID: sessionID,
-		AfterSeq:  afterSeq,
-		BeforeSeq: beforeSeq,
-		Limit:     limit,
-		Init:      init,
-		Deferred:  deferred,
+		SessionID:          sessionID,
+		AfterSeq:           afterSeq,
+		BeforeSeq:          beforeSeq,
+		Limit:              limit,
+		Init:               init,
+		Deferred:           deferred,
+		ActiveTurnStartSeq: activeTurnStartSeq,
+		IncludeToolDetails: includeToolDetails,
+		EventID:            eventID,
+		ToolCallID:         toolCallID,
 	})
 	if err != nil {
 		writeAppError(w, err)
@@ -1175,6 +1202,18 @@ func queryInt(req *http.Request, key string) (int, error) {
 	}
 	if n < 0 {
 		return 0, app.Invalid(key, key+" must be non-negative")
+	}
+	return n, nil
+}
+
+func queryUint(req *http.Request, key string) (uint64, error) {
+	value := strings.TrimSpace(req.URL.Query().Get(key))
+	if value == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, app.Invalid(key, key+" must be an unsigned integer")
 	}
 	return n, nil
 }

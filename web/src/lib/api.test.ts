@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { create, toBinary } from "@bufbuild/protobuf";
 import { sendRealtimeCommand } from "../domains/realtime/client";
+import { SessionMessagesResponseSchema } from "../gen/actrail/v1/transport_pb";
 import { api } from "./api";
 import { getJson, HttpError, subscribeUnauthorized } from "./http";
 import type { LiveSessionResponse, MessagesResponse, SessionBootstrapResponse, SessionDetailsResponse, SessionUiStateResponse, SessionsResponse, WorkspaceResponse } from "./types";
@@ -317,7 +319,29 @@ describe("api", () => {
     });
   });
 
-  it("builds the init messages route", async () => {
+  it("loads messages through Connect proto by default", async () => {
+    const body = toBinary(SessionMessagesResponseSchema, create(SessionMessagesResponseSchema, {
+      eventsJson: [new TextEncoder().encode(JSON.stringify({ seq: 1, role: "user", text: "hi" }))],
+      tailSeq: 1n,
+    }));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.listMessages("session-1", true)).resolves.toMatchObject({
+      events: [{ seq: 1, role: "user", text: "hi" }],
+      tail_seq: 1,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/SessionMessages", expect.objectContaining({
+      method: "POST",
+      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+    }));
+  });
+
+  it("builds the init messages REST route when Connect is disabled", async () => {
     const payload: MessagesResponse = { events: [], offset: 0, ui_version: "v1" };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -326,14 +350,14 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.listMessages("session-1", true)).resolves.toEqual(payload);
+    await expect(api.listMessages("session-1", true, undefined, undefined, undefined, undefined, undefined, false, false)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/messages?init=1", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
   });
 
-  it("includes after_seq when polling from a known message cursor", async () => {
+  it("includes after_seq when polling from a known message cursor over REST", async () => {
     const payload: MessagesResponse = { events: [{ id: "m1" }], offset: 9 };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -342,14 +366,14 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.listMessages("session-1", false, undefined, 4)).resolves.toEqual(payload);
+    await expect(api.listMessages("session-1", false, undefined, 4, undefined, undefined, undefined, false, false)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/messages?after_seq=4", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
   });
 
-  it("includes before and limit when loading older history pages", async () => {
+  it("includes before and limit when loading older REST history pages", async () => {
     const payload: MessagesResponse = { events: [{ id: "m0" }], offset: 9, has_older: true, next_before: 12 };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -358,7 +382,7 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.listMessages("session-1", true, undefined, undefined, 6, 40)).resolves.toEqual(payload);
+    await expect(api.listMessages("session-1", true, undefined, undefined, 6, 40, undefined, false, false)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith("api/sessions/session-1/messages?init=1&before=6&before_seq=6&limit=40", {
       headers: { Accept: "application/json" },
       signal: undefined,

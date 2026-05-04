@@ -7,10 +7,12 @@ import {
   InterruptRequestSchema,
   RespondUIRequestSchema,
   SendRequestSchema,
+  SessionMessagesRequestSchema,
+  SessionMessagesResponseSchema,
   SubscribeRequestSchema,
 } from "../../gen/actrail/v1/transport_pb";
 import { HttpError } from "../../lib/http";
-import type { RealtimeEnvelope } from "../../lib/types";
+import type { MessagesResponse, RealtimeEnvelope } from "../../lib/types";
 import type { RealtimeCommand } from "./client";
 
 const COMMAND_SERVICE = "actrail.v1.SessionCommandService";
@@ -226,4 +228,80 @@ export function subscribeConnectEvents(config: ConnectTransportConfig, afterEven
     }
     return readConnectStream(response, onFrame, signal, wireFormat);
   });
+}
+
+export interface ConnectMessagesOptions {
+  sessionId: string;
+  after?: number;
+  before?: number;
+  limit?: number;
+  init?: boolean;
+  deferred?: boolean;
+  activeTurnStartSeq?: number;
+  includeToolDetails?: boolean;
+  eventId?: string;
+  toolCallId?: string;
+  signal?: AbortSignal;
+}
+
+function messageResponseFromProto(data: ReturnType<typeof fromBinary<typeof SessionMessagesResponseSchema>>): MessagesResponse {
+  const items = data.eventsJson.map((raw) => decodePayloadBytes(raw) as never);
+  return {
+    events: items,
+    items,
+    tail_seq: Number(data.tailSeq || 0n),
+    has_more: data.hasMore,
+    next_before_seq: data.nextBeforeSeq === undefined ? undefined : Number(data.nextBeforeSeq),
+  };
+}
+
+export async function fetchConnectSessionMessages(config: ConnectTransportConfig, options: ConnectMessagesOptions): Promise<MessagesResponse> {
+  const basePath = config.basePath || "/api/connect";
+  const wireFormat = config.wireFormat === "json" ? "json" : "proto";
+  const url = servicePath(basePath, COMMAND_SERVICE, "SessionMessages");
+  if (wireFormat === "proto") {
+    const body = toBinary(SessionMessagesRequestSchema, create(SessionMessagesRequestSchema, {
+      sessionId: options.sessionId,
+      ...(typeof options.after === "number" ? { afterSeq: BigInt(Math.floor(options.after)) } : {}),
+      ...(typeof options.before === "number" ? { beforeSeq: BigInt(Math.floor(options.before)) } : {}),
+      limit: options.limit || 0,
+      init: options.init === true,
+      deferred: options.deferred === true,
+      activeTurnStartSeq: BigInt(options.activeTurnStartSeq || 0),
+      includeToolDetails: options.includeToolDetails === true,
+      eventId: options.eventId || "",
+      toolCallId: options.toolCallId || "",
+    }));
+    const response = await fetch(apiPath(url), {
+      method: "POST",
+      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+      body,
+      signal: options.signal,
+    });
+    if (!response.ok) {
+      throw new HttpError(await response.text(), response.status);
+    }
+    return messageResponseFromProto(fromBinary(SessionMessagesResponseSchema, new Uint8Array(await response.arrayBuffer())));
+  }
+  const response = await fetch(apiPath(url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      session: { session_id: options.sessionId },
+      after_seq: options.after,
+      before_seq: options.before,
+      limit: options.limit,
+      init: options.init,
+      deferred: options.deferred,
+      active_turn_start_seq: options.activeTurnStartSeq,
+      include_tool_details: options.includeToolDetails,
+      event_id: options.eventId,
+      tool_call_id: options.toolCallId,
+    }),
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    throw new HttpError(await response.text(), response.status);
+  }
+  return await response.json() as MessagesResponse;
 }

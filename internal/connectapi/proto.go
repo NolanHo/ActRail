@@ -2,7 +2,6 @@ package connectapi
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -45,13 +44,9 @@ func decodeCommandRequestProto(method string, data []byte) (commandRequest, erro
 		if err := proto.Unmarshal(data, &req); err != nil {
 			return commandRequest{}, err
 		}
-		value, err := json.Marshal(req.GetValue())
-		if err != nil {
-			return commandRequest{}, err
-		}
 		out.Session = sessionIdentityFromProto(req.GetSession())
 		out.ResponseTo = req.GetResponseTo()
-		out.Value = value
+		out.Value = []byte(req.GetValue())
 	default:
 		return commandRequest{}, fmt.Errorf("unknown command method %q", method)
 	}
