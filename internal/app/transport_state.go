@@ -41,15 +41,12 @@ func (s *Stub) sessionProbing(record sessionRecord) bool {
 }
 
 func sessionProbing(record sessionRecord) bool {
-	return !record.identity.Historical() && record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && !record.transport.ResetRequired && !record.state.Busy()
+	transport := sessionTransportSnapshot(record)
+	return !record.identity.Historical() && record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil && !transport.ResetRequired && transport.State == SessionTransportStateAttached && !record.state.Busy()
 }
 
 func sessionTransportSnapshot(record sessionRecord) SessionTransportSnapshot {
 	snapshot := record.transport
-	if shouldReattachPIAgentGRPC(record) {
-		snapshot.State = SessionTransportStateAttached
-		snapshot.Reason = ""
-	}
 	if snapshot.State == SessionTransportStateAttached && !record.identity.Historical() && record.runtime.helper == nil && record.runtime.piAgentGRPC == nil && record.runtime.handle == nil {
 		snapshot.State = SessionTransportStateEnded
 		if snapshot.Reason == "" {

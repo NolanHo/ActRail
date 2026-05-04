@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -335,6 +336,87 @@ func TestPersistentStubColdStartRehydratesLiveSessionState(t *testing.T) {
 	}
 }
 
+func TestPersistentStubMarksUnavailablePIAgentGRPCEndedOnRehydrate(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	server := &fakePiAgentServer{}
+	grpcServer := grpc.NewServer()
+	piagentv1.RegisterPiAgentServer(grpcServer, server)
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
+
+	runner := &process.FakeRunner{}
+	createRuntimeCfg := RuntimeConfig{
+		Runner:            runner,
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		},
+		ResolveBinPath: func(session.Backend) (string, error) { return "/tmp/custom-pi", nil },
+	}
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, createRuntimeCfg)
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	useGRPC := true
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir(), PIAgentGRPC: &useGRPC})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, false); err != nil || !ok {
+		t.Fatalf("SetBusy(false) = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	rehydrateRuntimeCfg := RuntimeConfig{
+		Runner:            runner,
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return nil, errors.New("grpc unavailable")
+		},
+		ResolveBinPath: func(session.Backend) (string, error) { return "/tmp/custom-pi", nil },
+	}
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, rehydrateRuntimeCfg)
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
+	}
+	record, err := rehydrated.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	if record.runtime.piAgentGRPC != nil {
+		t.Fatal("rehydrated runtime.piAgentGRPC != nil, want unavailable runtime")
+	}
+	if record.runtimeAgentRunning {
+		t.Fatal("rehydrated runtimeAgentRunning = true, want false")
+	}
+	listed, err := rehydrated.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
+	}
+	if listed.Items[0].TransportState != SessionTransportStateEnded.String() || listed.Items[0].TransportReason != "pi_agent_grpc_unavailable" {
+		t.Fatalf("ListSessions().Items[0] transport = (%q, %q), want ended pi_agent_grpc_unavailable", listed.Items[0].TransportState, listed.Items[0].TransportReason)
+	}
+	if listed.Items[0].Probing {
+		t.Fatal("ListSessions().Items[0].Probing = true, want false for ended runtime")
+	}
+}
+
 func TestPersistentStubReattachesRunningPIAgentGRPCWithoutStartingNewProcess(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
@@ -414,6 +496,9 @@ func TestPersistentStubReattachesRunningPIAgentGRPCWithoutStartingNewProcess(t *
 	}
 	if listed.Items[0].TransportState != SessionTransportStateAttached.String() || listed.Items[0].ResetRequired {
 		t.Fatalf("ListSessions().Items[0] transport = (%q, reset=%v), want attached without reset", listed.Items[0].TransportState, listed.Items[0].ResetRequired)
+	}
+	if listed.Items[0].Probing {
+		t.Fatal("ListSessions().Items[0].Probing = true, want false for attached grpc runtime")
 	}
 }
 
