@@ -141,7 +141,6 @@ export function AppShell() {
   const [supervisorProviderApiKeyDraft, setSupervisorProviderApiKeyDraft] = useState("");
   const [supervisorProviderStatus, setSupervisorProviderStatus] = useState("");
   const voiceSupported = bootstrapCapabilities?.voice !== false;
-  const harnessSupported = bootstrapCapabilities?.harness !== false;
   const notificationsSupported = bootstrapCapabilities?.notifications !== false;
   const {
     announcementEnabled,
@@ -673,7 +672,6 @@ export function AppShell() {
         fileViewerPath={fileViewerPath}
         fileViewerRequestKey={fileViewerRequestKey}
         harnessOpen={harnessOpen}
-        harnessSupported={harnessSupported}
         newSessionOpen={newSessionOpen}
         sessionsRail={renderSessionsRail()}
         sidebarOpen={sidebarOpen}

@@ -11,11 +11,10 @@ interface HarnessDialogProps {
   open: boolean;
   sessionId: string | null;
   runtimeId?: string | null;
-  supported?: boolean;
   onClose: () => void;
 }
 
-export function HarnessDialog({ open, sessionId, runtimeId = null, supported = true, onClose }: HarnessDialogProps) {
+export function HarnessDialog({ open, sessionId, runtimeId = null, onClose }: HarnessDialogProps) {
   const [enabled, setEnabled] = useState(false);
   const [idleAfterMinutes, setIdleAfterMinutes] = useState("5");
   const [maxConsecutiveInjections, setMaxConsecutiveInjections] = useState("10");
@@ -28,11 +27,6 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
 
   useEffect(() => {
     if (!open || !sessionId) {
-      return;
-    }
-    if (!supported) {
-      setLoading(false);
-      setStatus("Supervisor is unavailable on this backend.");
       return;
     }
     let cancelled = false;
@@ -61,14 +55,10 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
     return () => {
       cancelled = true;
     };
-  }, [open, runtimeId, sessionId, supported]);
+  }, [open, runtimeId, sessionId]);
 
   const save = async () => {
     if (!sessionId || saving) {
-      return;
-    }
-    if (!supported) {
-      setStatus("Supervisor is unavailable on this backend.");
       return;
     }
     setSaving(true);
@@ -151,7 +141,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, supported = t
         </div>
         <div className="flex shrink-0 justify-end gap-2 border-t border-border/70 bg-card/95 px-6 py-4">
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-          <Button type="button" onClick={() => void save()} disabled={saving || loading || !sessionId || !supported}>Save</Button>
+          <Button type="button" onClick={() => void save()} disabled={saving || loading || !sessionId}>Save</Button>
         </div>
       </DialogContent>
     </Dialog>
