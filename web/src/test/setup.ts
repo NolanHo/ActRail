@@ -45,16 +45,7 @@ function installStorage(name: "localStorage" | "sessionStorage", storage: Storag
 }
 
 function ensureStorage(name: "localStorage" | "sessionStorage", storage: Storage) {
-  const current = (window as typeof window & Record<string, unknown>)[name] as Partial<Storage> | undefined;
-  if (
-    !current
-    || typeof current.getItem !== "function"
-    || typeof current.setItem !== "function"
-    || typeof current.removeItem !== "function"
-    || typeof current.clear !== "function"
-  ) {
-    installStorage(name, storage);
-  }
+  installStorage(name, storage);
 }
 
 function ensureBrowserShims() {
