@@ -69,6 +69,16 @@ type supervisorRunOnceRequest struct {
 	DryRun bool `json:"dry_run"`
 }
 
+type schedulerSettingsRequest struct {
+	IdleBeforeDeliverySeconds *int `json:"idle_before_delivery_seconds"`
+}
+
+type setAlarmRequest struct {
+	DurationSeconds int    `json:"duration_seconds"`
+	Title           string `json:"title"`
+	Message         string `json:"message"`
+}
+
 func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHandlers ...http.Handler) http.Handler {
 	var connectHandler http.Handler
 	if len(connectHandlers) > 0 {
@@ -110,6 +120,10 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("POST /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.updateSessionSupervisor)))
 	mux.Handle("GET /api/sessions/{session_id}/supervisor/runs", r.requireAuth(http.HandlerFunc(r.supervisorRuns)))
 	mux.Handle("POST /api/sessions/{session_id}/supervisor/run-once", r.requireAuth(http.HandlerFunc(r.runSupervisorOnce)))
+	mux.Handle("GET /api/scheduler", r.requireAuth(http.HandlerFunc(r.schedulerSnapshot)))
+	mux.Handle("POST /api/scheduler/settings", r.requireAuth(http.HandlerFunc(r.updateSchedulerSettings)))
+	mux.Handle("GET /api/sessions/{session_id}/inbox", r.requireAuth(http.HandlerFunc(r.sessionInbox)))
+	mux.Handle("POST /api/sessions/{session_id}/alarms", r.requireAuth(http.HandlerFunc(r.setSessionAlarm)))
 	mux.Handle("GET /api/sessions/{session_id}/state", r.requireAuth(http.HandlerFunc(r.sessionState)))
 	mux.Handle("POST /api/sessions/{session_id}/state/probe", r.requireAuth(http.HandlerFunc(r.probeSessionState)))
 	mux.Handle("GET /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.sessionWorkspace)))
@@ -1211,4 +1225,68 @@ func queryRelativePath(req *http.Request, key string, required bool) (string, er
 		return "", app.Invalid(key, key+" escapes workspace root")
 	}
 	return strings.TrimPrefix(cleaned, "./"), nil
+}
+
+func (r Router) schedulerSnapshot(w http.ResponseWriter, req *http.Request) {
+	limit, err := queryInt(req, "limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.SchedulerSnapshot(req.Context(), app.SchedulerSnapshotRequest{Limit: limit})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) updateSchedulerSettings(w http.ResponseWriter, req *http.Request) {
+	var body schedulerSettingsRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.UpdateSchedulerSettings(req.Context(), app.UpdateSchedulerSettingsRequest{IdleBeforeDeliverySeconds: body.IdleBeforeDeliverySeconds})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sessionInbox(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	limit, err := queryInt(req, "limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.SessionInbox(req.Context(), app.SessionInboxRequest{SessionID: sessionID, Limit: limit})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) setSessionAlarm(w http.ResponseWriter, req *http.Request) {
+	sessionID, ok := routeSessionID(w, req)
+	if !ok {
+		return
+	}
+	var body setAlarmRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.SetAlarm(req.Context(), app.SetAlarmRequest{SessionID: sessionID, DurationSeconds: body.DurationSeconds, Title: body.Title, Message: body.Message, CreatedBy: "api"})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
 }

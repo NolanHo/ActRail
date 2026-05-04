@@ -60,6 +60,10 @@ type Service interface {
 	UpdateSessionSupervisor(context.Context, UpdateSessionSupervisorRequest) (SessionSupervisorResponse, error)
 	SupervisorRuns(context.Context, SupervisorRunsRequest) (SupervisorRunsResponse, error)
 	RunSupervisorOnce(context.Context, SupervisorRunOnceRequest) (SupervisorRunOnceResponse, error)
+	SchedulerSnapshot(context.Context, SchedulerSnapshotRequest) (SchedulerSnapshotResponse, error)
+	UpdateSchedulerSettings(context.Context, UpdateSchedulerSettingsRequest) (SchedulerSettings, error)
+	SessionInbox(context.Context, SessionInboxRequest) (SessionInboxResponse, error)
+	SetAlarm(context.Context, SetAlarmRequest) (SetAlarmResponse, error)
 }
 
 type Stub struct {
@@ -74,6 +78,7 @@ type Stub struct {
 	messageCache        *sessionMessageCache
 	waitStore           waitStore
 	supervisorStore     supervisorStore
+	schedulerStore      schedulerStore
 	subagents           *subagentRegistry
 	runtimeAgentMu      sync.RWMutex
 	runtimeAgentRunning map[session.SessionID]bool
@@ -116,6 +121,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
 		waitStore:           newMemoryWaitStore(),
 		supervisorStore:     newMemorySupervisorStore(),
+		schedulerStore:      newMemorySchedulerStore(),
 		subagents:           newSubagentRegistry(now),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
