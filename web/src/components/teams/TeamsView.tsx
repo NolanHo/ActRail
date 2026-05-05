@@ -127,7 +127,7 @@ function normalizeNode(node: TeamNodeResponse): TeamNode {
     childSessionId: node.child_session_id,
     parentSessionId: node.parent_session_id,
     name: node.name || node.actor_id,
-    role: node.role || "subagent",
+    role: node.role || "team",
     status,
     turnId: node.turn_id,
     question: node.question,
@@ -248,22 +248,22 @@ export function TeamsRail({ selectedActorId, data, onSelect }: TeamsRailProps) {
   }, [onSelect, selectedActorId, selectedVisible]);
 
   return (
-    <div className="subagentsRailShell">
-      <section className="subagentsRailHeader" aria-label="Team filters">
+    <div className="teamsRailShell">
+      <section className="teamsRailHeader" aria-label="Team filters">
         <p className="sessionsEyebrow">Teams</p>
         <h2 className="sessionsSurfaceTitle">Teams</h2>
-        <div className="subagentsRailStats" aria-label="Team counts">
+        <div className="teamsRailStats" aria-label="Team counts">
           <span>{data.nonLeafCount} team leads</span>
           <span>{data.totalCount} total</span>
         </div>
-        <input className="subagentsSearch" type="search" placeholder="Search teams" aria-label="Search teams" disabled />
-        <div className="subagentsFilterRow" aria-label="Live filters">
+        <input className="teamsSearch" type="search" placeholder="Search teams" aria-label="Search teams" disabled />
+        <div className="teamsFilterRow" aria-label="Live filters">
           <Badge variant="outline">live</Badge>
           <Badge variant="outline">{data.loading ? "loading" : "synced"}</Badge>
         </div>
         {data.error ? <p className="text-xs text-destructive">{data.error}</p> : null}
       </section>
-      <ScrollArea className="subagentsRailBody">
+      <ScrollArea className="teamsRailBody">
         <div className="mainAgentList">
           {nodes.length ? nodes.map((node) => (
             <button
@@ -275,7 +275,7 @@ export function TeamsRail({ selectedActorId, data, onSelect }: TeamsRailProps) {
             >
               <span className="mainAgentCardTopline">
                 <strong>{node.name}</strong>
-                <span className={cn("subagentStatusPill", node.status)}>{formatStatus(node.status)}</span>
+                <span className={cn("teamStatusPill", node.status)}>{formatStatus(node.status)}</span>
               </span>
               <span className="mainAgentCardMeta">{node.role}</span>
               <span className="mainAgentCardBadges">
@@ -303,14 +303,14 @@ export function TeamsThreadView({ selectedActorId, data }: TeamsThreadViewProps)
 
   if (!selected) {
     return (
-      <section className="subagentsThreadView" aria-label="Team conversation view">
-        <header className="subagentsThreadHeader">
-          <div className="subagentsThreadTitleBlock">
+      <section className="teamsThreadView" aria-label="Team conversation view">
+        <header className="teamsThreadHeader">
+          <div className="teamsThreadTitleBlock">
             <p className="sessionsEyebrow">Selected team</p>
             <h1>Teams</h1>
             <p>{data.loading ? "Loading live team state" : "No live teams"}</p>
           </div>
-          <div className="subagentsThreadHeaderMeta">
+          <div className="teamsThreadHeaderMeta">
             <Button type="button" variant="outline" onClick={data.refresh}>Refresh</Button>
           </div>
         </header>
@@ -319,26 +319,26 @@ export function TeamsThreadView({ selectedActorId, data }: TeamsThreadViewProps)
   }
 
   return (
-    <section className="subagentsThreadView" aria-label="Team conversation view">
-      <header className="subagentsThreadHeader">
-        <div className="subagentsThreadTitleBlock">
+    <section className="teamsThreadView" aria-label="Team conversation view">
+      <header className="teamsThreadHeader">
+        <div className="teamsThreadTitleBlock">
           <p className="sessionsEyebrow">Selected team</p>
           <h1>{selected.name}</h1>
           <p>{selected.role} / {selected.cwd || "unknown cwd"}</p>
         </div>
-        <div className="subagentsThreadHeaderMeta">
-          <span className={cn("subagentStatusPill", selected.status)}>{formatStatus(selected.status)}</span>
+        <div className="teamsThreadHeaderMeta">
+          <span className={cn("teamStatusPill", selected.status)}>{formatStatus(selected.status)}</span>
           <span>{team.length} direct reports</span>
           <Button type="button" variant="outline" onClick={data.refresh}>Refresh</Button>
         </div>
       </header>
 
-      <div className="subagentsTeamStrip" aria-label="Team members">
+      <div className="teamsTeamStrip" aria-label="Team members">
         {team.length ? team.map((node) => (
-          <article key={node.actorId} className="subagentTeamChip">
-            <div className="subagentCardTopline">
+          <article key={node.actorId} className="teamTeamChip">
+            <div className="teamCardTopline">
               <strong>{node.name}</strong>
-              <span className={cn("subagentStatusPill", node.status)}>{formatStatus(node.status)}</span>
+              <span className={cn("teamStatusPill", node.status)}>{formatStatus(node.status)}</span>
             </div>
             <span>{node.role}</span>
             {node.children.length ? <small>{node.children.length} nested teams</small> : <small>{node.lastEvent}</small>}
@@ -346,11 +346,11 @@ export function TeamsThreadView({ selectedActorId, data }: TeamsThreadViewProps)
         )) : <p className="text-sm text-muted-foreground">No direct team members.</p>}
       </div>
 
-      <ScrollArea className="subagentsThreadScroll">
-        <div className="subagentsThreadMessages">
+      <ScrollArea className="teamsThreadScroll">
+        <div className="teamsThreadMessages">
           {selected.messages.length ? selected.messages.map((message) => (
-            <article key={message.id} className={cn("subagentsThreadMessage", message.kind)}>
-              <div className="subagentsMessageMeta">
+            <article key={message.id} className={cn("teamsThreadMessage", message.kind)}>
+              <div className="teamsMessageMeta">
                 <span>{message.label}</span>
                 <time>{message.ts}</time>
               </div>
@@ -363,7 +363,7 @@ export function TeamsThreadView({ selectedActorId, data }: TeamsThreadViewProps)
         </div>
       </ScrollArea>
 
-      <footer className="subagentsThreadFooter">
+      <footer className="teamsThreadFooter">
         <span>{selected.lastEvent}</span>
         <span>{selected.actorId}</span>
       </footer>

@@ -81,8 +81,8 @@
   --message-card-tool-result-border: color-mix(in srgb, #b2cfba 50%, var(--legacy-border));
   --message-card-tool-error-bg: color-mix(in srgb, #fff2f2 84%, white);
   --message-card-tool-error-border: rgba(185, 28, 28, 0.28);
-  --message-card-subagent-bg: color-mix(in srgb, #f2efff 78%, white);
-  --message-card-subagent-border: color-mix(in srgb, #cdbdff 52%, var(--legacy-border));
+  --message-card-team-bg: color-mix(in srgb, #f2efff 78%, white);
+  --message-card-team-border: color-mix(in srgb, #cdbdff 52%, var(--legacy-border));
   --message-card-todo-bg: color-mix(in srgb, #f3f7e8 82%, white);
   --message-card-todo-border: color-mix(in srgb, #c7d8a7 52%, var(--legacy-border));
   --message-todo-item-bg: color-mix(in srgb, #fbfcf6 84%, var(--panel));
@@ -189,8 +189,8 @@
   --message-card-tool-result-border: color-mix(in srgb, #33564d 26%, var(--legacy-border));
   --message-card-tool-error-bg: color-mix(in srgb, #2b131b 88%, var(--panel));
   --message-card-tool-error-border: rgba(244, 86, 157, 0.24);
-  --message-card-subagent-bg: color-mix(in srgb, #1c1730 84%, var(--panel));
-  --message-card-subagent-border: color-mix(in srgb, #4b3b76 30%, var(--legacy-border));
+  --message-card-team-bg: color-mix(in srgb, #1c1730 84%, var(--panel));
+  --message-card-team-border: color-mix(in srgb, #4b3b76 30%, var(--legacy-border));
   --message-card-todo-bg: color-mix(in srgb, #141914 92%, var(--panel));
   --message-card-todo-border: color-mix(in srgb, #33483a 20%, var(--legacy-border));
   --message-todo-item-bg: color-mix(in srgb, #111511 90%, var(--panel));
