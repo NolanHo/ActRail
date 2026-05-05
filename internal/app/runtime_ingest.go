@@ -59,6 +59,8 @@ type piRPCStateSnapshot struct {
 	IsStreaming          bool
 	IsCompacting         bool
 	PendingMessageCount  int
+	IsBusy               bool
+	BusyReason           string
 	RuntimeState         piagentgrpc.RuntimeState
 	RuntimeStatusMessage string
 }
@@ -87,6 +89,9 @@ type piRPCStateCache struct {
 }
 
 func (s piRPCStateSnapshot) Busy() bool {
+	if strings.TrimSpace(s.BusyReason) != "" {
+		return s.IsBusy
+	}
 	return s.IsStreaming || s.IsCompacting || s.PendingMessageCount > 0
 }
 
@@ -567,6 +572,8 @@ func piRPCStateSnapshotFromGRPC(state piagentgrpc.State) *piRPCStateSnapshot {
 		IsStreaming:          state.IsStreaming,
 		IsCompacting:         state.IsCompacting,
 		PendingMessageCount:  state.PendingMessageCount,
+		IsBusy:               state.Busy(),
+		BusyReason:           state.BusyStateReason(),
 		RuntimeState:         state.RuntimeState,
 		RuntimeStatusMessage: state.RuntimeMessage(),
 	}
@@ -733,6 +740,8 @@ func decodePIRPCStateResponse(raw map[string]any) (runtimeProjection, bool) {
 		IsStreaming:         boolValue(data["isStreaming"]),
 		IsCompacting:        boolValue(data["isCompacting"]),
 		PendingMessageCount: intValueFromAny(data["pendingMessageCount"]),
+		IsBusy:              boolValue(data["isBusy"]),
+		BusyReason:          strings.TrimSpace(stringValue(data["busyReason"])),
 	}}, true
 }
 

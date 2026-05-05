@@ -137,6 +137,8 @@ message SessionState {
   uint32 pending_message_count = 12;
   RuntimeState runtime_state = 13;
   string runtime_status_message = 14;
+  bool is_busy = 15;
+  string busy_reason = 16;
 }
 
 message Model {

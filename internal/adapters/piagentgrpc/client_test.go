@@ -31,12 +31,14 @@ func TestStateFromProtoCopiesSessionState(t *testing.T) {
 		ThinkingLevel:       "high",
 		IsStreaming:         true,
 		PendingMessageCount: 2,
+		IsBusy:              true,
+		BusyReason:          "streaming",
 		Model: &piagentv1.Model{
 			Id:       " gpt-5.5 ",
 			Provider: " openai ",
 		},
 	})
-	if state.SessionID != "s_pi" || state.SessionFile != "/tmp/session.jsonl" || state.ModelID != "gpt-5.5" || state.Provider != "openai" || !state.IsStreaming || state.PendingMessageCount != 2 {
+	if state.SessionID != "s_pi" || state.SessionFile != "/tmp/session.jsonl" || state.ModelID != "gpt-5.5" || state.Provider != "openai" || !state.IsStreaming || state.PendingMessageCount != 2 || !state.Busy() || state.BusyStateReason() != "streaming" {
 		t.Fatalf("stateFromProto() = %+v", state)
 	}
 }
