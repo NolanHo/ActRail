@@ -439,7 +439,7 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Settings");
     expect(getRoot().textContent).toContain("Log out");
     expect(findButtonByAriaLabel("Sessions view")).not.toBeNull();
-    expect(findButtonByAriaLabel("Subagents view")).not.toBeNull();
+    expect(findButtonByAriaLabel("Teams view")).not.toBeNull();
     expect(findButtonByAriaLabel("Scheduler view")).not.toBeNull();
     expect(getRoot().textContent).toContain("No session selected");
     expect(getRoot().querySelector(".mobileSheetTrigger")).toBeNull();

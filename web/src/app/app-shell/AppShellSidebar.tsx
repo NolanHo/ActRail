@@ -68,8 +68,8 @@ export function GlobalNavRail({
           type="button"
           variant={activeView === "subagents" ? "default" : "outline"}
           className="globalNavButton"
-          aria-label="Subagents view"
-          title="Subagents"
+          aria-label="Teams view"
+          title="Teams"
           onClick={() => onViewChange("subagents")}
         >
           <GlobalSubagentsIcon />

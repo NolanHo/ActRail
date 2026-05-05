@@ -249,14 +249,14 @@ export function SubagentsRail({ selectedActorId, data, onSelect }: SubagentsRail
 
   return (
     <div className="subagentsRailShell">
-      <section className="subagentsRailHeader" aria-label="Subagent team filters">
-        <p className="sessionsEyebrow">Team leads</p>
-        <h2 className="sessionsSurfaceTitle">Subagents</h2>
-        <div className="subagentsRailStats" aria-label="Subagent counts">
-          <span>{data.nonLeafCount} non-leaf agents</span>
+      <section className="subagentsRailHeader" aria-label="Team filters">
+        <p className="sessionsEyebrow">Teams</p>
+        <h2 className="sessionsSurfaceTitle">Teams</h2>
+        <div className="subagentsRailStats" aria-label="Team counts">
+          <span>{data.nonLeafCount} team leads</span>
           <span>{data.totalCount} total</span>
         </div>
-        <input className="subagentsSearch" type="search" placeholder="Search team leads" aria-label="Search team leads" disabled />
+        <input className="subagentsSearch" type="search" placeholder="Search teams" aria-label="Search teams" disabled />
         <div className="subagentsFilterRow" aria-label="Live filters">
           <Badge variant="outline">live</Badge>
           <Badge variant="outline">{data.loading ? "loading" : "synced"}</Badge>
@@ -284,7 +284,7 @@ export function SubagentsRail({ selectedActorId, data, onSelect }: SubagentsRail
               </span>
             </button>
           )) : (
-            <p className="text-sm text-muted-foreground">No live subagents.</p>
+            <p className="text-sm text-muted-foreground">No live teams.</p>
           )}
         </div>
       </ScrollArea>
@@ -303,12 +303,12 @@ export function SubagentsThreadView({ selectedActorId, data }: SubagentsThreadVi
 
   if (!selected) {
     return (
-      <section className="subagentsThreadView" aria-label="Subagent team conversation view">
+      <section className="subagentsThreadView" aria-label="Team conversation view">
         <header className="subagentsThreadHeader">
           <div className="subagentsThreadTitleBlock">
-            <p className="sessionsEyebrow">Selected team lead</p>
-            <h1>Subagents</h1>
-            <p>{data.loading ? "Loading live subagent state" : "No live subagents"}</p>
+            <p className="sessionsEyebrow">Selected team</p>
+            <h1>Teams</h1>
+            <p>{data.loading ? "Loading live team state" : "No live teams"}</p>
           </div>
           <div className="subagentsThreadHeaderMeta">
             <Button type="button" variant="outline" onClick={data.refresh}>Refresh</Button>
@@ -319,10 +319,10 @@ export function SubagentsThreadView({ selectedActorId, data }: SubagentsThreadVi
   }
 
   return (
-    <section className="subagentsThreadView" aria-label="Subagent team conversation view">
+    <section className="subagentsThreadView" aria-label="Team conversation view">
       <header className="subagentsThreadHeader">
         <div className="subagentsThreadTitleBlock">
-          <p className="sessionsEyebrow">Selected team lead</p>
+          <p className="sessionsEyebrow">Selected team</p>
           <h1>{selected.name}</h1>
           <p>{selected.role} / {selected.cwd || "unknown cwd"}</p>
         </div>
@@ -333,7 +333,7 @@ export function SubagentsThreadView({ selectedActorId, data }: SubagentsThreadVi
         </div>
       </header>
 
-      <div className="subagentsTeamStrip" aria-label="Direct subagents">
+      <div className="subagentsTeamStrip" aria-label="Team members">
         {team.length ? team.map((node) => (
           <article key={node.actorId} className="subagentTeamChip">
             <div className="subagentCardTopline">
@@ -341,9 +341,9 @@ export function SubagentsThreadView({ selectedActorId, data }: SubagentsThreadVi
               <span className={cn("subagentStatusPill", node.status)}>{formatStatus(node.status)}</span>
             </div>
             <span>{node.role}</span>
-            {node.children.length ? <small>{node.children.length} child agents</small> : <small>{node.lastEvent}</small>}
+            {node.children.length ? <small>{node.children.length} nested teams</small> : <small>{node.lastEvent}</small>}
           </article>
-        )) : <p className="text-sm text-muted-foreground">No direct subagents.</p>}
+        )) : <p className="text-sm text-muted-foreground">No direct team members.</p>}
       </div>
 
       <ScrollArea className="subagentsThreadScroll">
@@ -358,7 +358,7 @@ export function SubagentsThreadView({ selectedActorId, data }: SubagentsThreadVi
               {message.meta ? <small>{message.meta}</small> : null}
             </article>
           )) : (
-            <p className="text-sm text-muted-foreground">No recorded subagent messages.</p>
+            <p className="text-sm text-muted-foreground">No recorded team messages.</p>
           )}
         </div>
       </ScrollArea>
