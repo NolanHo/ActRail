@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,9 +30,13 @@ type launchAdapter struct {
 
 type fakePiAgentServer struct {
 	piagentv1.UnimplementedPiAgentServer
+	states func(context.Context) (*piagentv1.SessionState, error)
 }
 
-func (fakePiAgentServer) GetState(context.Context, *piagentv1.GetStateRequest) (*piagentv1.SessionState, error) {
+func (s fakePiAgentServer) GetState(ctx context.Context, _ *piagentv1.GetStateRequest) (*piagentv1.SessionState, error) {
+	if s.states != nil {
+		return s.states(ctx)
+	}
 	return &piagentv1.SessionState{SessionId: "pi-grpc-test", RuntimeState: piagentv1.RuntimeState_RUNTIME_STATE_READY, RuntimeStatusMessage: "ready"}, nil
 }
 
@@ -268,21 +274,36 @@ func TestCreateSessionCanOptOutOfPIAgentGRPC(t *testing.T) {
 	}
 }
 
-func TestCreateSessionMarksPIAgentGRPCFailedWhenReadyProbeFails(t *testing.T) {
+func TestCreateSessionAttachesAfterTransientPIAgentGRPCStartupDialErrors(t *testing.T) {
 	runner := &process.FakeRunner{}
+	grpcServer := grpc.NewServer()
+	var calls atomic.Int32
+	piagentv1.RegisterPiAgentServer(grpcServer, fakePiAgentServer{states: func(context.Context) (*piagentv1.SessionState, error) {
+		if calls.Add(1) <= 2 {
+			return nil, errors.New(`rpc error: code = Unavailable desc = connection error: desc = "transport: Error while dialing: dial unix /tmp/pi-agent/actrail/s_1.sock: connect: no such file or directory"`)
+		}
+		return &piagentv1.SessionState{SessionId: "pi-grpc-test", RuntimeState: piagentv1.RuntimeState_RUNTIME_STATE_READY, RuntimeStatusMessage: "ready"}, nil
+	}})
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
-		Runner: runner,
+		Runner:                  runner,
+		PIAgentGRPCReadyTimeout: time.Second,
 		ResolveBinPath: func(session.Backend) (string, error) {
 			return "/tmp/custom-pi", nil
 		},
 		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
 		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
-			return nil, context.Canceled
+			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return listener.Dial()
+			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		},
 	})
-	createCtx, cancelCreate := context.WithTimeout(context.Background(), time.Second)
-	defer cancelCreate()
-	created, err := svc.CreateSession(createCtx, CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
@@ -291,6 +312,87 @@ func TestCreateSessionMarksPIAgentGRPCFailedWhenReadyProbeFails(t *testing.T) {
 		t.Fatalf("ParseSessionID() error = %v", err)
 	}
 	assertCtx, cancelAssert := context.WithTimeout(context.Background(), time.Second)
+	defer cancelAssert()
+	for {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		if err != nil {
+			t.Fatalf("SessionState() error = %v", err)
+		}
+		if state.Transport.State == SessionTransportStateAttached {
+			return
+		}
+		select {
+		case <-assertCtx.Done():
+			t.Fatalf("transport state = %q, want attached", state.Transport.State)
+		case <-time.After(helperReadyPollInterval):
+		}
+	}
+}
+
+func TestCreateSessionMarksPIAgentGRPCFailedWhenStartupDialNeverRecovers(t *testing.T) {
+	runner := &process.FakeRunner{}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner:                  runner,
+		PIAgentGRPCReadyTimeout: 50 * time.Millisecond,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/custom-pi", nil
+		},
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return nil, errors.New(`rpc error: code = Unavailable desc = connection error: desc = "transport: Error while dialing: dial unix /tmp/pi-agent/actrail/s_1.sock: connect: no such file or directory"`)
+		},
+	})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	assertCtx, cancelAssert := context.WithTimeout(context.Background(), time.Second)
+	defer cancelAssert()
+	for {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		if err != nil {
+			t.Fatalf("SessionState() error = %v", err)
+		}
+		if state.Transport.State == SessionTransportStateFailed {
+			if !strings.Contains(state.Transport.Reason, "wait for pi agent grpc") {
+				t.Fatalf("failed transport reason = %q, want readiness timeout", state.Transport.Reason)
+			}
+			return
+		}
+		select {
+		case <-assertCtx.Done():
+			t.Fatalf("transport state = %q, want failed", state.Transport.State)
+		case <-time.After(helperReadyPollInterval):
+		}
+	}
+}
+
+func TestCreateSessionMarksPIAgentGRPCHardDialFailureImmediately(t *testing.T) {
+	runner := &process.FakeRunner{}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner:                  runner,
+		PIAgentGRPCReadyTimeout: time.Second,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/custom-pi", nil
+		},
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return nil, context.Canceled
+		},
+	})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	assertCtx, cancelAssert := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancelAssert()
 	for {
 		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
