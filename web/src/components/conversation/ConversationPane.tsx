@@ -29,7 +29,7 @@ const MAIN_TIMELINE_KINDS = new Set([
   "reasoning",
   "tool",
   "tool_result",
-  "subagent",
+  "team",
   "todo_snapshot",
   "custom_message",
   "pi_session",
@@ -74,7 +74,7 @@ const EVENT_LABELS: Record<string, string> = {
   reasoning: "Reasoning",
   tool: "Tool",
   tool_result: "Tool Result",
-  subagent: "Subagent",
+  team: "Team",
   todo_snapshot: "Todo Progress",
   custom_message: "Custom Message",
   pi_session: "Session",
@@ -782,7 +782,7 @@ function messageSurfaceTone(kind: string, isError = false): string {
       return "border-indigo-200/80 bg-indigo-50/80";
     case "tool_result":
       return "border-emerald-200/80 bg-emerald-50/80";
-    case "subagent":
+    case "team":
       return "border-slate-200/80 bg-slate-50/85";
     case "todo_snapshot":
       return "";
@@ -2517,7 +2517,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
   );
 }
 
-function SubagentIcon() {
+function TeamIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 4.5 17.5 8v6.5L12 18l-5.5-3.5V8L12 4.5Z" />
@@ -2530,18 +2530,18 @@ function SubagentIcon() {
   );
 }
 
-function renderSubagentCard(event: MessageEvent, options: MarkdownRenderOptions) {
+function renderTeamCard(event: MessageEvent, options: MarkdownRenderOptions) {
   const output = firstNonEmptyText(event.output, event.text);
   const pending = !output;
 
   return (
-    <MessageSurface kind="subagent">
-      <div className="subagentCardHeading flex items-start gap-3">
-        <div className="subagentCardIcon" data-testid="subagent-icon" aria-label="Subagent">
-          <SubagentIcon />
+    <MessageSurface kind="team">
+      <div className="teamCardHeading flex items-start gap-3">
+        <div className="teamCardIcon" data-testid="team-icon" aria-label="Team">
+          <TeamIcon />
         </div>
         <div className="min-w-0 flex-1">
-          {renderCardHeader("subagent", firstNonEmptyText(event.agent, "subagent"), firstNonEmptyText(event.task), event.ts)}
+          {renderCardHeader("team", firstNonEmptyText(event.agent, "team"), firstNonEmptyText(event.task), event.ts)}
         </div>
       </div>
       <div className="messageMetaList flex flex-col gap-2">
@@ -2564,7 +2564,7 @@ function renderSubagentCard(event: MessageEvent, options: MarkdownRenderOptions)
           </div>
         ) : null}
       </div>
-      {output ? renderRichText(output, "messageBody", options) : <div className="messageCardFooterText text-sm text-muted-foreground">Waiting for subagent output...</div>}
+      {output ? renderRichText(output, "messageBody", options) : <div className="messageCardFooterText text-sm text-muted-foreground">Waiting for team output...</div>}
     </MessageSurface>
   );
 }
@@ -2673,8 +2673,8 @@ function renderConversationEvent(
     case "tool":
     case "tool_result":
       return renderSystemCard(event, kind, options);
-    case "subagent":
-      return renderSubagentCard(event, options);
+    case "team":
+      return renderTeamCard(event, options);
     case "todo_snapshot":
       return renderTodoSnapshotCard(event, options);
     case "custom_message":

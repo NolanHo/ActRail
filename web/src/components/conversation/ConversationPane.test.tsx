@@ -108,7 +108,7 @@ describe("ConversationPane", () => {
             { type: "reasoning", text: "thinking...", summary: "Inspecting current state" },
             { type: "tool", name: "read" },
             { type: "tool_result", name: "read", text: "{\"ok\":true}" },
-            { type: "subagent", agent: "reviewer", task: "Check the patch", output: "Looks good" },
+            { type: "team", agent: "reviewer", task: "Check the patch", output: "Looks good" },
             {
               type: "todo_snapshot",
               progress_text: "2/3 completed",
@@ -143,9 +143,9 @@ describe("ConversationPane", () => {
     expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(4);
     const todoToken = root.querySelector(".machineTraceToken.todo_snapshot") as HTMLButtonElement | null;
     expect(todoToken).not.toBeNull();
-    expect(root.querySelector("[data-testid='message-surface'][data-kind='subagent']")).not.toBeNull();
-    expect(root.querySelector("[data-testid='message-surface'][data-kind='subagent'].subagent.messageCard")).not.toBeNull();
-    expect(root.querySelector("[data-testid='subagent-icon']")).not.toBeNull();
+    expect(root.querySelector("[data-testid='message-surface'][data-kind='team']")).not.toBeNull();
+    expect(root.querySelector("[data-testid='message-surface'][data-kind='team'].team.messageCard")).not.toBeNull();
+    expect(root.querySelector("[data-testid='team-icon']")).not.toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='todo_snapshot']")).toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='pi_model_change']")).not.toBeNull();
     expect(text).toContain("Please fix this");

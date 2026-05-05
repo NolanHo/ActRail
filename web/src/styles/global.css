@@ -458,7 +458,7 @@ select {
   box-shadow: 0 28px 64px rgba(15, 23, 42, 0.08);
 }
 
-.subagentsThreadView {
+.teamsThreadView {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -804,7 +804,7 @@ select {
   flex: 1;
 }
 
-.subagentsRailShell {
+.teamsRailShell {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -812,27 +812,27 @@ select {
   flex: 1;
 }
 
-.subagentsRailHeader {
+.teamsRailHeader {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
   padding: 0.25rem 0 0.8rem;
 }
 
-.subagentsRailStats,
-.subagentsFilterRow {
+.teamsRailStats,
+.teamsFilterRow {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem;
 }
 
-.subagentsRailStats {
+.teamsRailStats {
   color: var(--legacy-muted);
   font-size: 0.78rem;
 }
 
-.subagentsSearch {
+.teamsSearch {
   width: 100%;
   min-height: 2.45rem;
   border: 1px solid color-mix(in srgb, var(--legacy-border) 72%, transparent);
@@ -843,12 +843,12 @@ select {
   font: inherit;
 }
 
-.subagentsSearch:focus {
+.teamsSearch:focus {
   outline: 2px solid color-mix(in srgb, var(--accent) 26%, transparent);
   outline-offset: 1px;
 }
 
-.subagentsRailBody {
+.teamsRailBody {
   min-height: 0;
   flex: 1 1 auto;
 }
@@ -907,25 +907,25 @@ select {
   background: color-mix(in srgb, var(--panel) 90%, var(--chrome-elevated));
 }
 
-.subagentCardTopline {
+.teamCardTopline {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.5rem;
 }
 
-.subagentCardMeta,
-.subagentCardQuestion {
+.teamCardMeta,
+.teamCardQuestion {
   color: var(--legacy-muted);
   font-size: 0.78rem;
   line-height: 1.3;
 }
 
-.subagentCardQuestion {
+.teamCardQuestion {
   color: color-mix(in srgb, #d97706 76%, var(--text));
 }
 
-.subagentStatusPill {
+.teamStatusPill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -940,32 +940,32 @@ select {
   background: color-mix(in srgb, var(--panel) 92%, var(--chrome-elevated));
 }
 
-.subagentStatusPill.waiting_for_parent {
+.teamStatusPill.waiting_for_parent {
   border-color: color-mix(in srgb, #d97706 34%, var(--legacy-border));
   color: color-mix(in srgb, #d97706 76%, var(--text));
   background: color-mix(in srgb, #d97706 12%, var(--panel));
 }
 
-.subagentStatusPill.running {
+.teamStatusPill.running {
   border-color: color-mix(in srgb, #2563eb 34%, var(--legacy-border));
   color: color-mix(in srgb, #60a5fa 76%, var(--text));
   background: color-mix(in srgb, #2563eb 12%, var(--panel));
 }
 
-.subagentStatusPill.failed {
+.teamStatusPill.failed {
   border-color: color-mix(in srgb, hsl(var(--destructive)) 34%, var(--legacy-border));
   color: hsl(var(--destructive));
   background: color-mix(in srgb, hsl(var(--destructive)) 9%, var(--panel));
 }
 
-.subagentStatusPill.idle,
-.subagentStatusPill.completed {
+.teamStatusPill.idle,
+.teamStatusPill.completed {
   border-color: color-mix(in srgb, #22c55e 34%, var(--legacy-border));
   color: color-mix(in srgb, #22c55e 70%, var(--text));
   background: color-mix(in srgb, #22c55e 10%, var(--panel));
 }
 
-.subagentsThreadHeader {
+.teamsThreadHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -974,29 +974,29 @@ select {
   border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 70%, transparent);
 }
 
-.subagentsThreadTitleBlock {
+.teamsThreadTitleBlock {
   min-width: 0;
 }
 
-.subagentsThreadTitleBlock h1 {
+.teamsThreadTitleBlock h1 {
   margin: 0;
   font-size: 1.5rem;
   line-height: 1.08;
 }
 
-.subagentsThreadTitleBlock p:last-child {
+.teamsThreadTitleBlock p:last-child {
   margin: 0.25rem 0 0;
   color: var(--legacy-muted);
 }
 
-.subagentsThreadHeaderMeta {
+.teamsThreadHeaderMeta {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   flex: 0 0 auto;
 }
 
-.subagentsTeamStrip {
+.teamsTeamStrip {
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
@@ -1004,7 +1004,7 @@ select {
   border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 70%, transparent);
 }
 
-.subagentTeamChip {
+.teamTeamChip {
   min-width: min(15rem, 100%);
   max-width: 22rem;
   display: flex;
@@ -1017,25 +1017,25 @@ select {
   padding: 0.65rem 0.75rem;
 }
 
-.subagentTeamChip span,
-.subagentTeamChip small {
+.teamTeamChip span,
+.teamTeamChip small {
   color: var(--legacy-muted);
   font-size: 0.78rem;
 }
 
-.subagentsThreadScroll {
+.teamsThreadScroll {
   min-height: 0;
   flex: 1 1 auto;
 }
 
-.subagentsThreadMessages {
+.teamsThreadMessages {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
   padding: 1.2rem;
 }
 
-.subagentsThreadMessage {
+.teamsThreadMessage {
   align-self: flex-start;
   max-width: min(72%, 58rem);
   border: 1px solid color-mix(in srgb, var(--legacy-border) 66%, transparent);
@@ -1045,15 +1045,15 @@ select {
   box-shadow: 0 14px 34px rgba(15, 23, 42, 0.05);
 }
 
-.subagentsThreadMessage.leader {
+.teamsThreadMessage.leader {
   background: color-mix(in srgb, #2563eb 13%, var(--panel));
 }
 
-.subagentsThreadMessage.member {
+.teamsThreadMessage.member {
   background: color-mix(in srgb, #22c55e 12%, var(--panel));
 }
 
-.subagentsThreadMessage.system {
+.teamsThreadMessage.system {
   max-width: min(58%, 42rem);
   padding: 0.48rem 0.7rem;
   border-radius: 0.85rem 0.85rem 0.85rem 0.35rem;
@@ -1062,12 +1062,12 @@ select {
   box-shadow: none;
 }
 
-.subagentsThreadMessage p {
+.teamsThreadMessage p {
   margin: 0.35rem 0 0;
   line-height: 1.48;
 }
 
-.subagentsThreadMessage small {
+.teamsThreadMessage small {
   display: block;
   margin-top: 0.42rem;
   color: var(--legacy-muted);
@@ -1075,7 +1075,7 @@ select {
   font-size: 0.74rem;
 }
 
-.subagentsMessageMeta {
+.teamsMessageMeta {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1085,7 +1085,7 @@ select {
   font-weight: 700;
 }
 
-.subagentsThreadFooter {
+.teamsThreadFooter {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1095,7 +1095,7 @@ select {
   font-size: 0.8rem;
 }
 
-.subagentsThreadFooter span:last-child {
+.teamsThreadFooter span:last-child {
   font-family: var(--font-code);
 }
 
@@ -1781,7 +1781,7 @@ select {
   max-width: 100%;
 }
 
-.subagentCardIcon {
+.teamCardIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1794,7 +1794,7 @@ select {
   color: color-mix(in srgb, var(--text) 80%, #475569);
 }
 
-.subagentCardIcon svg {
+.teamCardIcon svg {
   width: 1.25rem;
   height: 1.25rem;
 }
@@ -1808,7 +1808,7 @@ select {
 .messageRow.reasoning,
 .messageRow.tool,
 .messageRow.tool_result,
-.messageRow.subagent,
+.messageRow.team,
 .messageRow.todo_snapshot,
 .messageRow.pi_session,
 .messageRow.pi_model_change,
@@ -2303,9 +2303,9 @@ select {
   background: var(--message-card-tool-error-bg);
 }
 
-.messageCard.subagent {
-  background: var(--message-card-subagent-bg);
-  border-color: var(--message-card-subagent-border);
+.messageCard.team {
+  background: var(--message-card-team-bg);
+  border-color: var(--message-card-team-border);
 }
 
 .messageCard.todo_snapshot {

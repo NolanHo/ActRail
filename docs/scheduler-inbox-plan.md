@@ -10,7 +10,7 @@ SQLite persists scheduler state, inbox state, settings, and delivery history. Th
 
 ## Product model
 
-Global Scheduler is a top-level view in the left global view rail, at the same level as Sessions and Subagents. It is not part of Workspace and not part of Settings.
+Global Scheduler is a top-level view in the left global view rail, at the same level as Sessions and Teams. It is not part of Workspace and not part of Settings.
 
 Workspace Inbox is a per-session pane opened from the active session toolbar. It shows pending, delivered, cancelled, and failed inbox items for the active session.
 

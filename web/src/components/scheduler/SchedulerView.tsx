@@ -36,15 +36,15 @@ export function SchedulerView() {
   }, []);
 
   return (
-    <section className="subagentsThreadView" aria-label="Scheduler view">
-      <header className="subagentsThreadHeader">
+    <section className="teamsThreadView" aria-label="Scheduler view">
+      <header className="teamsThreadHeader">
         <div>
           <p className="sectionEyebrow">Global view</p>
           <h2>Scheduler</h2>
           <p>Alarms, supervisor preset activity, and inbox delivery state across sessions.</p>
         </div>
       </header>
-      <div className="subagentsThreadBody">
+      <div className="teamsThreadBody">
         <section className="workspaceCard">
           <h3>Settings</h3>
           <dl className="workspaceMetaGrid">

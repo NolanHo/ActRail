@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestSubagentSnapshotPersistsAcrossReload(t *testing.T) {
+func TestTeamSnapshotPersistsAcrossReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "actrail.db")
 	catalog, err := OpenSessionCatalog(path)
 	if err != nil {
@@ -18,16 +18,16 @@ func TestSubagentSnapshotPersistsAcrossReload(t *testing.T) {
 	if err := catalog.UpsertSession(context.Background(), SessionRow{SessionID: "child", Backend: "pi", CWD: "/repo", Title: "child", CreatedAt: now, UpdatedAt: now, ActivityAt: now, Hidden: true}); err != nil {
 		t.Fatalf("UpsertSession() error = %v", err)
 	}
-	snapshot := SubagentSnapshotRow{
-		Actor: SubagentActorRow{ActorID: "actor_7", ChildSessionID: "child", ParentSessionID: "parent", Name: "reviewer", Role: "review", Status: "waiting_for_parent", TurnID: "turn_3", QuestionID: "question_2", QuestionTurnID: "turn_3", Question: "Use A?", QuestionContext: "ctx", QuestionCreatedTS: 42, LastEventID: "event_9", LastEventAt: &now, CWD: "/repo", CreatedAt: now, UpdatedAt: now},
-		Events: []SubagentEventRow{
-			{ActorID: "actor_7", EventID: "event_8", Type: "subagent.question", ChildSessionID: "child", ParentSessionID: "parent", TurnID: "turn_3", QuestionID: "question_2", Message: "Use A?", Status: "waiting_for_parent", TS: 42},
-			{ActorID: "actor_7", EventID: "event_9", Type: "subagent.status", ChildSessionID: "child", ParentSessionID: "parent", Status: "waiting_for_parent", TS: 43},
+	snapshot := TeamSnapshotRow{
+		Actor: TeamActorRow{ActorID: "actor_7", ChildSessionID: "child", ParentSessionID: "parent", Name: "reviewer", Role: "review", Status: "waiting_for_parent", TurnID: "turn_3", QuestionID: "question_2", QuestionTurnID: "turn_3", Question: "Use A?", QuestionContext: "ctx", QuestionCreatedTS: 42, LastEventID: "event_9", LastEventAt: &now, CWD: "/repo", CreatedAt: now, UpdatedAt: now},
+		Events: []TeamEventRow{
+			{ActorID: "actor_7", EventID: "event_8", Type: "team.question", ChildSessionID: "child", ParentSessionID: "parent", TurnID: "turn_3", QuestionID: "question_2", Message: "Use A?", Status: "waiting_for_parent", TS: 42},
+			{ActorID: "actor_7", EventID: "event_9", Type: "team.status", ChildSessionID: "child", ParentSessionID: "parent", Status: "waiting_for_parent", TS: 43},
 		},
-		Messages: []SubagentMessageRow{{ActorID: "actor_7", MessageID: "question_2", Kind: "member", Label: "reviewer", Body: "Use A?", TS: 42, Meta: "ask_parent"}},
+		Messages: []TeamMessageRow{{ActorID: "actor_7", MessageID: "question_2", Kind: "member", Label: "reviewer", Body: "Use A?", TS: 42, Meta: "ask_parent"}},
 	}
-	if err := catalog.ReplaceSubagentSnapshot(context.Background(), snapshot); err != nil {
-		t.Fatalf("ReplaceSubagentSnapshot() error = %v", err)
+	if err := catalog.ReplaceTeamSnapshot(context.Background(), snapshot); err != nil {
+		t.Fatalf("ReplaceTeamSnapshot() error = %v", err)
 	}
 	if err := catalog.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -38,16 +38,16 @@ func TestSubagentSnapshotPersistsAcrossReload(t *testing.T) {
 		t.Fatalf("OpenSessionCatalog(reload) error = %v", err)
 	}
 	defer func() { _ = reloaded.Close() }()
-	loaded, err := reloaded.ListSubagentSnapshots(context.Background())
+	loaded, err := reloaded.ListTeamSnapshots(context.Background())
 	if err != nil {
-		t.Fatalf("ListSubagentSnapshots() error = %v", err)
+		t.Fatalf("ListTeamSnapshots() error = %v", err)
 	}
 	if len(loaded) != 1 || loaded[0].Actor.ActorID != "actor_7" || len(loaded[0].Events) != 2 || len(loaded[0].Messages) != 1 {
 		t.Fatalf("loaded snapshot = %+v", loaded)
 	}
 }
 
-func TestOpenSessionCatalogMigratesSubagentTables(t *testing.T) {
+func TestOpenSessionCatalogMigratesTeamTables(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "actrail.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestOpenSessionCatalogMigratesSubagentTables(t *testing.T) {
 		t.Fatalf("OpenSessionCatalog() error = %v", err)
 	}
 	defer func() { _ = catalog.Close() }()
-	for _, table := range []string{"subagent_actors", "subagent_events", "subagent_messages"} {
+	for _, table := range []string{"team_actors", "team_events", "team_messages"} {
 		var count int
 		if err := catalog.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatalf("query table %s: %v", table, err)

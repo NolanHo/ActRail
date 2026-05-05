@@ -98,20 +98,20 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.HandleFunc("POST /api/logout", r.logout)
 	mux.Handle("GET /api/bootstrap", r.requireAuth(http.HandlerFunc(r.bootstrap)))
 	mux.Handle("POST /team/command", r.requireAuth(http.HandlerFunc(r.teamCommand)))
-	mux.Handle("GET /team/events", r.requireAuth(http.HandlerFunc(r.teamEvents)))
+	mux.Handle("GET /team/events", r.requireAuth(http.HandlerFunc(r.teamEventsSSE)))
 	mux.Handle("GET /api/sessions", r.requireAuth(http.HandlerFunc(r.listSessions)))
 	mux.Handle("POST /api/sessions", r.requireAuth(http.HandlerFunc(r.createSession)))
-	mux.Handle("GET /api/subagents", r.requireAuth(http.HandlerFunc(r.listSubagents)))
-	mux.Handle("POST /api/subagents/spawn", r.requireAuth(http.HandlerFunc(r.spawnSubagent)))
-	mux.Handle("POST /api/subagents/{actor_id}/prompt", r.requireAuth(http.HandlerFunc(r.promptSubagent)))
-	mux.Handle("POST /api/subagents/{actor_id}/followup", r.requireAuth(http.HandlerFunc(r.followupSubagent)))
-	mux.Handle("POST /api/subagents/{actor_id}/send", r.requireAuth(http.HandlerFunc(r.sendSubagent)))
-	mux.Handle("POST /api/subagents/{actor_id}/ask_parent", r.requireAuth(http.HandlerFunc(r.askParent)))
-	mux.Handle("POST /api/subagents/{actor_id}/ask_parent/resume", r.requireAuth(http.HandlerFunc(r.resumeAskParent)))
-	mux.Handle("POST /api/subagents/{actor_id}/answer", r.requireAuth(http.HandlerFunc(r.answerSubagent)))
-	mux.Handle("POST /api/subagents/{actor_id}/abort", r.requireAuth(http.HandlerFunc(r.abortSubagent)))
-	mux.Handle("POST /api/subagents/{actor_id}/close", r.requireAuth(http.HandlerFunc(r.closeSubagent)))
-	mux.Handle("GET /api/subagents/{actor_id}/events", r.requireAuth(http.HandlerFunc(r.subagentEvents)))
+	mux.Handle("GET /api/teams", r.requireAuth(http.HandlerFunc(r.listTeams)))
+	mux.Handle("POST /api/teams/spawn", r.requireAuth(http.HandlerFunc(r.spawnTeam)))
+	mux.Handle("POST /api/teams/{actor_id}/prompt", r.requireAuth(http.HandlerFunc(r.promptTeam)))
+	mux.Handle("POST /api/teams/{actor_id}/followup", r.requireAuth(http.HandlerFunc(r.followupTeam)))
+	mux.Handle("POST /api/teams/{actor_id}/send", r.requireAuth(http.HandlerFunc(r.sendTeam)))
+	mux.Handle("POST /api/teams/{actor_id}/ask_parent", r.requireAuth(http.HandlerFunc(r.askParent)))
+	mux.Handle("POST /api/teams/{actor_id}/ask_parent/resume", r.requireAuth(http.HandlerFunc(r.resumeAskParent)))
+	mux.Handle("POST /api/teams/{actor_id}/answer", r.requireAuth(http.HandlerFunc(r.answerTeam)))
+	mux.Handle("POST /api/teams/{actor_id}/abort", r.requireAuth(http.HandlerFunc(r.abortTeam)))
+	mux.Handle("POST /api/teams/{actor_id}/close", r.requireAuth(http.HandlerFunc(r.closeTeam)))
+	mux.Handle("GET /api/teams/{actor_id}/events", r.requireAuth(http.HandlerFunc(r.teamEventsJSON)))
 	mux.Handle("GET /api/session_resume_candidates", r.requireAuth(http.HandlerFunc(r.sessionResumeCandidates)))
 	mux.Handle("GET /api/settings/voice", r.requireAuth(http.HandlerFunc(r.voiceSettings)))
 	mux.Handle("POST /api/settings/voice", r.requireAuth(http.HandlerFunc(r.updateVoiceSettings)))
@@ -259,13 +259,13 @@ func (r Router) listSessions(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (r Router) listSubagents(w http.ResponseWriter, req *http.Request) {
+func (r Router) listTeams(w http.ResponseWriter, req *http.Request) {
 	includeClosed, err := queryBool(req, "include_closed")
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
-	payload, err := r.app.ListSubagents(req.Context(), app.ListSubagentsRequest{IncludeClosed: includeClosed})
+	payload, err := r.app.ListTeams(req.Context(), app.ListTeamsRequest{IncludeClosed: includeClosed})
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -273,13 +273,13 @@ func (r Router) listSubagents(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (r Router) spawnSubagent(w http.ResponseWriter, req *http.Request) {
-	var body app.SpawnSubagentRequest
+func (r Router) spawnTeam(w http.ResponseWriter, req *http.Request) {
+	var body app.SpawnTeamRequest
 	if err := decodeJSONBody(req, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
-	payload, err := r.app.SpawnSubagent(req.Context(), body)
+	payload, err := r.app.SpawnTeam(req.Context(), body)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -287,29 +287,14 @@ func (r Router) spawnSubagent(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (r Router) promptSubagent(w http.ResponseWriter, req *http.Request) {
-	var body app.PromptSubagentRequest
-	if err := decodeJSONBody(req, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
-		return
-	}
-	body.ActorID = req.PathValue("actor_id")
-	payload, err := r.app.PromptSubagent(req.Context(), body)
-	if err != nil {
-		writeAppError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, payload)
-}
-
-func (r Router) followupSubagent(w http.ResponseWriter, req *http.Request) {
-	var body app.FollowupSubagentRequest
+func (r Router) promptTeam(w http.ResponseWriter, req *http.Request) {
+	var body app.PromptTeamRequest
 	if err := decodeJSONBody(req, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
 	body.ActorID = req.PathValue("actor_id")
-	payload, err := r.app.FollowupSubagent(req.Context(), body)
+	payload, err := r.app.PromptTeam(req.Context(), body)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -317,14 +302,29 @@ func (r Router) followupSubagent(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (r Router) sendSubagent(w http.ResponseWriter, req *http.Request) {
-	var body app.SendSubagentRequest
+func (r Router) followupTeam(w http.ResponseWriter, req *http.Request) {
+	var body app.FollowupTeamRequest
 	if err := decodeJSONBody(req, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
 	body.ActorID = req.PathValue("actor_id")
-	payload, err := r.app.SendSubagent(req.Context(), body)
+	payload, err := r.app.FollowupTeam(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) sendTeam(w http.ResponseWriter, req *http.Request) {
+	var body app.SendTeamRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.ActorID = req.PathValue("actor_id")
+	payload, err := r.app.SendTeam(req.Context(), body)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -362,14 +362,14 @@ func (r Router) resumeAskParent(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (r Router) answerSubagent(w http.ResponseWriter, req *http.Request) {
-	var body app.AnswerSubagentRequest
+func (r Router) answerTeam(w http.ResponseWriter, req *http.Request) {
+	var body app.AnswerTeamRequest
 	if err := decodeJSONBody(req, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
 	body.ActorID = req.PathValue("actor_id")
-	payload, err := r.app.AnswerSubagent(req.Context(), body)
+	payload, err := r.app.AnswerTeam(req.Context(), body)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -377,14 +377,14 @@ func (r Router) answerSubagent(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (r Router) abortSubagent(w http.ResponseWriter, req *http.Request) {
-	var body app.AbortSubagentRequest
+func (r Router) abortTeam(w http.ResponseWriter, req *http.Request) {
+	var body app.AbortTeamRequest
 	if err := decodeJSONBody(req, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
 	body.ActorID = req.PathValue("actor_id")
-	payload, err := r.app.AbortSubagent(req.Context(), body)
+	payload, err := r.app.AbortTeam(req.Context(), body)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -392,17 +392,8 @@ func (r Router) abortSubagent(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (r Router) closeSubagent(w http.ResponseWriter, req *http.Request) {
-	payload, err := r.app.CloseSubagent(req.Context(), app.CloseSubagentRequest{ActorID: req.PathValue("actor_id")})
-	if err != nil {
-		writeAppError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, payload)
-}
-
-func (r Router) subagentEvents(w http.ResponseWriter, req *http.Request) {
-	payload, err := r.app.SubagentEvents(req.Context(), app.SubagentEventsRequest{ActorID: req.PathValue("actor_id"), AfterEventID: strings.TrimSpace(req.URL.Query().Get("after_event_id"))})
+func (r Router) closeTeam(w http.ResponseWriter, req *http.Request) {
+	payload, err := r.app.CloseTeam(req.Context(), app.CloseTeamRequest{ActorID: req.PathValue("actor_id")})
 	if err != nil {
 		writeAppError(w, err)
 		return

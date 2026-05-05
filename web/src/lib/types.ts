@@ -270,6 +270,40 @@ export interface SessionsResponse {
   group_key?: string | null;
 }
 
+export interface TeamMessage {
+  message_id: string;
+  kind: "leader" | "member" | "system" | string;
+  label: string;
+  body: string;
+  ts?: number;
+  meta?: string;
+}
+
+export interface TeamNodeResponse {
+  actor_id: string;
+  child_session_id: string;
+  parent_session_id: string;
+  parent_actor_id?: string;
+  name: string;
+  role: string;
+  status: "waiting_for_parent" | "running" | "failed" | "idle" | "completed" | "aborted" | "closed" | string;
+  turn_id?: string;
+  question?: string;
+  last_event_id?: string;
+  last_event_ts?: number;
+  model?: string;
+  cwd?: string;
+  messages?: TeamMessage[];
+  children?: TeamNodeResponse[];
+}
+
+export interface TeamsResponse {
+  ok?: boolean;
+  roots?: TeamNodeResponse[];
+  total_count?: number;
+  non_leaf_count?: number;
+}
+
 export interface SessionBootstrapResponse {
   protocol_version?: number;
   capabilities?: BootstrapCapabilities;
