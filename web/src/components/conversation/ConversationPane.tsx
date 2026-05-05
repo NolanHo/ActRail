@@ -58,6 +58,13 @@ interface AssistantTurnMeta {
   turnSeconds: number | null;
   endTs: number | null;
 }
+
+type ToolPairState = "call" | "result" | "orphan";
+
+interface ToolTracePairInfo {
+  id: string;
+  state: ToolPairState;
+}
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
 
@@ -2057,6 +2064,44 @@ function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, Assistant
   return result;
 }
 
+function buildToolTracePairs(events: MessageEvent[]): Map<number, ToolTracePairInfo> {
+  const calls = new Map<string, number[]>();
+  const results = new Map<string, number[]>();
+
+  for (let index = 0; index < events.length; index += 1) {
+    const kind = eventKind(events[index]);
+    if (kind !== "tool" && kind !== "tool_result") {
+      continue;
+    }
+    const id = toolCallID(events[index]);
+    if (!id) {
+      continue;
+    }
+    const bucket = kind === "tool" ? calls : results;
+    bucket.set(id, [...bucket.get(id) ?? [], index]);
+  }
+
+  const pairs = new Map<number, ToolTracePairInfo>();
+  for (const [id, callIndexes] of calls) {
+    const resultIndexes = results.get(id) ?? [];
+    for (const index of callIndexes) {
+      pairs.set(index, { id, state: resultIndexes.length > 0 ? "call" : "orphan" });
+    }
+    for (const index of resultIndexes) {
+      pairs.set(index, { id, state: "result" });
+    }
+  }
+  for (const [id, resultIndexes] of results) {
+    if (calls.has(id)) {
+      continue;
+    }
+    for (const index of resultIndexes) {
+      pairs.set(index, { id, state: "orphan" });
+    }
+  }
+  return pairs;
+}
+
 function hasToolResultAfter(events: MessageEvent[], tool: MessageEvent, startIndex: number): boolean {
   const callID = toolCallID(tool);
   for (let index = startIndex + 1; index < events.length; index += 1) {
@@ -2333,6 +2378,7 @@ async function hydrateDeferredToolEvent(event: MessageEvent) {
 function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {
   const traceEvents = sortMachineTraceEvents(events);
   const runningIndex = machineTraceRunningIndex(traceEvents, isBusy);
+  const toolTracePairs = buildToolTracePairs(traceEvents);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [hydratedByKey, setHydratedByKey] = useState<Record<string, MessageEvent>>({});
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000);
@@ -2395,8 +2441,16 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             : summary;
           const title = machineTraceTitle(event, kind);
           const toolFamily = kind === "tool" || kind === "tool_result" ? machineTraceToolFamily(event) : undefined;
+          const toolPair = toolTracePairs.get(index);
+          const pairLabel = toolPair
+            ? toolPair.state === "call"
+              ? `paired call ${toolPair.id}`
+              : toolPair.state === "result"
+                ? `paired result ${toolPair.id}`
+                : `unpaired tool ${toolPair.id}`
+            : "";
           const runtimeLabel = typeof runtimeSeconds === "number" ? `running ${formatRuntime(runtimeSeconds)}` : "";
-          const accessibleLabel = [tokenSummary ? `${title}: ${tokenSummary}` : title, runtimeLabel].filter(Boolean).join("; ");
+          const accessibleLabel = [tokenSummary ? `${title}: ${tokenSummary}` : title, pairLabel, runtimeLabel].filter(Boolean).join("; ");
           const statusLabel = kind === "tool_result"
             ? (event.is_error ? "error" : "complete")
             : kind === "todo_snapshot"
@@ -2412,12 +2466,17 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
               data-status={statusLabel}
               data-variant={piEventVariant || undefined}
               data-tool={toolFamily}
+              data-pair-state={toolPair?.state}
+              data-pair-id={toolPair?.id}
               className={cn(
                 "machineTraceToken",
                 kind,
                 isSelected && "isSelected",
                 isRunning && "isRunning",
                 event.is_error && "isError",
+                toolPair?.state === "call" && "isPairedToolCall",
+                toolPair?.state === "result" && "isPairedToolResult",
+                toolPair?.state === "orphan" && "isUnpairedTool",
                 (kind === "tool" || kind === "tool_result") && event.name === "process" && "isProcessTool",
                 (piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.extension_ui && "isExtensionUI",

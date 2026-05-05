@@ -1960,6 +1960,29 @@ select {
   color: hsl(var(--destructive));
 }
 
+.machineTraceToken.isPairedToolCall::after,
+.machineTraceToken.isPairedToolResult::after {
+  content: "";
+  position: absolute;
+  inset-block: 0.34rem;
+  width: 0.16rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+}
+
+.machineTraceToken.isPairedToolCall::after {
+  right: -0.09rem;
+}
+
+.machineTraceToken.isPairedToolResult::after {
+  left: -0.09rem;
+}
+
+.machineTraceToken.isUnpairedTool {
+  border-style: dashed;
+}
+
 .machineTraceToken.isProcessTool,
 .machineTraceToken[data-tool="terminal"] {
   background: color-mix(in srgb, var(--message-card-base) 80%, #0ea5e9);
