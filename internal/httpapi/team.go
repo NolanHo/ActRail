@@ -35,14 +35,14 @@ type teamRoleConfig struct {
 }
 
 type teamCommandResult struct {
-	RequestID      string             `json:"requestId"`
-	ActorID        string             `json:"actorId,omitempty"`
-	ChildSessionID string             `json:"childSessionId,omitempty"`
-	Status         app.SubagentStatus `json:"status,omitempty"`
-	TurnID         string             `json:"turnId,omitempty"`
-	Error          string             `json:"error,omitempty"`
-	ExitCode       *int               `json:"exitCode,omitempty"`
-	Delivery       string             `json:"delivery,omitempty"`
+	RequestID      string         `json:"requestId"`
+	ActorID        string         `json:"actorId,omitempty"`
+	ChildSessionID string         `json:"childSessionId,omitempty"`
+	Status         app.TeamStatus `json:"status,omitempty"`
+	TurnID         string         `json:"turnId,omitempty"`
+	Error          string         `json:"error,omitempty"`
+	ExitCode       *int           `json:"exitCode,omitempty"`
+	Delivery       string         `json:"delivery,omitempty"`
 }
 
 func (r Router) teamCommand(w http.ResponseWriter, req *http.Request) {
@@ -70,7 +70,7 @@ func (r Router) teamCommand(w http.ResponseWriter, req *http.Request) {
 func (r Router) dispatchTeamCommand(req *http.Request, cmd teamCommand) (teamCommandResult, error) {
 	switch cmd.Type {
 	case "team.spawn":
-		res, err := r.app.SpawnSubagent(req.Context(), app.SpawnSubagentRequest{
+		res, err := r.app.SpawnTeam(req.Context(), app.SpawnTeamRequest{
 			ParentSessionID: cmd.ParentSessionID,
 			Name:            cmd.Name,
 			Role:            cmd.Role,
@@ -79,7 +79,7 @@ func (r Router) dispatchTeamCommand(req *http.Request, cmd teamCommand) (teamCom
 			Model:           cmd.Model,
 			InitialPrompt:   cmd.InitialPrompt,
 		})
-		return teamResultFromSubagentCommand(cmd.RequestID, res), err
+		return teamResultFromTeamCommand(cmd.RequestID, res), err
 	case "team.followup":
 		prompt := strings.TrimSpace(strings.Join(cmd.QueuedMessages, "\n\n"))
 		if prompt != "" {
@@ -87,33 +87,48 @@ func (r Router) dispatchTeamCommand(req *http.Request, cmd teamCommand) (teamCom
 		} else {
 			prompt = cmd.Prompt
 		}
-		res, err := r.app.FollowupSubagent(req.Context(), app.FollowupSubagentRequest{ActorID: cmd.ActorID, Prompt: prompt})
-		return teamResultFromSubagentCommand(cmd.RequestID, res), err
+		res, err := r.app.FollowupTeam(req.Context(), app.FollowupTeamRequest{ActorID: cmd.ActorID, Prompt: prompt})
+		return teamResultFromTeamCommand(cmd.RequestID, res), err
 	case "team.send":
-		res, err := r.app.SendSubagent(req.Context(), app.SendSubagentRequest{ActorID: cmd.ActorID, Message: cmd.Message})
+		res, err := r.app.SendTeam(req.Context(), app.SendTeamRequest{ActorID: cmd.ActorID, Message: cmd.Message})
 		return teamCommandResult{RequestID: cmd.RequestID, ActorID: res.ActorID, TurnID: res.TurnID, Delivery: res.Delivery}, err
 	case "team.answer":
-		res, err := r.app.AnswerSubagent(req.Context(), app.AnswerSubagentRequest{ActorID: cmd.ActorID, QuestionID: cmd.QuestionID, Answer: cmd.Answer})
-		return teamResultFromSubagentCommand(cmd.RequestID, res), err
+		res, err := r.app.AnswerTeam(req.Context(), app.AnswerTeamRequest{ActorID: cmd.ActorID, QuestionID: cmd.QuestionID, Answer: cmd.Answer})
+		return teamResultFromTeamCommand(cmd.RequestID, res), err
 	case "team.abort":
-		res, err := r.app.AbortSubagent(req.Context(), app.AbortSubagentRequest{ActorID: cmd.ActorID})
-		return teamResultFromSubagentCommand(cmd.RequestID, res), err
+		res, err := r.app.AbortTeam(req.Context(), app.AbortTeamRequest{ActorID: cmd.ActorID})
+		return teamResultFromTeamCommand(cmd.RequestID, res), err
 	case "team.close":
-		res, err := r.app.CloseSubagent(req.Context(), app.CloseSubagentRequest{ActorID: cmd.ActorID})
-		return teamResultFromSubagentCommand(cmd.RequestID, res), err
+		res, err := r.app.CloseTeam(req.Context(), app.CloseTeamRequest{ActorID: cmd.ActorID})
+		return teamResultFromTeamCommand(cmd.RequestID, res), err
 	case "team.status", "team.subscribe":
-		res, err := r.app.StatusSubagent(req.Context(), app.StatusSubagentRequest{ActorID: cmd.ActorID})
-		return teamResultFromSubagentCommand(cmd.RequestID, res), err
+		res, err := r.app.StatusTeam(req.Context(), app.StatusTeamRequest{ActorID: cmd.ActorID})
+		return teamResultFromTeamCommand(cmd.RequestID, res), err
 	default:
 		return teamCommandResult{}, app.Invalid("type", fmt.Sprintf("unsupported team command %q", cmd.Type))
 	}
 }
 
-func teamResultFromSubagentCommand(requestID string, res app.SubagentCommandResponse) teamCommandResult {
+func teamResultFromTeamCommand(requestID string, res app.TeamCommandResponse) teamCommandResult {
 	return teamCommandResult{RequestID: requestID, ActorID: res.ActorID, ChildSessionID: res.ChildSessionID, Status: res.Status, TurnID: res.TurnID}
 }
 
-func (r Router) teamEvents(w http.ResponseWriter, req *http.Request) {
+func (r Router) teamEventsJSON(w http.ResponseWriter, req *http.Request) {
+	actorID := strings.TrimSpace(req.PathValue("actor_id"))
+	afterEventID := strings.TrimSpace(req.URL.Query().Get("after_event_id"))
+	if actorID == "" {
+		writeAppError(w, app.Invalid("actorId", "actorId required"))
+		return
+	}
+	payload, err := r.app.TeamEvents(req.Context(), app.TeamEventsRequest{ActorID: actorID, AfterEventID: afterEventID})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) teamEventsSSE(w http.ResponseWriter, req *http.Request) {
 	actorID := strings.TrimSpace(req.URL.Query().Get("actorId"))
 	afterEventID := strings.TrimSpace(req.URL.Query().Get("afterEventId"))
 	if actorID == "" {
@@ -136,7 +151,7 @@ func (r Router) teamEvents(w http.ResponseWriter, req *http.Request) {
 	defer heartbeat.Stop()
 	enc := json.NewEncoder(w)
 	for {
-		payload, err := r.app.SubagentEvents(req.Context(), app.SubagentEventsRequest{ActorID: actorID, AfterEventID: afterEventID})
+		payload, err := r.app.TeamEvents(req.Context(), app.TeamEventsRequest{ActorID: actorID, AfterEventID: afterEventID})
 		if err != nil {
 			_, _ = w.Write([]byte("event: error\n"))
 			_, _ = w.Write([]byte("data: "))
@@ -146,7 +161,7 @@ func (r Router) teamEvents(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if len(payload.Events) > 0 {
-			actor, err := r.app.StatusSubagent(req.Context(), app.StatusSubagentRequest{ActorID: actorID})
+			actor, err := r.app.StatusTeam(req.Context(), app.StatusTeamRequest{ActorID: actorID})
 			if err != nil {
 				_, _ = w.Write([]byte("event: error\n"))
 				_, _ = w.Write([]byte("data: "))
@@ -155,7 +170,7 @@ func (r Router) teamEvents(w http.ResponseWriter, req *http.Request) {
 				flusher.Flush()
 				return
 			}
-			for _, event := range app.TeamEventsFromSubagentEvents(payload.Events, actor.Actor) {
+			for _, event := range app.TeamEventsFromStoredEvents(payload.Events, actor.Actor) {
 				_, _ = w.Write([]byte("data: "))
 				_ = enc.Encode(event)
 				_, _ = w.Write([]byte("\n"))

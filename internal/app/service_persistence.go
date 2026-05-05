@@ -38,7 +38,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		_ = catalog.Close()
 		return nil, err
 	}
-	subagentSnapshots, err := catalog.ListSubagentSnapshots(context.Background())
+	teamSnapshots, err := catalog.ListTeamSnapshots(context.Background())
 	if err != nil {
 		_ = catalog.Close()
 		return nil, err
@@ -55,7 +55,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		waitStore:           catalog,
 		supervisorStore:     catalog,
 		schedulerStore:      catalog,
-		subagents:           newSubagentRegistry(now, catalog),
+		teams:               newTeamRegistry(now, catalog),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
 		piModels:            piModelCache{},
@@ -66,7 +66,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		_ = catalog.Close()
 		return nil, err
 	}
-	if err := stub.subagents.rehydrate(subagentSnapshots); err != nil {
+	if err := stub.teams.rehydrate(teamSnapshots); err != nil {
 		_ = catalog.Close()
 		return nil, err
 	}

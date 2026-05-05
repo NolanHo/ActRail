@@ -352,7 +352,7 @@ var migrations = []migration{
 		version: 9,
 		apply: func(ctx context.Context, tx *sql.Tx) error {
 			statements := []string{
-				`CREATE TABLE IF NOT EXISTS subagent_actors (
+				`CREATE TABLE IF NOT EXISTS team_actors (
 					actor_id TEXT PRIMARY KEY,
 					child_session_id TEXT NOT NULL,
 					parent_actor_id TEXT NOT NULL DEFAULT '',
@@ -375,9 +375,9 @@ var migrations = []migration{
 					updated_at TEXT NOT NULL,
 					FOREIGN KEY(child_session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
 				)`,
-				`CREATE UNIQUE INDEX IF NOT EXISTS subagent_active_parent_name_idx ON subagent_actors(parent_session_id, name) WHERE status <> 'closed'`,
-				`CREATE INDEX IF NOT EXISTS subagent_parent_actor_idx ON subagent_actors(parent_actor_id, updated_at DESC)`,
-				`CREATE TABLE IF NOT EXISTS subagent_events (
+				`CREATE UNIQUE INDEX IF NOT EXISTS team_active_parent_name_idx ON team_actors(parent_session_id, name) WHERE status <> 'closed'`,
+				`CREATE INDEX IF NOT EXISTS team_parent_actor_idx ON team_actors(parent_actor_id, updated_at DESC)`,
+				`CREATE TABLE IF NOT EXISTS team_events (
 					actor_id TEXT NOT NULL,
 					ordinal INTEGER NOT NULL,
 					event_id TEXT NOT NULL UNIQUE,
@@ -391,10 +391,10 @@ var migrations = []migration{
 					status TEXT NOT NULL DEFAULT '',
 					ts REAL NOT NULL DEFAULT 0,
 					PRIMARY KEY(actor_id, ordinal),
-					FOREIGN KEY(actor_id) REFERENCES subagent_actors(actor_id) ON DELETE CASCADE
+					FOREIGN KEY(actor_id) REFERENCES team_actors(actor_id) ON DELETE CASCADE
 				)`,
-				`CREATE INDEX IF NOT EXISTS subagent_events_actor_event_idx ON subagent_events(actor_id, event_id)`,
-				`CREATE TABLE IF NOT EXISTS subagent_messages (
+				`CREATE INDEX IF NOT EXISTS team_events_actor_event_idx ON team_events(actor_id, event_id)`,
+				`CREATE TABLE IF NOT EXISTS team_messages (
 					actor_id TEXT NOT NULL,
 					ordinal INTEGER NOT NULL,
 					message_id TEXT NOT NULL,
@@ -404,7 +404,7 @@ var migrations = []migration{
 					ts REAL NOT NULL DEFAULT 0,
 					meta TEXT NOT NULL DEFAULT '',
 					PRIMARY KEY(actor_id, ordinal),
-					FOREIGN KEY(actor_id) REFERENCES subagent_actors(actor_id) ON DELETE CASCADE
+					FOREIGN KEY(actor_id) REFERENCES team_actors(actor_id) ON DELETE CASCADE
 				)`,
 			}
 			for _, stmt := range statements {
@@ -419,10 +419,10 @@ var migrations = []migration{
 	{
 		version: 10,
 		apply: func(ctx context.Context, tx *sql.Tx) error {
-			if err := ensureColumnExists(ctx, tx, "subagent_actors", "question_answer", `ALTER TABLE subagent_actors ADD COLUMN question_answer TEXT NOT NULL DEFAULT ''`); err != nil {
+			if err := ensureColumnExists(ctx, tx, "team_actors", "question_answer", `ALTER TABLE team_actors ADD COLUMN question_answer TEXT NOT NULL DEFAULT ''`); err != nil {
 				return err
 			}
-			if err := ensureColumnExists(ctx, tx, "subagent_actors", "question_terminal", `ALTER TABLE subagent_actors ADD COLUMN question_terminal TEXT NOT NULL DEFAULT ''`); err != nil {
+			if err := ensureColumnExists(ctx, tx, "team_actors", "question_terminal", `ALTER TABLE team_actors ADD COLUMN question_terminal TEXT NOT NULL DEFAULT ''`); err != nil {
 				return err
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 10, time.Now().UTC().Format(tsLayout))

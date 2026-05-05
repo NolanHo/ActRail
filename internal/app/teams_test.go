@@ -13,33 +13,33 @@ import (
 	"actrail/internal/domain/session"
 )
 
-func testSpawnSubagentRequest(parentSessionID, name, role, cwd string) SpawnSubagentRequest {
+func testSpawnTeamRequest(parentSessionID, name, role, cwd string) SpawnTeamRequest {
 	useGRPC := false
-	return SpawnSubagentRequest{ParentSessionID: parentSessionID, Name: name, Role: role, AgentBackend: "pi", CWD: cwd, PIAgentGRPC: &useGRPC}
+	return SpawnTeamRequest{ParentSessionID: parentSessionID, Name: name, Role: role, AgentBackend: "pi", CWD: cwd, PIAgentGRPC: &useGRPC}
 }
 
-func TestListSubagentsEmptyUntilRuntimeBackendCreatesActors(t *testing.T) {
+func TestListTeamsEmptyUntilRuntimeBackendCreatesActors(t *testing.T) {
 	s := NewStubForTest(config.Load(), time.Now, RuntimeConfig{})
-	res, err := s.ListSubagents(context.Background(), ListSubagentsRequest{})
+	res, err := s.ListTeams(context.Background(), ListTeamsRequest{})
 	if err != nil {
-		t.Fatalf("ListSubagents() error = %v", err)
+		t.Fatalf("ListTeams() error = %v", err)
 	}
 	if !res.OK || len(res.Roots) != 0 || res.TotalCount != 0 || res.NonLeafCount != 0 {
-		t.Fatalf("ListSubagents() = %#v, want empty ok snapshot", res)
+		t.Fatalf("ListTeams() = %#v, want empty ok snapshot", res)
 	}
 }
 
-func TestPersistentStubListSubagentsEmpty(t *testing.T) {
+func TestPersistentStubListTeamsEmpty(t *testing.T) {
 	s, err := NewPersistentStubForTest(persistentTestConfig(t), time.Now, RuntimeConfig{})
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest() error = %v", err)
 	}
-	res, err := s.ListSubagents(context.Background(), ListSubagentsRequest{})
+	res, err := s.ListTeams(context.Background(), ListTeamsRequest{})
 	if err != nil {
-		t.Fatalf("ListSubagents() error = %v", err)
+		t.Fatalf("ListTeams() error = %v", err)
 	}
 	if !res.OK || res.TotalCount != 0 {
-		t.Fatalf("ListSubagents() = %#v, want empty ok snapshot", res)
+		t.Fatalf("ListTeams() = %#v, want empty ok snapshot", res)
 	}
 }
 
@@ -55,11 +55,11 @@ func TestPersistentStubResumeAskParentAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	spawned, err := created.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "", cwd))
+	spawned, err := created.SpawnTeam(context.Background(), testSpawnTeamRequest(parent.Session.SessionID, "reviewer", "", cwd))
 	if err != nil {
-		t.Fatalf("SpawnSubagent() error = %v", err)
+		t.Fatalf("SpawnTeam() error = %v", err)
 	}
-	_, err = created.subagents.askParent(spawned.ActorID, "turn_1", "Continue?", "ctx")
+	_, err = created.teams.askParent(spawned.ActorID, "turn_1", "Continue?", "ctx")
 	if err != nil {
 		t.Fatalf("askParent() error = %v", err)
 	}
@@ -68,11 +68,11 @@ func TestPersistentStubResumeAskParentAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
 	}
-	listed, err := rehydrated.ListSubagents(context.Background(), ListSubagentsRequest{})
+	listed, err := rehydrated.ListTeams(context.Background(), ListTeamsRequest{})
 	if err != nil {
-		t.Fatalf("ListSubagents() error = %v", err)
+		t.Fatalf("ListTeams() error = %v", err)
 	}
-	if listed.TotalCount != 1 || listed.Roots[0].Question == nil || listed.Roots[0].Status != SubagentStatusWaitingForParent {
+	if listed.TotalCount != 1 || listed.Roots[0].Question == nil || listed.Roots[0].Status != TeamStatusWaitingForParent {
 		t.Fatalf("rehydrated pending question = %+v", listed)
 	}
 	answerCh := make(chan appAskParentResult, 1)
@@ -80,8 +80,8 @@ func TestPersistentStubResumeAskParentAfterRestart(t *testing.T) {
 		answer, err := rehydrated.ResumeAskParent(context.Background(), AskParentRequest{ActorID: spawned.ActorID, QuestionID: listed.Roots[0].Question.QuestionID})
 		answerCh <- appAskParentResult{answer: answer, err: err}
 	}()
-	if _, err := rehydrated.AnswerSubagent(context.Background(), AnswerSubagentRequest{ActorID: spawned.ActorID, QuestionID: listed.Roots[0].Question.QuestionID, Answer: "Continue"}); err != nil {
-		t.Fatalf("AnswerSubagent() error = %v", err)
+	if _, err := rehydrated.AnswerTeam(context.Background(), AnswerTeamRequest{ActorID: spawned.ActorID, QuestionID: listed.Roots[0].Question.QuestionID, Answer: "Continue"}); err != nil {
+		t.Fatalf("AnswerTeam() error = %v", err)
 	}
 	select {
 	case got := <-answerCh:
@@ -110,7 +110,7 @@ type appAskParentResult struct {
 	err    error
 }
 
-func TestPersistentStubRehydratesSubagentActorsAndEvents(t *testing.T) {
+func TestPersistentStubRehydratesTeamActorsAndEvents(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	created, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
@@ -122,73 +122,73 @@ func TestPersistentStubRehydratesSubagentActorsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	spawned, err := created.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "review", cwd))
+	spawned, err := created.SpawnTeam(context.Background(), testSpawnTeamRequest(parent.Session.SessionID, "reviewer", "review", cwd))
 	if err != nil {
-		t.Fatalf("SpawnSubagent() error = %v", err)
+		t.Fatalf("SpawnTeam() error = %v", err)
 	}
-	if _, err := created.PromptSubagent(context.Background(), PromptSubagentRequest{ActorID: spawned.ActorID, Prompt: "Inspect this"}); err != nil {
-		t.Fatalf("PromptSubagent() error = %v", err)
+	if _, err := created.PromptTeam(context.Background(), PromptTeamRequest{ActorID: spawned.ActorID, Prompt: "Inspect this"}); err != nil {
+		t.Fatalf("PromptTeam() error = %v", err)
 	}
 
 	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
 	}
-	listed, err := rehydrated.ListSubagents(context.Background(), ListSubagentsRequest{IncludeClosed: true})
+	listed, err := rehydrated.ListTeams(context.Background(), ListTeamsRequest{IncludeClosed: true})
 	if err != nil {
-		t.Fatalf("ListSubagents() error = %v", err)
+		t.Fatalf("ListTeams() error = %v", err)
 	}
 	if listed.TotalCount != 1 || len(listed.Roots) != 1 {
-		t.Fatalf("ListSubagents() = %+v, want one actor", listed)
+		t.Fatalf("ListTeams() = %+v, want one actor", listed)
 	}
 	actor := listed.Roots[0]
-	if actor.ActorID != spawned.ActorID || actor.ChildSessionID != spawned.ChildSessionID || actor.Status != SubagentStatusRunning || len(actor.Messages) != 1 {
+	if actor.ActorID != spawned.ActorID || actor.ChildSessionID != spawned.ChildSessionID || actor.Status != TeamStatusRunning || len(actor.Messages) != 1 {
 		t.Fatalf("rehydrated actor = %+v, want persisted prompt actor", actor)
 	}
-	events, err := rehydrated.SubagentEvents(context.Background(), SubagentEventsRequest{ActorID: spawned.ActorID})
+	events, err := rehydrated.TeamEvents(context.Background(), TeamEventsRequest{ActorID: spawned.ActorID})
 	if err != nil {
-		t.Fatalf("SubagentEvents() error = %v", err)
+		t.Fatalf("TeamEvents() error = %v", err)
 	}
-	if len(events.Events) != 3 || events.Events[0].Type != "subagent.started" || events.Events[2].Type != "subagent.prompt" {
+	if len(events.Events) != 3 || events.Events[0].Type != "team.started" || events.Events[2].Type != "team.prompt" {
 		t.Fatalf("events = %+v, want started, turn_started, prompt", events.Events)
 	}
-	again, err := rehydrated.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "", cwd))
+	again, err := rehydrated.SpawnTeam(context.Background(), testSpawnTeamRequest(parent.Session.SessionID, "reviewer", "", cwd))
 	if err == nil || again.OK {
-		t.Fatalf("SpawnSubagent duplicate = %+v, %v, want conflict", again, err)
+		t.Fatalf("SpawnTeam duplicate = %+v, %v, want conflict", again, err)
 	}
 }
 
-func TestSpawnSubagentCreatesChildSessionAndActor(t *testing.T) {
+func TestSpawnTeamCreatesChildSessionAndActor(t *testing.T) {
 	s := newStub(config.Load(), time.Now)
 	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/repo"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	res, err := s.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "review", "/repo"))
+	res, err := s.SpawnTeam(context.Background(), testSpawnTeamRequest(parent.Session.SessionID, "reviewer", "review", "/repo"))
 	if err != nil {
-		t.Fatalf("SpawnSubagent() error = %v", err)
+		t.Fatalf("SpawnTeam() error = %v", err)
 	}
 	if !res.OK || res.ActorID == "" || res.ChildSessionID == "" || res.Actor == nil {
-		t.Fatalf("SpawnSubagent() = %+v, want actor and child session", res)
+		t.Fatalf("SpawnTeam() = %+v, want actor and child session", res)
 	}
-	listed, err := s.ListSubagents(context.Background(), ListSubagentsRequest{})
+	listed, err := s.ListTeams(context.Background(), ListTeamsRequest{})
 	if err != nil {
-		t.Fatalf("ListSubagents() error = %v", err)
+		t.Fatalf("ListTeams() error = %v", err)
 	}
 	if listed.TotalCount != 1 || len(listed.Roots) != 1 || listed.Roots[0].ChildSessionID != res.ChildSessionID {
-		t.Fatalf("ListSubagents() = %+v, want spawned actor", listed)
+		t.Fatalf("ListTeams() = %+v, want spawned actor", listed)
 	}
 }
 
-func TestSpawnSubagentHidesChildSessionFromSessionList(t *testing.T) {
+func TestSpawnTeamHidesChildSessionFromSessionList(t *testing.T) {
 	s := newStub(config.Load(), time.Now)
 	parent, err := s.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/repo"})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	spawned, err := s.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "", "/repo"))
+	spawned, err := s.SpawnTeam(context.Background(), testSpawnTeamRequest(parent.Session.SessionID, "reviewer", "", "/repo"))
 	if err != nil {
-		t.Fatalf("SpawnSubagent() error = %v", err)
+		t.Fatalf("SpawnTeam() error = %v", err)
 	}
 	sessions, err := s.ListSessions(context.Background(), ListSessionsRequest{})
 	if err != nil {
@@ -205,7 +205,7 @@ func TestSpawnSubagentHidesChildSessionFromSessionList(t *testing.T) {
 	}
 }
 
-func TestCloseSubagentKillsChildRuntimeWithoutDeletingHistory(t *testing.T) {
+func TestCloseTeamKillsChildRuntimeWithoutDeletingHistory(t *testing.T) {
 	var handles []*process.FakeHandle
 	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
 		h := process.NewFakeHandle(spec)
@@ -217,39 +217,39 @@ func TestCloseSubagentKillsChildRuntimeWithoutDeletingHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	spawned, err := s.SpawnSubagent(context.Background(), testSpawnSubagentRequest(parent.Session.SessionID, "reviewer", "", "/repo"))
+	spawned, err := s.SpawnTeam(context.Background(), testSpawnTeamRequest(parent.Session.SessionID, "reviewer", "", "/repo"))
 	if err != nil {
-		t.Fatalf("SpawnSubagent() error = %v", err)
+		t.Fatalf("SpawnTeam() error = %v", err)
 	}
 	if len(handles) != 2 {
 		t.Fatalf("runtime starts = %d, want parent and child", len(handles))
 	}
-	if _, err := s.CloseSubagent(context.Background(), CloseSubagentRequest{ActorID: spawned.ActorID}); err != nil {
-		t.Fatalf("CloseSubagent() error = %v", err)
+	if _, err := s.CloseTeam(context.Background(), CloseTeamRequest{ActorID: spawned.ActorID}); err != nil {
+		t.Fatalf("CloseTeam() error = %v", err)
 	}
 	if handles[0].KillCalls() != 0 || handles[1].KillCalls() != 1 {
 		t.Fatalf("kill calls = parent %d child %d, want 0 and 1", handles[0].KillCalls(), handles[1].KillCalls())
 	}
-	listed, err := s.ListSubagents(context.Background(), ListSubagentsRequest{IncludeClosed: true})
+	listed, err := s.ListTeams(context.Background(), ListTeamsRequest{IncludeClosed: true})
 	if err != nil {
-		t.Fatalf("ListSubagents() error = %v", err)
+		t.Fatalf("ListTeams() error = %v", err)
 	}
-	if listed.TotalCount != 1 || listed.Roots[0].Status != SubagentStatusClosed {
-		t.Fatalf("ListSubagents(include closed) = %+v, want closed actor history", listed)
+	if listed.TotalCount != 1 || listed.Roots[0].Status != TeamStatusClosed {
+		t.Fatalf("ListTeams(include closed) = %+v, want closed actor history", listed)
 	}
 }
 
-func TestSpawnSubagentRejectsMissingParentSession(t *testing.T) {
+func TestSpawnTeamRejectsMissingParentSession(t *testing.T) {
 	s := newStub(config.Load(), time.Now)
-	_, err := s.SpawnSubagent(context.Background(), testSpawnSubagentRequest("missing", "reviewer", "", "/repo"))
+	_, err := s.SpawnTeam(context.Background(), testSpawnTeamRequest("missing", "reviewer", "", "/repo"))
 	var appErr *Error
 	if !errors.As(err, &appErr) || appErr.Code != "not_found" {
-		t.Fatalf("SpawnSubagent() error = %v, want not_found", err)
+		t.Fatalf("SpawnTeam() error = %v, want not_found", err)
 	}
 }
 
-func TestSubagentRegistryActiveNameConflictAllowsClosedRecreate(t *testing.T) {
-	r := newSubagentRegistry(time.Now)
+func TestTeamRegistryActiveNameConflictAllowsClosedRecreate(t *testing.T) {
+	r := newTeamRegistry(time.Now)
 	first, err := r.spawn("parent", "", "child_1", "reviewer", "review", "pi", "", "/repo")
 	if err != nil {
 		t.Fatalf("spawn first error = %v", err)
@@ -267,10 +267,10 @@ func TestSubagentRegistryActiveNameConflictAllowsClosedRecreate(t *testing.T) {
 	}
 }
 
-func TestSubagentStatusJSONSerialization(t *testing.T) {
-	statuses := []SubagentStatus{SubagentStatusRunning, SubagentStatusIdle, SubagentStatusWaitingForParent, SubagentStatusCompleted, SubagentStatusFailed, SubagentStatusClosed, SubagentStatusUnknown}
+func TestTeamStatusJSONSerialization(t *testing.T) {
+	statuses := []TeamStatus{TeamStatusRunning, TeamStatusIdle, TeamStatusWaitingForParent, TeamStatusCompleted, TeamStatusFailed, TeamStatusClosed, TeamStatusUnknown}
 	for _, status := range statuses {
-		encoded, err := json.Marshal(SubagentNode{ActorID: "actor", Status: status})
+		encoded, err := json.Marshal(TeamNode{ActorID: "actor", Status: status})
 		if err != nil {
 			t.Fatalf("Marshal(%q) error = %v", status, err)
 		}
@@ -280,8 +280,8 @@ func TestSubagentStatusJSONSerialization(t *testing.T) {
 	}
 }
 
-func TestSubagentAskParentAbortReturnsTerminalResult(t *testing.T) {
-	r := newSubagentRegistry(time.Now)
+func TestTeamAskParentAbortReturnsTerminalResult(t *testing.T) {
+	r := newTeamRegistry(time.Now)
 	actor, err := r.spawn("parent", "", "child", "reviewer", "review", "pi", "", "/repo")
 	if err != nil {
 		t.Fatalf("spawn error = %v", err)
@@ -290,7 +290,7 @@ func TestSubagentAskParentAbortReturnsTerminalResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("askParent error = %v", err)
 	}
-	answerCh := make(chan subagentParentAnswer, 1)
+	answerCh := make(chan teamParentAnswer, 1)
 	errCh := make(chan error, 1)
 	go func() {
 		answer, err := r.waitForAnswer(context.Background(), actor.ActorID, qid)
@@ -315,8 +315,8 @@ func TestSubagentAskParentAbortReturnsTerminalResult(t *testing.T) {
 	}
 }
 
-func TestSubagentRegistryTreeAndClosedFilter(t *testing.T) {
-	r := newSubagentRegistry(time.Now)
+func TestTeamRegistryTreeAndClosedFilter(t *testing.T) {
+	r := newTeamRegistry(time.Now)
 	lead, err := r.spawn("parent", "", "child_lead", "lead", "main", "pi", "", "/repo")
 	if err != nil {
 		t.Fatalf("spawn lead error = %v", err)
@@ -332,20 +332,20 @@ func TestSubagentRegistryTreeAndClosedFilter(t *testing.T) {
 		t.Fatalf("close error = %v", err)
 	}
 	visible := r.snapshot(false)
-	if got := countSubagentNodes(visible); got != 2 {
-		t.Fatalf("countSubagentNodes(visible) = %d, want 2", got)
+	if got := countTeamNodes(visible); got != 2 {
+		t.Fatalf("countTeamNodes(visible) = %d, want 2", got)
 	}
-	if got := countNonLeafSubagentNodes(visible); got != 1 {
-		t.Fatalf("countNonLeafSubagentNodes(visible) = %d, want 1", got)
+	if got := countNonLeafTeamNodes(visible); got != 1 {
+		t.Fatalf("countNonLeafTeamNodes(visible) = %d, want 1", got)
 	}
 	withClosed := r.snapshot(true)
-	if got := countSubagentNodes(withClosed); got != 3 {
-		t.Fatalf("countSubagentNodes(withClosed) = %d, want 3", got)
+	if got := countTeamNodes(withClosed); got != 3 {
+		t.Fatalf("countTeamNodes(withClosed) = %d, want 3", got)
 	}
 }
 
-func TestSubagentAskParentAnswerAndReplay(t *testing.T) {
-	r := newSubagentRegistry(time.Now)
+func TestTeamAskParentAnswerAndReplay(t *testing.T) {
+	r := newTeamRegistry(time.Now)
 	actor, err := r.spawn("parent", "", "child", "reviewer", "review", "pi", "", "/repo")
 	if err != nil {
 		t.Fatalf("spawn error = %v", err)
@@ -354,7 +354,7 @@ func TestSubagentAskParentAnswerAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("askParent error = %v", err)
 	}
-	answerCh := make(chan subagentParentAnswer, 1)
+	answerCh := make(chan teamParentAnswer, 1)
 	errCh := make(chan error, 1)
 	go func() {
 		answer, err := r.waitForAnswer(context.Background(), actor.ActorID, qid)

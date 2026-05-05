@@ -116,7 +116,7 @@ func (s *Stub) emitMessageCommit(sessionID session.SessionID, turnID string, msg
 	if s == nil {
 		return
 	}
-	s.appendSubagentMessageCommitEvent(sessionID, turnID, msg)
+	s.appendTeamMessageCommitEvent(sessionID, turnID, msg)
 	if s.sink == nil {
 		return
 	}
@@ -127,7 +127,7 @@ func (s *Stub) emitMessageDelta(sessionID session.SessionID, turnID, role, delta
 	if s == nil {
 		return
 	}
-	s.appendSubagentMessageDeltaEvent(sessionID, turnID, role, delta)
+	s.appendTeamMessageDeltaEvent(sessionID, turnID, role, delta)
 	if s.sink == nil {
 		return
 	}

@@ -16,18 +16,18 @@ type Service interface {
 	Bootstrap(context.Context, BootstrapRequest) BootstrapSnapshot
 	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
 	CreateSession(context.Context, CreateSessionRequest) (CreateSessionResponse, error)
-	ListSubagents(context.Context, ListSubagentsRequest) (ListSubagentsResponse, error)
-	SpawnSubagent(context.Context, SpawnSubagentRequest) (SubagentCommandResponse, error)
-	PromptSubagent(context.Context, PromptSubagentRequest) (SubagentCommandResponse, error)
-	FollowupSubagent(context.Context, FollowupSubagentRequest) (SubagentCommandResponse, error)
-	SendSubagent(context.Context, SendSubagentRequest) (SubagentDeliveryResponse, error)
+	ListTeams(context.Context, ListTeamsRequest) (ListTeamsResponse, error)
+	SpawnTeam(context.Context, SpawnTeamRequest) (TeamCommandResponse, error)
+	PromptTeam(context.Context, PromptTeamRequest) (TeamCommandResponse, error)
+	FollowupTeam(context.Context, FollowupTeamRequest) (TeamCommandResponse, error)
+	SendTeam(context.Context, SendTeamRequest) (TeamDeliveryResponse, error)
 	AskParent(context.Context, AskParentRequest) (AskParentResponse, error)
 	ResumeAskParent(context.Context, AskParentRequest) (AskParentResponse, error)
-	AnswerSubagent(context.Context, AnswerSubagentRequest) (SubagentCommandResponse, error)
-	AbortSubagent(context.Context, AbortSubagentRequest) (SubagentCommandResponse, error)
-	CloseSubagent(context.Context, CloseSubagentRequest) (SubagentCommandResponse, error)
-	StatusSubagent(context.Context, StatusSubagentRequest) (SubagentCommandResponse, error)
-	SubagentEvents(context.Context, SubagentEventsRequest) (SubagentEventsResponse, error)
+	AnswerTeam(context.Context, AnswerTeamRequest) (TeamCommandResponse, error)
+	AbortTeam(context.Context, AbortTeamRequest) (TeamCommandResponse, error)
+	CloseTeam(context.Context, CloseTeamRequest) (TeamCommandResponse, error)
+	StatusTeam(context.Context, StatusTeamRequest) (TeamCommandResponse, error)
+	TeamEvents(context.Context, TeamEventsRequest) (TeamEventsResponse, error)
 	SessionResumeCandidates(context.Context, SessionResumeCandidatesRequest) (SessionResumeCandidatesResponse, error)
 	SessionDetails(context.Context, SessionDetailsRequest) (SessionDetailsResponse, error)
 	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)
@@ -80,7 +80,7 @@ type Stub struct {
 	waitStore           waitStore
 	supervisorStore     supervisorStore
 	schedulerStore      schedulerStore
-	subagents           *subagentRegistry
+	teams               *teamRegistry
 	runtimeAgentMu      sync.RWMutex
 	runtimeAgentRunning map[session.SessionID]bool
 	piRPCStateMu        sync.Mutex
@@ -123,7 +123,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		waitStore:           newMemoryWaitStore(),
 		supervisorStore:     newMemorySupervisorStore(),
 		schedulerStore:      newMemorySchedulerStore(),
-		subagents:           newSubagentRegistry(now),
+		teams:               newTeamRegistry(now),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
 		piResumePaths:       piResumePathCache{},

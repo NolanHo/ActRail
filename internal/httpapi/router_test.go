@@ -22,7 +22,7 @@ type serviceStub struct {
 	base              *app.Stub
 	listSessionsFunc  func(context.Context, app.ListSessionsRequest) (app.ListSessionsResponse, error)
 	createSessionFunc func(context.Context, app.CreateSessionRequest) (app.CreateSessionResponse, error)
-	subagentsFunc     func(context.Context, app.ListSubagentsRequest) (app.ListSubagentsResponse, error)
+	teamsFunc         func(context.Context, app.ListTeamsRequest) (app.ListTeamsResponse, error)
 	resumeFunc        func(context.Context, app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error)
 	detailsFunc       func(context.Context, app.SessionDetailsRequest) (app.SessionDetailsResponse, error)
 	messagesFunc      func(context.Context, app.SessionMessagesRequest) (app.SessionMessagesResponse, error)
@@ -65,27 +65,27 @@ func (s serviceStub) CreateSession(ctx context.Context, req app.CreateSessionReq
 	return s.base.CreateSession(ctx, req)
 }
 
-func (s serviceStub) ListSubagents(ctx context.Context, req app.ListSubagentsRequest) (app.ListSubagentsResponse, error) {
-	if s.subagentsFunc != nil {
-		return s.subagentsFunc(ctx, req)
+func (s serviceStub) ListTeams(ctx context.Context, req app.ListTeamsRequest) (app.ListTeamsResponse, error) {
+	if s.teamsFunc != nil {
+		return s.teamsFunc(ctx, req)
 	}
-	return s.base.ListSubagents(ctx, req)
+	return s.base.ListTeams(ctx, req)
 }
 
-func (s serviceStub) SpawnSubagent(ctx context.Context, req app.SpawnSubagentRequest) (app.SubagentCommandResponse, error) {
-	return s.base.SpawnSubagent(ctx, req)
+func (s serviceStub) SpawnTeam(ctx context.Context, req app.SpawnTeamRequest) (app.TeamCommandResponse, error) {
+	return s.base.SpawnTeam(ctx, req)
 }
 
-func (s serviceStub) PromptSubagent(ctx context.Context, req app.PromptSubagentRequest) (app.SubagentCommandResponse, error) {
-	return s.base.PromptSubagent(ctx, req)
+func (s serviceStub) PromptTeam(ctx context.Context, req app.PromptTeamRequest) (app.TeamCommandResponse, error) {
+	return s.base.PromptTeam(ctx, req)
 }
 
-func (s serviceStub) FollowupSubagent(ctx context.Context, req app.FollowupSubagentRequest) (app.SubagentCommandResponse, error) {
-	return s.base.FollowupSubagent(ctx, req)
+func (s serviceStub) FollowupTeam(ctx context.Context, req app.FollowupTeamRequest) (app.TeamCommandResponse, error) {
+	return s.base.FollowupTeam(ctx, req)
 }
 
-func (s serviceStub) SendSubagent(ctx context.Context, req app.SendSubagentRequest) (app.SubagentDeliveryResponse, error) {
-	return s.base.SendSubagent(ctx, req)
+func (s serviceStub) SendTeam(ctx context.Context, req app.SendTeamRequest) (app.TeamDeliveryResponse, error) {
+	return s.base.SendTeam(ctx, req)
 }
 
 func (s serviceStub) AskParent(ctx context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
@@ -96,24 +96,24 @@ func (s serviceStub) ResumeAskParent(ctx context.Context, req app.AskParentReque
 	return s.base.ResumeAskParent(ctx, req)
 }
 
-func (s serviceStub) AnswerSubagent(ctx context.Context, req app.AnswerSubagentRequest) (app.SubagentCommandResponse, error) {
-	return s.base.AnswerSubagent(ctx, req)
+func (s serviceStub) AnswerTeam(ctx context.Context, req app.AnswerTeamRequest) (app.TeamCommandResponse, error) {
+	return s.base.AnswerTeam(ctx, req)
 }
 
-func (s serviceStub) AbortSubagent(ctx context.Context, req app.AbortSubagentRequest) (app.SubagentCommandResponse, error) {
-	return s.base.AbortSubagent(ctx, req)
+func (s serviceStub) AbortTeam(ctx context.Context, req app.AbortTeamRequest) (app.TeamCommandResponse, error) {
+	return s.base.AbortTeam(ctx, req)
 }
 
-func (s serviceStub) CloseSubagent(ctx context.Context, req app.CloseSubagentRequest) (app.SubagentCommandResponse, error) {
-	return s.base.CloseSubagent(ctx, req)
+func (s serviceStub) CloseTeam(ctx context.Context, req app.CloseTeamRequest) (app.TeamCommandResponse, error) {
+	return s.base.CloseTeam(ctx, req)
 }
 
-func (s serviceStub) StatusSubagent(ctx context.Context, req app.StatusSubagentRequest) (app.SubagentCommandResponse, error) {
-	return s.base.StatusSubagent(ctx, req)
+func (s serviceStub) StatusTeam(ctx context.Context, req app.StatusTeamRequest) (app.TeamCommandResponse, error) {
+	return s.base.StatusTeam(ctx, req)
 }
 
-func (s serviceStub) SubagentEvents(ctx context.Context, req app.SubagentEventsRequest) (app.SubagentEventsResponse, error) {
-	return s.base.SubagentEvents(ctx, req)
+func (s serviceStub) TeamEvents(ctx context.Context, req app.TeamEventsRequest) (app.TeamEventsResponse, error) {
+	return s.base.TeamEvents(ctx, req)
 }
 
 func (s serviceStub) SessionResumeCandidates(ctx context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
@@ -321,7 +321,7 @@ func (s serviceStub) SetAlarm(ctx context.Context, req app.SetAlarmRequest) (app
 type fixtureService struct {
 	listReq           app.ListSessionsRequest
 	createReq         app.CreateSessionRequest
-	subagentsReq      app.ListSubagentsRequest
+	teamsReq          app.ListTeamsRequest
 	resumeReq         app.SessionResumeCandidatesRequest
 	detailsReq        app.SessionDetailsRequest
 	messagesReq       app.SessionMessagesRequest
@@ -417,25 +417,25 @@ func (s *fixtureService) CreateSession(_ context.Context, req app.CreateSessionR
 	}, nil
 }
 
-func (s *fixtureService) ListSubagents(_ context.Context, req app.ListSubagentsRequest) (app.ListSubagentsResponse, error) {
-	s.subagentsReq = req
-	return app.ListSubagentsResponse{
+func (s *fixtureService) ListTeams(_ context.Context, req app.ListTeamsRequest) (app.ListTeamsResponse, error) {
+	s.teamsReq = req
+	return app.ListTeamsResponse{
 		OK: true,
-		Roots: []app.SubagentNode{{
+		Roots: []app.TeamNode{{
 			ActorID:         "actor_lead",
 			ChildSessionID:  "child_lead",
 			ParentSessionID: "s_123",
 			Name:            "lead",
 			Role:            "main agent",
-			Status:          app.SubagentStatusRunning,
-			Children: []app.SubagentNode{{
+			Status:          app.TeamStatusRunning,
+			Children: []app.TeamNode{{
 				ActorID:         "actor_leaf",
 				ChildSessionID:  "child_leaf",
 				ParentActorID:   "actor_lead",
 				ParentSessionID: "s_123",
 				Name:            "leaf",
 				Role:            "tester",
-				Status:          app.SubagentStatusIdle,
+				Status:          app.TeamStatusIdle,
 			}},
 		}},
 		TotalCount:   2,
@@ -443,20 +443,20 @@ func (s *fixtureService) ListSubagents(_ context.Context, req app.ListSubagentsR
 	}, nil
 }
 
-func (s *fixtureService) SpawnSubagent(_ context.Context, req app.SpawnSubagentRequest) (app.SubagentCommandResponse, error) {
-	return app.SubagentCommandResponse{OK: true, ActorID: "actor_1", ChildSessionID: "s_child", Status: app.SubagentStatusIdle}, nil
+func (s *fixtureService) SpawnTeam(_ context.Context, req app.SpawnTeamRequest) (app.TeamCommandResponse, error) {
+	return app.TeamCommandResponse{OK: true, ActorID: "actor_1", ChildSessionID: "s_child", Status: app.TeamStatusIdle}, nil
 }
 
-func (s *fixtureService) PromptSubagent(_ context.Context, req app.PromptSubagentRequest) (app.SubagentCommandResponse, error) {
-	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, ChildSessionID: "s_child", TurnID: "turn_1", Status: app.SubagentStatusRunning}, nil
+func (s *fixtureService) PromptTeam(_ context.Context, req app.PromptTeamRequest) (app.TeamCommandResponse, error) {
+	return app.TeamCommandResponse{OK: true, ActorID: req.ActorID, ChildSessionID: "s_child", TurnID: "turn_1", Status: app.TeamStatusRunning}, nil
 }
 
-func (s *fixtureService) FollowupSubagent(_ context.Context, req app.FollowupSubagentRequest) (app.SubagentCommandResponse, error) {
-	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, ChildSessionID: "s_child", TurnID: "turn_2", Status: app.SubagentStatusRunning}, nil
+func (s *fixtureService) FollowupTeam(_ context.Context, req app.FollowupTeamRequest) (app.TeamCommandResponse, error) {
+	return app.TeamCommandResponse{OK: true, ActorID: req.ActorID, ChildSessionID: "s_child", TurnID: "turn_2", Status: app.TeamStatusRunning}, nil
 }
 
-func (s *fixtureService) SendSubagent(_ context.Context, req app.SendSubagentRequest) (app.SubagentDeliveryResponse, error) {
-	return app.SubagentDeliveryResponse{OK: true, ActorID: req.ActorID, TurnID: "turn_1", Delivery: "live"}, nil
+func (s *fixtureService) SendTeam(_ context.Context, req app.SendTeamRequest) (app.TeamDeliveryResponse, error) {
+	return app.TeamDeliveryResponse{OK: true, ActorID: req.ActorID, TurnID: "turn_1", Delivery: "live"}, nil
 }
 
 func (s *fixtureService) AskParent(_ context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
@@ -467,24 +467,24 @@ func (s *fixtureService) ResumeAskParent(_ context.Context, req app.AskParentReq
 	return app.AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: req.QuestionID, Answer: "answer"}, nil
 }
 
-func (s *fixtureService) AnswerSubagent(_ context.Context, req app.AnswerSubagentRequest) (app.SubagentCommandResponse, error) {
-	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, QuestionID: req.QuestionID, Status: app.SubagentStatusRunning}, nil
+func (s *fixtureService) AnswerTeam(_ context.Context, req app.AnswerTeamRequest) (app.TeamCommandResponse, error) {
+	return app.TeamCommandResponse{OK: true, ActorID: req.ActorID, QuestionID: req.QuestionID, Status: app.TeamStatusRunning}, nil
 }
 
-func (s *fixtureService) AbortSubagent(_ context.Context, req app.AbortSubagentRequest) (app.SubagentCommandResponse, error) {
-	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, Status: app.SubagentStatusIdle}, nil
+func (s *fixtureService) AbortTeam(_ context.Context, req app.AbortTeamRequest) (app.TeamCommandResponse, error) {
+	return app.TeamCommandResponse{OK: true, ActorID: req.ActorID, Status: app.TeamStatusIdle}, nil
 }
 
-func (s *fixtureService) CloseSubagent(_ context.Context, req app.CloseSubagentRequest) (app.SubagentCommandResponse, error) {
-	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, Status: app.SubagentStatusClosed}, nil
+func (s *fixtureService) CloseTeam(_ context.Context, req app.CloseTeamRequest) (app.TeamCommandResponse, error) {
+	return app.TeamCommandResponse{OK: true, ActorID: req.ActorID, Status: app.TeamStatusClosed}, nil
 }
 
-func (s *fixtureService) StatusSubagent(_ context.Context, req app.StatusSubagentRequest) (app.SubagentCommandResponse, error) {
-	return app.SubagentCommandResponse{OK: true, Actor: &app.SubagentNode{ActorID: req.ActorID, ChildSessionID: "s_child", ParentSessionID: "s_123", Name: "lead", Role: "review", Status: app.SubagentStatusIdle}, ActorID: req.ActorID, ChildSessionID: "s_child", Status: app.SubagentStatusIdle}, nil
+func (s *fixtureService) StatusTeam(_ context.Context, req app.StatusTeamRequest) (app.TeamCommandResponse, error) {
+	return app.TeamCommandResponse{OK: true, Actor: &app.TeamNode{ActorID: req.ActorID, ChildSessionID: "s_child", ParentSessionID: "s_123", Name: "lead", Role: "review", Status: app.TeamStatusIdle}, ActorID: req.ActorID, ChildSessionID: "s_child", Status: app.TeamStatusIdle}, nil
 }
 
-func (s *fixtureService) SubagentEvents(_ context.Context, req app.SubagentEventsRequest) (app.SubagentEventsResponse, error) {
-	return app.SubagentEventsResponse{OK: true, Events: []app.SubagentEvent{{EventID: "event_1", ActorID: req.ActorID, ChildSessionID: "s_child", ParentSessionID: "s_123", Type: "subagent.started", Status: app.SubagentStatusIdle, TS: 1760000000}}}, nil
+func (s *fixtureService) TeamEvents(_ context.Context, req app.TeamEventsRequest) (app.TeamEventsResponse, error) {
+	return app.TeamEventsResponse{OK: true, Events: []app.TeamStoredEvent{{EventID: "event_1", ActorID: req.ActorID, ChildSessionID: "s_child", ParentSessionID: "s_123", Type: "team.started", Status: app.TeamStatusIdle, TS: 1760000000}}}, nil
 }
 
 func (s *fixtureService) SessionResumeCandidates(_ context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
@@ -927,16 +927,16 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
 		}
 
-		var payload app.ListSubagentsResponse
+		var payload app.ListTeamsResponse
 		decodeJSON(t, res, &payload)
 		if !payload.OK || payload.TotalCount != 2 || payload.NonLeafCount != 1 || len(payload.Roots) != 1 {
 			t.Fatalf("unexpected teams payload: %+v", payload)
 		}
 		if payload.Roots[0].ActorID != "actor_lead" || payload.Roots[0].Children[0].ActorID != "actor_leaf" {
-			t.Fatalf("unexpected subagent tree: %+v", payload.Roots)
+			t.Fatalf("unexpected team tree: %+v", payload.Roots)
 		}
-		if !svc.subagentsReq.IncludeClosed {
-			t.Fatalf("expected include_closed request, got %+v", svc.subagentsReq)
+		if !svc.teamsReq.IncludeClosed {
+			t.Fatalf("expected include_closed request, got %+v", svc.teamsReq)
 		}
 	})
 
@@ -949,7 +949,7 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
 		}
 
-		var payload app.SubagentEventsResponse
+		var payload app.TeamEventsResponse
 		decodeJSON(t, res, &payload)
 		if !payload.OK || len(payload.Events) != 1 || payload.Events[0].ActorID != "actor_lead" {
 			t.Fatalf("unexpected events payload: %+v", payload)
