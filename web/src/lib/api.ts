@@ -35,6 +35,7 @@ import type {
   SessionUiStateResponse,
   SessionsResponse,
   SessionSupervisorSnapshot,
+  SubagentsResponse,
   SupervisorProviderResponse,
   SupervisorRunsResponse,
   SupervisorRunOnceResponse,
@@ -188,6 +189,14 @@ export const api = {
     }
     const suffix = query.size ? `?${query.toString()}` : "";
     return getJson<SessionsResponse>(`/api/sessions${suffix}`, signal);
+  },
+  listSubagents(options?: { includeClosed?: boolean }, signal?: AbortSignal) {
+    const query = new URLSearchParams();
+    if (options?.includeClosed) {
+      query.set("include_closed", "1");
+    }
+    const suffix = query.size ? `?${query.toString()}` : "";
+    return getJson<SubagentsResponse>(`/api/subagents${suffix}`, signal);
   },
   getBootstrap(options?: { refreshPiModels?: boolean }, signal?: AbortSignal) {
     const query = new URLSearchParams();

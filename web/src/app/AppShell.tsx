@@ -9,7 +9,7 @@ import { AppShellSidebar, GlobalNavRail, type DesktopGlobalView } from "./app-sh
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
 import { SchedulerView } from "../components/scheduler/SchedulerView";
-import { mockSubagents, SubagentsThreadView } from "../components/subagents/SubagentsView";
+import { SubagentsThreadView, useSubagentsData } from "../components/subagents/SubagentsView";
 import { MobileShell } from "./app-shell/MobileShell";
 import { VoiceSettingsDialog } from "./app-shell/VoiceSettingsDialog";
 import { useAppShellAudio } from "./app-shell/useAppShellAudio";
@@ -131,7 +131,8 @@ export function AppShell() {
   const [fileViewerRequestKey, setFileViewerRequestKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [desktopGlobalView, setDesktopGlobalView] = useState<DesktopGlobalView>("sessions");
-  const [selectedSubagentId, setSelectedSubagentId] = useState(() => mockSubagents[0]?.actorId || "");
+  const [selectedSubagentId, setSelectedSubagentId] = useState("");
+  const subagentsData = useSubagentsData(desktopGlobalView === "subagents" ? 5000 : 0);
   const [themeMode, setThemeMode] = useState(() => readThemeMode());
   const [displaySettings, setDisplaySettings] = useState(() => readUserDisplaySettings());
   const [displaySettingsDraft, setDisplaySettingsDraft] = useState(() => readUserDisplaySettings());
@@ -571,6 +572,7 @@ export function AppShell() {
     <AppShellSidebar
       activeView={desktopGlobalView}
       activeSubagentId={selectedSubagentId}
+      subagentsData={subagentsData}
       onNewSession={() => setNewSessionOpen(true)}
       onOpenSettings={() => openVoiceSettings()}
       onLogout={() => {
@@ -661,7 +663,7 @@ export function AppShell() {
                 <Composer />
               </section>
             ) : desktopGlobalView === "subagents" ? (
-              <SubagentsThreadView selectedActorId={selectedSubagentId} />
+              <SubagentsThreadView selectedActorId={selectedSubagentId} data={subagentsData} />
             ) : (
               <SchedulerView />
             )}

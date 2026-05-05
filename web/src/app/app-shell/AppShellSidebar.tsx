@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { SessionsPane } from "../../components/sessions/SessionsPane";
 import { SubagentsRail } from "../../components/subagents/SubagentsView";
+import type { SubagentsData } from "../../components/subagents/SubagentsView";
 
 export type DesktopGlobalView = "sessions" | "subagents" | "scheduler";
 
@@ -91,6 +92,7 @@ export function GlobalNavRail({
 interface AppShellSidebarProps {
   activeView: DesktopGlobalView;
   activeSubagentId: string;
+  subagentsData: SubagentsData;
   onNewSession(): void;
   onOpenSettings(): void;
   onLogout(): void;
@@ -100,6 +102,7 @@ interface AppShellSidebarProps {
 export function AppShellSidebar({
   activeView,
   activeSubagentId,
+  subagentsData,
   onNewSession,
   onOpenSettings,
   onLogout,
@@ -107,7 +110,7 @@ export function AppShellSidebar({
 }: AppShellSidebarProps) {
   return (
     <>
-      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "subagents" ? <SubagentsRail selectedActorId={activeSubagentId} onSelect={onSubagentSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Scheduler</h2></div></header><p className="text-sm text-muted-foreground">Manage alarms, supervisor preset activity, and inbox delivery.</p></div>}
+      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "subagents" ? <SubagentsRail selectedActorId={activeSubagentId} data={subagentsData} onSelect={onSubagentSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Scheduler</h2></div></header><p className="text-sm text-muted-foreground">Manage alarms, supervisor preset activity, and inbox delivery.</p></div>}
       <footer className="sidebarFooter">
         <Button type="button" variant="outline" className="footerAction"><span className="buttonGlyph">?</span><span>Help</span></Button>
         <Button type="button" variant="outline" className="footerAction" onClick={onOpenSettings}><span className="buttonGlyph">ST</span><span>Settings</span></Button>

@@ -149,6 +149,23 @@ describe("api", () => {
     });
   });
 
+  it("requests live subagents with closed actors included", async () => {
+    const payload = { ok: true, roots: [], total_count: 0, non_leaf_count: 0 };
+    const signal = new AbortController().signal;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.listSubagents({ includeClosed: true }, signal)).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/subagents?include_closed=1", {
+      headers: { Accept: "application/json" },
+      signal,
+    });
+  });
+
   it("requests session details and normalizes the flat backend shape", async () => {
     const payload: SessionDetailsResponse = {
       session_id: "sess-1",

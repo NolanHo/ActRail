@@ -1,10 +1,30 @@
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import type { SubagentMessage, SubagentNode } from "@/lib/types";
 
-type TeamNodeStatus = "waiting_for_parent" | "running" | "failed" | "idle" | "completed";
-type ThreadMessageKind = "leader" | "member" | "system";
+type TeamNodeStatus = "waiting_for_parent" | "running" | "failed" | "idle" | "completed" | "aborted" | "closed" | string;
+type ThreadMessageKind = "leader" | "member" | "system" | string;
+
+export interface TeamNode {
+  actorId: string;
+  childSessionId: string;
+  parentSessionId: string;
+  name: string;
+  role: string;
+  status: TeamNodeStatus;
+  turnId?: string;
+  question?: string;
+  lastEvent: string;
+  lastEventTs?: number;
+  model: string;
+  cwd: string;
+  children: TeamNode[];
+  messages: ThreadMessage[];
+}
 
 interface ThreadMessage {
   id: string;
@@ -15,179 +35,127 @@ interface ThreadMessage {
   meta?: string;
 }
 
-export interface MockTeamNode {
-  actorId: string;
-  childSessionId: string;
-  name: string;
-  role: string;
-  status: TeamNodeStatus;
-  turnId?: string;
-  question?: string;
-  lastEvent: string;
-  model: string;
-  cwd: string;
-  children: MockTeamNode[];
-  messages: ThreadMessage[];
+export interface SubagentsData {
+  roots: TeamNode[];
+  totalCount: number;
+  nonLeafCount: number;
+  loading: boolean;
+  error: string;
+  refresh(): void;
 }
 
-export const mockTeamRoots: MockTeamNode[] = [
-  {
-    actorId: "actor_runtime_lead",
-    childSessionId: "session_child_runtime_lead",
-    name: "runtime-lead",
-    role: "main agent",
-    status: "waiting_for_parent",
-    turnId: "turn_21",
-    question: "Should child sessions stay hidden from the normal Sessions view?",
-    lastEvent: "2m ago",
-    model: "openai/gpt-5.4",
-    cwd: "/root/code/ActRail",
-    children: [
-      {
-        actorId: "actor_reviewer_a7c1",
-        childSessionId: "session_child_reviewer_a7c1",
-        name: "reviewer",
-        role: "code-review",
-        status: "waiting_for_parent",
-        turnId: "turn_17",
-        question: "Should I preserve the deprecated extension API?",
-        lastEvent: "2m ago",
-        model: "openai/gpt-5.4",
-        cwd: "/root/code/ActRail",
-        children: [
-          {
-            actorId: "actor_api_probe_c91a",
-            childSessionId: "session_child_api_probe_c91a",
-            name: "api-probe",
-            role: "contract probe",
-            status: "idle",
-            turnId: "turn_3",
-            lastEvent: "7m ago",
-            model: "openai/gpt-5.4-mini",
-            cwd: "/root/code/ActRail",
-            children: [],
-            messages: [
-              { id: "m1", kind: "leader", label: "reviewer", body: "Check whether the child session filtering contract conflicts with replay.", ts: "12:03" },
-              { id: "m2", kind: "member", label: "api-probe", body: "No conflict if actor APIs read child history by actor id and normal Sessions excludes generated children.", ts: "12:05" },
-            ],
-          },
-        ],
-        messages: [
-          { id: "m1", kind: "leader", label: "runtime-lead", body: "Review the ActRail subagent runtime plan. Focus on ownership boundaries and failure semantics.", ts: "12:04" },
-          { id: "m2", kind: "system", label: "runtime", body: "subagent.turn_started turn_17", ts: "12:04", meta: "actor_reviewer_a7c1" },
-          { id: "m3", kind: "member", label: "reviewer", body: "I found one boundary risk: child session history must stay readable without making the child appear in the normal Sessions view.", ts: "12:06" },
-          { id: "m4", kind: "member", label: "reviewer", body: "Should I preserve the deprecated extension API?", ts: "12:07", meta: "ask_parent" },
-        ],
-      },
-      {
-        actorId: "actor_tester_b2e9",
-        childSessionId: "session_child_tester_b2e9",
-        name: "tester",
-        role: "test-runner",
-        status: "running",
-        turnId: "turn_9",
-        lastEvent: "18s ago",
-        model: "openai/gpt-5.4-mini",
-        cwd: "/root/code/ActRail",
-        children: [],
-        messages: [
-          { id: "m1", kind: "leader", label: "runtime-lead", body: "Run the actor replay tests after the command API sketch lands.", ts: "12:09" },
-          { id: "m2", kind: "member", label: "tester", body: "I am running targeted Go tests for actor replay and question ownership.", ts: "12:10" },
-          { id: "m3", kind: "system", label: "runtime", body: "subagent.status running", ts: "12:10", meta: "turn_9" },
-        ],
-      },
-    ],
-    messages: [
-      { id: "m1", kind: "leader", label: "operator", body: "Build the ActRail-backed subagent runtime shell. Keep generated children out of normal Sessions.", ts: "11:58" },
-      { id: "m2", kind: "member", label: "runtime-lead", body: "I split the work into actor identity, command API, replay, ask_parent, and read-only UI packets.", ts: "12:01" },
-      { id: "m3", kind: "leader", label: "runtime-lead", body: "Reviewer and tester are working on boundary checks and replay tests.", ts: "12:04" },
-      { id: "m4", kind: "member", label: "reviewer", body: "Child session history should be addressable by actor id, but hidden from the normal Sessions list.", ts: "12:06" },
-      { id: "m5", kind: "member", label: "tester", body: "Replay tests are running against the actor event cursor model.", ts: "12:10" },
-    ],
-  },
-  {
-    actorId: "actor_ui_lead",
-    childSessionId: "session_child_ui_lead",
-    name: "ui-lead",
-    role: "main agent",
-    status: "running",
-    turnId: "turn_8",
-    lastEvent: "1m ago",
-    model: "openai/gpt-5.4",
-    cwd: "/root/code/ActRail",
-    children: [
-      {
-        actorId: "actor_docs_41fd",
-        childSessionId: "session_child_docs_41fd",
-        name: "docs-writer",
-        role: "documentation",
-        status: "idle",
-        turnId: "turn_4",
-        lastEvent: "11m ago",
-        model: "openai/gpt-5.4",
-        cwd: "/root/docs/pi-agent/ActRail",
-        children: [],
-        messages: [
-          { id: "m1", kind: "leader", label: "ui-lead", body: "Draft the acceptance criteria for a read-only desktop shell.", ts: "11:52" },
-          { id: "m2", kind: "member", label: "docs-writer", body: "Acceptance criteria drafted. The shell has no backend dependency and mobile has no Subagents entrypoint.", ts: "11:59" },
-        ],
-      },
-      {
-        actorId: "actor_probe_0d55",
-        childSessionId: "session_child_probe_0d55",
-        name: "runtime-probe",
-        role: "diagnostics",
-        status: "failed",
-        turnId: "turn_2",
-        lastEvent: "24m ago",
-        model: "openai/gpt-5.4-mini",
-        cwd: "/root/code/ActRail",
-        children: [],
-        messages: [
-          { id: "m1", kind: "leader", label: "ui-lead", body: "Check whether the frontend can bootstrap through the validation port.", ts: "11:41" },
-          { id: "m2", kind: "member", label: "runtime-probe", body: "The static server returns 404 for API routes. Use Vite proxy or an edge proxy for validation.", ts: "11:43" },
-        ],
-      },
-    ],
-    messages: [
-      { id: "m1", kind: "leader", label: "operator", body: "Make the subagent UI shell. Mobile does not need this function.", ts: "11:45" },
-      { id: "m2", kind: "member", label: "ui-lead", body: "I moved global switching into a dedicated left rail and made the right pane an IM-style team flow.", ts: "11:51" },
-      { id: "m3", kind: "member", label: "docs-writer", body: "The worklog records desktop-only scope and mock-data boundaries.", ts: "11:59" },
-      { id: "m4", kind: "member", label: "runtime-probe", body: "Validation needs Vite proxy on the frontend port because the static server does not proxy API routes.", ts: "12:02" },
-    ],
-  },
-];
-
-export const mockSubagents = mockTeamRoots;
-
-const statusRank: Record<TeamNodeStatus, number> = {
+const statusRank: Record<string, number> = {
   waiting_for_parent: 0,
   running: 1,
   failed: 2,
   idle: 3,
   completed: 4,
+  aborted: 5,
+  closed: 6,
 };
 
-const statusLabel: Record<TeamNodeStatus, string> = {
+const statusLabel: Record<string, string> = {
   waiting_for_parent: "waiting",
   running: "running",
   failed: "failed",
   idle: "idle",
   completed: "completed",
+  aborted: "aborted",
+  closed: "closed",
 };
 
-function descendantCount(node: MockTeamNode): number {
+function normalizeStatus(status: string | undefined): TeamNodeStatus {
+  const cleaned = status?.trim();
+  return cleaned || "idle";
+}
+
+function sortRank(status: TeamNodeStatus): number {
+  return statusRank[status] ?? 99;
+}
+
+function formatStatus(status: TeamNodeStatus): string {
+  return statusLabel[status] ?? status.split("_").join(" ");
+}
+
+function formatEventTime(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return "no events";
+  }
+  const ageMs = Date.now() - value * 1000;
+  if (!Number.isFinite(ageMs) || ageMs < 0) {
+    return new Date(value * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (ageMs < minute) {
+    return "just now";
+  }
+  if (ageMs < hour) {
+    return `${Math.floor(ageMs / minute)}m ago`;
+  }
+  if (ageMs < day) {
+    return `${Math.floor(ageMs / hour)}h ago`;
+  }
+  return `${Math.floor(ageMs / day)}d ago`;
+}
+
+function formatMessageTime(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  return new Date(value * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function normalizeMessage(message: SubagentMessage, index: number): ThreadMessage {
+  return {
+    id: message.message_id || `message_${index}`,
+    kind: message.kind || "system",
+    label: message.label || "runtime",
+    body: message.body || "",
+    ts: formatMessageTime(message.ts),
+    meta: message.meta,
+  };
+}
+
+function normalizeNode(node: SubagentNode): TeamNode {
+  const children = (node.children ?? []).map(normalizeNode);
+  const status = normalizeStatus(node.status);
+  const lastEventTs = node.last_event_ts;
+  return {
+    actorId: node.actor_id,
+    childSessionId: node.child_session_id,
+    parentSessionId: node.parent_session_id,
+    name: node.name || node.actor_id,
+    role: node.role || "subagent",
+    status,
+    turnId: node.turn_id,
+    question: node.question,
+    lastEvent: formatEventTime(lastEventTs),
+    lastEventTs,
+    model: node.model || "",
+    cwd: node.cwd || "",
+    children,
+    messages: (node.messages ?? []).map(normalizeMessage),
+  };
+}
+
+function descendantCount(node: TeamNode): number {
   return node.children.reduce((sum, child) => sum + 1 + descendantCount(child), 0);
 }
 
-function visibleTeamNodes(nodes: MockTeamNode[]) {
+function visibleTeamNodes(nodes: TeamNode[]) {
   return nodes
     .filter((node) => node.children.length > 0)
     .slice()
-    .sort((a, b) => statusRank[a.status] - statusRank[b.status] || a.name.localeCompare(b.name));
+    .sort((a, b) => sortRank(a.status) - sortRank(b.status) || a.name.localeCompare(b.name));
 }
 
-function findNode(nodes: MockTeamNode[], actorId: string): MockTeamNode | null {
+function allTeamNodes(nodes: TeamNode[]): TeamNode[] {
+  return nodes.flatMap((node) => [node, ...allTeamNodes(node.children)]);
+}
+
+function findNode(nodes: TeamNode[], actorId: string): TeamNode | null {
   for (const node of nodes) {
     if (node.actorId === actorId) {
       return node;
@@ -200,14 +168,84 @@ function findNode(nodes: MockTeamNode[], actorId: string): MockTeamNode | null {
   return null;
 }
 
+function selectableNodes(nodes: TeamNode[]) {
+  const nonLeaf = visibleTeamNodes(nodes);
+  return nonLeaf.length ? nonLeaf : allTeamNodes(nodes).sort((a, b) => sortRank(a.status) - sortRank(b.status) || a.name.localeCompare(b.name));
+}
+
+export function useSubagentsData(refreshMs = 5000): SubagentsData {
+  const [roots, setRoots] = useState<TeamNode[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [nonLeafCount, setNonLeafCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const response = await api.listSubagents({ includeClosed: true }, controller.signal);
+        if (cancelled) {
+          return;
+        }
+        const nextRoots = (response.roots ?? []).map(normalizeNode);
+        setRoots(nextRoots);
+        setTotalCount(response.total_count ?? allTeamNodes(nextRoots).length);
+        setNonLeafCount(response.non_leaf_count ?? visibleTeamNodes(nextRoots).length);
+        setError("");
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [refreshToken]);
+
+  useEffect(() => {
+    if (refreshMs <= 0) {
+      return;
+    }
+    const id = window.setInterval(() => setRefreshToken((value) => value + 1), refreshMs);
+    return () => window.clearInterval(id);
+  }, [refreshMs]);
+
+  return {
+    roots,
+    totalCount,
+    nonLeafCount,
+    loading,
+    error,
+    refresh: () => setRefreshToken((value) => value + 1),
+  };
+}
+
 interface SubagentsRailProps {
   selectedActorId: string;
+  data: SubagentsData;
   onSelect(actorId: string): void;
 }
 
-export function SubagentsRail({ selectedActorId, onSelect }: SubagentsRailProps) {
-  const nodes = visibleTeamNodes(mockTeamRoots);
+export function SubagentsRail({ selectedActorId, data, onSelect }: SubagentsRailProps) {
+  const nodes = useMemo(() => selectableNodes(data.roots), [data.roots]);
   const selectedVisible = nodes.some((node) => node.actorId === selectedActorId) ? selectedActorId : nodes[0]?.actorId;
+
+  useEffect(() => {
+    if (selectedVisible && selectedVisible !== selectedActorId) {
+      onSelect(selectedVisible);
+    }
+  }, [onSelect, selectedActorId, selectedVisible]);
 
   return (
     <div className="subagentsRailShell">
@@ -215,18 +253,19 @@ export function SubagentsRail({ selectedActorId, onSelect }: SubagentsRailProps)
         <p className="sessionsEyebrow">Team leads</p>
         <h2 className="sessionsSurfaceTitle">Subagents</h2>
         <div className="subagentsRailStats" aria-label="Subagent counts">
-          <span>{nodes.length} non-leaf agents</span>
-          <span>{nodes.reduce((sum, node) => sum + descendantCount(node), 0)} descendants</span>
+          <span>{data.nonLeafCount} non-leaf agents</span>
+          <span>{data.totalCount} total</span>
         </div>
-        <input className="subagentsSearch" type="search" placeholder="Search team leads" aria-label="Search team leads" />
-        <div className="subagentsFilterRow" aria-label="Mock filters">
-          <Badge variant="outline">status</Badge>
-          <Badge variant="outline">team</Badge>
+        <input className="subagentsSearch" type="search" placeholder="Search team leads" aria-label="Search team leads" disabled />
+        <div className="subagentsFilterRow" aria-label="Live filters">
+          <Badge variant="outline">live</Badge>
+          <Badge variant="outline">{data.loading ? "loading" : "synced"}</Badge>
         </div>
+        {data.error ? <p className="text-xs text-destructive">{data.error}</p> : null}
       </section>
       <ScrollArea className="subagentsRailBody">
         <div className="mainAgentList">
-          {nodes.map((node) => (
+          {nodes.length ? nodes.map((node) => (
             <button
               key={node.actorId}
               type="button"
@@ -236,15 +275,17 @@ export function SubagentsRail({ selectedActorId, onSelect }: SubagentsRailProps)
             >
               <span className="mainAgentCardTopline">
                 <strong>{node.name}</strong>
-                <span className={cn("subagentStatusPill", node.status)}>{statusLabel[node.status]}</span>
+                <span className={cn("subagentStatusPill", node.status)}>{formatStatus(node.status)}</span>
               </span>
               <span className="mainAgentCardMeta">{node.role}</span>
               <span className="mainAgentCardBadges">
                 <span>{node.children.length} direct</span>
-                <span>{descendantCount(node)} total</span>
+                <span>{descendantCount(node)} descendants</span>
               </span>
             </button>
-          ))}
+          )) : (
+            <p className="text-sm text-muted-foreground">No live subagents.</p>
+          )}
         </div>
       </ScrollArea>
     </div>
@@ -253,11 +294,29 @@ export function SubagentsRail({ selectedActorId, onSelect }: SubagentsRailProps)
 
 interface SubagentsThreadViewProps {
   selectedActorId: string;
+  data: SubagentsData;
 }
 
-export function SubagentsThreadView({ selectedActorId }: SubagentsThreadViewProps) {
-  const selected = findNode(mockTeamRoots, selectedActorId) || visibleTeamNodes(mockTeamRoots)[0] || mockTeamRoots[0];
-  const team = selected.children.slice().sort((a, b) => statusRank[a.status] - statusRank[b.status] || a.name.localeCompare(b.name));
+export function SubagentsThreadView({ selectedActorId, data }: SubagentsThreadViewProps) {
+  const selected = findNode(data.roots, selectedActorId) || selectableNodes(data.roots)[0] || data.roots[0];
+  const team = selected?.children.slice().sort((a, b) => sortRank(a.status) - sortRank(b.status) || a.name.localeCompare(b.name)) ?? [];
+
+  if (!selected) {
+    return (
+      <section className="subagentsThreadView" aria-label="Subagent team conversation view">
+        <header className="subagentsThreadHeader">
+          <div className="subagentsThreadTitleBlock">
+            <p className="sessionsEyebrow">Selected team lead</p>
+            <h1>Subagents</h1>
+            <p>{data.loading ? "Loading live subagent state" : "No live subagents"}</p>
+          </div>
+          <div className="subagentsThreadHeaderMeta">
+            <Button type="button" variant="outline" onClick={data.refresh}>Refresh</Button>
+          </div>
+        </header>
+      </section>
+    );
+  }
 
   return (
     <section className="subagentsThreadView" aria-label="Subagent team conversation view">
@@ -265,31 +324,31 @@ export function SubagentsThreadView({ selectedActorId }: SubagentsThreadViewProp
         <div className="subagentsThreadTitleBlock">
           <p className="sessionsEyebrow">Selected team lead</p>
           <h1>{selected.name}</h1>
-          <p>{selected.role} / {selected.cwd}</p>
+          <p>{selected.role} / {selected.cwd || "unknown cwd"}</p>
         </div>
         <div className="subagentsThreadHeaderMeta">
-          <span className={cn("subagentStatusPill", selected.status)}>{statusLabel[selected.status]}</span>
+          <span className={cn("subagentStatusPill", selected.status)}>{formatStatus(selected.status)}</span>
           <span>{team.length} direct reports</span>
-          <Button type="button" variant="outline" disabled>Details later</Button>
+          <Button type="button" variant="outline" onClick={data.refresh}>Refresh</Button>
         </div>
       </header>
 
       <div className="subagentsTeamStrip" aria-label="Direct subagents">
-        {team.map((node) => (
+        {team.length ? team.map((node) => (
           <article key={node.actorId} className="subagentTeamChip">
             <div className="subagentCardTopline">
               <strong>{node.name}</strong>
-              <span className={cn("subagentStatusPill", node.status)}>{statusLabel[node.status]}</span>
+              <span className={cn("subagentStatusPill", node.status)}>{formatStatus(node.status)}</span>
             </div>
             <span>{node.role}</span>
-            {node.children.length ? <small>{node.children.length} child agents</small> : null}
+            {node.children.length ? <small>{node.children.length} child agents</small> : <small>{node.lastEvent}</small>}
           </article>
-        ))}
+        )) : <p className="text-sm text-muted-foreground">No direct subagents.</p>}
       </div>
 
       <ScrollArea className="subagentsThreadScroll">
         <div className="subagentsThreadMessages">
-          {selected.messages.map((message) => (
+          {selected.messages.length ? selected.messages.map((message) => (
             <article key={message.id} className={cn("subagentsThreadMessage", message.kind)}>
               <div className="subagentsMessageMeta">
                 <span>{message.label}</span>
@@ -298,12 +357,14 @@ export function SubagentsThreadView({ selectedActorId }: SubagentsThreadViewProp
               <p>{message.body}</p>
               {message.meta ? <small>{message.meta}</small> : null}
             </article>
-          ))}
+          )) : (
+            <p className="text-sm text-muted-foreground">No recorded subagent messages.</p>
+          )}
         </div>
       </ScrollArea>
 
       <footer className="subagentsThreadFooter">
-        <span>Left rail hides leaf agents. A subagent appears there only when it leads its own children.</span>
+        <span>{selected.lastEvent}</span>
         <span>{selected.actorId}</span>
       </footer>
     </section>
