@@ -329,6 +329,49 @@ describe("createMessagesStore", () => {
     expect(store.getState().offsetsBySessionId.s1).toBe(2);
   });
 
+  it("upserts live tool calls by tool_call_id before render", () => {
+    const store = createMessagesStore();
+
+    store.applyLive(
+      "s1",
+      [{ event_id: "pi:tool_call:call-1", type: "tool", name: "read", tool_call_id: "call-1", text: "read", ts: 1000 } as any],
+      { replace: true, offset: 1 },
+    );
+    store.applyLive(
+      "s1",
+      [{ seq: 2, event_id: "pi:tool_call:entry-a", type: "tool", name: "read", details: { tool_call_id: "call-1", arguments: { path: "package.json" } }, text: "read package.json", ts: 1001 } as any],
+      { replace: false, offset: 2 },
+    );
+
+    expect(store.getState().bySessionId.s1).toEqual([
+      { event_id: "pi:tool_call:entry-a", seq: 2, type: "tool", name: "read", tool_call_id: "call-1", details: { tool_call_id: "call-1", arguments: { path: "package.json" } }, text: "read package.json", ts: 1001 },
+    ]);
+    expect(store.getState().offsetsBySessionId.s1).toBe(2);
+  });
+
+  it("keeps a tool call and its result distinct while deduping repeated results", () => {
+    const store = createMessagesStore();
+
+    store.applyLive(
+      "s1",
+      [
+        { event_id: "pi:tool_call:call-1", type: "tool", name: "read", tool_call_id: "call-1", text: "read", ts: 1000 } as any,
+        { event_id: "pi:tool_result:call-1:0", type: "tool_result", name: "read", tool_call_id: "call-1", text: "old", ts: 1001 } as any,
+      ],
+      { replace: true, offset: 2 },
+    );
+    store.applyLive(
+      "s1",
+      [{ event_id: "pi:tool_result:turn-1:0", type: "tool_result", name: "read", details: { tool_call_id: "call-1" }, text: "new", ts: 1002 } as any],
+      { replace: false, offset: 3 },
+    );
+
+    expect(store.getState().bySessionId.s1).toEqual([
+      { event_id: "pi:tool_call:call-1", type: "tool", name: "read", tool_call_id: "call-1", text: "read", ts: 1000 },
+      { event_id: "pi:tool_result:turn-1:0", type: "tool_result", name: "read", tool_call_id: "call-1", details: { tool_call_id: "call-1" }, text: "new", ts: 1002 },
+    ]);
+  });
+
   it("prepends older replay pages and tracks the next history cursor", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({
