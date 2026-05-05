@@ -162,6 +162,49 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("2/3 completed");
   });
 
+  it("marks tool calls and matching results as one visual pair", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-tool-pairs", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-tool-pairs": [
+            { type: "tool", name: "read", tool_call_id: "call-read", text: "package.json", ts: 100 },
+            { type: "tool_result", name: "read", tool_call_id: "call-read", text: "{}", ts: 101 },
+            { type: "tool", name: "bash", tool_call_id: "call-running", text: "npm test", ts: 102 },
+          ],
+        },
+        offsetsBySessionId: { "sess-tool-pairs": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const pairedCall = root.querySelector<HTMLButtonElement>(".machineTraceToken.tool[data-pair-id='call-read']");
+    const pairedResult = root.querySelector<HTMLButtonElement>(".machineTraceToken.tool_result[data-pair-id='call-read']");
+    const unpairedCall = root.querySelector<HTMLButtonElement>(".machineTraceToken.tool[data-pair-id='call-running']");
+
+    expect(pairedCall?.dataset.pairState).toBe("call");
+    expect(pairedResult?.dataset.pairState).toBe("result");
+    expect(unpairedCall?.dataset.pairState).toBe("orphan");
+    expect(pairedCall?.classList.contains("isPairedToolCall")).toBe(true);
+    expect(pairedResult?.classList.contains("isPairedToolResult")).toBe(true);
+    expect(unpairedCall?.classList.contains("isUnpairedTool")).toBe(true);
+    expect(pairedCall?.title).toContain("paired call call-read");
+    expect(pairedResult?.title).toContain("paired result call-read");
+  });
+
   it("keeps a selected tool detail open after refreshed message objects replace the trace", async () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-refresh", loading: false, newSessionDefaults: null },
