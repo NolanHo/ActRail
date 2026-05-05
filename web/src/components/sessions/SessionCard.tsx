@@ -22,7 +22,7 @@ interface SessionCardProps {
 
 type SessionHealth = "healthy" | "working" | "unhealthy" | "unread" | "unknown";
 
-const unavailableTransportStates = new Set(["broken", "ended", "silent", "stalled"]);
+const unavailableTransportStates = new Set(["broken", "failed", "ended", "silent", "stalled"]);
 const availableTransportStates = new Set(["", "attached", "idle", "ready", "running"]);
 
 export function sessionTransportHealth(session: SessionSummary, historical: boolean): SessionHealth {
