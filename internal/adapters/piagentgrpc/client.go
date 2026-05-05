@@ -61,16 +61,27 @@ type Command struct {
 	SourceInfo  SourceInfo `json:"source_info,omitempty"`
 }
 
+type RuntimeState string
+
+const (
+	RuntimeStateUnknown  RuntimeState = ""
+	RuntimeStateStarting RuntimeState = "starting"
+	RuntimeStateReady    RuntimeState = "ready"
+	RuntimeStateFailed   RuntimeState = "failed"
+)
+
 type State struct {
-	SessionID           string
-	SessionFile         string
-	SessionName         string
-	ModelID             string
-	Provider            string
-	ThinkingLevel       string
-	IsStreaming         bool
-	IsCompacting        bool
-	PendingMessageCount int
+	SessionID            string
+	SessionFile          string
+	SessionName          string
+	ModelID              string
+	Provider             string
+	ThinkingLevel        string
+	IsStreaming          bool
+	IsCompacting         bool
+	PendingMessageCount  int
+	RuntimeState         RuntimeState
+	RuntimeStatusMessage string
 }
 
 func New(target string, dialer Dialer) *Client {
@@ -99,8 +110,14 @@ func SocketPathForTarget(target string) string {
 }
 
 func (c *Client) Connect(ctx context.Context) error {
-	_, err := c.GetState(ctx)
-	return err
+	state, err := c.GetState(ctx)
+	if err != nil {
+		return err
+	}
+	if state.RuntimeFailed() {
+		return fmt.Errorf("runtime failed: %s", firstNonEmptyString(state.RuntimeMessage(), "runtime failed"))
+	}
+	return nil
 }
 
 func (c *Client) GetState(ctx context.Context) (State, error) {
@@ -285,18 +302,58 @@ func (c *Client) observeSequence(seq uint64) {
 	}
 }
 
+func runtimeStateFromProto(state piagentv1.RuntimeState) RuntimeState {
+	switch state {
+	case piagentv1.RuntimeState_RUNTIME_STATE_STARTING:
+		return RuntimeStateStarting
+	case piagentv1.RuntimeState_RUNTIME_STATE_READY:
+		return RuntimeStateReady
+	case piagentv1.RuntimeState_RUNTIME_STATE_FAILED:
+		return RuntimeStateFailed
+	default:
+		return RuntimeStateUnknown
+	}
+}
+
+func (s State) RuntimeReady() bool {
+	return s.RuntimeState == RuntimeStateUnknown || s.RuntimeState == RuntimeStateReady
+}
+
+func (s State) RuntimeStarting() bool {
+	return s.RuntimeState == RuntimeStateStarting
+}
+
+func (s State) RuntimeFailed() bool {
+	return s.RuntimeState == RuntimeStateFailed
+}
+
+func (s State) RuntimeMessage() string {
+	return strings.TrimSpace(s.RuntimeStatusMessage)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func stateFromProto(state *piagentv1.SessionState) State {
 	if state == nil {
 		return State{}
 	}
 	out := State{
-		SessionID:           strings.TrimSpace(state.GetSessionId()),
-		SessionFile:         strings.TrimSpace(state.GetSessionFile()),
-		SessionName:         strings.TrimSpace(state.GetSessionName()),
-		ThinkingLevel:       strings.TrimSpace(state.GetThinkingLevel()),
-		IsStreaming:         state.GetIsStreaming(),
-		IsCompacting:        state.GetIsCompacting(),
-		PendingMessageCount: int(state.GetPendingMessageCount()),
+		SessionID:            strings.TrimSpace(state.GetSessionId()),
+		SessionFile:          strings.TrimSpace(state.GetSessionFile()),
+		SessionName:          strings.TrimSpace(state.GetSessionName()),
+		ThinkingLevel:        strings.TrimSpace(state.GetThinkingLevel()),
+		IsStreaming:          state.GetIsStreaming(),
+		IsCompacting:         state.GetIsCompacting(),
+		PendingMessageCount:  int(state.GetPendingMessageCount()),
+		RuntimeState:         runtimeStateFromProto(state.GetRuntimeState()),
+		RuntimeStatusMessage: strings.TrimSpace(state.GetRuntimeStatusMessage()),
 	}
 	if model := state.GetModel(); model != nil {
 		out.ModelID = strings.TrimSpace(model.GetId())

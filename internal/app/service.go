@@ -590,13 +590,39 @@ func (s *Stub) startPIAgentGRPCReadyTransition(sessionID session.SessionID, runt
 		return
 	}
 	go func() {
-		err := runtime.WaitForPIAgentGRPCReady(context.Background())
-		if err != nil {
-			_ = runtime.Kill(context.Background())
-			s.markPIAgentGRPCStartupFailed(sessionID, err)
+		for {
+			state, err := runtime.PIAgentGRPCState(context.Background())
+			if err != nil {
+				if strings.Contains(err.Error(), "runtime starting") {
+					time.Sleep(helperReadyPollInterval)
+					continue
+				}
+				_ = runtime.Kill(context.Background())
+				s.markPIAgentGRPCStartupFailed(sessionID, err)
+				return
+			}
+			if state.RuntimeStarting() {
+				if err := s.applyRuntimeProjection(sessionID, runtimeProjection{piRPCState: piRPCStateSnapshotFromGRPC(state)}); err != nil {
+					_ = runtime.Kill(context.Background())
+					s.markPIAgentGRPCStartupFailed(sessionID, err)
+					return
+				}
+				time.Sleep(helperReadyPollInterval)
+				continue
+			}
+			if state.RuntimeFailed() {
+				_ = runtime.Kill(context.Background())
+				s.markPIAgentGRPCStartupFailed(sessionID, fmt.Errorf("pi agent grpc runtime failed: %s", firstNonEmptyString(state.RuntimeMessage(), "runtime failed")))
+				return
+			}
+			if err := s.applyRuntimeProjection(sessionID, runtimeProjection{piRPCState: piRPCStateSnapshotFromGRPC(state)}); err != nil {
+				_ = runtime.Kill(context.Background())
+				s.markPIAgentGRPCStartupFailed(sessionID, err)
+				return
+			}
+			s.markPIAgentGRPCStartupReady(sessionID, runtime)
 			return
 		}
-		s.markPIAgentGRPCStartupReady(sessionID, runtime)
 	}()
 }
 

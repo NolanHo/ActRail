@@ -57,6 +57,13 @@ message FollowUpRequest {
 
 message AbortRequest {}
 
+enum RuntimeState {
+  RUNTIME_STATE_UNSPECIFIED = 0;
+  RUNTIME_STATE_STARTING = 1;
+  RUNTIME_STATE_READY = 2;
+  RUNTIME_STATE_FAILED = 3;
+}
+
 message NewSessionRequest {
   optional string parent_session = 1;
 }
@@ -117,6 +124,7 @@ enum EventLevel {
 message SessionState {
   optional Model model = 1;
   string thinking_level = 2;
+  // True while the session is processing a turn, including provider calls, tool execution, and auto-retry continuation.
   bool is_streaming = 3;
   bool is_compacting = 4;
   string steering_mode = 5;
@@ -127,6 +135,8 @@ message SessionState {
   bool auto_compaction_enabled = 10;
   uint32 message_count = 11;
   uint32 pending_message_count = 12;
+  RuntimeState runtime_state = 13;
+  string runtime_status_message = 14;
 }
 
 message Model {

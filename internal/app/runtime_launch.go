@@ -494,8 +494,14 @@ func (l processRuntimeLauncher) waitForPIAgentGRPCReady(ctx context.Context, cli
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		if err := client.Connect(readyCtx); err == nil {
-			return nil
+		if state, err := client.GetState(readyCtx); err == nil {
+			if state.RuntimeReady() {
+				return nil
+			}
+			if state.RuntimeFailed() {
+				return fmt.Errorf("pi agent grpc runtime failed: %s", firstNonEmptyString(state.RuntimeMessage(), "runtime failed"))
+			}
+			lastErr = fmt.Errorf("pi agent grpc runtime starting: %s", firstNonEmptyString(state.RuntimeMessage(), "runtime starting"))
 		} else {
 			lastErr = err
 			if errors.Is(err, context.Canceled) {
@@ -736,6 +742,13 @@ func (r sessionRuntime) UsesPIAgentGRPC() bool {
 
 func (r sessionRuntime) PendingPIAgentGRPCReady() bool {
 	return r.piAgentGRPC != nil && r.piAgentGRPCReady != nil
+}
+
+func (r sessionRuntime) PIAgentGRPCState(ctx context.Context) (piagentgrpc.State, error) {
+	if r.piAgentGRPC == nil {
+		return piagentgrpc.State{}, nil
+	}
+	return r.piAgentGRPC.GetState(ctx)
 }
 
 func (r sessionRuntime) WaitForPIAgentGRPCReady(ctx context.Context) error {

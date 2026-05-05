@@ -31,7 +31,7 @@ type fakePiAgentServer struct {
 }
 
 func (fakePiAgentServer) GetState(context.Context, *piagentv1.GetStateRequest) (*piagentv1.SessionState, error) {
-	return &piagentv1.SessionState{SessionId: "pi-grpc-test"}, nil
+	return &piagentv1.SessionState{SessionId: "pi-grpc-test", RuntimeState: piagentv1.RuntimeState_RUNTIME_STATE_READY, RuntimeStatusMessage: "ready"}, nil
 }
 
 func (a launchAdapter) Backend() session.Backend {
