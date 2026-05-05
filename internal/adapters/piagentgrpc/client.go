@@ -116,6 +116,14 @@ func (c *Client) GetState(ctx context.Context) (State, error) {
 }
 
 func (c *Client) Prompt(ctx context.Context, message string) error {
+	return c.prompt(ctx, message, piagentv1.StreamingBehavior_STREAMING_BEHAVIOR_UNSPECIFIED)
+}
+
+func (c *Client) FollowUp(ctx context.Context, message string) error {
+	return c.prompt(ctx, message, piagentv1.StreamingBehavior_STREAMING_BEHAVIOR_FOLLOW_UP)
+}
+
+func (c *Client) prompt(ctx context.Context, message string, behavior piagentv1.StreamingBehavior) error {
 	text := strings.TrimSpace(message)
 	if text == "" {
 		return fmt.Errorf("prompt is required")
@@ -124,7 +132,7 @@ func (c *Client) Prompt(ctx context.Context, message string) error {
 	if err != nil {
 		return err
 	}
-	_, err = rpc.Prompt(ctx, &piagentv1.PromptRequest{Message: text})
+	_, err = rpc.Prompt(ctx, &piagentv1.PromptRequest{Message: text, StreamingBehavior: behavior})
 	return err
 }
 

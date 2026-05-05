@@ -113,14 +113,22 @@ func (s *Stub) emitQueueState(sessionID session.SessionID, queue SessionQueueSna
 }
 
 func (s *Stub) emitMessageCommit(sessionID session.SessionID, turnID string, msg SessionMessage) {
-	if s == nil || s.sink == nil {
+	if s == nil {
+		return
+	}
+	s.appendSubagentMessageCommitEvent(sessionID, turnID, msg)
+	if s.sink == nil {
 		return
 	}
 	s.sink.PublishMessageCommit(MessageCommitEvent{SessionID: sessionID, TurnID: turnID, Message: msg})
 }
 
 func (s *Stub) emitMessageDelta(sessionID session.SessionID, turnID, role, delta string) {
-	if s == nil || s.sink == nil {
+	if s == nil {
+		return
+	}
+	s.appendSubagentMessageDeltaEvent(sessionID, turnID, role, delta)
+	if s.sink == nil {
 		return
 	}
 	s.sink.PublishMessageDelta(MessageDeltaEvent{SessionID: sessionID, TurnID: turnID, Role: role, Delta: delta})

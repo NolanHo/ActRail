@@ -97,6 +97,8 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.HandleFunc("POST /api/login", r.login)
 	mux.HandleFunc("POST /api/logout", r.logout)
 	mux.Handle("GET /api/bootstrap", r.requireAuth(http.HandlerFunc(r.bootstrap)))
+	mux.Handle("POST /team/command", r.requireAuth(http.HandlerFunc(r.teamCommand)))
+	mux.Handle("GET /team/events", r.requireAuth(http.HandlerFunc(r.teamEvents)))
 	mux.Handle("GET /api/sessions", r.requireAuth(http.HandlerFunc(r.listSessions)))
 	mux.Handle("POST /api/sessions", r.requireAuth(http.HandlerFunc(r.createSession)))
 	mux.Handle("GET /api/subagents", r.requireAuth(http.HandlerFunc(r.listSubagents)))

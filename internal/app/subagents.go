@@ -83,6 +83,32 @@ type SubagentEvent struct {
 	TS              float64        `json:"ts"`
 }
 
+type TeamEvent struct {
+	Protocol        string         `json:"protocol"`
+	EventID         string         `json:"eventId"`
+	Type            string         `json:"type"`
+	ActorID         string         `json:"actorId"`
+	ChildSessionID  string         `json:"childSessionId"`
+	ParentSessionID string         `json:"parentSessionId"`
+	Timestamp       int64          `json:"timestamp"`
+	Name            string         `json:"name,omitempty"`
+	Role            string         `json:"role,omitempty"`
+	TurnID          string         `json:"turnId,omitempty"`
+	QuestionID      string         `json:"questionId,omitempty"`
+	Question        string         `json:"question,omitempty"`
+	Context         string         `json:"context,omitempty"`
+	Blocking        bool           `json:"blocking,omitempty"`
+	Delta           string         `json:"delta,omitempty"`
+	ToolCallID      string         `json:"toolCallId,omitempty"`
+	ToolName        string         `json:"toolName,omitempty"`
+	IsError         bool           `json:"isError,omitempty"`
+	Status          SubagentStatus `json:"status,omitempty"`
+	Output          string         `json:"output,omitempty"`
+	Error           string         `json:"error,omitempty"`
+	ExitCode        *int           `json:"exitCode,omitempty"`
+	Reason          string         `json:"reason,omitempty"`
+}
+
 type SpawnSubagentRequest struct {
 	ParentSessionID string  `json:"parent_session_id"`
 	ParentActorID   string  `json:"parent_actor_id"`
@@ -139,6 +165,10 @@ type AbortSubagentRequest struct {
 }
 
 type CloseSubagentRequest struct {
+	ActorID string `json:"actor_id"`
+}
+
+type StatusSubagentRequest struct {
 	ActorID string `json:"actor_id"`
 }
 
@@ -283,7 +313,7 @@ func (s *Stub) SpawnSubagent(ctx context.Context, req SpawnSubagentRequest) (Sub
 		return SubagentCommandResponse{}, err
 	}
 	if text := strings.TrimSpace(req.InitialPrompt); text != "" {
-		if _, err := s.sendSubagentText(ctx, actor.ActorID, text, true); err != nil {
+		if _, err := s.sendSubagentText(ctx, actor.ActorID, text, true, true); err != nil {
 			s.subagents.markFailed(actor.ActorID, err.Error())
 			return SubagentCommandResponse{}, err
 		}
@@ -293,7 +323,7 @@ func (s *Stub) SpawnSubagent(ctx context.Context, req SpawnSubagentRequest) (Sub
 }
 
 func (s *Stub) PromptSubagent(ctx context.Context, req PromptSubagentRequest) (SubagentCommandResponse, error) {
-	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true)
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true, false)
 	if err != nil {
 		return SubagentCommandResponse{}, err
 	}
@@ -301,7 +331,7 @@ func (s *Stub) PromptSubagent(ctx context.Context, req PromptSubagentRequest) (S
 }
 
 func (s *Stub) FollowupSubagent(ctx context.Context, req FollowupSubagentRequest) (SubagentCommandResponse, error) {
-	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true)
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true, false)
 	if err != nil {
 		return SubagentCommandResponse{}, err
 	}
@@ -309,14 +339,14 @@ func (s *Stub) FollowupSubagent(ctx context.Context, req FollowupSubagentRequest
 }
 
 func (s *Stub) SendSubagent(ctx context.Context, req SendSubagentRequest) (SubagentDeliveryResponse, error) {
-	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Message, false)
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Message, false, false)
 	if err != nil {
 		return SubagentDeliveryResponse{}, err
 	}
 	return SubagentDeliveryResponse{OK: true, ActorID: actor.ActorID, TurnID: actor.TurnID, Delivery: "live"}, nil
 }
 
-func (s *Stub) sendSubagentText(ctx context.Context, actorID, text string, newTurn bool) (*SubagentNode, error) {
+func (s *Stub) sendSubagentText(ctx context.Context, actorID, text string, newTurn bool, followUp bool) (*SubagentNode, error) {
 	cleaned := strings.TrimSpace(text)
 	if cleaned == "" {
 		return nil, Invalid("text", "text required")
@@ -325,7 +355,7 @@ func (s *Stub) sendSubagentText(ctx context.Context, actorID, text string, newTu
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.Send(ctx, SendRequest{SessionID: actor.ChildSessionID, Text: cleaned}); err != nil {
+	if _, err := s.send(ctx, SendRequest{SessionID: actor.ChildSessionID, Text: cleaned}, followUp); err != nil {
 		s.subagents.markFailed(actorID, err.Error())
 		return nil, err
 	}
@@ -412,6 +442,14 @@ func (s *Stub) CloseSubagent(ctx context.Context, req CloseSubagentRequest) (Sub
 		return SubagentCommandResponse{}, err
 	}
 	return SubagentCommandResponse{OK: true, Actor: node, ActorID: node.ActorID, ChildSessionID: node.ChildSessionID, TurnID: node.TurnID, Status: node.Status}, nil
+}
+
+func (s *Stub) StatusSubagent(_ context.Context, req StatusSubagentRequest) (SubagentCommandResponse, error) {
+	actor := s.subagents.lookupNode(req.ActorID)
+	if actor == nil {
+		return SubagentCommandResponse{}, NotFound(fmt.Sprintf("subagent actor %q not found", strings.TrimSpace(req.ActorID)))
+	}
+	return SubagentCommandResponse{OK: true, Actor: actor, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID, TurnID: actor.TurnID, Status: actor.Status}, nil
 }
 
 func (s *Stub) SubagentEvents(_ context.Context, req SubagentEventsRequest) (SubagentEventsResponse, error) {
@@ -642,6 +680,22 @@ func (r *subagentRegistry) markFailed(actorID, message string) {
 	}
 	r.appendEventLocked(actor, "subagent.error", actor.TurnID, "", message, actor.Status)
 	_ = r.persistActorLocked(actor)
+}
+
+func (r *subagentRegistry) appendTeamEventForSession(sessionID session.SessionID, typ, turnID, questionID, message string, status SubagentStatus) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, actor := range r.actors {
+		if actor.ChildSessionID != sessionID {
+			continue
+		}
+		if status != "" {
+			actor.Status = status
+		}
+		r.appendEventLocked(actor, typ, turnID, questionID, message, actor.Status)
+		_ = r.persistActorLocked(actor)
+		return
+	}
 }
 
 func (r *subagentRegistry) snapshot(includeClosed bool) []SubagentNode {
@@ -890,4 +944,97 @@ func subagentTimestamp(t time.Time) float64 {
 		return 0
 	}
 	return timestampSeconds(t)
+}
+
+func TeamEventsFromSubagentEvents(events []SubagentEvent, actor *SubagentNode) []TeamEvent {
+	out := make([]TeamEvent, 0, len(events))
+	for _, event := range events {
+		out = append(out, TeamEventFromSubagentEvent(event, actor))
+	}
+	return out
+}
+
+func TeamEventFromSubagentEvent(event SubagentEvent, actor *SubagentNode) TeamEvent {
+	teamType := mapSubagentEventType(event.Type)
+	team := TeamEvent{
+		Protocol:        "pi.team.v1",
+		EventID:         event.EventID,
+		Type:            teamType,
+		ActorID:         event.ActorID,
+		ChildSessionID:  event.ChildSessionID,
+		ParentSessionID: event.ParentSessionID,
+		Timestamp:       int64(event.TS * 1000),
+		TurnID:          event.TurnID,
+		QuestionID:      event.QuestionID,
+	}
+	if actor != nil {
+		team.Name = actor.Name
+		team.Role = actor.Role
+	}
+	switch teamType {
+	case "team.started", "team.status":
+		team.Status = event.Status
+	case "team.question":
+		team.Question = event.Message
+		team.Blocking = true
+		if actor != nil && actor.Question != nil && actor.Question.QuestionID == event.QuestionID {
+			team.Context = actor.Question.Context
+		}
+	case "team.answer_accepted":
+	case "team.output_delta":
+		team.Delta = event.Message
+	case "team.tool_call", "team.tool_result":
+		team.ToolCallID = event.QuestionID
+		team.ToolName = event.Message
+		if team.ToolName == "" {
+			team.ToolName = teamType
+		}
+	case "team.turn_result":
+		team.Status = event.Status
+		team.Output = event.Message
+		if event.Status == SubagentStatusFailed {
+			team.Error = event.Message
+			code := 1
+			team.ExitCode = &code
+		} else if event.Status == SubagentStatusCompleted {
+			code := 0
+			team.ExitCode = &code
+		}
+	case "team.error":
+		team.Error = event.Message
+	case "team.aborted", "team.closed":
+		team.Reason = event.Message
+	}
+	return team
+}
+
+func mapSubagentEventType(typ string) string {
+	switch typ {
+	case "subagent.started":
+		return "team.started"
+	case "subagent.turn_started":
+		return "team.turn_started"
+	case "subagent.prompt":
+		return "team.status"
+	case "subagent.question":
+		return "team.question"
+	case "subagent.answer_accepted":
+		return "team.answer_accepted"
+	case "subagent.output_delta":
+		return "team.output_delta"
+	case "subagent.tool_call":
+		return "team.tool_call"
+	case "subagent.tool_result":
+		return "team.tool_result"
+	case "subagent.turn_result":
+		return "team.turn_result"
+	case "subagent.error":
+		return "team.error"
+	case "subagent.aborted":
+		return "team.aborted"
+	case "subagent.closed":
+		return "team.closed"
+	default:
+		return "team.status"
+	}
 }
