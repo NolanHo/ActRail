@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,10 @@ import (
 	"actrail/internal/adapters/process"
 	"actrail/internal/app"
 	"actrail/internal/config"
+	piagentv1 "actrail/proto/pi/agent/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 )
 
 type testPTY struct {
@@ -130,6 +135,87 @@ func TestTeamProtocolE2EWithDefaultActRailClient(t *testing.T) {
 			t.Fatalf("missing event type %s in %v", typ, seen)
 		}
 	}
+}
+
+func TestTeamSpawnUsesFollowUpForInitialPromptOverPIAgentGRPC(t *testing.T) {
+	var gotBehavior piagentv1.StreamingBehavior
+	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
+		return process.NewFakeHandle(spec)
+	}}
+	grpcServer := newTeamE2EPiAgentServer(t, func(req *piagentv1.PromptRequest) {
+		gotBehavior = req.GetStreamingBehavior()
+	})
+	svc := app.NewStubForTest(config.Load(), time.Now, app.RuntimeConfig{
+		Runner:            runner,
+		PIAgentGRPCTarget: "bufnet",
+		PIAgentGRPCDialer: grpcServer.Dial,
+	})
+	parent, err := svc.CreateSession(context.Background(), app.CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	h := newTestRouter(config.Load(), svc)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	spawnBody, _ := json.Marshal(map[string]any{
+		"protocol":        "pi.team.v1",
+		"type":            "team.spawn",
+		"requestId":       "req_spawn_grpc",
+		"parentSessionId": parent.Session.SessionID,
+		"name":            "worker",
+		"role":            "review",
+		"cwd":             t.TempDir(),
+		"initialPrompt":   "inspect",
+	})
+	res, err := http.Post(server.URL+"/team/command", "application/json", bytes.NewReader(spawnBody))
+	if err != nil {
+		t.Fatalf("POST /team/command error = %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("POST /team/command status = %d", res.StatusCode)
+	}
+	if gotBehavior != piagentv1.StreamingBehavior_STREAMING_BEHAVIOR_FOLLOW_UP {
+		t.Fatalf("streaming_behavior = %v, want FOLLOW_UP", gotBehavior)
+	}
+}
+
+type teamE2EPiAgentServer struct {
+	piagentv1.UnimplementedPiAgentServer
+	onPrompt func(*piagentv1.PromptRequest)
+}
+
+func (s teamE2EPiAgentServer) GetState(context.Context, *piagentv1.GetStateRequest) (*piagentv1.SessionState, error) {
+	return &piagentv1.SessionState{SessionId: "pi-grpc-team-test"}, nil
+}
+
+func (s teamE2EPiAgentServer) Prompt(_ context.Context, req *piagentv1.PromptRequest) (*piagentv1.CommandAck, error) {
+	if s.onPrompt != nil {
+		s.onPrompt(req)
+	}
+	return &piagentv1.CommandAck{}, nil
+}
+
+type teamE2EPiAgentFixture struct {
+	Dial func(context.Context, string) (*grpc.ClientConn, error)
+}
+
+func newTeamE2EPiAgentServer(t *testing.T, onPrompt func(*piagentv1.PromptRequest)) teamE2EPiAgentFixture {
+	t.Helper()
+	grpcServer := grpc.NewServer()
+	piagentv1.RegisterPiAgentServer(grpcServer, teamE2EPiAgentServer{onPrompt: onPrompt})
+	listener := bufconn.Listen(1024 * 1024)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	go func() { _ = grpcServer.Serve(listener) }()
+	return teamE2EPiAgentFixture{Dial: func(context.Context, string) (*grpc.ClientConn, error) {
+		return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return listener.Dial()
+		}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}}
 }
 
 func boolPtr(v bool) *bool { return &v }

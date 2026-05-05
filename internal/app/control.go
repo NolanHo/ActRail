@@ -81,6 +81,10 @@ type UIResponseResponse struct {
 }
 
 func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) {
+	return s.send(ctx, req, false)
+}
+
+func (s *Stub) send(ctx context.Context, req SendRequest, followUp bool) (SendResponse, error) {
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
 		return SendResponse{}, Invalid("text", "text required")
@@ -106,7 +110,16 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 		if !sameRuntime(record, current) {
 			return errRuntimeChanged
 		}
-		if err := record.runtime.SendPromptWithStaleCheck(ctx, text, func() bool {
+		sendRuntimePrompt := record.runtime.SendPromptWithStaleCheck
+		if followUp {
+			sendRuntimePrompt = func(ctx context.Context, text string, stale func() bool) error {
+				if stale != nil && stale() {
+					return errRuntimeChanged
+				}
+				return record.runtime.SendFollowUp(ctx, text)
+			}
+		}
+		if err := sendRuntimePrompt(ctx, text, func() bool {
 			current, err := s.lookupSession(req.SessionID)
 			return err != nil || !sameRuntime(record, current)
 		}); err != nil {

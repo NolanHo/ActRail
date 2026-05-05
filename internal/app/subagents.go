@@ -313,7 +313,7 @@ func (s *Stub) SpawnSubagent(ctx context.Context, req SpawnSubagentRequest) (Sub
 		return SubagentCommandResponse{}, err
 	}
 	if text := strings.TrimSpace(req.InitialPrompt); text != "" {
-		if _, err := s.sendSubagentText(ctx, actor.ActorID, text, true); err != nil {
+		if _, err := s.sendSubagentText(ctx, actor.ActorID, text, true, true); err != nil {
 			s.subagents.markFailed(actor.ActorID, err.Error())
 			return SubagentCommandResponse{}, err
 		}
@@ -323,7 +323,7 @@ func (s *Stub) SpawnSubagent(ctx context.Context, req SpawnSubagentRequest) (Sub
 }
 
 func (s *Stub) PromptSubagent(ctx context.Context, req PromptSubagentRequest) (SubagentCommandResponse, error) {
-	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true)
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true, false)
 	if err != nil {
 		return SubagentCommandResponse{}, err
 	}
@@ -331,7 +331,7 @@ func (s *Stub) PromptSubagent(ctx context.Context, req PromptSubagentRequest) (S
 }
 
 func (s *Stub) FollowupSubagent(ctx context.Context, req FollowupSubagentRequest) (SubagentCommandResponse, error) {
-	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true)
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Prompt, true, false)
 	if err != nil {
 		return SubagentCommandResponse{}, err
 	}
@@ -339,14 +339,14 @@ func (s *Stub) FollowupSubagent(ctx context.Context, req FollowupSubagentRequest
 }
 
 func (s *Stub) SendSubagent(ctx context.Context, req SendSubagentRequest) (SubagentDeliveryResponse, error) {
-	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Message, false)
+	actor, err := s.sendSubagentText(ctx, req.ActorID, req.Message, false, false)
 	if err != nil {
 		return SubagentDeliveryResponse{}, err
 	}
 	return SubagentDeliveryResponse{OK: true, ActorID: actor.ActorID, TurnID: actor.TurnID, Delivery: "live"}, nil
 }
 
-func (s *Stub) sendSubagentText(ctx context.Context, actorID, text string, newTurn bool) (*SubagentNode, error) {
+func (s *Stub) sendSubagentText(ctx context.Context, actorID, text string, newTurn bool, followUp bool) (*SubagentNode, error) {
 	cleaned := strings.TrimSpace(text)
 	if cleaned == "" {
 		return nil, Invalid("text", "text required")
@@ -355,7 +355,7 @@ func (s *Stub) sendSubagentText(ctx context.Context, actorID, text string, newTu
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.Send(ctx, SendRequest{SessionID: actor.ChildSessionID, Text: cleaned}); err != nil {
+	if _, err := s.send(ctx, SendRequest{SessionID: actor.ChildSessionID, Text: cleaned}, followUp); err != nil {
 		s.subagents.markFailed(actorID, err.Error())
 		return nil, err
 	}

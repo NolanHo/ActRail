@@ -775,14 +775,18 @@ func (r sessionRuntime) RequestPIRPCState(ctx context.Context, id string) error 
 }
 
 func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
-	return r.sendPrompt(ctx, text, nil)
+	return r.sendPrompt(ctx, text, nil, false)
+}
+
+func (r sessionRuntime) SendFollowUp(ctx context.Context, text string) error {
+	return r.sendPrompt(ctx, text, nil, true)
 }
 
 func (r sessionRuntime) SendPromptWithStaleCheck(ctx context.Context, text string, stale func() bool) error {
-	return r.sendPrompt(ctx, text, stale)
+	return r.sendPrompt(ctx, text, stale, false)
 }
 
-func (r sessionRuntime) sendPrompt(ctx context.Context, text string, stale func() bool) error {
+func (r sessionRuntime) sendPrompt(ctx context.Context, text string, stale func() bool, followUp bool) error {
 	payload := strings.TrimSpace(text)
 	if payload == "" {
 		return fmt.Errorf("runtime prompt is required")
@@ -820,6 +824,9 @@ func (r sessionRuntime) sendPrompt(ctx context.Context, text string, stale func(
 		return r.helper.command(ctx, iod.CommandSend, json.RawMessage(strconv.Quote(payload)))
 	}
 	if r.piAgentGRPC != nil {
+		if followUp {
+			return r.piAgentGRPC.FollowUp(ctx, payload)
+		}
 		return r.piAgentGRPC.Prompt(ctx, payload)
 	}
 	if r.protocol == runtimeProtocolPIRPC {
