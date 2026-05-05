@@ -88,6 +88,13 @@ func (s *Stub) loadDetachedImportedPIHistory(ctx context.Context, record session
 	if items, ok := s.messageCache.Get(record.identity.SessionID(), cacheKey); ok {
 		return paginateSessionMessagesForRequest(items, req), true, nil
 	}
+	if page, ok, err := loadSourceHistoryPage(sourcePath, req); ok {
+		if err != nil {
+			return SessionMessagesResponse{}, true, err
+		}
+		s.rememberPISourceBinding(record, sourcePath, sourceConfidenceExact)
+		return sourceHistorySessionMessagesResponse(page, req), true, nil
+	}
 	items, err := importedSessionMessagesFromSourcePath(sourcePath)
 	if err != nil {
 		return SessionMessagesResponse{}, true, err
@@ -345,14 +352,35 @@ func (s *Stub) loadPIAuthoritativeHistory(ctx context.Context, record sessionRec
 		defer cancel()
 		packet, err := record.runtime.helper.sessionHistory(historyCtx)
 		if err == nil && len(packet.Lines) > 0 {
-			helperItems, err = importedSessionMessagesFromJSONLLines(packet.SourcePath, packet.Lines)
-			if err != nil {
-				return SessionMessagesResponse{}, true, err
+			if packet.Complete || len(paths) == 0 {
+				helperItems, err = importedSessionMessagesFromJSONLLines(packet.SourcePath, packet.Lines)
+				if err != nil {
+					return SessionMessagesResponse{}, true, err
+				}
+			}
+			if sourceSig, ok := piSourceSignature(packet.SourcePath); ok {
+				signatureParts = append(signatureParts, "helper:"+sourceSig)
+			} else {
+				signatureParts = append(signatureParts, fmt.Sprintf("helper:%s:%t:%t:%d", strings.TrimSpace(packet.SourcePath), packet.Warmed, packet.Complete, len(packet.Lines)))
+			}
+			if !packet.Complete {
+				signatureParts = append(signatureParts, "incomplete")
 			}
 		}
 	}
 
 	items := make([]SessionMessage, 0)
+	if len(paths) == 1 && len(helperItems) == 0 && record.transcript.Len() == 0 {
+		if page, ok, err := loadSourceHistoryPage(paths[0], req); ok {
+			if err != nil {
+				return SessionMessagesResponse{}, true, err
+			}
+			if len(paths) > 0 {
+				s.rememberPISourceBinding(record, paths[0], sourceConfidenceForPath(record, paths[0]))
+			}
+			return sourceHistorySessionMessagesResponse(page, req), true, nil
+		}
+	}
 	for _, path := range paths {
 		sourceItems, err := importedSessionMessagesFromSourcePath(path)
 		if err != nil {
