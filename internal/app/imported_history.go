@@ -330,26 +330,6 @@ func (s *Stub) loadPIAuthoritativeHistory(ctx context.Context, record sessionRec
 	}
 	signatureParts := []string{fmt.Sprintf("transcript:%d", record.transcript.TailSeq().Uint64())}
 	var helperItems []SessionMessage
-	if record.runtime.helper != nil {
-		historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		defer cancel()
-		packet, err := record.runtime.helper.sessionHistory(historyCtx)
-		if err == nil && len(packet.Lines) > 0 {
-			if sourceSig, ok := piSourceSignature(packet.SourcePath); ok {
-				signatureParts = append(signatureParts, "helper:"+sourceSig)
-			} else {
-				signatureParts = append(signatureParts, fmt.Sprintf("helper:%s:%t:%t:%d", strings.TrimSpace(packet.SourcePath), packet.Warmed, packet.Complete, len(packet.Lines)))
-			}
-			if !packet.Complete {
-				signatureParts = append(signatureParts, "incomplete")
-			}
-			helperItems, err = importedSessionMessagesFromJSONLLines(packet.SourcePath, packet.Lines)
-			if err != nil {
-				return SessionMessagesResponse{}, true, err
-			}
-		}
-	}
-
 	paths := piHistorySourcePaths(record)
 	for _, path := range paths {
 		if sourceSig, ok := piSourceSignature(path); ok {
@@ -357,8 +337,19 @@ func (s *Stub) loadPIAuthoritativeHistory(ctx context.Context, record sessionRec
 		}
 	}
 	cacheKey := "pi-authoritative:" + strings.Join(signatureParts, "|")
-	if cached, ok := s.messageCache.Get(record.identity.SessionID(), cacheKey); ok {
-		return paginateSessionMessagesForRequest(cached, req), true, nil
+	if response, ok := s.messageCache.GetPage(record.identity.SessionID(), cacheKey, req); ok {
+		return response, true, nil
+	}
+	if record.runtime.helper != nil {
+		historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		packet, err := record.runtime.helper.sessionHistory(historyCtx)
+		if err == nil && len(packet.Lines) > 0 {
+			helperItems, err = importedSessionMessagesFromJSONLLines(packet.SourcePath, packet.Lines)
+			if err != nil {
+				return SessionMessagesResponse{}, true, err
+			}
+		}
 	}
 
 	items := make([]SessionMessage, 0)
@@ -501,9 +492,14 @@ func piSourceSignature(path string) (string, bool) {
 }
 
 func appendTranscriptMessages(items *[]SessionMessage, record sessionRecord) {
-	for _, item := range record.transcript.Items() {
-		appendDedupedMessages(items, []SessionMessage{sessionMessageFromCommitted(item)})
+	if record.transcript.Len() == 0 {
+		return
 	}
+	incoming := make([]SessionMessage, 0, record.transcript.Len())
+	for _, item := range record.transcript.Items() {
+		incoming = append(incoming, sessionMessageFromCommitted(item))
+	}
+	appendDedupedMessages(items, incoming)
 }
 
 func appendDedupedMessages(items *[]SessionMessage, incoming []SessionMessage) {
@@ -600,6 +596,9 @@ func strictPISessionSourcePaths(record sessionRecord, backendSessionID string) [
 		paths = append(paths, cleaned)
 	}
 	add(record.importedSourcePath)
+	if len(paths) > 0 && strings.TrimSpace(record.importedSourceConfidence) == sourceConfidenceExact {
+		return paths
+	}
 	for _, path := range discoverPISessionSourcesByID(record.cwd, backendSessionID) {
 		add(path)
 	}

@@ -59,6 +59,23 @@ func decodeCommandRequestProto(method string, data []byte) (commandRequest, erro
 	return out, nil
 }
 
+func decodeListSessionsRequestProto(data []byte) (listSessionsRequest, error) {
+	var req actrailv1.ListSessionsRequest
+	if err := proto.Unmarshal(data, &req); err != nil {
+		return listSessionsRequest{}, err
+	}
+	return listSessionsRequest{
+		GroupKey:     req.GetGroupKey(),
+		Offset:       int(req.GetOffset()),
+		Limit:        int(req.GetLimit()),
+		GroupOffset:  int(req.GetGroupOffset()),
+		GroupLimit:   int(req.GetGroupLimit()),
+		AgentBackend: req.GetAgentBackend(),
+		CWD:          req.GetCwd(),
+		Title:        req.GetTitle(),
+	}, nil
+}
+
 func sessionIdentityFromProto(identity *actrailv1.SessionIdentity) SessionIdentity {
 	if identity == nil {
 		return SessionIdentity{}

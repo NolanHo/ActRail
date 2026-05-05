@@ -68,6 +68,26 @@ func (c *sessionMessageCache) Get(sessionID session.SessionID, signature string)
 	return cloneSessionMessages(entry.items), true
 }
 
+func (c *sessionMessageCache) GetPage(sessionID session.SessionID, signature string, req SessionMessagesRequest) (SessionMessagesResponse, bool) {
+	if c == nil || signature == "" {
+		return SessionMessagesResponse{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	elem := c.items[sessionID]
+	if elem == nil {
+		return SessionMessagesResponse{}, false
+	}
+	entry := elem.Value.(*sessionMessageCacheEntry)
+	if entry.signature != signature {
+		c.lru.Remove(elem)
+		delete(c.items, sessionID)
+		return SessionMessagesResponse{}, false
+	}
+	c.lru.MoveToFront(elem)
+	return paginateSessionMessagesForRequest(entry.items, req), true
+}
+
 func (c *sessionMessageCache) Put(sessionID session.SessionID, signature string, items []SessionMessage) {
 	if c == nil || signature == "" {
 		return

@@ -19,9 +19,15 @@ import (
 )
 
 type controllerStub struct {
+	listReq     app.ListSessionsRequest
 	sendReq     app.SendRequest
 	stateReq    app.SessionStateRequest
 	messagesReq app.SessionMessagesRequest
+}
+
+func (s *controllerStub) ListSessions(_ context.Context, req app.ListSessionsRequest) (app.ListSessionsResponse, error) {
+	s.listReq = req
+	return app.ListSessionsResponse{Items: []app.SessionSummary{{SessionID: "s_123"}}, TotalCount: 1}, nil
 }
 
 func (s *controllerStub) Send(_ context.Context, req app.SendRequest) (app.SendResponse, error) {
@@ -47,6 +53,32 @@ func (s *controllerStub) SessionState(_ context.Context, req app.SessionStateReq
 func (s *controllerStub) SessionMessages(_ context.Context, req app.SessionMessagesRequest) (app.SessionMessagesResponse, error) {
 	s.messagesReq = req
 	return app.SessionMessagesResponse{Items: []app.SessionMessage{{Seq: 1, Role: "user", Kind: "message", Text: "hello"}}, TailSeq: 1}, nil
+}
+
+func TestListSessionsProto(t *testing.T) {
+	stub := &controllerStub{}
+	h := NewHandler(stub, NewBroker(100), nil)
+	body, err := proto.Marshal(&actrailv1.ListSessionsRequest{GroupKey: "/work/docs", Offset: 5, Limit: 50, GroupOffset: 2, GroupLimit: 3, AgentBackend: "pi", Cwd: "/work/docs", Title: "docs"})
+	if err != nil {
+		t.Fatalf("marshal list sessions proto: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, connectBasePath+sessionCommandService+"/ListSessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/connect+proto")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if stub.listReq.GroupKey != "/work/docs" || stub.listReq.Offset != 5 || stub.listReq.Limit != 50 || stub.listReq.GroupOffset != 2 || stub.listReq.GroupLimit != 3 || stub.listReq.AgentBackend != "pi" || stub.listReq.CWD != "/work/docs" || stub.listReq.Title != "docs" {
+		t.Fatalf("list req = %+v", stub.listReq)
+	}
+	var response actrailv1.CommandResponse
+	if err := proto.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !strings.Contains(string(response.GetPayloadJson()), `"total_count":1`) {
+		t.Fatalf("payload_json = %s", string(response.GetPayloadJson()))
+	}
 }
 
 func TestSessionCommandServiceSendMapsToController(t *testing.T) {

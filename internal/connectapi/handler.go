@@ -54,6 +54,21 @@ type commandResponse struct {
 	PayloadJSON string `json:"payloadJson"`
 }
 
+type listSessionsRequest struct {
+	GroupKey        string `json:"groupKey"`
+	GroupKeyRaw     string `json:"group_key"`
+	Offset          int    `json:"offset"`
+	Limit           int    `json:"limit"`
+	GroupOffset     int    `json:"groupOffset"`
+	GroupOffsetRaw  int    `json:"group_offset"`
+	GroupLimit      int    `json:"groupLimit"`
+	GroupLimitRaw   int    `json:"group_limit"`
+	AgentBackend    string `json:"agentBackend"`
+	AgentBackendRaw string `json:"agent_backend"`
+	CWD             string `json:"cwd"`
+	Title           string `json:"title"`
+}
+
 type subscribeRequest struct {
 	AfterEventID    uint64 `json:"afterEventId"`
 	AfterEventIDRaw uint64 `json:"after_event_id"`
@@ -120,6 +135,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	switch parts[0] {
 	case sessionCommandService:
+		if parts[1] == "ListSessions" {
+			h.handleListSessions(w, req)
+			return
+		}
 		if parts[1] == "SessionMessages" {
 			h.handleSessionMessages(w, req)
 			return
@@ -130,6 +149,59 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	default:
 		writeConnectError(w, http.StatusNotFound, "unimplemented", "unknown service")
 	}
+}
+
+func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
+	started := time.Now()
+	if h.controller == nil {
+		writeConnectError(w, http.StatusServiceUnavailable, "unavailable", "session controller unavailable")
+		return
+	}
+	protoMode := requestWantsProto(req.Header.Get("Content-Type"))
+	var body listSessionsRequest
+	if protoMode {
+		data, err := readProtoBody(req.Body)
+		if err != nil {
+			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
+			return
+		}
+		decoded, err := decodeListSessionsRequestProto(data)
+		if err != nil {
+			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
+			return
+		}
+		body = decoded
+	} else if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid json")
+		return
+	}
+	payload, err := h.controller.ListSessions(req.Context(), app.ListSessionsRequest{
+		GroupKey:     firstString(body.GroupKey, body.GroupKeyRaw),
+		Offset:       body.Offset,
+		Limit:        body.Limit,
+		GroupOffset:  firstNonZeroInt(body.GroupOffset, body.GroupOffsetRaw),
+		GroupLimit:   firstNonZeroInt(body.GroupLimit, body.GroupLimitRaw),
+		AgentBackend: firstString(body.AgentBackend, body.AgentBackendRaw),
+		CWD:          body.CWD,
+		Title:        body.Title,
+	})
+	if err != nil {
+		status := statusForCommandError(err)
+		h.logger.Info("connect command", zap.String("method", "ListSessions"), zap.Int("status", status), zap.Int64("latency_ms", time.Since(started).Milliseconds()), zap.Error(err))
+		writeConnectError(w, status, codeForCommandError(err), err.Error())
+		return
+	}
+	encoded, err := marshalPayload(payload, nil)
+	if err != nil {
+		writeConnectError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	h.logger.Info("connect command", zap.String("method", "ListSessions"), zap.Int("status", http.StatusOK), zap.Int64("latency_ms", time.Since(started).Milliseconds()))
+	if protoMode {
+		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(encoded))
+		return
+	}
+	writeConnectJSON(w, http.StatusOK, commandResponse{PayloadJSON: base64.StdEncoding.EncodeToString(encoded)})
 }
 
 func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method string) {
@@ -516,6 +588,13 @@ func firstUint64(a, b *uint64) *uint64 {
 }
 
 func firstNonZeroUint64(a, b uint64) uint64 {
+	if a != 0 {
+		return a
+	}
+	return b
+}
+
+func firstNonZeroInt(a, b int) int {
 	if a != 0 {
 		return a
 	}

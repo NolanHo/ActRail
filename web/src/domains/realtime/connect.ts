@@ -3,6 +3,7 @@ import {
   CancelQueueRequestSchema,
   CommandResponseSchema,
   EnqueueRequestSchema,
+  ListSessionsRequestSchema,
   EventEnvelopeSchema,
   InterruptRequestSchema,
   RespondUIRequestSchema,
@@ -13,7 +14,7 @@ import {
   SubscribeRequestSchema,
 } from "../../gen/actrail/v1/transport_pb";
 import { HttpError } from "../../lib/http";
-import type { LiveSessionResponse, MessagesResponse, RealtimeEnvelope } from "../../lib/types";
+import type { LiveSessionResponse, MessagesResponse, RealtimeEnvelope, SessionsResponse } from "../../lib/types";
 import type { RealtimeCommand } from "./client";
 
 const COMMAND_SERVICE = "actrail.v1.SessionCommandService";
@@ -236,6 +237,69 @@ export function subscribeConnectEvents(config: ConnectTransportConfig, afterEven
     }
     return readConnectStream(response, onFrame, signal, wireFormat);
   });
+}
+
+export interface ConnectListSessionsOptions {
+  groupKey?: string;
+  offset?: number;
+  limit?: number;
+  groupOffset?: number;
+  groupLimit?: number;
+  agentBackend?: string;
+  cwd?: string;
+  title?: string;
+  signal?: AbortSignal;
+}
+
+function int32Option(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+export async function fetchConnectListSessions(config: ConnectTransportConfig, options: ConnectListSessionsOptions = {}): Promise<SessionsResponse> {
+  const basePath = config.basePath || "/api/connect";
+  const wireFormat = config.wireFormat === "json" ? "json" : "proto";
+  const url = servicePath(basePath, COMMAND_SERVICE, "ListSessions");
+  if (wireFormat === "proto") {
+    const body = toBinary(ListSessionsRequestSchema, create(ListSessionsRequestSchema, {
+      groupKey: options.groupKey || "",
+      offset: int32Option(options.offset),
+      limit: int32Option(options.limit),
+      groupOffset: int32Option(options.groupOffset),
+      groupLimit: int32Option(options.groupLimit),
+      agentBackend: options.agentBackend || "",
+      cwd: options.cwd || "",
+      title: options.title || "",
+    }));
+    const response = await fetch(apiPath(url), {
+      method: "POST",
+      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+      body,
+      signal: options.signal,
+    });
+    if (!response.ok) {
+      throw new HttpError(await response.text(), response.status);
+    }
+    return payloadResponseFromProto<SessionsResponse>(new Uint8Array(await response.arrayBuffer()));
+  }
+  const response = await fetch(apiPath(url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      group_key: options.groupKey,
+      offset: options.offset,
+      limit: options.limit,
+      group_offset: options.groupOffset,
+      group_limit: options.groupLimit,
+      agent_backend: options.agentBackend,
+      cwd: options.cwd,
+      title: options.title,
+    }),
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    throw new HttpError(await response.text(), response.status);
+  }
+  return decodePayloadJson((await readJson<{ payloadJson?: string }>(response)).payloadJson) as SessionsResponse;
 }
 
 export interface ConnectMessagesOptions {

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file actrail/v1/transport.proto.
  */
 export const file_actrail_v1_transport: GenFile = /*@__PURE__*/
-  fileDesc("ChphY3RyYWlsL3YxL3RyYW5zcG9ydC5wcm90bxIKYWN0cmFpbC52MSI5Cg9TZXNzaW9uSWRlbnRpdHkSEgoKc2Vzc2lvbl9pZBgBIAEoCRISCgpydW50aW1lX2lkGAIgASgJIkkKC1NlbmRSZXF1ZXN0EiwKB3Nlc3Npb24YASABKAsyGy5hY3RyYWlsLnYxLlNlc3Npb25JZGVudGl0eRIMCgR0ZXh0GAIgASgJIkwKDkVucXVldWVSZXF1ZXN0EiwKB3Nlc3Npb24YASABKAsyGy5hY3RyYWlsLnYxLlNlc3Npb25JZGVudGl0eRIMCgR0ZXh0GAIgASgJIkIKEkNhbmNlbFF1ZXVlUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiQAoQSW50ZXJydXB0UmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiZAoQUmVzcG9uZFVJUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkSEwoLcmVzcG9uc2VfdG8YAiABKAkSDQoFdmFsdWUYAyABKAkiQwoTU2Vzc2lvblN0YXRlUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiJwoPQ29tbWFuZFJlc3BvbnNlEhQKDHBheWxvYWRfanNvbhgBIAEoDCIqChBTdWJzY3JpYmVSZXF1ZXN0EhYKDmFmdGVyX2V2ZW50X2lkGAEgASgEImQKDUV2ZW50RW52ZWxvcGUSCgoCaWQYASABKAQSDAoEdHlwZRgCIAEoCRIOCgZzdHJlYW0YAyABKAkSEwoLdW5peF9taWxsaXMYBCABKAMSFAoMcGF5bG9hZF9qc29uGAUgASgMIo4CChZTZXNzaW9uTWVzc2FnZXNSZXF1ZXN0EhIKCnNlc3Npb25faWQYASABKAkSFgoJYWZ0ZXJfc2VxGAIgASgESACIAQESFwoKYmVmb3JlX3NlcRgDIAEoBEgBiAEBEg0KBWxpbWl0GAQgASgFEgwKBGluaXQYBSABKAgSEAoIZGVmZXJyZWQYBiABKAgSHQoVYWN0aXZlX3R1cm5fc3RhcnRfc2VxGAcgASgEEhwKFGluY2x1ZGVfdG9vbF9kZXRhaWxzGAggASgIEhAKCGV2ZW50X2lkGAkgASgJEhQKDHRvb2xfY2FsbF9pZBgKIAEoCUIMCgpfYWZ0ZXJfc2VxQg0KC19iZWZvcmVfc2VxIoQBChdTZXNzaW9uTWVzc2FnZXNSZXNwb25zZRITCgtldmVudHNfanNvbhgBIAMoDBIQCgh0YWlsX3NlcRgCIAEoBBIQCghoYXNfbW9yZRgDIAEoCBIcCg9uZXh0X2JlZm9yZV9zZXEYBCABKARIAIgBAUISChBfbmV4dF9iZWZvcmVfc2VxMp8EChVTZXNzaW9uQ29tbWFuZFNlcnZpY2USPAoEU2VuZBIXLmFjdHJhaWwudjEuU2VuZFJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJCCgdFbnF1ZXVlEhouYWN0cmFpbC52MS5FbnF1ZXVlUmVxdWVzdBobLmFjdHJhaWwudjEuQ29tbWFuZFJlc3BvbnNlEkoKC0NhbmNlbFF1ZXVlEh4uYWN0cmFpbC52MS5DYW5jZWxRdWV1ZVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJGCglJbnRlcnJ1cHQSHC5hY3RyYWlsLnYxLkludGVycnVwdFJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJGCglSZXNwb25kVUkSHC5hY3RyYWlsLnYxLlJlc3BvbmRVSVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJMCgxTZXNzaW9uU3RhdGUSHy5hY3RyYWlsLnYxLlNlc3Npb25TdGF0ZVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJaCg9TZXNzaW9uTWVzc2FnZXMSIi5hY3RyYWlsLnYxLlNlc3Npb25NZXNzYWdlc1JlcXVlc3QaIy5hY3RyYWlsLnYxLlNlc3Npb25NZXNzYWdlc1Jlc3BvbnNlMlYKDEV2ZW50U2VydmljZRJGCglTdWJzY3JpYmUSHC5hY3RyYWlsLnYxLlN1YnNjcmliZVJlcXVlc3QaGS5hY3RyYWlsLnYxLkV2ZW50RW52ZWxvcGUwAUIkWiJhY3RyYWlsL3Byb3RvL2FjdHJhaWwvdjE7YWN0cmFpbHYxYgZwcm90bzM");
+  fileDesc("ChphY3RyYWlsL3YxL3RyYW5zcG9ydC5wcm90bxIKYWN0cmFpbC52MSI5Cg9TZXNzaW9uSWRlbnRpdHkSEgoKc2Vzc2lvbl9pZBgBIAEoCRISCgpydW50aW1lX2lkGAIgASgJIqUBChNMaXN0U2Vzc2lvbnNSZXF1ZXN0EhEKCWdyb3VwX2tleRgBIAEoCRIOCgZvZmZzZXQYAiABKAUSDQoFbGltaXQYAyABKAUSFAoMZ3JvdXBfb2Zmc2V0GAQgASgFEhMKC2dyb3VwX2xpbWl0GAUgASgFEhUKDWFnZW50X2JhY2tlbmQYBiABKAkSCwoDY3dkGAcgASgJEg0KBXRpdGxlGAggASgJIkkKC1NlbmRSZXF1ZXN0EiwKB3Nlc3Npb24YASABKAsyGy5hY3RyYWlsLnYxLlNlc3Npb25JZGVudGl0eRIMCgR0ZXh0GAIgASgJIkwKDkVucXVldWVSZXF1ZXN0EiwKB3Nlc3Npb24YASABKAsyGy5hY3RyYWlsLnYxLlNlc3Npb25JZGVudGl0eRIMCgR0ZXh0GAIgASgJIkIKEkNhbmNlbFF1ZXVlUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiQAoQSW50ZXJydXB0UmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiZAoQUmVzcG9uZFVJUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkSEwoLcmVzcG9uc2VfdG8YAiABKAkSDQoFdmFsdWUYAyABKAkiQwoTU2Vzc2lvblN0YXRlUmVxdWVzdBIsCgdzZXNzaW9uGAEgASgLMhsuYWN0cmFpbC52MS5TZXNzaW9uSWRlbnRpdHkiJwoPQ29tbWFuZFJlc3BvbnNlEhQKDHBheWxvYWRfanNvbhgBIAEoDCIqChBTdWJzY3JpYmVSZXF1ZXN0EhYKDmFmdGVyX2V2ZW50X2lkGAEgASgEImQKDUV2ZW50RW52ZWxvcGUSCgoCaWQYASABKAQSDAoEdHlwZRgCIAEoCRIOCgZzdHJlYW0YAyABKAkSEwoLdW5peF9taWxsaXMYBCABKAMSFAoMcGF5bG9hZF9qc29uGAUgASgMIo4CChZTZXNzaW9uTWVzc2FnZXNSZXF1ZXN0EhIKCnNlc3Npb25faWQYASABKAkSFgoJYWZ0ZXJfc2VxGAIgASgESACIAQESFwoKYmVmb3JlX3NlcRgDIAEoBEgBiAEBEg0KBWxpbWl0GAQgASgFEgwKBGluaXQYBSABKAgSEAoIZGVmZXJyZWQYBiABKAgSHQoVYWN0aXZlX3R1cm5fc3RhcnRfc2VxGAcgASgEEhwKFGluY2x1ZGVfdG9vbF9kZXRhaWxzGAggASgIEhAKCGV2ZW50X2lkGAkgASgJEhQKDHRvb2xfY2FsbF9pZBgKIAEoCUIMCgpfYWZ0ZXJfc2VxQg0KC19iZWZvcmVfc2VxIoQBChdTZXNzaW9uTWVzc2FnZXNSZXNwb25zZRITCgtldmVudHNfanNvbhgBIAMoDBIQCgh0YWlsX3NlcRgCIAEoBBIQCghoYXNfbW9yZRgDIAEoCBIcCg9uZXh0X2JlZm9yZV9zZXEYBCABKARIAIgBAUISChBfbmV4dF9iZWZvcmVfc2VxMu0EChVTZXNzaW9uQ29tbWFuZFNlcnZpY2USTAoMTGlzdFNlc3Npb25zEh8uYWN0cmFpbC52MS5MaXN0U2Vzc2lvbnNSZXF1ZXN0GhsuYWN0cmFpbC52MS5Db21tYW5kUmVzcG9uc2USPAoEU2VuZBIXLmFjdHJhaWwudjEuU2VuZFJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJCCgdFbnF1ZXVlEhouYWN0cmFpbC52MS5FbnF1ZXVlUmVxdWVzdBobLmFjdHJhaWwudjEuQ29tbWFuZFJlc3BvbnNlEkoKC0NhbmNlbFF1ZXVlEh4uYWN0cmFpbC52MS5DYW5jZWxRdWV1ZVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJGCglJbnRlcnJ1cHQSHC5hY3RyYWlsLnYxLkludGVycnVwdFJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJGCglSZXNwb25kVUkSHC5hY3RyYWlsLnYxLlJlc3BvbmRVSVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJMCgxTZXNzaW9uU3RhdGUSHy5hY3RyYWlsLnYxLlNlc3Npb25TdGF0ZVJlcXVlc3QaGy5hY3RyYWlsLnYxLkNvbW1hbmRSZXNwb25zZRJaCg9TZXNzaW9uTWVzc2FnZXMSIi5hY3RyYWlsLnYxLlNlc3Npb25NZXNzYWdlc1JlcXVlc3QaIy5hY3RyYWlsLnYxLlNlc3Npb25NZXNzYWdlc1Jlc3BvbnNlMlYKDEV2ZW50U2VydmljZRJGCglTdWJzY3JpYmUSHC5hY3RyYWlsLnYxLlN1YnNjcmliZVJlcXVlc3QaGS5hY3RyYWlsLnYxLkV2ZW50RW52ZWxvcGUwAUIkWiJhY3RyYWlsL3Byb3RvL2FjdHJhaWwvdjE7YWN0cmFpbHYxYgZwcm90bzM");
 
 /**
  * @generated from message actrail.v1.SessionIdentity
@@ -35,6 +35,58 @@ export const SessionIdentitySchema: GenMessage<SessionIdentity> = /*@__PURE__*/
   messageDesc(file_actrail_v1_transport, 0);
 
 /**
+ * @generated from message actrail.v1.ListSessionsRequest
+ */
+export type ListSessionsRequest = Message<"actrail.v1.ListSessionsRequest"> & {
+  /**
+   * @generated from field: string group_key = 1;
+   */
+  groupKey: string;
+
+  /**
+   * @generated from field: int32 offset = 2;
+   */
+  offset: number;
+
+  /**
+   * @generated from field: int32 limit = 3;
+   */
+  limit: number;
+
+  /**
+   * @generated from field: int32 group_offset = 4;
+   */
+  groupOffset: number;
+
+  /**
+   * @generated from field: int32 group_limit = 5;
+   */
+  groupLimit: number;
+
+  /**
+   * @generated from field: string agent_backend = 6;
+   */
+  agentBackend: string;
+
+  /**
+   * @generated from field: string cwd = 7;
+   */
+  cwd: string;
+
+  /**
+   * @generated from field: string title = 8;
+   */
+  title: string;
+};
+
+/**
+ * Describes the message actrail.v1.ListSessionsRequest.
+ * Use `create(ListSessionsRequestSchema)` to create a new message.
+ */
+export const ListSessionsRequestSchema: GenMessage<ListSessionsRequest> = /*@__PURE__*/
+  messageDesc(file_actrail_v1_transport, 1);
+
+/**
  * @generated from message actrail.v1.SendRequest
  */
 export type SendRequest = Message<"actrail.v1.SendRequest"> & {
@@ -54,7 +106,7 @@ export type SendRequest = Message<"actrail.v1.SendRequest"> & {
  * Use `create(SendRequestSchema)` to create a new message.
  */
 export const SendRequestSchema: GenMessage<SendRequest> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 1);
+  messageDesc(file_actrail_v1_transport, 2);
 
 /**
  * @generated from message actrail.v1.EnqueueRequest
@@ -76,7 +128,7 @@ export type EnqueueRequest = Message<"actrail.v1.EnqueueRequest"> & {
  * Use `create(EnqueueRequestSchema)` to create a new message.
  */
 export const EnqueueRequestSchema: GenMessage<EnqueueRequest> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 2);
+  messageDesc(file_actrail_v1_transport, 3);
 
 /**
  * @generated from message actrail.v1.CancelQueueRequest
@@ -93,7 +145,7 @@ export type CancelQueueRequest = Message<"actrail.v1.CancelQueueRequest"> & {
  * Use `create(CancelQueueRequestSchema)` to create a new message.
  */
 export const CancelQueueRequestSchema: GenMessage<CancelQueueRequest> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 3);
+  messageDesc(file_actrail_v1_transport, 4);
 
 /**
  * @generated from message actrail.v1.InterruptRequest
@@ -110,7 +162,7 @@ export type InterruptRequest = Message<"actrail.v1.InterruptRequest"> & {
  * Use `create(InterruptRequestSchema)` to create a new message.
  */
 export const InterruptRequestSchema: GenMessage<InterruptRequest> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 4);
+  messageDesc(file_actrail_v1_transport, 5);
 
 /**
  * @generated from message actrail.v1.RespondUIRequest
@@ -137,7 +189,7 @@ export type RespondUIRequest = Message<"actrail.v1.RespondUIRequest"> & {
  * Use `create(RespondUIRequestSchema)` to create a new message.
  */
 export const RespondUIRequestSchema: GenMessage<RespondUIRequest> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 5);
+  messageDesc(file_actrail_v1_transport, 6);
 
 /**
  * @generated from message actrail.v1.SessionStateRequest
@@ -154,7 +206,7 @@ export type SessionStateRequest = Message<"actrail.v1.SessionStateRequest"> & {
  * Use `create(SessionStateRequestSchema)` to create a new message.
  */
 export const SessionStateRequestSchema: GenMessage<SessionStateRequest> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 6);
+  messageDesc(file_actrail_v1_transport, 7);
 
 /**
  * @generated from message actrail.v1.CommandResponse
@@ -171,7 +223,7 @@ export type CommandResponse = Message<"actrail.v1.CommandResponse"> & {
  * Use `create(CommandResponseSchema)` to create a new message.
  */
 export const CommandResponseSchema: GenMessage<CommandResponse> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 7);
+  messageDesc(file_actrail_v1_transport, 8);
 
 /**
  * @generated from message actrail.v1.SubscribeRequest
@@ -188,7 +240,7 @@ export type SubscribeRequest = Message<"actrail.v1.SubscribeRequest"> & {
  * Use `create(SubscribeRequestSchema)` to create a new message.
  */
 export const SubscribeRequestSchema: GenMessage<SubscribeRequest> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 8);
+  messageDesc(file_actrail_v1_transport, 9);
 
 /**
  * @generated from message actrail.v1.EventEnvelope
@@ -225,7 +277,7 @@ export type EventEnvelope = Message<"actrail.v1.EventEnvelope"> & {
  * Use `create(EventEnvelopeSchema)` to create a new message.
  */
 export const EventEnvelopeSchema: GenMessage<EventEnvelope> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 9);
+  messageDesc(file_actrail_v1_transport, 10);
 
 /**
  * @generated from message actrail.v1.SessionMessagesRequest
@@ -287,7 +339,7 @@ export type SessionMessagesRequest = Message<"actrail.v1.SessionMessagesRequest"
  * Use `create(SessionMessagesRequestSchema)` to create a new message.
  */
 export const SessionMessagesRequestSchema: GenMessage<SessionMessagesRequest> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 10);
+  messageDesc(file_actrail_v1_transport, 11);
 
 /**
  * @generated from message actrail.v1.SessionMessagesResponse
@@ -319,12 +371,20 @@ export type SessionMessagesResponse = Message<"actrail.v1.SessionMessagesRespons
  * Use `create(SessionMessagesResponseSchema)` to create a new message.
  */
 export const SessionMessagesResponseSchema: GenMessage<SessionMessagesResponse> = /*@__PURE__*/
-  messageDesc(file_actrail_v1_transport, 11);
+  messageDesc(file_actrail_v1_transport, 12);
 
 /**
  * @generated from service actrail.v1.SessionCommandService
  */
 export const SessionCommandService: GenService<{
+  /**
+   * @generated from rpc actrail.v1.SessionCommandService.ListSessions
+   */
+  listSessions: {
+    methodKind: "unary";
+    input: typeof ListSessionsRequestSchema;
+    output: typeof CommandResponseSchema;
+  },
   /**
    * @generated from rpc actrail.v1.SessionCommandService.Send
    */

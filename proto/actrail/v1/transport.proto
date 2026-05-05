@@ -5,6 +5,7 @@ package actrail.v1;
 option go_package = "actrail/proto/actrail/v1;actrailv1";
 
 service SessionCommandService {
+  rpc ListSessions(ListSessionsRequest) returns (CommandResponse);
   rpc Send(SendRequest) returns (CommandResponse);
   rpc Enqueue(EnqueueRequest) returns (CommandResponse);
   rpc CancelQueue(CancelQueueRequest) returns (CommandResponse);
@@ -21,6 +22,17 @@ service EventService {
 message SessionIdentity {
   string session_id = 1;
   string runtime_id = 2;
+}
+
+message ListSessionsRequest {
+  string group_key = 1;
+  int32 offset = 2;
+  int32 limit = 3;
+  int32 group_offset = 4;
+  int32 group_limit = 5;
+  string agent_backend = 6;
+  string cwd = 7;
+  string title = 8;
 }
 
 message SendRequest {

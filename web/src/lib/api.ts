@@ -1,5 +1,5 @@
 import { sendRealtimeCommand } from "../domains/realtime/client";
-import { fetchConnectSessionMessages, fetchConnectSessionState, type ConnectTransportConfig } from "../domains/realtime/connect";
+import { fetchConnectListSessions, fetchConnectSessionMessages, fetchConnectSessionState, type ConnectTransportConfig } from "../domains/realtime/connect";
 import { getJson, postJson } from "./http";
 import { getSessionRouteId } from "./session-identity";
 import type {
@@ -157,7 +157,7 @@ export const api = {
   login(password: string, signal?: AbortSignal) {
     return postJson<LoginResponse>("/api/login", { password }, signal);
   },
-  listSessions(options?: { groupKey?: string; offset?: number; limit?: number; groupOffset?: number; groupLimit?: number; agentBackend?: string; cwd?: string; title?: string }, signal?: AbortSignal) {
+  listSessions(options?: { groupKey?: string; offset?: number; limit?: number; groupOffset?: number; groupLimit?: number; agentBackend?: string; cwd?: string; title?: string }, signal?: AbortSignal, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }) {
     const query = new URLSearchParams();
     if (options?.groupKey) {
       query.set("group_key", options.groupKey);
@@ -182,6 +182,9 @@ export const api = {
     }
     if (typeof options?.title === "string" && options.title.trim()) {
       query.set("title", options.title.trim());
+    }
+    if (connectConfig !== false && connectConfig !== null) {
+      return fetchConnectListSessions(connectConfig, { ...options, signal });
     }
     const suffix = query.size ? `?${query.toString()}` : "";
     return getJson<SessionsResponse>(`/api/sessions${suffix}`, signal);

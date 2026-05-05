@@ -12,6 +12,7 @@ import (
 
 // SessionController exposes command-side session control seams for HTTP and WebSocket wiring.
 type SessionController interface {
+	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
 	Send(context.Context, SendRequest) (SendResponse, error)
 	Enqueue(context.Context, EnqueueRequest) (EnqueueResponse, error)
 	CancelQueue(context.Context, CancelQueueRequest) (CancelQueueResponse, error)

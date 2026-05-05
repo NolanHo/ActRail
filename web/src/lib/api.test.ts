@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { create, toBinary } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { sendRealtimeCommand } from "../domains/realtime/client";
-import { CommandResponseSchema, SessionMessagesResponseSchema } from "../gen/actrail/v1/transport_pb";
+import { CommandResponseSchema, ListSessionsRequestSchema, SessionMessagesResponseSchema } from "../gen/actrail/v1/transport_pb";
 import { api } from "./api";
 import { getJson, HttpError, subscribeUnauthorized } from "./http";
 import type { LiveSessionResponse, MessagesResponse, SessionBootstrapResponse, SessionDetailsResponse, SessionUiStateResponse, SessionsResponse, WorkspaceResponse } from "./types";
@@ -71,7 +71,28 @@ describe("api", () => {
     vi.clearAllMocks();
   });
 
-  it("requests sessions with the provided abort signal", async () => {
+  it("loads sessions through Connect proto by default", async () => {
+    const signal = new AbortController().signal;
+    const payload = new TextEncoder().encode(JSON.stringify({ sessions: [] }));
+    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, { payloadJson: payload }));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await api.listSessions(undefined, signal);
+
+    expect(response).toEqual({ sessions: [] });
+    expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/ListSessions", expect.objectContaining({
+      method: "POST",
+      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+      signal,
+    }));
+  });
+
+  it("requests sessions over REST when Connect is disabled", async () => {
     const signal = new AbortController().signal;
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -80,7 +101,7 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const payload = await api.listSessions(undefined, signal);
+    const payload = await api.listSessions(undefined, signal, false);
 
     expect(payload).toEqual({ sessions: [] });
     expect(fetchMock).toHaveBeenCalledWith("api/sessions", {
@@ -273,11 +294,27 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.listSessions({ groupKey: "/work/docs", offset: 5, limit: 5 })).resolves.toEqual(payload);
+    await expect(api.listSessions({ groupKey: "/work/docs", offset: 5, limit: 5 }, undefined, false)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith("api/sessions?group_key=%2Fwork%2Fdocs&offset=5&limit=5", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });
+  });
+
+  it("encodes sessions list filters for Connect proto", async () => {
+    const payload = new TextEncoder().encode(JSON.stringify({ sessions: [{ session_id: "sess-6" }] }));
+    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, { payloadJson: payload }));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.listSessions({ groupKey: "/work/docs", offset: 5, limit: 50, agentBackend: "pi", cwd: "/work/docs", title: "Docs" })).resolves.toEqual({ sessions: [{ session_id: "sess-6" }] });
+    const requestBody = fetchMock.mock.calls[0]?.[1]?.body as Uint8Array;
+    const request = fromBinary(ListSessionsRequestSchema, requestBody);
+    expect(request).toMatchObject({ groupKey: "/work/docs", offset: 5, limit: 50, agentBackend: "pi", cwd: "/work/docs", title: "Docs" });
   });
 
   it("requests more omitted session groups", async () => {
@@ -292,7 +329,7 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.listSessions({ groupOffset: 3, groupLimit: 3 })).resolves.toEqual(payload);
+    await expect(api.listSessions({ groupOffset: 3, groupLimit: 3 }, undefined, false)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith("api/sessions?group_offset=3&group_limit=3", {
       headers: { Accept: "application/json" },
       signal: undefined,
