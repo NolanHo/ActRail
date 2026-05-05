@@ -37,7 +37,12 @@ func TestTeamProtocolE2EWithDefaultActRailClient(t *testing.T) {
 		childPTY = pty
 		return h
 	}}
-	svc := app.NewStubForTest(config.Load(), time.Now, app.RuntimeConfig{Runner: runner})
+	grpcServer := newTeamE2EPiAgentServer(t, nil)
+	svc := app.NewStubForTest(config.Load(), time.Now, app.RuntimeConfig{
+		Runner:            runner,
+		PIAgentGRPCTarget: "bufnet",
+		PIAgentGRPCDialer: grpcServer.Dial,
+	})
 	parent, err := svc.CreateSession(context.Background(), app.CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
