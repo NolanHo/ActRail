@@ -46,7 +46,7 @@ function handoffSessionConfirmText(session: SessionSummary) {
 
 function sessionBackendUnavailable(session: SessionSummary) {
   const state = String(session.transport_state || "").trim();
-  return session.reset_required === true || state === "ended" || state === "broken";
+  return session.reset_required === true || state === "ended" || state === "broken" || state === "failed";
 }
 
 function restartSessionActionLabel(session: SessionSummary) {

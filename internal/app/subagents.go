@@ -313,6 +313,15 @@ func (s *Stub) SpawnSubagent(ctx context.Context, req SpawnSubagentRequest) (Sub
 		return SubagentCommandResponse{}, err
 	}
 	if text := strings.TrimSpace(req.InitialPrompt); text != "" {
+		childSessionID, err := session.ParseSessionID(created.Session.SessionID)
+		if err != nil {
+			s.subagents.markFailed(actor.ActorID, err.Error())
+			return SubagentCommandResponse{}, err
+		}
+		if err := s.waitForSubagentRuntimeReady(ctx, childSessionID); err != nil {
+			s.subagents.markFailed(actor.ActorID, err.Error())
+			return SubagentCommandResponse{}, err
+		}
 		if _, err := s.sendSubagentText(ctx, actor.ActorID, text, true, true); err != nil {
 			s.subagents.markFailed(actor.ActorID, err.Error())
 			return SubagentCommandResponse{}, err
@@ -320,6 +329,24 @@ func (s *Stub) SpawnSubagent(ctx context.Context, req SpawnSubagentRequest) (Sub
 		actor = s.subagents.lookupNode(actor.ActorID)
 	}
 	return SubagentCommandResponse{OK: true, Actor: actor, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID, TurnID: actor.TurnID, Status: actor.Status}, nil
+}
+
+func (s *Stub) waitForSubagentRuntimeReady(ctx context.Context, sessionID session.SessionID) error {
+	for {
+		record, err := s.lookupSession(sessionID)
+		if err != nil {
+			return err
+		}
+		transport := sessionTransportSnapshot(record)
+		if transport.State != SessionTransportStateStarting {
+			return transportControlError(transport)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(helperReadyPollInterval):
+		}
+	}
 }
 
 func (s *Stub) PromptSubagent(ctx context.Context, req PromptSubagentRequest) (SubagentCommandResponse, error) {

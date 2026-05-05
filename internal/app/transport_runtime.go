@@ -17,6 +17,18 @@ func transportSnapshotAttached(generationID iod.GenerationID) SessionTransportSn
 	}
 }
 
+func transportSnapshotPIAgentGRPCStarting() SessionTransportSnapshot {
+	return SessionTransportSnapshot{State: SessionTransportStateStarting, GenerationID: "pi_agent_grpc", Reason: "pi_agent_grpc_starting"}
+}
+
+func transportSnapshotPIAgentGRPCAttached() SessionTransportSnapshot {
+	return SessionTransportSnapshot{State: SessionTransportStateAttached, GenerationID: "pi_agent_grpc", Reason: "pi_agent_grpc"}
+}
+
+func transportSnapshotPIAgentGRPCFailed(reason string) SessionTransportSnapshot {
+	return SessionTransportSnapshot{State: SessionTransportStateFailed, GenerationID: "pi_agent_grpc", Reason: strings.TrimSpace(reason)}
+}
+
 func transportSnapshotEnded(generationID iod.GenerationID, reason string) SessionTransportSnapshot {
 	return SessionTransportSnapshot{
 		GenerationID: strings.TrimSpace(generationID.String()),

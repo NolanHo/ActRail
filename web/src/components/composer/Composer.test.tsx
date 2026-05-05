@@ -320,7 +320,7 @@ describe("Composer", () => {
 
   it("blocks sends but allows queueing to ended session backends", async () => {
     const { submit } = renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, transport_state: "ended" }],
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, transport_state: "failed" }],
       draft: "queued draft",
     });
 
@@ -328,7 +328,7 @@ describe("Composer", () => {
     const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Queue")) as HTMLButtonElement;
     const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
 
-    expect(composerRoot.textContent).toContain("Session backend has ended");
+    expect(composerRoot.textContent).toContain("Session backend failed to start");
     expect(queueButton.disabled).toBe(false);
     expect(sendButton.disabled).toBe(true);
 

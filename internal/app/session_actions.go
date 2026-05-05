@@ -559,6 +559,7 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
 	}
 	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
+	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), newRuntime)
 	_ = record.runtime.Kill(context.Background())
 	if record.runtime.helper != nil && s.helpers != nil {
 		s.helpers.Remove(record.identity.SessionID())

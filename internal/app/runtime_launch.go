@@ -116,6 +116,7 @@ type sessionRuntime struct {
 	codex                *codexRuntimeState
 	helper               *runtimeIODHelper
 	piAgentGRPC          *piagentgrpc.Client
+	piAgentGRPCReady     <-chan error
 	helperBinding        *RuntimeHelperBinding
 	currentHelperBinding func(session.SessionID) (*RuntimeHelperBinding, error)
 }
@@ -415,7 +416,15 @@ func (l processRuntimeLauncher) Launch(ctx context.Context, req runtimeLaunchReq
 func (l processRuntimeLauncher) AttachPIAgentGRPC(ctx context.Context, req runtimeLaunchRequest) (sessionRuntime, error) {
 	req.PIAgentGRPC = true
 	req.AttachOnly = true
-	return l.launchPIAgentGRPC(ctx, req)
+	runtime, err := l.launchPIAgentGRPC(ctx, req)
+	if err != nil {
+		return sessionRuntime{}, err
+	}
+	if err := runtime.WaitForPIAgentGRPCReady(ctx); err != nil {
+		_ = runtime.Kill(context.Background())
+		return sessionRuntime{}, err
+	}
+	return runtime, nil
 }
 
 func (l processRuntimeLauncher) PIAgentGRPCTarget(sessionID session.SessionID) string {
@@ -456,20 +465,22 @@ func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runti
 			return sessionRuntime{}, fmt.Errorf("start pi agent grpc runtime %q: nil process handle", req.SessionID)
 		}
 	}
-	if err := l.waitForPIAgentGRPCReady(ctx, client); err != nil {
-		if handle != nil {
-			_ = handle.Kill()
-		}
-		_ = client.Close()
-		return sessionRuntime{}, err
-	}
 	return sessionRuntime{
 		launchSpec:           launchSpec,
 		handle:               handle,
 		protocol:             runtimeProtocolPIRPC,
 		piAgentGRPC:          client,
+		piAgentGRPCReady:     l.piAgentGRPCReady(client),
 		currentHelperBinding: l.currentHelperBinding,
 	}, nil
+}
+
+func (l processRuntimeLauncher) piAgentGRPCReady(client *piagentgrpc.Client) <-chan error {
+	ready := make(chan error, 1)
+	go func() {
+		ready <- l.waitForPIAgentGRPCReady(context.Background(), client)
+	}()
+	return ready
 }
 
 func (l processRuntimeLauncher) waitForPIAgentGRPCReady(ctx context.Context, client *piagentgrpc.Client) error {
@@ -487,6 +498,9 @@ func (l processRuntimeLauncher) waitForPIAgentGRPCReady(ctx context.Context, cli
 			return nil
 		} else {
 			lastErr = err
+			if errors.Is(err, context.Canceled) {
+				return fmt.Errorf("wait for pi agent grpc: %w", err)
+			}
 		}
 		select {
 		case <-readyCtx.Done():
@@ -718,6 +732,23 @@ func copyIntPtr(raw *int) *int {
 
 func (r sessionRuntime) UsesPIAgentGRPC() bool {
 	return r.piAgentGRPC != nil
+}
+
+func (r sessionRuntime) PendingPIAgentGRPCReady() bool {
+	return r.piAgentGRPC != nil && r.piAgentGRPCReady != nil
+}
+
+func (r sessionRuntime) WaitForPIAgentGRPCReady(ctx context.Context) error {
+	if r.piAgentGRPCReady == nil {
+		return nil
+	}
+	select {
+	case err := <-r.piAgentGRPCReady:
+		return err
+	case <-ctx.Done():
+		go func() { <-r.piAgentGRPCReady }()
+		return ctx.Err()
+	}
 }
 
 func (r sessionRuntime) CurrentHelperBinding(sessionID session.SessionID) (*RuntimeHelperBinding, error) {

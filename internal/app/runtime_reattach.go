@@ -63,7 +63,7 @@ func (s *Stub) reattachSurvivingPIAgentGRPCRuntimes(ctx context.Context) error {
 }
 
 func piAgentGRPCTransportSnapshot() SessionTransportSnapshot {
-	return SessionTransportSnapshot{State: SessionTransportStateAttached, GenerationID: "pi_agent_grpc", Reason: "pi_agent_grpc"}
+	return transportSnapshotPIAgentGRPCAttached()
 }
 
 func (s *Stub) markPIAgentGRPCReattachFailed(sessionID session.SessionID, generationID, reason string) error {

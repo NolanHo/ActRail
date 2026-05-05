@@ -294,6 +294,8 @@ export function AppShell() {
     }
     if (activeSession.reset_required === true || activeSession.transport_state === "broken") {
       items.push({ label: "Runtime", value: "broken", tone: "error" });
+    } else if (activeSession.transport_state === "failed") {
+      items.push({ label: "Runtime", value: "failed", tone: "error" });
     } else if (activeSession.transport_state === "ended") {
       items.push({ label: "Runtime", value: "ended", tone: "error" });
     } else if (activeSession.transport_state === "silent" || activeSession.transport_state === "stalled") {

@@ -13,12 +13,16 @@ import (
 )
 
 type sessionStatePayload struct {
-	SessionID string                       `json:"session_id"`
-	StreamSeq int64                        `json:"stream_seq"`
-	Busy      bool                         `json:"busy"`
-	QueueLen  int                          `json:"queue_len"`
-	TailSeq   uint64                       `json:"tail_seq"`
-	Transport app.SessionTransportSnapshot `json:"transport"`
+	SessionID       string                       `json:"session_id"`
+	StreamSeq       int64                        `json:"stream_seq"`
+	Busy            bool                         `json:"busy"`
+	QueueLen        int                          `json:"queue_len"`
+	TailSeq         uint64                       `json:"tail_seq"`
+	Transport       app.SessionTransportSnapshot `json:"transport"`
+	TransportState  string                       `json:"transport_state,omitempty"`
+	ResetRequired   bool                         `json:"reset_required,omitempty"`
+	TransportReason string                       `json:"transport_reason,omitempty"`
+	PendingStartup  bool                         `json:"pending_startup,omitempty"`
 }
 
 type messageDeltaPayload struct {
@@ -198,12 +202,16 @@ func (b *AppBridge) HandleUIResponse(cmd UIResponseCommand) error {
 func (b *AppBridge) PublishSessionState(event app.SessionStateEvent) {
 	b.publish(event.SessionID, session.StreamKindMain, FrameTypeSessionState, func(cursor int64) any {
 		return sessionStatePayload{
-			SessionID: event.SessionID.String(),
-			StreamSeq: cursor,
-			Busy:      event.Busy,
-			QueueLen:  event.QueueLen,
-			TailSeq:   event.TailSeq,
-			Transport: event.Transport,
+			SessionID:       event.SessionID.String(),
+			StreamSeq:       cursor,
+			Busy:            event.Busy,
+			QueueLen:        event.QueueLen,
+			TailSeq:         event.TailSeq,
+			Transport:       event.Transport,
+			TransportState:  event.Transport.State.String(),
+			ResetRequired:   event.Transport.ResetRequired,
+			TransportReason: event.Transport.Reason,
+			PendingStartup:  event.Transport.State == app.SessionTransportStateStarting,
 		}
 	})
 }
