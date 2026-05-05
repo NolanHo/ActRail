@@ -80,6 +80,8 @@ type State struct {
 	IsStreaming          bool
 	IsCompacting         bool
 	PendingMessageCount  int
+	IsBusy               bool
+	BusyReason           string
 	RuntimeState         RuntimeState
 	RuntimeStatusMessage string
 }
@@ -331,6 +333,35 @@ func (s State) RuntimeMessage() string {
 	return strings.TrimSpace(s.RuntimeStatusMessage)
 }
 
+func (s State) Busy() bool {
+	if reason := strings.TrimSpace(s.BusyReason); reason != "" {
+		return s.IsBusy
+	}
+	return s.IsStreaming || s.IsCompacting || s.PendingMessageCount > 0
+}
+
+func (s State) BusyStateReason() string {
+	if reason := strings.TrimSpace(s.BusyReason); reason != "" {
+		return reason
+	}
+	if s.IsCompacting {
+		return "compacting"
+	}
+	if s.IsStreaming {
+		return "streaming"
+	}
+	if s.PendingMessageCount > 0 {
+		return "queued"
+	}
+	if s.RuntimeStarting() {
+		return "starting"
+	}
+	if s.RuntimeFailed() {
+		return "failed"
+	}
+	return "ready"
+}
+
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -352,6 +383,8 @@ func stateFromProto(state *piagentv1.SessionState) State {
 		IsStreaming:          state.GetIsStreaming(),
 		IsCompacting:         state.GetIsCompacting(),
 		PendingMessageCount:  int(state.GetPendingMessageCount()),
+		IsBusy:               state.GetIsBusy(),
+		BusyReason:           strings.TrimSpace(state.GetBusyReason()),
 		RuntimeState:         runtimeStateFromProto(state.GetRuntimeState()),
 		RuntimeStatusMessage: strings.TrimSpace(state.GetRuntimeStatusMessage()),
 	}

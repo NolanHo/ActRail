@@ -1071,6 +1071,8 @@ type SessionState struct {
 	PendingMessageCount   uint32       `protobuf:"varint,12,opt,name=pending_message_count,json=pendingMessageCount,proto3" json:"pending_message_count,omitempty"`
 	RuntimeState          RuntimeState `protobuf:"varint,13,opt,name=runtime_state,json=runtimeState,proto3,enum=pi.agent.v1.RuntimeState" json:"runtime_state,omitempty"`
 	RuntimeStatusMessage  string       `protobuf:"bytes,14,opt,name=runtime_status_message,json=runtimeStatusMessage,proto3" json:"runtime_status_message,omitempty"`
+	IsBusy                bool         `protobuf:"varint,15,opt,name=is_busy,json=isBusy,proto3" json:"is_busy,omitempty"`
+	BusyReason            string       `protobuf:"bytes,16,opt,name=busy_reason,json=busyReason,proto3" json:"busy_reason,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1199,6 +1201,20 @@ func (x *SessionState) GetRuntimeState() RuntimeState {
 func (x *SessionState) GetRuntimeStatusMessage() string {
 	if x != nil {
 		return x.RuntimeStatusMessage
+	}
+	return ""
+}
+
+func (x *SessionState) GetIsBusy() bool {
+	if x != nil {
+		return x.IsBusy
+	}
+	return false
+}
+
+func (x *SessionState) GetBusyReason() string {
+	if x != nil {
+		return x.BusyReason
 	}
 	return ""
 }
@@ -1909,7 +1925,7 @@ const file_pi_agent_v1_pi_agent_proto_rawDesc = "" +
 	"\x11inline_byte_limit\x18\x06 \x01(\rR\x0finlineByteLimit\"8\n" +
 	"\x05Image\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\tR\x04data\x12\x1b\n" +
-	"\tmime_type\x18\x02 \x01(\tR\bmimeType\"\x99\x05\n" +
+	"\tmime_type\x18\x02 \x01(\tR\bmimeType\"\xd3\x05\n" +
 	"\fSessionState\x12-\n" +
 	"\x05model\x18\x01 \x01(\v2\x12.pi.agent.v1.ModelH\x00R\x05model\x88\x01\x01\x12%\n" +
 	"\x0ethinking_level\x18\x02 \x01(\tR\rthinkingLevel\x12!\n" +
@@ -1926,7 +1942,10 @@ const file_pi_agent_v1_pi_agent_proto_rawDesc = "" +
 	"\rmessage_count\x18\v \x01(\rR\fmessageCount\x122\n" +
 	"\x15pending_message_count\x18\f \x01(\rR\x13pendingMessageCount\x12>\n" +
 	"\rruntime_state\x18\r \x01(\x0e2\x19.pi.agent.v1.RuntimeStateR\fruntimeState\x124\n" +
-	"\x16runtime_status_message\x18\x0e \x01(\tR\x14runtimeStatusMessageB\b\n" +
+	"\x16runtime_status_message\x18\x0e \x01(\tR\x14runtimeStatusMessage\x12\x17\n" +
+	"\ais_busy\x18\x0f \x01(\bR\x06isBusy\x12\x1f\n" +
+	"\vbusy_reason\x18\x10 \x01(\tR\n" +
+	"busyReasonB\b\n" +
 	"\x06_modelB\x0f\n" +
 	"\r_session_fileB\x0f\n" +
 	"\r_session_name\"\x9a\x02\n" +
