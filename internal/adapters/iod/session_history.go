@@ -2,8 +2,10 @@ package iod
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +13,7 @@ import (
 	"time"
 )
 
-const defaultSessionHistoryWarmLines = 200
+const defaultSessionHistoryWarmLines = 3000
 
 type SessionHistorySnapshot struct {
 	SourcePath string
@@ -142,6 +144,9 @@ func (c *sessionHistoryCache) refreshIfChanged(ctx context.Context) error {
 	if c == nil {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	info, err := os.Stat(c.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -150,12 +155,12 @@ func (c *sessionHistoryCache) refreshIfChanged(ctx context.Context) error {
 		return fmt.Errorf("stat session history %q: %w", c.path, err)
 	}
 	c.mu.RLock()
-	unchanged := c.complete && info.Size() == c.lastSize && info.ModTime().Equal(c.lastMod)
+	unchanged := c.warmed && info.Size() == c.lastSize && info.ModTime().Equal(c.lastMod)
 	c.mu.RUnlock()
 	if unchanged {
 		return nil
 	}
-	return c.loadFull(ctx)
+	return c.warmTail(defaultSessionHistoryWarmLines)
 }
 
 func readAllLines(path string) ([]string, int64, time.Time, error) {
@@ -181,12 +186,87 @@ func readAllLines(path string) ([]string, int64, time.Time, error) {
 }
 
 func tailLines(path string, limit int) ([]string, int64, time.Time, error) {
-	lines, size, mod, err := readAllLines(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, 0, time.Time{}, err
 	}
-	if limit > 0 && len(lines) > limit {
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, 0, time.Time{}, err
+	}
+	if limit <= 0 || info.Size() == 0 {
+		return readAllLines(path)
+	}
+	const initialChunk = int64(1 << 20)
+	const maxChunk = int64(64 << 20)
+	upper := info.Size()
+	chunk := initialChunk
+	var lines []string
+	for upper > 0 && len(lines) <= limit {
+		lower := upper - chunk
+		if lower < 0 {
+			lower = 0
+		}
+		buf := make([]byte, upper-lower)
+		if _, err := file.ReadAt(buf, lower); err != nil && err != io.EOF {
+			return nil, 0, time.Time{}, fmt.Errorf("read session history %q: %w", path, err)
+		}
+		windowLines := tailWindowLines(buf, lower == 0, upper == info.Size())
+		lines = append(windowLines, lines...)
+		if lower == 0 {
+			break
+		}
+		upper = lower
+		if chunk < maxChunk {
+			chunk *= 2
+			if chunk > maxChunk {
+				chunk = maxChunk
+			}
+		}
+	}
+	if len(lines) > limit {
 		lines = append([]string(nil), lines[len(lines)-limit:]...)
 	}
-	return lines, size, mod, nil
+	return lines, info.Size(), info.ModTime(), nil
+}
+
+func tailWindowLines(buf []byte, includePrefix bool, includeSuffix bool) []string {
+	if len(buf) == 0 {
+		return nil
+	}
+	start := 0
+	if !includePrefix {
+		idx := bytes.IndexByte(buf, '\n')
+		if idx < 0 {
+			return nil
+		}
+		start = idx + 1
+	}
+	end := len(buf)
+	if !includeSuffix && end > start && buf[end-1] != '\n' {
+		idx := bytes.LastIndexByte(buf[start:end], '\n')
+		if idx < 0 {
+			return nil
+		}
+		end = start + idx + 1
+	}
+	out := make([]string, 0)
+	pos := start
+	for pos < end {
+		next := bytes.IndexByte(buf[pos:end], '\n')
+		lineEnd := end
+		if next >= 0 {
+			lineEnd = pos + next
+		}
+		line := strings.TrimSpace(string(buf[pos:lineEnd]))
+		if line != "" {
+			out = append(out, line)
+		}
+		if next < 0 {
+			break
+		}
+		pos = lineEnd + 1
+	}
+	return out
 }
