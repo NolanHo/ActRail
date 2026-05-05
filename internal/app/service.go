@@ -26,6 +26,7 @@ type Service interface {
 	AnswerSubagent(context.Context, AnswerSubagentRequest) (SubagentCommandResponse, error)
 	AbortSubagent(context.Context, AbortSubagentRequest) (SubagentCommandResponse, error)
 	CloseSubagent(context.Context, CloseSubagentRequest) (SubagentCommandResponse, error)
+	StatusSubagent(context.Context, StatusSubagentRequest) (SubagentCommandResponse, error)
 	SubagentEvents(context.Context, SubagentEventsRequest) (SubagentEventsResponse, error)
 	SessionResumeCandidates(context.Context, SessionResumeCandidatesRequest) (SessionResumeCandidatesResponse, error)
 	SessionDetails(context.Context, SessionDetailsRequest) (SessionDetailsResponse, error)

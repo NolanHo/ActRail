@@ -108,6 +108,10 @@ func (s serviceStub) CloseSubagent(ctx context.Context, req app.CloseSubagentReq
 	return s.base.CloseSubagent(ctx, req)
 }
 
+func (s serviceStub) StatusSubagent(ctx context.Context, req app.StatusSubagentRequest) (app.SubagentCommandResponse, error) {
+	return s.base.StatusSubagent(ctx, req)
+}
+
 func (s serviceStub) SubagentEvents(ctx context.Context, req app.SubagentEventsRequest) (app.SubagentEventsResponse, error) {
 	return s.base.SubagentEvents(ctx, req)
 }
@@ -475,8 +479,12 @@ func (s *fixtureService) CloseSubagent(_ context.Context, req app.CloseSubagentR
 	return app.SubagentCommandResponse{OK: true, ActorID: req.ActorID, Status: app.SubagentStatusClosed}, nil
 }
 
+func (s *fixtureService) StatusSubagent(_ context.Context, req app.StatusSubagentRequest) (app.SubagentCommandResponse, error) {
+	return app.SubagentCommandResponse{OK: true, Actor: &app.SubagentNode{ActorID: req.ActorID, ChildSessionID: "s_child", ParentSessionID: "s_123", Name: "lead", Role: "review", Status: app.SubagentStatusIdle}, ActorID: req.ActorID, ChildSessionID: "s_child", Status: app.SubagentStatusIdle}, nil
+}
+
 func (s *fixtureService) SubagentEvents(_ context.Context, req app.SubagentEventsRequest) (app.SubagentEventsResponse, error) {
-	return app.SubagentEventsResponse{OK: true, Events: []app.SubagentEvent{{EventID: "event_1", ActorID: req.ActorID, Type: "subagent.started"}}}, nil
+	return app.SubagentEventsResponse{OK: true, Events: []app.SubagentEvent{{EventID: "event_1", ActorID: req.ActorID, ChildSessionID: "s_child", ParentSessionID: "s_123", Type: "subagent.started", Status: app.SubagentStatusIdle, TS: 1760000000}}}, nil
 }
 
 func (s *fixtureService) SessionResumeCandidates(_ context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
@@ -948,6 +956,58 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		}
 	})
 
+	t.Run("team command spawn", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"protocol":"pi.team.v1","type":"team.spawn","requestId":"req_1","parentSessionId":"s_123","name":"worker","role":"review","cwd":"/repo","initialPrompt":"inspect"}`)
+		req := httptest.NewRequest(http.MethodPost, "/team/command", body)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, res.Code, res.Body.String())
+		}
+
+		var payload map[string]any
+		decodeJSON(t, res, &payload)
+		if payload["requestId"] != "req_1" || payload["actorId"] != "actor_1" || payload["childSessionId"] != "s_child" {
+			t.Fatalf("unexpected team command payload: %+v", payload)
+		}
+	})
+
+	t.Run("team events", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/team/events?actorId=actor_lead&afterEventId=event_0", nil)
+		res := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			h.ServeHTTP(res, req)
+			close(done)
+		}()
+
+		deadline := time.After(time.Second)
+		for !strings.Contains(res.Body.String(), `"protocol":"pi.team.v1"`) {
+			select {
+			case <-deadline:
+				cancel()
+				<-done
+				t.Fatalf("event stream did not emit team event: %s", res.Body.String())
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+		cancel()
+		<-done
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if got := res.Header().Get("Content-Type"); !strings.Contains(got, "text/event-stream") {
+			t.Fatalf("Content-Type = %q, want text/event-stream", got)
+		}
+		body := res.Body.String()
+		if !strings.Contains(body, `"type":"team.started"`) || !strings.Contains(body, `"actorId":"actor_lead"`) {
+			t.Fatalf("unexpected event stream: %s", body)
+		}
+	})
+
 	t.Run("create session", func(t *testing.T) {
 		body := bytes.NewBufferString(`{"agent_backend":"pi","cwd":"/root/code/ActRail"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/sessions", body)
@@ -1213,6 +1273,8 @@ func TestProtectedRoutesRequireAuthCookieInPasswordMode(t *testing.T) {
 		body   string
 	}{
 		{name: "bootstrap", method: http.MethodGet, target: "/api/bootstrap"},
+		{name: "team command", method: http.MethodPost, target: "/team/command"},
+		{name: "team events", method: http.MethodGet, target: "/team/events"},
 		{name: "list sessions", method: http.MethodGet, target: "/api/sessions"},
 		{name: "create session", method: http.MethodPost, target: "/api/sessions"},
 		{name: "list subagents", method: http.MethodGet, target: "/api/subagents"},
