@@ -119,6 +119,14 @@ Useful backend environment variables:
 - `ACTRAIL_IOD_BIN`
 - `ACTRAIL_DATA_DIR`
 
+ActRail PI sessions use `pi --mode grpc --grpc-socket ...`. Do not add std/rpc fallback to restart paths. The Pi binary must support gRPC in the compiled runtime.
+
+Bun-specific Pi gRPC requirements:
+
+- Load protobuf schema from generated static JSON. Runtime `.proto` loading reaches `protobufjs -> @protobufjs/inquire("fs")`; Bun compiled binaries return `null` for that dynamic require and crash before binding the socket.
+- Disable HTTP/2 server push before constructing the gRPC server. gRPC bidirectional streaming does not use HTTP/2 server push. If Bun advertises push, Node gRPC clients reject the connection with `GOAWAY PROTOCOL_ERROR` before any RPC handler runs.
+- Wrap protobufjs response serialization with `Buffer.from(...)` under Bun. Bun can return `Uint8Array`; `@grpc/grpc-js` server response framing calls `.copy(...)`.
+
 Current limitation:
 
 - `ACTRAIL_DATA_DIR` creates directories and stores runtime artifacts, but the live session registry is still in-memory. Do not treat this deployment as durable session storage.
