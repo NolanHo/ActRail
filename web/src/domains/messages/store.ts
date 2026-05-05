@@ -64,9 +64,38 @@ function isStreamingAssistantEvent(event: MessageEvent | undefined): event is Me
   );
 }
 
+function toolCallID(event: MessageEvent | undefined): string {
+  if (!event) {
+    return "";
+  }
+  if (typeof event.tool_call_id === "string" && event.tool_call_id.trim()) {
+    return event.tool_call_id.trim();
+  }
+  const details = event.details && typeof event.details === "object" ? event.details as Record<string, unknown> : null;
+  return typeof details?.tool_call_id === "string" ? details.tool_call_id.trim() : "";
+}
+
+function semanticMessageKey(event: MessageEvent | undefined): string | null {
+  if (!event) {
+    return null;
+  }
+  const type = typeof event.type === "string" ? event.type.trim() : typeof event.kind === "string" ? event.kind.trim() : "";
+  if (type === "tool" || type === "tool_result") {
+    const id = toolCallID(event);
+    if (id) {
+      return `${type}:${id}`;
+    }
+  }
+  return null;
+}
+
 function stableMessageKey(event: MessageEvent | undefined): string | null {
   if (!event) {
     return null;
+  }
+  const semanticKey = semanticMessageKey(event);
+  if (semanticKey) {
+    return semanticKey;
   }
   if (typeof event.seq === "number" && Number.isFinite(event.seq)) {
     return `seq:${Math.floor(event.seq)}`;
