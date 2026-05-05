@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { SubagentMessage, SubagentNode } from "@/lib/types";
+import type { TeamMessage, TeamNodeResponse } from "@/lib/types";
 
 type TeamNodeStatus = "waiting_for_parent" | "running" | "failed" | "idle" | "completed" | "aborted" | "closed" | string;
 type ThreadMessageKind = "leader" | "member" | "system" | string;
@@ -35,7 +35,7 @@ interface ThreadMessage {
   meta?: string;
 }
 
-export interface SubagentsData {
+export interface TeamsData {
   roots: TeamNode[];
   totalCount: number;
   nonLeafCount: number;
@@ -107,7 +107,7 @@ function formatMessageTime(value: number | undefined): string {
   return new Date(value * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function normalizeMessage(message: SubagentMessage, index: number): ThreadMessage {
+function normalizeMessage(message: TeamMessage, index: number): ThreadMessage {
   return {
     id: message.message_id || `message_${index}`,
     kind: message.kind || "system",
@@ -118,7 +118,7 @@ function normalizeMessage(message: SubagentMessage, index: number): ThreadMessag
   };
 }
 
-function normalizeNode(node: SubagentNode): TeamNode {
+function normalizeNode(node: TeamNodeResponse): TeamNode {
   const children = (node.children ?? []).map(normalizeNode);
   const status = normalizeStatus(node.status);
   const lastEventTs = node.last_event_ts;
@@ -173,7 +173,7 @@ function selectableNodes(nodes: TeamNode[]) {
   return nonLeaf.length ? nonLeaf : allTeamNodes(nodes).sort((a, b) => sortRank(a.status) - sortRank(b.status) || a.name.localeCompare(b.name));
 }
 
-export function useSubagentsData(refreshMs = 5000): SubagentsData {
+export function useTeamsData(refreshMs = 5000): TeamsData {
   const [roots, setRoots] = useState<TeamNode[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [nonLeafCount, setNonLeafCount] = useState(0);
@@ -187,7 +187,7 @@ export function useSubagentsData(refreshMs = 5000): SubagentsData {
     const load = async () => {
       setLoading(true);
       try {
-        const response = await api.listSubagents({ includeClosed: true }, controller.signal);
+        const response = await api.listTeams({ includeClosed: true }, controller.signal);
         if (cancelled) {
           return;
         }
@@ -231,13 +231,13 @@ export function useSubagentsData(refreshMs = 5000): SubagentsData {
   };
 }
 
-interface SubagentsRailProps {
+interface TeamsRailProps {
   selectedActorId: string;
-  data: SubagentsData;
+  data: TeamsData;
   onSelect(actorId: string): void;
 }
 
-export function SubagentsRail({ selectedActorId, data, onSelect }: SubagentsRailProps) {
+export function TeamsRail({ selectedActorId, data, onSelect }: TeamsRailProps) {
   const nodes = useMemo(() => selectableNodes(data.roots), [data.roots]);
   const selectedVisible = nodes.some((node) => node.actorId === selectedActorId) ? selectedActorId : nodes[0]?.actorId;
 
@@ -292,12 +292,12 @@ export function SubagentsRail({ selectedActorId, data, onSelect }: SubagentsRail
   );
 }
 
-interface SubagentsThreadViewProps {
+interface TeamsThreadViewProps {
   selectedActorId: string;
-  data: SubagentsData;
+  data: TeamsData;
 }
 
-export function SubagentsThreadView({ selectedActorId, data }: SubagentsThreadViewProps) {
+export function TeamsThreadView({ selectedActorId, data }: TeamsThreadViewProps) {
   const selected = findNode(data.roots, selectedActorId) || selectableNodes(data.roots)[0] || data.roots[0];
   const team = selected?.children.slice().sort((a, b) => sortRank(a.status) - sortRank(b.status) || a.name.localeCompare(b.name)) ?? [];
 

@@ -270,7 +270,7 @@ export interface SessionsResponse {
   group_key?: string | null;
 }
 
-export interface SubagentMessage {
+export interface TeamMessage {
   message_id: string;
   kind: "leader" | "member" | "system" | string;
   label: string;
@@ -279,7 +279,7 @@ export interface SubagentMessage {
   meta?: string;
 }
 
-export interface SubagentNode {
+export interface TeamNodeResponse {
   actor_id: string;
   child_session_id: string;
   parent_session_id: string;
@@ -293,13 +293,13 @@ export interface SubagentNode {
   last_event_ts?: number;
   model?: string;
   cwd?: string;
-  messages?: SubagentMessage[];
-  children?: SubagentNode[];
+  messages?: TeamMessage[];
+  children?: TeamNodeResponse[];
 }
 
-export interface SubagentsResponse {
+export interface TeamsResponse {
   ok?: boolean;
-  roots?: SubagentNode[];
+  roots?: TeamNodeResponse[];
   total_count?: number;
   non_leaf_count?: number;
 }

@@ -1,9 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { SessionsPane } from "../../components/sessions/SessionsPane";
-import { SubagentsRail } from "../../components/subagents/SubagentsView";
-import type { SubagentsData } from "../../components/subagents/SubagentsView";
+import { TeamsRail } from "../../components/teams/TeamsView";
+import type { TeamsData } from "../../components/teams/TeamsView";
 
-export type DesktopGlobalView = "sessions" | "subagents" | "scheduler";
+export type DesktopGlobalView = "sessions" | "teams" | "scheduler";
 
 interface GlobalNavRailProps {
   activeView: DesktopGlobalView;
@@ -32,7 +32,7 @@ function GlobalSchedulerIcon() {
   );
 }
 
-function GlobalSubagentsIcon() {
+function GlobalTeamsIcon() {
   return (
     <svg className="globalNavIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="12" cy="6" r="2.3" />
@@ -66,13 +66,13 @@ export function GlobalNavRail({
         </Button>
         <Button
           type="button"
-          variant={activeView === "subagents" ? "default" : "outline"}
+          variant={activeView === "teams" ? "default" : "outline"}
           className="globalNavButton"
           aria-label="Teams view"
           title="Teams"
-          onClick={() => onViewChange("subagents")}
+          onClick={() => onViewChange("teams")}
         >
-          <GlobalSubagentsIcon />
+          <GlobalTeamsIcon />
         </Button>
         <Button
           type="button"
@@ -91,26 +91,26 @@ export function GlobalNavRail({
 
 interface AppShellSidebarProps {
   activeView: DesktopGlobalView;
-  activeSubagentId: string;
-  subagentsData: SubagentsData;
+  activeTeamId: string;
+  teamsData: TeamsData;
   onNewSession(): void;
   onOpenSettings(): void;
   onLogout(): void;
-  onSubagentSelect(actorId: string): void;
+  onTeamSelect(actorId: string): void;
 }
 
 export function AppShellSidebar({
   activeView,
-  activeSubagentId,
-  subagentsData,
+  activeTeamId,
+  teamsData,
   onNewSession,
   onOpenSettings,
   onLogout,
-  onSubagentSelect,
+  onTeamSelect,
 }: AppShellSidebarProps) {
   return (
     <>
-      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "subagents" ? <SubagentsRail selectedActorId={activeSubagentId} data={subagentsData} onSelect={onSubagentSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Scheduler</h2></div></header><p className="text-sm text-muted-foreground">Manage alarms, supervisor preset activity, and inbox delivery.</p></div>}
+      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "teams" ? <TeamsRail selectedActorId={activeTeamId} data={teamsData} onSelect={onTeamSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Scheduler</h2></div></header><p className="text-sm text-muted-foreground">Manage alarms, supervisor preset activity, and inbox delivery.</p></div>}
       <footer className="sidebarFooter">
         <Button type="button" variant="outline" className="footerAction"><span className="buttonGlyph">?</span><span>Help</span></Button>
         <Button type="button" variant="outline" className="footerAction" onClick={onOpenSettings}><span className="buttonGlyph">ST</span><span>Settings</span></Button>

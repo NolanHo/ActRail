@@ -918,8 +918,8 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		}
 	})
 
-	t.Run("list subagents", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/subagents?include_closed=true", nil)
+	t.Run("list teams", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/teams?include_closed=true", nil)
 		res := httptest.NewRecorder()
 		h.ServeHTTP(res, req)
 
@@ -930,7 +930,7 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		var payload app.ListSubagentsResponse
 		decodeJSON(t, res, &payload)
 		if !payload.OK || payload.TotalCount != 2 || payload.NonLeafCount != 1 || len(payload.Roots) != 1 {
-			t.Fatalf("unexpected subagents payload: %+v", payload)
+			t.Fatalf("unexpected teams payload: %+v", payload)
 		}
 		if payload.Roots[0].ActorID != "actor_lead" || payload.Roots[0].Children[0].ActorID != "actor_leaf" {
 			t.Fatalf("unexpected subagent tree: %+v", payload.Roots)
@@ -940,8 +940,8 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		}
 	})
 
-	t.Run("subagent events", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/subagents/actor_lead/events?after_event_id=event_1", nil)
+	t.Run("team events", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/teams/actor_lead/events?after_event_id=event_1", nil)
 		res := httptest.NewRecorder()
 		h.ServeHTTP(res, req)
 
@@ -1277,17 +1277,17 @@ func TestProtectedRoutesRequireAuthCookieInPasswordMode(t *testing.T) {
 		{name: "team events", method: http.MethodGet, target: "/team/events"},
 		{name: "list sessions", method: http.MethodGet, target: "/api/sessions"},
 		{name: "create session", method: http.MethodPost, target: "/api/sessions"},
-		{name: "list subagents", method: http.MethodGet, target: "/api/subagents"},
-		{name: "spawn subagent", method: http.MethodPost, target: "/api/subagents/spawn"},
-		{name: "prompt subagent", method: http.MethodPost, target: "/api/subagents/actor_1/prompt"},
-		{name: "followup subagent", method: http.MethodPost, target: "/api/subagents/actor_1/followup"},
-		{name: "send subagent", method: http.MethodPost, target: "/api/subagents/actor_1/send"},
-		{name: "ask parent", method: http.MethodPost, target: "/api/subagents/actor_1/ask_parent"},
-		{name: "resume ask parent", method: http.MethodPost, target: "/api/subagents/actor_1/ask_parent/resume"},
-		{name: "answer subagent", method: http.MethodPost, target: "/api/subagents/actor_1/answer"},
-		{name: "abort subagent", method: http.MethodPost, target: "/api/subagents/actor_1/abort"},
-		{name: "close subagent", method: http.MethodPost, target: "/api/subagents/actor_1/close"},
-		{name: "subagent events", method: http.MethodGet, target: "/api/subagents/actor_1/events"},
+		{name: "list teams", method: http.MethodGet, target: "/api/teams"},
+		{name: "spawn team", method: http.MethodPost, target: "/api/teams/spawn"},
+		{name: "prompt team", method: http.MethodPost, target: "/api/teams/actor_1/prompt"},
+		{name: "followup team", method: http.MethodPost, target: "/api/teams/actor_1/followup"},
+		{name: "send team", method: http.MethodPost, target: "/api/teams/actor_1/send"},
+		{name: "ask parent", method: http.MethodPost, target: "/api/teams/actor_1/ask_parent"},
+		{name: "resume ask parent", method: http.MethodPost, target: "/api/teams/actor_1/ask_parent/resume"},
+		{name: "answer team", method: http.MethodPost, target: "/api/teams/actor_1/answer"},
+		{name: "abort team", method: http.MethodPost, target: "/api/teams/actor_1/abort"},
+		{name: "close team", method: http.MethodPost, target: "/api/teams/actor_1/close"},
+		{name: "team events", method: http.MethodGet, target: "/api/teams/actor_1/events"},
 		{name: "resume candidates", method: http.MethodGet, target: "/api/session_resume_candidates"},
 		{name: "session details", method: http.MethodGet, target: "/api/sessions/s_123/details"},
 		{name: "session messages", method: http.MethodGet, target: "/api/sessions/s_123/messages"},

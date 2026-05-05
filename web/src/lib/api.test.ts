@@ -149,7 +149,7 @@ describe("api", () => {
     });
   });
 
-  it("requests live subagents with closed actors included", async () => {
+  it("requests live teams with closed actors included", async () => {
     const payload = { ok: true, roots: [], total_count: 0, non_leaf_count: 0 };
     const signal = new AbortController().signal;
     const fetchMock = vi.fn().mockResolvedValue({
@@ -159,8 +159,8 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.listSubagents({ includeClosed: true }, signal)).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("api/subagents?include_closed=1", {
+    await expect(api.listTeams({ includeClosed: true }, signal)).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/teams?include_closed=1", {
       headers: { Accept: "application/json" },
       signal,
     });
