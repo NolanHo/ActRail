@@ -313,6 +313,10 @@ func (s *Stub) SpawnTeam(ctx context.Context, req SpawnTeamRequest) (TeamCommand
 		return TeamCommandResponse{}, err
 	}
 	if text := strings.TrimSpace(req.InitialPrompt); text != "" {
+		if err := s.waitForTeamRuntimeReady(ctx, created.Session.SessionID); err != nil {
+			s.teams.markFailed(actor.ActorID, err.Error())
+			return TeamCommandResponse{}, err
+		}
 		if _, err := s.sendTeamText(ctx, actor.ActorID, text, true, true); err != nil {
 			s.teams.markFailed(actor.ActorID, err.Error())
 			return TeamCommandResponse{}, err
@@ -320,6 +324,25 @@ func (s *Stub) SpawnTeam(ctx context.Context, req SpawnTeamRequest) (TeamCommand
 		actor = s.teams.lookupNode(actor.ActorID)
 	}
 	return TeamCommandResponse{OK: true, Actor: actor, ActorID: actor.ActorID, ChildSessionID: actor.ChildSessionID, TurnID: actor.TurnID, Status: actor.Status}, nil
+}
+
+func (s *Stub) waitForTeamRuntimeReady(ctx context.Context, rawSessionID string) error {
+	sessionID := session.SessionID(strings.TrimSpace(rawSessionID))
+	for {
+		record, err := s.lookupSession(sessionID)
+		if err != nil {
+			return err
+		}
+		transport := sessionTransportSnapshot(record)
+		if transport.State != SessionTransportStateStarting {
+			return transportControlError(transport)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(helperReadyPollInterval):
+		}
+	}
 }
 
 func (s *Stub) PromptTeam(ctx context.Context, req PromptTeamRequest) (TeamCommandResponse, error) {
