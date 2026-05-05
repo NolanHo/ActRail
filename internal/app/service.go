@@ -227,6 +227,7 @@ type SessionSummary struct {
 	Probing             bool                       `json:"probing,omitempty"`
 	ResetRequired       bool                       `json:"reset_required,omitempty"`
 	TransportReason     string                     `json:"transport_reason,omitempty"`
+	PendingStartup      bool                       `json:"pending_startup,omitempty"`
 	LastUpdatedTS       float64                    `json:"last_updated_ts"`
 	UpdatedTS           float64                    `json:"updated_ts,omitempty"`
 	LastAssistantTS     float64                    `json:"last_assistant_message_ts,omitempty"`
@@ -318,6 +319,7 @@ type CreatedSession struct {
 	Probing         bool   `json:"probing,omitempty"`
 	ResetRequired   bool   `json:"reset_required,omitempty"`
 	TransportReason string `json:"transport_reason,omitempty"`
+	PendingStartup  bool   `json:"pending_startup,omitempty"`
 	SessionFilePath string `json:"session_file_path,omitempty"`
 }
 
@@ -539,7 +541,9 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}
 	bindingSaved = true
 	transport := SessionTransportSnapshot{}
-	if runtime.UsesPIAgentGRPC() {
+	if runtime.PendingPIAgentGRPCReady() {
+		transport = transportSnapshotPIAgentGRPCStarting()
+	} else if runtime.UsesPIAgentGRPC() {
 		transport = piAgentGRPCTransportSnapshot()
 	}
 	record, err := s.registry.Create(sessionCreateSpec{
@@ -562,6 +566,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		return CreateSessionResponse{}, err
 	}
 	s.startRuntimeIngest(record.identity.SessionID(), backend, runtime)
+	s.startPIAgentGRPCReadyTransition(record.identity.SessionID(), runtime)
 	stream, err := session.MainStream(record.identity)
 	if err != nil {
 		return CreateSessionResponse{}, err
@@ -578,6 +583,46 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 
 func createSessionUsesPIAgentGRPC(req CreateSessionRequest, backend session.Backend) bool {
 	return backend == session.BackendPI && (req.PIAgentGRPC == nil || *req.PIAgentGRPC)
+}
+
+func (s *Stub) startPIAgentGRPCReadyTransition(sessionID session.SessionID, runtime sessionRuntime) {
+	if s == nil || !runtime.PendingPIAgentGRPCReady() {
+		return
+	}
+	go func() {
+		err := runtime.WaitForPIAgentGRPCReady(context.Background())
+		if err != nil {
+			_ = runtime.Kill(context.Background())
+			s.markPIAgentGRPCStartupFailed(sessionID, err)
+			return
+		}
+		s.markPIAgentGRPCStartupReady(sessionID, runtime)
+	}()
+}
+
+func (s *Stub) markPIAgentGRPCStartupReady(sessionID session.SessionID, runtime sessionRuntime) {
+	runtime.piAgentGRPCReady = nil
+	updated, ok, err := s.registry.SetRuntimeTransport(sessionID, runtime, transportSnapshotPIAgentGRPCAttached())
+	if err != nil || !ok {
+		_ = runtime.Kill(context.Background())
+		return
+	}
+	s.emitSessionState(updated.identity.SessionID())
+}
+
+func (s *Stub) markPIAgentGRPCStartupFailed(sessionID session.SessionID, err error) {
+	reason := "pi_agent_grpc_start_failed"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		reason = err.Error()
+	}
+	if _, ok, markErr := s.registry.MarkRuntimeCompleted(sessionID); markErr != nil || !ok {
+		return
+	}
+	if _, ok, setErr := s.registry.SetTransport(sessionID, transportSnapshotPIAgentGRPCFailed(reason)); setErr != nil || !ok {
+		return
+	}
+	_ = s.setRuntimeAgentRunning(sessionID, false)
+	s.emitSessionState(sessionID)
 }
 
 func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {
@@ -609,6 +654,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		Probing:             s.sessionProbing(record),
 		ResetRequired:       transport.ResetRequired,
 		TransportReason:     transport.Reason,
+		PendingStartup:      transport.State == SessionTransportStateStarting,
 		LastUpdatedTS:       timestampSeconds(updatedAt),
 		UpdatedTS:           timestampSeconds(updatedAt),
 		LastAssistantTS:     lastAssistantMessageTimestamp(record),
@@ -675,6 +721,7 @@ func (s *Stub) createdSessionFromRecord(record sessionRecord) *CreatedSession {
 		Probing:         s.sessionProbing(record),
 		ResetRequired:   transport.ResetRequired,
 		TransportReason: transport.Reason,
+		PendingStartup:  transport.State == SessionTransportStateStarting,
 		SessionFilePath: record.importedSourcePath,
 	}
 }

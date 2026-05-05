@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,9 +153,6 @@ func TestCreateSessionDefaultsPIAgentToGRPC(t *testing.T) {
 	if created.Session == nil {
 		t.Fatal("CreateSession().Session = nil")
 	}
-	if resolvedTarget != "unix:///tmp/custom-pi-agent.sock" {
-		t.Fatalf("grpc target = %q, want custom target", resolvedTarget)
-	}
 	if len(runner.Starts) != 1 {
 		t.Fatalf("len(runner.Starts) = %d, want 1", len(runner.Starts))
 	}
@@ -182,6 +180,18 @@ func TestCreateSessionDefaultsPIAgentToGRPC(t *testing.T) {
 	}
 	if record.runtime.piAgentGRPC == nil {
 		t.Fatal("record.runtime.piAgentGRPC = nil")
+	}
+	if created.Session.TransportState != SessionTransportStateStarting.String() || !created.Session.PendingStartup {
+		t.Fatalf("CreateSession().Session transport = (%q, pending=%v), want starting pending", created.Session.TransportState, created.Session.PendingStartup)
+	}
+	if resolvedTarget != "" {
+		t.Fatalf("grpc target before readiness wait = %q, want no synchronous dial", resolvedTarget)
+	}
+	if err := record.runtime.WaitForPIAgentGRPCReady(context.Background()); err != nil {
+		t.Fatalf("WaitForPIAgentGRPCReady() error = %v", err)
+	}
+	if resolvedTarget != "unix:///tmp/custom-pi-agent.sock" {
+		t.Fatalf("grpc target = %q, want custom target", resolvedTarget)
 	}
 	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
 	if err != nil {
@@ -219,6 +229,49 @@ func TestCreateSessionCanOptOutOfPIAgentGRPC(t *testing.T) {
 	}
 	if created.Session.TransportState != string(SessionTransportStateAttached) {
 		t.Fatalf("CreateSession().Session.TransportState = %q, want attached", created.Session.TransportState)
+	}
+}
+
+func TestCreateSessionMarksPIAgentGRPCFailedWhenReadyProbeFails(t *testing.T) {
+	runner := &process.FakeRunner{}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner: runner,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/custom-pi", nil
+		},
+		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
+		PIAgentGRPCDialer: func(context.Context, string) (*grpc.ClientConn, error) {
+			return nil, context.Canceled
+		},
+	})
+	createCtx, cancelCreate := context.WithTimeout(context.Background(), time.Second)
+	defer cancelCreate()
+	created, err := svc.CreateSession(createCtx, CreateSessionRequest{AgentBackend: "pi", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	assertCtx, cancelAssert := context.WithTimeout(context.Background(), time.Second)
+	defer cancelAssert()
+	for {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		if err != nil {
+			t.Fatalf("SessionState() error = %v", err)
+		}
+		if state.Transport.State == SessionTransportStateFailed {
+			if !strings.Contains(state.Transport.Reason, "context canceled") {
+				t.Fatalf("failed transport reason = %q, want canceled error", state.Transport.Reason)
+			}
+			return
+		}
+		select {
+		case <-assertCtx.Done():
+			t.Fatalf("transport state = %q, want failed", state.Transport.State)
+		case <-time.After(helperReadyPollInterval):
+		}
 	}
 }
 

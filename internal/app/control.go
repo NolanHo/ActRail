@@ -427,6 +427,9 @@ func transportControlError(transport SessionTransportSnapshot) error {
 		}
 		return &Error{Code: "transport_reset_required", Message: message}
 	}
+	if transport.State == SessionTransportStateStarting {
+		return Conflict("session runtime is starting")
+	}
 	if transport.State == SessionTransportStateBroken && isRecoverableTransportProbeIssue(transport) {
 		return nil
 	}
@@ -434,6 +437,13 @@ func transportControlError(transport SessionTransportSnapshot) error {
 		message := "session generation is broken"
 		if transport.Reason != "" {
 			message = fmt.Sprintf("session generation is broken: %s", transport.Reason)
+		}
+		return Conflict(message)
+	}
+	if transport.State == SessionTransportStateFailed {
+		message := "session runtime failed to start"
+		if transport.Reason != "" {
+			message = fmt.Sprintf("session runtime failed to start: %s", transport.Reason)
 		}
 		return Conflict(message)
 	}

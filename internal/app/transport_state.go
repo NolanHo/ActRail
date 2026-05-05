@@ -9,10 +9,12 @@ import (
 type SessionTransportState string
 
 const (
+	SessionTransportStateStarting SessionTransportState = "starting"
 	SessionTransportStateAttached SessionTransportState = "attached"
 	SessionTransportStateSilent   SessionTransportState = "silent"
 	SessionTransportStateStalled  SessionTransportState = "stalled"
 	SessionTransportStateBroken   SessionTransportState = "broken"
+	SessionTransportStateFailed   SessionTransportState = "failed"
 	SessionTransportStateEnded    SessionTransportState = "ended"
 )
 

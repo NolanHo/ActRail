@@ -93,7 +93,7 @@ function sessionBackendUnavailable(session: SessionSummary | null) {
     return false;
   }
   const state = String(session.transport_state || "").trim();
-  return session.reset_required === true || state === "ended" || state === "broken";
+  return session.reset_required === true || state === "ended" || state === "broken" || state === "failed";
 }
 
 function sessionBackendUnavailableLabel(session: SessionSummary | null) {
@@ -106,6 +106,9 @@ function sessionBackendUnavailableLabel(session: SessionSummary | null) {
   }
   if (state === "broken") {
     return "Session backend is broken. Restart or create a new session before sending.";
+  }
+  if (state === "failed") {
+    return "Session backend failed to start. Restart or create a new session before sending.";
   }
   return "Session backend is unavailable.";
 }
@@ -376,7 +379,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const supervisorEnabled = activeSession?.supervisor?.enabled === true;
   const supervisorBlockReason = "Supervisor is controlling this session. Disable Supervisor to send manually.";
   const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(activeWait) || supervisorEnabled;
-  const activeSessionSendBlockReason = supervisorEnabled ? supervisorBlockReason : activeWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : "";
+  const activeSessionSendBlockReason = supervisorEnabled ? supervisorBlockReason : activeWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : activeSessionPending ? "Session runtime is starting." : "";
   const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
   const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
     ? Math.max(0, Math.round(activeSession.queue_len))
