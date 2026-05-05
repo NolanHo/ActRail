@@ -53,6 +53,7 @@ type RuntimeConfig struct {
 	IODDialer               iodclient.Dialer
 	PIAgentGRPCDialer       piagentgrpc.Dialer
 	PIAgentGRPCTarget       string
+	PIAgentGRPCReadyTimeout time.Duration
 	IODRuntimeRoot          string
 	UseIODHelper            bool
 	NewGenerationID         func(session.SessionID) (iod.GenerationID, error)
@@ -83,6 +84,7 @@ type processRuntimeLauncher struct {
 	dialer                  iodclient.Dialer
 	piAgentGRPCDialer       piagentgrpc.Dialer
 	piAgentGRPCTarget       string
+	piAgentGRPCReadyTimeout time.Duration
 	resolveLaunchEnv        func(session.Backend, process.Environment) (process.Environment, error)
 	env                     process.Environment
 	io                      process.IO
@@ -96,7 +98,6 @@ const (
 	runtimeProtocolCodexRPC runtimeProtocol = "codex_rpc"
 
 	helperReadyPollInterval = 25 * time.Millisecond
-	helperReadyTimeout      = 30 * time.Second
 	helperStopTimeout       = 3 * time.Second
 
 	helperFlagSessionID          = "-session-id"
@@ -108,6 +109,8 @@ const (
 	helperFlagChildIOMode        = "-child-io-mode"
 	helperFlagSessionHistoryPath = "-session-history-path"
 )
+
+const defaultHelperReadyTimeout = 30 * time.Second
 
 type sessionRuntime struct {
 	launchSpec           process.LaunchSpec
@@ -316,6 +319,10 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 	if err != nil {
 		panic(err)
 	}
+	readyTimeout := cfg.PIAgentGRPCReadyTimeout
+	if readyTimeout <= 0 {
+		readyTimeout = defaultHelperReadyTimeout
+	}
 
 	return processRuntimeLauncher{
 		catalog:                 catalog,
@@ -329,6 +336,7 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 		dialer:                  cfg.IODDialer,
 		piAgentGRPCDialer:       cfg.PIAgentGRPCDialer,
 		piAgentGRPCTarget:       cfg.PIAgentGRPCTarget,
+		piAgentGRPCReadyTimeout: readyTimeout,
 		resolveLaunchEnv:        resolveLaunchEnv,
 		env:                     env,
 		io:                      ioSpec,
@@ -487,7 +495,7 @@ func (l processRuntimeLauncher) waitForPIAgentGRPCReady(ctx context.Context, cli
 	readyCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		readyCtx, cancel = context.WithTimeout(ctx, helperReadyTimeout)
+		readyCtx, cancel = context.WithTimeout(ctx, l.piAgentGRPCReadyTimeout)
 		defer cancel()
 	}
 	ticker := time.NewTicker(helperReadyPollInterval)
@@ -680,7 +688,7 @@ func (l processRuntimeLauncher) waitForHelperReady(ctx context.Context, handle p
 	readyCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		readyCtx, cancel = context.WithTimeout(ctx, helperReadyTimeout)
+		readyCtx, cancel = context.WithTimeout(ctx, defaultHelperReadyTimeout)
 		defer cancel()
 	}
 	ticker := time.NewTicker(helperReadyPollInterval)

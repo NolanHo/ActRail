@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -590,21 +591,31 @@ func (s *Stub) startPIAgentGRPCReadyTransition(sessionID session.SessionID, runt
 		return
 	}
 	go func() {
+		readyTimeout := defaultHelperReadyTimeout
+		if processRuntime, ok := s.launcher.(processRuntimeLauncher); ok {
+			readyTimeout = processRuntime.piAgentGRPCReadyTimeout
+		}
+		deadline := time.Now().Add(readyTimeout)
 		for {
 			state, err := runtime.PIAgentGRPCState(context.Background())
 			if err != nil {
-				if strings.Contains(err.Error(), "runtime starting") {
-					time.Sleep(helperReadyPollInterval)
-					continue
+				if !isPIAgentGRPCStartupTransient(err) || time.Now().After(deadline) {
+					_ = runtime.Kill(context.Background())
+					s.markPIAgentGRPCStartupFailed(sessionID, fmt.Errorf("wait for pi agent grpc: %w", err))
+					return
 				}
-				_ = runtime.Kill(context.Background())
-				s.markPIAgentGRPCStartupFailed(sessionID, err)
-				return
+				time.Sleep(helperReadyPollInterval)
+				continue
 			}
 			if state.RuntimeStarting() {
 				if err := s.applyRuntimeProjection(sessionID, runtimeProjection{piRPCState: piRPCStateSnapshotFromGRPC(state)}); err != nil {
 					_ = runtime.Kill(context.Background())
 					s.markPIAgentGRPCStartupFailed(sessionID, err)
+					return
+				}
+				if time.Now().After(deadline) {
+					_ = runtime.Kill(context.Background())
+					s.markPIAgentGRPCStartupFailed(sessionID, fmt.Errorf("pi agent grpc runtime starting: %s", firstNonEmptyString(state.RuntimeMessage(), "runtime starting")))
 					return
 				}
 				time.Sleep(helperReadyPollInterval)
@@ -624,6 +635,17 @@ func (s *Stub) startPIAgentGRPCReadyTransition(sessionID session.SessionID, runt
 			return
 		}
 	}()
+}
+
+func isPIAgentGRPCStartupTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	text := err.Error()
+	return strings.Contains(text, "dial unix") || strings.Contains(text, "connect: no such file or directory") || strings.Contains(text, "connection refused")
 }
 
 func (s *Stub) markPIAgentGRPCStartupReady(sessionID session.SessionID, runtime sessionRuntime) {
