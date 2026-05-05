@@ -21,6 +21,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type RuntimeState int32
+
+const (
+	RuntimeState_RUNTIME_STATE_UNSPECIFIED RuntimeState = 0
+	RuntimeState_RUNTIME_STATE_STARTING    RuntimeState = 1
+	RuntimeState_RUNTIME_STATE_READY       RuntimeState = 2
+	RuntimeState_RUNTIME_STATE_FAILED      RuntimeState = 3
+)
+
+// Enum value maps for RuntimeState.
+var (
+	RuntimeState_name = map[int32]string{
+		0: "RUNTIME_STATE_UNSPECIFIED",
+		1: "RUNTIME_STATE_STARTING",
+		2: "RUNTIME_STATE_READY",
+		3: "RUNTIME_STATE_FAILED",
+	}
+	RuntimeState_value = map[string]int32{
+		"RUNTIME_STATE_UNSPECIFIED": 0,
+		"RUNTIME_STATE_STARTING":    1,
+		"RUNTIME_STATE_READY":       2,
+		"RUNTIME_STATE_FAILED":      3,
+	}
+)
+
+func (x RuntimeState) Enum() *RuntimeState {
+	p := new(RuntimeState)
+	*p = x
+	return p
+}
+
+func (x RuntimeState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RuntimeState) Descriptor() protoreflect.EnumDescriptor {
+	return file_pi_agent_v1_pi_agent_proto_enumTypes[0].Descriptor()
+}
+
+func (RuntimeState) Type() protoreflect.EnumType {
+	return &file_pi_agent_v1_pi_agent_proto_enumTypes[0]
+}
+
+func (x RuntimeState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RuntimeState.Descriptor instead.
+func (RuntimeState) EnumDescriptor() ([]byte, []int) {
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{0}
+}
+
 type StreamingBehavior int32
 
 const (
@@ -54,11 +106,11 @@ func (x StreamingBehavior) String() string {
 }
 
 func (StreamingBehavior) Descriptor() protoreflect.EnumDescriptor {
-	return file_pi_agent_v1_pi_agent_proto_enumTypes[0].Descriptor()
+	return file_pi_agent_v1_pi_agent_proto_enumTypes[1].Descriptor()
 }
 
 func (StreamingBehavior) Type() protoreflect.EnumType {
-	return &file_pi_agent_v1_pi_agent_proto_enumTypes[0]
+	return &file_pi_agent_v1_pi_agent_proto_enumTypes[1]
 }
 
 func (x StreamingBehavior) Number() protoreflect.EnumNumber {
@@ -67,7 +119,7 @@ func (x StreamingBehavior) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use StreamingBehavior.Descriptor instead.
 func (StreamingBehavior) EnumDescriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{0}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{1}
 }
 
 type EventLevel int32
@@ -106,11 +158,11 @@ func (x EventLevel) String() string {
 }
 
 func (EventLevel) Descriptor() protoreflect.EnumDescriptor {
-	return file_pi_agent_v1_pi_agent_proto_enumTypes[1].Descriptor()
+	return file_pi_agent_v1_pi_agent_proto_enumTypes[2].Descriptor()
 }
 
 func (EventLevel) Type() protoreflect.EnumType {
-	return &file_pi_agent_v1_pi_agent_proto_enumTypes[1]
+	return &file_pi_agent_v1_pi_agent_proto_enumTypes[2]
 }
 
 func (x EventLevel) Number() protoreflect.EnumNumber {
@@ -119,7 +171,7 @@ func (x EventLevel) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use EventLevel.Descriptor instead.
 func (EventLevel) EnumDescriptor() ([]byte, []int) {
-	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{1}
+	return file_pi_agent_v1_pi_agent_proto_rawDescGZIP(), []int{2}
 }
 
 type GetStateRequest struct {
@@ -1003,19 +1055,22 @@ func (x *Image) GetMimeType() string {
 }
 
 type SessionState struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	Model                 *Model                 `protobuf:"bytes,1,opt,name=model,proto3,oneof" json:"model,omitempty"`
-	ThinkingLevel         string                 `protobuf:"bytes,2,opt,name=thinking_level,json=thinkingLevel,proto3" json:"thinking_level,omitempty"`
-	IsStreaming           bool                   `protobuf:"varint,3,opt,name=is_streaming,json=isStreaming,proto3" json:"is_streaming,omitempty"`
-	IsCompacting          bool                   `protobuf:"varint,4,opt,name=is_compacting,json=isCompacting,proto3" json:"is_compacting,omitempty"`
-	SteeringMode          string                 `protobuf:"bytes,5,opt,name=steering_mode,json=steeringMode,proto3" json:"steering_mode,omitempty"`
-	FollowUpMode          string                 `protobuf:"bytes,6,opt,name=follow_up_mode,json=followUpMode,proto3" json:"follow_up_mode,omitempty"`
-	SessionFile           *string                `protobuf:"bytes,7,opt,name=session_file,json=sessionFile,proto3,oneof" json:"session_file,omitempty"`
-	SessionId             string                 `protobuf:"bytes,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	SessionName           *string                `protobuf:"bytes,9,opt,name=session_name,json=sessionName,proto3,oneof" json:"session_name,omitempty"`
-	AutoCompactionEnabled bool                   `protobuf:"varint,10,opt,name=auto_compaction_enabled,json=autoCompactionEnabled,proto3" json:"auto_compaction_enabled,omitempty"`
-	MessageCount          uint32                 `protobuf:"varint,11,opt,name=message_count,json=messageCount,proto3" json:"message_count,omitempty"`
-	PendingMessageCount   uint32                 `protobuf:"varint,12,opt,name=pending_message_count,json=pendingMessageCount,proto3" json:"pending_message_count,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Model         *Model                 `protobuf:"bytes,1,opt,name=model,proto3,oneof" json:"model,omitempty"`
+	ThinkingLevel string                 `protobuf:"bytes,2,opt,name=thinking_level,json=thinkingLevel,proto3" json:"thinking_level,omitempty"`
+	// True while the session is processing a turn, including provider calls, tool execution, and auto-retry continuation.
+	IsStreaming           bool         `protobuf:"varint,3,opt,name=is_streaming,json=isStreaming,proto3" json:"is_streaming,omitempty"`
+	IsCompacting          bool         `protobuf:"varint,4,opt,name=is_compacting,json=isCompacting,proto3" json:"is_compacting,omitempty"`
+	SteeringMode          string       `protobuf:"bytes,5,opt,name=steering_mode,json=steeringMode,proto3" json:"steering_mode,omitempty"`
+	FollowUpMode          string       `protobuf:"bytes,6,opt,name=follow_up_mode,json=followUpMode,proto3" json:"follow_up_mode,omitempty"`
+	SessionFile           *string      `protobuf:"bytes,7,opt,name=session_file,json=sessionFile,proto3,oneof" json:"session_file,omitempty"`
+	SessionId             string       `protobuf:"bytes,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SessionName           *string      `protobuf:"bytes,9,opt,name=session_name,json=sessionName,proto3,oneof" json:"session_name,omitempty"`
+	AutoCompactionEnabled bool         `protobuf:"varint,10,opt,name=auto_compaction_enabled,json=autoCompactionEnabled,proto3" json:"auto_compaction_enabled,omitempty"`
+	MessageCount          uint32       `protobuf:"varint,11,opt,name=message_count,json=messageCount,proto3" json:"message_count,omitempty"`
+	PendingMessageCount   uint32       `protobuf:"varint,12,opt,name=pending_message_count,json=pendingMessageCount,proto3" json:"pending_message_count,omitempty"`
+	RuntimeState          RuntimeState `protobuf:"varint,13,opt,name=runtime_state,json=runtimeState,proto3,enum=pi.agent.v1.RuntimeState" json:"runtime_state,omitempty"`
+	RuntimeStatusMessage  string       `protobuf:"bytes,14,opt,name=runtime_status_message,json=runtimeStatusMessage,proto3" json:"runtime_status_message,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1132,6 +1187,20 @@ func (x *SessionState) GetPendingMessageCount() uint32 {
 		return x.PendingMessageCount
 	}
 	return 0
+}
+
+func (x *SessionState) GetRuntimeState() RuntimeState {
+	if x != nil {
+		return x.RuntimeState
+	}
+	return RuntimeState_RUNTIME_STATE_UNSPECIFIED
+}
+
+func (x *SessionState) GetRuntimeStatusMessage() string {
+	if x != nil {
+		return x.RuntimeStatusMessage
+	}
+	return ""
 }
 
 type Model struct {
@@ -1840,7 +1909,7 @@ const file_pi_agent_v1_pi_agent_proto_rawDesc = "" +
 	"\x11inline_byte_limit\x18\x06 \x01(\rR\x0finlineByteLimit\"8\n" +
 	"\x05Image\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\tR\x04data\x12\x1b\n" +
-	"\tmime_type\x18\x02 \x01(\tR\bmimeType\"\xa3\x04\n" +
+	"\tmime_type\x18\x02 \x01(\tR\bmimeType\"\x99\x05\n" +
 	"\fSessionState\x12-\n" +
 	"\x05model\x18\x01 \x01(\v2\x12.pi.agent.v1.ModelH\x00R\x05model\x88\x01\x01\x12%\n" +
 	"\x0ethinking_level\x18\x02 \x01(\tR\rthinkingLevel\x12!\n" +
@@ -1855,7 +1924,9 @@ const file_pi_agent_v1_pi_agent_proto_rawDesc = "" +
 	"\x17auto_compaction_enabled\x18\n" +
 	" \x01(\bR\x15autoCompactionEnabled\x12#\n" +
 	"\rmessage_count\x18\v \x01(\rR\fmessageCount\x122\n" +
-	"\x15pending_message_count\x18\f \x01(\rR\x13pendingMessageCountB\b\n" +
+	"\x15pending_message_count\x18\f \x01(\rR\x13pendingMessageCount\x12>\n" +
+	"\rruntime_state\x18\r \x01(\x0e2\x19.pi.agent.v1.RuntimeStateR\fruntimeState\x124\n" +
+	"\x16runtime_status_message\x18\x0e \x01(\tR\x14runtimeStatusMessageB\b\n" +
 	"\x06_modelB\x0f\n" +
 	"\r_session_fileB\x0f\n" +
 	"\r_session_name\"\x9a\x02\n" +
@@ -1909,7 +1980,12 @@ const file_pi_agent_v1_pi_agent_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12&\n" +
 	"\fsession_file\x18\x02 \x01(\tH\x00R\vsessionFile\x88\x01\x01\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reasonB\x0f\n" +
-	"\r_session_file*w\n" +
+	"\r_session_file*|\n" +
+	"\fRuntimeState\x12\x1d\n" +
+	"\x19RUNTIME_STATE_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16RUNTIME_STATE_STARTING\x10\x01\x12\x17\n" +
+	"\x13RUNTIME_STATE_READY\x10\x02\x12\x18\n" +
+	"\x14RUNTIME_STATE_FAILED\x10\x03*w\n" +
 	"\x11StreamingBehavior\x12\"\n" +
 	"\x1eSTREAMING_BEHAVIOR_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18STREAMING_BEHAVIOR_STEER\x10\x01\x12 \n" +
@@ -1946,83 +2022,85 @@ func file_pi_agent_v1_pi_agent_proto_rawDescGZIP() []byte {
 	return file_pi_agent_v1_pi_agent_proto_rawDescData
 }
 
-var file_pi_agent_v1_pi_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_pi_agent_v1_pi_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
 var file_pi_agent_v1_pi_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_pi_agent_v1_pi_agent_proto_goTypes = []any{
-	(StreamingBehavior)(0),         // 0: pi.agent.v1.StreamingBehavior
-	(EventLevel)(0),                // 1: pi.agent.v1.EventLevel
-	(*GetStateRequest)(nil),        // 2: pi.agent.v1.GetStateRequest
-	(*GetMessagesRequest)(nil),     // 3: pi.agent.v1.GetMessagesRequest
-	(*ReadBlobRequest)(nil),        // 4: pi.agent.v1.ReadBlobRequest
-	(*ReadBlobResponse)(nil),       // 5: pi.agent.v1.ReadBlobResponse
-	(*PromptRequest)(nil),          // 6: pi.agent.v1.PromptRequest
-	(*SteerRequest)(nil),           // 7: pi.agent.v1.SteerRequest
-	(*FollowUpRequest)(nil),        // 8: pi.agent.v1.FollowUpRequest
-	(*AbortRequest)(nil),           // 9: pi.agent.v1.AbortRequest
-	(*NewSessionRequest)(nil),      // 10: pi.agent.v1.NewSessionRequest
-	(*ListCommandsRequest)(nil),    // 11: pi.agent.v1.ListCommandsRequest
-	(*ExecuteCommandRequest)(nil),  // 12: pi.agent.v1.ExecuteCommandRequest
-	(*ListCommandsResponse)(nil),   // 13: pi.agent.v1.ListCommandsResponse
-	(*SlashCommand)(nil),           // 14: pi.agent.v1.SlashCommand
-	(*SourceInfo)(nil),             // 15: pi.agent.v1.SourceInfo
-	(*SubscribeEventsRequest)(nil), // 16: pi.agent.v1.SubscribeEventsRequest
-	(*Image)(nil),                  // 17: pi.agent.v1.Image
-	(*SessionState)(nil),           // 18: pi.agent.v1.SessionState
-	(*Model)(nil),                  // 19: pi.agent.v1.Model
-	(*ModelCost)(nil),              // 20: pi.agent.v1.ModelCost
-	(*CommandAck)(nil),             // 21: pi.agent.v1.CommandAck
-	(*SessionSwitchResult)(nil),    // 22: pi.agent.v1.SessionSwitchResult
-	(*GetMessagesResponse)(nil),    // 23: pi.agent.v1.GetMessagesResponse
-	(*Payload)(nil),                // 24: pi.agent.v1.Payload
-	(*BlobRef)(nil),                // 25: pi.agent.v1.BlobRef
-	(*AgentMessage)(nil),           // 26: pi.agent.v1.AgentMessage
-	(*EventBatch)(nil),             // 27: pi.agent.v1.EventBatch
-	(*Event)(nil),                  // 28: pi.agent.v1.Event
-	(*SessionBoundary)(nil),        // 29: pi.agent.v1.SessionBoundary
+	(RuntimeState)(0),              // 0: pi.agent.v1.RuntimeState
+	(StreamingBehavior)(0),         // 1: pi.agent.v1.StreamingBehavior
+	(EventLevel)(0),                // 2: pi.agent.v1.EventLevel
+	(*GetStateRequest)(nil),        // 3: pi.agent.v1.GetStateRequest
+	(*GetMessagesRequest)(nil),     // 4: pi.agent.v1.GetMessagesRequest
+	(*ReadBlobRequest)(nil),        // 5: pi.agent.v1.ReadBlobRequest
+	(*ReadBlobResponse)(nil),       // 6: pi.agent.v1.ReadBlobResponse
+	(*PromptRequest)(nil),          // 7: pi.agent.v1.PromptRequest
+	(*SteerRequest)(nil),           // 8: pi.agent.v1.SteerRequest
+	(*FollowUpRequest)(nil),        // 9: pi.agent.v1.FollowUpRequest
+	(*AbortRequest)(nil),           // 10: pi.agent.v1.AbortRequest
+	(*NewSessionRequest)(nil),      // 11: pi.agent.v1.NewSessionRequest
+	(*ListCommandsRequest)(nil),    // 12: pi.agent.v1.ListCommandsRequest
+	(*ExecuteCommandRequest)(nil),  // 13: pi.agent.v1.ExecuteCommandRequest
+	(*ListCommandsResponse)(nil),   // 14: pi.agent.v1.ListCommandsResponse
+	(*SlashCommand)(nil),           // 15: pi.agent.v1.SlashCommand
+	(*SourceInfo)(nil),             // 16: pi.agent.v1.SourceInfo
+	(*SubscribeEventsRequest)(nil), // 17: pi.agent.v1.SubscribeEventsRequest
+	(*Image)(nil),                  // 18: pi.agent.v1.Image
+	(*SessionState)(nil),           // 19: pi.agent.v1.SessionState
+	(*Model)(nil),                  // 20: pi.agent.v1.Model
+	(*ModelCost)(nil),              // 21: pi.agent.v1.ModelCost
+	(*CommandAck)(nil),             // 22: pi.agent.v1.CommandAck
+	(*SessionSwitchResult)(nil),    // 23: pi.agent.v1.SessionSwitchResult
+	(*GetMessagesResponse)(nil),    // 24: pi.agent.v1.GetMessagesResponse
+	(*Payload)(nil),                // 25: pi.agent.v1.Payload
+	(*BlobRef)(nil),                // 26: pi.agent.v1.BlobRef
+	(*AgentMessage)(nil),           // 27: pi.agent.v1.AgentMessage
+	(*EventBatch)(nil),             // 28: pi.agent.v1.EventBatch
+	(*Event)(nil),                  // 29: pi.agent.v1.Event
+	(*SessionBoundary)(nil),        // 30: pi.agent.v1.SessionBoundary
 }
 var file_pi_agent_v1_pi_agent_proto_depIdxs = []int32{
-	17, // 0: pi.agent.v1.PromptRequest.images:type_name -> pi.agent.v1.Image
-	0,  // 1: pi.agent.v1.PromptRequest.streaming_behavior:type_name -> pi.agent.v1.StreamingBehavior
-	17, // 2: pi.agent.v1.SteerRequest.images:type_name -> pi.agent.v1.Image
-	17, // 3: pi.agent.v1.FollowUpRequest.images:type_name -> pi.agent.v1.Image
-	14, // 4: pi.agent.v1.ListCommandsResponse.commands:type_name -> pi.agent.v1.SlashCommand
-	15, // 5: pi.agent.v1.SlashCommand.source_info:type_name -> pi.agent.v1.SourceInfo
-	1,  // 6: pi.agent.v1.SubscribeEventsRequest.level:type_name -> pi.agent.v1.EventLevel
-	19, // 7: pi.agent.v1.SessionState.model:type_name -> pi.agent.v1.Model
-	20, // 8: pi.agent.v1.Model.cost:type_name -> pi.agent.v1.ModelCost
-	26, // 9: pi.agent.v1.GetMessagesResponse.messages:type_name -> pi.agent.v1.AgentMessage
-	25, // 10: pi.agent.v1.Payload.blob:type_name -> pi.agent.v1.BlobRef
-	24, // 11: pi.agent.v1.AgentMessage.payload:type_name -> pi.agent.v1.Payload
-	28, // 12: pi.agent.v1.EventBatch.events:type_name -> pi.agent.v1.Event
-	24, // 13: pi.agent.v1.Event.payload:type_name -> pi.agent.v1.Payload
-	29, // 14: pi.agent.v1.Event.session_boundary:type_name -> pi.agent.v1.SessionBoundary
-	2,  // 15: pi.agent.v1.PiAgent.GetState:input_type -> pi.agent.v1.GetStateRequest
-	6,  // 16: pi.agent.v1.PiAgent.Prompt:input_type -> pi.agent.v1.PromptRequest
-	7,  // 17: pi.agent.v1.PiAgent.Steer:input_type -> pi.agent.v1.SteerRequest
-	8,  // 18: pi.agent.v1.PiAgent.FollowUp:input_type -> pi.agent.v1.FollowUpRequest
-	9,  // 19: pi.agent.v1.PiAgent.Abort:input_type -> pi.agent.v1.AbortRequest
-	10, // 20: pi.agent.v1.PiAgent.NewSession:input_type -> pi.agent.v1.NewSessionRequest
-	11, // 21: pi.agent.v1.PiAgent.ListCommands:input_type -> pi.agent.v1.ListCommandsRequest
-	12, // 22: pi.agent.v1.PiAgent.ExecuteCommand:input_type -> pi.agent.v1.ExecuteCommandRequest
-	3,  // 23: pi.agent.v1.PiAgent.GetMessages:input_type -> pi.agent.v1.GetMessagesRequest
-	4,  // 24: pi.agent.v1.PiAgent.ReadBlob:input_type -> pi.agent.v1.ReadBlobRequest
-	16, // 25: pi.agent.v1.PiAgent.SubscribeEvents:input_type -> pi.agent.v1.SubscribeEventsRequest
-	18, // 26: pi.agent.v1.PiAgent.GetState:output_type -> pi.agent.v1.SessionState
-	21, // 27: pi.agent.v1.PiAgent.Prompt:output_type -> pi.agent.v1.CommandAck
-	21, // 28: pi.agent.v1.PiAgent.Steer:output_type -> pi.agent.v1.CommandAck
-	21, // 29: pi.agent.v1.PiAgent.FollowUp:output_type -> pi.agent.v1.CommandAck
-	21, // 30: pi.agent.v1.PiAgent.Abort:output_type -> pi.agent.v1.CommandAck
-	22, // 31: pi.agent.v1.PiAgent.NewSession:output_type -> pi.agent.v1.SessionSwitchResult
-	13, // 32: pi.agent.v1.PiAgent.ListCommands:output_type -> pi.agent.v1.ListCommandsResponse
-	21, // 33: pi.agent.v1.PiAgent.ExecuteCommand:output_type -> pi.agent.v1.CommandAck
-	23, // 34: pi.agent.v1.PiAgent.GetMessages:output_type -> pi.agent.v1.GetMessagesResponse
-	5,  // 35: pi.agent.v1.PiAgent.ReadBlob:output_type -> pi.agent.v1.ReadBlobResponse
-	27, // 36: pi.agent.v1.PiAgent.SubscribeEvents:output_type -> pi.agent.v1.EventBatch
-	26, // [26:37] is the sub-list for method output_type
-	15, // [15:26] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	18, // 0: pi.agent.v1.PromptRequest.images:type_name -> pi.agent.v1.Image
+	1,  // 1: pi.agent.v1.PromptRequest.streaming_behavior:type_name -> pi.agent.v1.StreamingBehavior
+	18, // 2: pi.agent.v1.SteerRequest.images:type_name -> pi.agent.v1.Image
+	18, // 3: pi.agent.v1.FollowUpRequest.images:type_name -> pi.agent.v1.Image
+	15, // 4: pi.agent.v1.ListCommandsResponse.commands:type_name -> pi.agent.v1.SlashCommand
+	16, // 5: pi.agent.v1.SlashCommand.source_info:type_name -> pi.agent.v1.SourceInfo
+	2,  // 6: pi.agent.v1.SubscribeEventsRequest.level:type_name -> pi.agent.v1.EventLevel
+	20, // 7: pi.agent.v1.SessionState.model:type_name -> pi.agent.v1.Model
+	0,  // 8: pi.agent.v1.SessionState.runtime_state:type_name -> pi.agent.v1.RuntimeState
+	21, // 9: pi.agent.v1.Model.cost:type_name -> pi.agent.v1.ModelCost
+	27, // 10: pi.agent.v1.GetMessagesResponse.messages:type_name -> pi.agent.v1.AgentMessage
+	26, // 11: pi.agent.v1.Payload.blob:type_name -> pi.agent.v1.BlobRef
+	25, // 12: pi.agent.v1.AgentMessage.payload:type_name -> pi.agent.v1.Payload
+	29, // 13: pi.agent.v1.EventBatch.events:type_name -> pi.agent.v1.Event
+	25, // 14: pi.agent.v1.Event.payload:type_name -> pi.agent.v1.Payload
+	30, // 15: pi.agent.v1.Event.session_boundary:type_name -> pi.agent.v1.SessionBoundary
+	3,  // 16: pi.agent.v1.PiAgent.GetState:input_type -> pi.agent.v1.GetStateRequest
+	7,  // 17: pi.agent.v1.PiAgent.Prompt:input_type -> pi.agent.v1.PromptRequest
+	8,  // 18: pi.agent.v1.PiAgent.Steer:input_type -> pi.agent.v1.SteerRequest
+	9,  // 19: pi.agent.v1.PiAgent.FollowUp:input_type -> pi.agent.v1.FollowUpRequest
+	10, // 20: pi.agent.v1.PiAgent.Abort:input_type -> pi.agent.v1.AbortRequest
+	11, // 21: pi.agent.v1.PiAgent.NewSession:input_type -> pi.agent.v1.NewSessionRequest
+	12, // 22: pi.agent.v1.PiAgent.ListCommands:input_type -> pi.agent.v1.ListCommandsRequest
+	13, // 23: pi.agent.v1.PiAgent.ExecuteCommand:input_type -> pi.agent.v1.ExecuteCommandRequest
+	4,  // 24: pi.agent.v1.PiAgent.GetMessages:input_type -> pi.agent.v1.GetMessagesRequest
+	5,  // 25: pi.agent.v1.PiAgent.ReadBlob:input_type -> pi.agent.v1.ReadBlobRequest
+	17, // 26: pi.agent.v1.PiAgent.SubscribeEvents:input_type -> pi.agent.v1.SubscribeEventsRequest
+	19, // 27: pi.agent.v1.PiAgent.GetState:output_type -> pi.agent.v1.SessionState
+	22, // 28: pi.agent.v1.PiAgent.Prompt:output_type -> pi.agent.v1.CommandAck
+	22, // 29: pi.agent.v1.PiAgent.Steer:output_type -> pi.agent.v1.CommandAck
+	22, // 30: pi.agent.v1.PiAgent.FollowUp:output_type -> pi.agent.v1.CommandAck
+	22, // 31: pi.agent.v1.PiAgent.Abort:output_type -> pi.agent.v1.CommandAck
+	23, // 32: pi.agent.v1.PiAgent.NewSession:output_type -> pi.agent.v1.SessionSwitchResult
+	14, // 33: pi.agent.v1.PiAgent.ListCommands:output_type -> pi.agent.v1.ListCommandsResponse
+	22, // 34: pi.agent.v1.PiAgent.ExecuteCommand:output_type -> pi.agent.v1.CommandAck
+	24, // 35: pi.agent.v1.PiAgent.GetMessages:output_type -> pi.agent.v1.GetMessagesResponse
+	6,  // 36: pi.agent.v1.PiAgent.ReadBlob:output_type -> pi.agent.v1.ReadBlobResponse
+	28, // 37: pi.agent.v1.PiAgent.SubscribeEvents:output_type -> pi.agent.v1.EventBatch
+	27, // [27:38] is the sub-list for method output_type
+	16, // [16:27] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_pi_agent_v1_pi_agent_proto_init() }
@@ -2038,7 +2116,7 @@ func file_pi_agent_v1_pi_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pi_agent_v1_pi_agent_proto_rawDesc), len(file_pi_agent_v1_pi_agent_proto_rawDesc)),
-			NumEnums:      2,
+			NumEnums:      3,
 			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,

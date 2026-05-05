@@ -55,10 +55,12 @@ type runtimeProjection struct {
 
 // piRPCStateSnapshot is the authoritative busy signal for Pi RPC sessions.
 type piRPCStateSnapshot struct {
-	ProbeID             string
-	IsStreaming         bool
-	IsCompacting        bool
-	PendingMessageCount int
+	ProbeID              string
+	IsStreaming          bool
+	IsCompacting         bool
+	PendingMessageCount  int
+	RuntimeState         piagentgrpc.RuntimeState
+	RuntimeStatusMessage string
 }
 
 type piRPCStateFailure struct {
@@ -561,10 +563,12 @@ func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.
 
 func piRPCStateSnapshotFromGRPC(state piagentgrpc.State) *piRPCStateSnapshot {
 	return &piRPCStateSnapshot{
-		ProbeID:             fmt.Sprintf("pi-agent-grpc-%d", time.Now().UTC().UnixNano()),
-		IsStreaming:         state.IsStreaming,
-		IsCompacting:        state.IsCompacting,
-		PendingMessageCount: state.PendingMessageCount,
+		ProbeID:              fmt.Sprintf("pi-agent-grpc-%d", time.Now().UTC().UnixNano()),
+		IsStreaming:          state.IsStreaming,
+		IsCompacting:         state.IsCompacting,
+		PendingMessageCount:  state.PendingMessageCount,
+		RuntimeState:         state.RuntimeState,
+		RuntimeStatusMessage: state.RuntimeMessage(),
 	}
 }
 
@@ -956,6 +960,28 @@ func (s *Stub) applyPIRPCState(sessionID session.SessionID, state piRPCStateSnap
 		return nil
 	}
 	transport := sessionTransportSnapshot(record)
+	if record.identity.Backend() == session.BackendPI && record.runtime.piAgentGRPC != nil {
+		if state.RuntimeState == piagentgrpc.RuntimeStateStarting {
+			if _, err := s.setSessionTransport(sessionID, transportSnapshotPIAgentGRPCStarting()); err != nil {
+				return err
+			}
+			s.emitSessionState(sessionID)
+			return nil
+		}
+		if state.RuntimeState == piagentgrpc.RuntimeStateFailed {
+			if _, err := s.setSessionTransport(sessionID, transportSnapshotPIAgentGRPCFailed(firstNonEmptyString(state.RuntimeStatusMessage, "runtime failed"))); err != nil {
+				return err
+			}
+			_ = s.setRuntimeAgentRunning(sessionID, false)
+			s.emitSessionState(sessionID)
+			return nil
+		}
+		if transport.State == SessionTransportStateStarting || transport.State == SessionTransportStateFailed {
+			if _, err := s.setSessionTransport(sessionID, transportSnapshotPIAgentGRPCAttached()); err != nil {
+				return err
+			}
+		}
+	}
 	if record.identity.Backend() == session.BackendPI && transport.ResetRequired {
 		if !isPIRPCStateProbeTransportIssue(transport) {
 			return nil
