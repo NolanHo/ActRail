@@ -519,6 +519,38 @@ func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T
 	}
 }
 
+func TestStubRestartSessionWithMissingPISourceCreatesFreshSource(t *testing.T) {
+	svc, handles, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
+	missingPath := filepath.Join(t.TempDir(), "missing.jsonl")
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.importedSourcePath = missingPath
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = ok %v err %v", ok, err)
+	}
+
+	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+	if !restarted.OK {
+		t.Fatalf("RestartSession() = %+v, want OK", restarted)
+	}
+	updated, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession(updated) error = %v", err)
+	}
+	if strings.TrimSpace(updated.importedSourcePath) == "" || updated.importedSourcePath == missingPath {
+		t.Fatalf("updated importedSourcePath = %q, missing = %q", updated.importedSourcePath, missingPath)
+	}
+	args := (*handles)[1].Spec().Command().Args()
+	for i, arg := range args {
+		if arg == "--session" && i+1 < len(args) && args[i+1] == missingPath {
+			t.Fatalf("restart args use missing source path: %#v", args)
+		}
+	}
+}
+
 func TestHandoffSidecarStartsAfterLastCompactionAndMasksOldToolResults(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source.jsonl")
 	body := `{"type":"message","id":"old-user","message":{"role":"user","content":[{"type":"text","text":"old user"}]}}

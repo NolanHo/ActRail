@@ -128,7 +128,8 @@ func TestCreateSessionDefaultsPIAgentToGRPC(t *testing.T) {
 		_ = listener.Close()
 	})
 	go func() { _ = grpcServer.Serve(listener) }()
-	resolvedTarget := ""
+	dialTargets := make(chan string, 4)
+	allowDial := make(chan struct{})
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
 		Catalog: catalog,
 		Runner:  runner,
@@ -137,19 +138,50 @@ func TestCreateSessionDefaultsPIAgentToGRPC(t *testing.T) {
 		},
 		PIAgentGRPCTarget: "unix:///tmp/custom-pi-agent.sock",
 		PIAgentGRPCDialer: func(ctx context.Context, target string) (*grpc.ClientConn, error) {
-			resolvedTarget = target
+			select {
+			case dialTargets <- target:
+			default:
+			}
+			select {
+			case <-allowDial:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 			return grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 				return listener.Dial()
 			}), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		},
 	})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
-		AgentBackend: "pi",
-		CWD:          "/root/code/ActRail",
-	})
-	if err != nil {
-		t.Fatalf("CreateSession() error = %v", err)
+	type createResult struct {
+		created CreateSessionResponse
+		err     error
 	}
+	createDone := make(chan createResult, 1)
+	go func() {
+		created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+			AgentBackend: "pi",
+			CWD:          "/root/code/ActRail",
+		})
+		createDone <- createResult{created: created, err: err}
+	}()
+	var result createResult
+	select {
+	case result = <-createDone:
+	case <-dialTargets:
+		select {
+		case result = <-createDone:
+		case <-time.After(200 * time.Millisecond):
+			close(allowDial)
+			t.Fatal("CreateSession blocked on pi agent grpc readiness")
+		}
+	case <-time.After(200 * time.Millisecond):
+		close(allowDial)
+		t.Fatal("CreateSession did not return")
+	}
+	if result.err != nil {
+		t.Fatalf("CreateSession() error = %v", result.err)
+	}
+	created := result.created
 	if created.Session == nil {
 		t.Fatal("CreateSession().Session = nil")
 	}
@@ -184,11 +216,15 @@ func TestCreateSessionDefaultsPIAgentToGRPC(t *testing.T) {
 	if created.Session.TransportState != SessionTransportStateStarting.String() || !created.Session.PendingStartup {
 		t.Fatalf("CreateSession().Session transport = (%q, pending=%v), want starting pending", created.Session.TransportState, created.Session.PendingStartup)
 	}
-	if resolvedTarget != "" {
-		t.Fatalf("grpc target before readiness wait = %q, want no synchronous dial", resolvedTarget)
-	}
+	close(allowDial)
 	if err := record.runtime.WaitForPIAgentGRPCReady(context.Background()); err != nil {
 		t.Fatalf("WaitForPIAgentGRPCReady() error = %v", err)
+	}
+	var resolvedTarget string
+	select {
+	case resolvedTarget = <-dialTargets:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for grpc dial")
 	}
 	if resolvedTarget != "unix:///tmp/custom-pi-agent.sock" {
 		t.Fatalf("grpc target = %q, want custom target", resolvedTarget)

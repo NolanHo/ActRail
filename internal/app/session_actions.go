@@ -493,6 +493,14 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
 	}
 	sourcePath := strings.TrimSpace(record.importedSourcePath)
+	if record.identity.Backend() == session.BackendPI && sourcePath != "" {
+		if _, err := os.Stat(sourcePath); err != nil {
+			if !stdErrors.Is(err, os.ErrNotExist) {
+				return sessionRecord{}, "", fmt.Errorf("stat pi session source %q: %w", sourcePath, err)
+			}
+			sourcePath = ""
+		}
+	}
 	if record.identity.Backend() == session.BackendPI && sourcePath == "" {
 		var err error
 		sourcePath, err = newPISessionSourcePath(record.cwd, identity.SessionID(), s.registry.now())
