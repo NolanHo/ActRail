@@ -186,7 +186,9 @@ export function createComposerStore(): ComposerStore {
     },
     async submit(sessionId: string, runtimeId?: string | null) {
       const text = state.draftBySessionId[sessionId] ?? "";
-      if (!text.trim() || state.sending) return;
+      const normalizedText = text.trim();
+      if (!normalizedText || state.sending) return;
+      const slashCommand = normalizedText.startsWith("/");
 
       nextPendingId += 1;
       const pendingMessage: PendingComposerMessage = {
@@ -202,17 +204,18 @@ export function createComposerStore(): ComposerStore {
         ...state,
         draftBySessionId: nextDraftMap(state.draftBySessionId, sessionId, ""),
         sending: true,
-        pendingBySessionId: {
-          ...state.pendingBySessionId,
-          [sessionId]: [...(state.pendingBySessionId[sessionId] ?? []), pendingMessage],
-        },
+        pendingBySessionId: slashCommand
+          ? state.pendingBySessionId
+          : {
+            ...state.pendingBySessionId,
+            [sessionId]: [...(state.pendingBySessionId[sessionId] ?? []), pendingMessage],
+          },
       };
       persistDrafts(state.draftBySessionId);
       emit();
 
       try {
-        const normalizedText = text.trim();
-        const response = normalizedText.startsWith("/")
+        const response = slashCommand
           ? await api.executeSessionCommand(sessionId, parseSlashCommand(normalizedText), runtimeId)
           : runtimeId
             ? await api.sendMessage(sessionId, normalizedText, runtimeId)
@@ -223,12 +226,14 @@ export function createComposerStore(): ComposerStore {
         state = {
           ...state,
           sending: false,
-          pendingBySessionId: {
-            ...state.pendingBySessionId,
-            [sessionId]: (state.pendingBySessionId[sessionId] ?? []).map((item) => item.localId === pendingMessage.localId
-              ? { ...item, requestId: requestId || item.requestId }
-              : item),
-          },
+          pendingBySessionId: slashCommand
+            ? state.pendingBySessionId
+            : {
+              ...state.pendingBySessionId,
+              [sessionId]: (state.pendingBySessionId[sessionId] ?? []).map((item) => item.localId === pendingMessage.localId
+                ? { ...item, requestId: requestId || item.requestId }
+                : item),
+            },
         };
         emit();
         return response;
@@ -237,10 +242,12 @@ export function createComposerStore(): ComposerStore {
           ...state,
           draftBySessionId: nextDraftMap(state.draftBySessionId, sessionId, state.draftBySessionId[sessionId] ? state.draftBySessionId[sessionId] : text),
           sending: false,
-          pendingBySessionId: {
-            ...state.pendingBySessionId,
-            [sessionId]: (state.pendingBySessionId[sessionId] ?? []).filter((item) => item.localId !== pendingMessage.localId),
-          },
+          pendingBySessionId: slashCommand
+            ? state.pendingBySessionId
+            : {
+              ...state.pendingBySessionId,
+              [sessionId]: (state.pendingBySessionId[sessionId] ?? []).filter((item) => item.localId !== pendingMessage.localId),
+            },
         };
         persistDrafts(state.draftBySessionId);
         emit();

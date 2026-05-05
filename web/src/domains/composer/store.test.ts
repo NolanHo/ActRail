@@ -77,7 +77,7 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
 
     expect(api.executeSessionCommand).toHaveBeenCalledWith("s1", { name: "handoff", args: "now" }, "rt1");
     expect(api.sendMessage).not.toHaveBeenCalled();
-    expect(store.getState().pendingBySessionId.s1[0]).toMatchObject({ text: "  /handoff now  ", pending: true });
+    expect(store.getState().pendingBySessionId.s1 ?? []).toEqual([]);
   });
 
   it("trims normal prompts before dispatch", async () => {
@@ -90,7 +90,7 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
     expect(api.sendMessage).toHaveBeenCalledWith("s1", "hello");
   });
 
-  it("restores sending=false on failure without clearing the session draft", async () => {
+  it("restores sending=false on prompt failure without clearing the session draft", async () => {
     vi.mocked(api.sendMessage).mockRejectedValue(new Error("fail"));
     const store = createComposerStore();
     store.setDraft("s1", "keep me");
@@ -98,6 +98,17 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
     await expect(store.submit("s1")).rejects.toThrow("fail");
 
     expect(store.getState()).toEqual({ draftBySessionId: { s1: "keep me" }, sending: false, pendingBySessionId: { s1: [] } });
+  });
+
+  it("restores the draft after command failure without creating a pending prompt", async () => {
+    vi.mocked(api.executeSessionCommand).mockRejectedValue(new Error("fail"));
+    const store = createComposerStore();
+    store.setDraft("s1", "/rename next");
+
+    await expect(store.submit("s1")).rejects.toThrow("fail");
+
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    expect(store.getState()).toEqual({ draftBySessionId: { s1: "/rename next" }, sending: false, pendingBySessionId: {} });
   });
 
   it("adds an optimistic pending message immediately and keeps it until persistence catches up", async () => {
