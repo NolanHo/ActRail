@@ -176,3 +176,26 @@ it("skips notification routes when bootstrap disables notifications", async () =
   expect(api.getNotificationsFeed).not.toHaveBeenCalled();
   expect(root.querySelector("[data-label]")?.getAttribute("data-label")).toBe("Notifications unavailable");
 });
+
+it("ignores failed notification feed polling", async () => {
+  const { api } = await import("../../lib/api");
+  vi.mocked(api.getNotificationsFeed).mockRejectedValueOnce(new Error("missing feed route"));
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        activeSessionId="sess-1"
+        bootstrapLoaded
+        bySessionId={{ "sess-1": [] }}
+        voiceSettings={{ notifications: { vapid_public_key: "" } }}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  expect(api.getNotificationsFeed).toHaveBeenCalled();
+  expect(root.querySelector("[data-label]")?.getAttribute("data-label")).toBe("Notifications off");
+});

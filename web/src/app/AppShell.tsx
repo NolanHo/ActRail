@@ -18,7 +18,18 @@ import { useAppShellEvents } from "./app-shell/useAppShellEvents";
 import { useAppShellNotifications } from "./app-shell/useAppShellNotifications";
 import { useAppShellSessionEffects } from "./app-shell/useAppShellSessionEffects";
 import { setConnectTransportOptIn, setConnectWireFormat } from "../domains/sessions/store";
-import { useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useSessionUiStore, useSessionUiStoreApi, useSessionsStore, useSessionsStoreApi, useWaitsStore, useWaitsStoreApi } from "./providers";
+import {
+  shallowEqual,
+  useLiveSessionStoreApi,
+  useLiveSessionStoreSelector,
+  useMessagesStoreSelector,
+  useSessionUiStoreApi,
+  useSessionUiStoreSelector,
+  useSessionsStoreApi,
+  useSessionsStoreSelector,
+  useWaitsStoreApi,
+  useWaitsStoreSelector,
+} from "./providers";
 import {
   applyThemeMode,
   readThemeMode,
@@ -108,15 +119,21 @@ function EmptyDetailsWorkspace() {
 }
 
 export function AppShell() {
-  const { bySessionId } = useMessagesStore();
-  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items, realtimeTransport } = useSessionsStore();
-  const { busyBySessionId, contextUsageBySessionId, generatingBySessionId } = useLiveSessionStore() as {
-    busyBySessionId: Record<string, boolean>;
-    generatingBySessionId?: Record<string, boolean>;
-    contextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
-  };
-  const { sessionId: sessionUiSessionId } = useSessionUiStore();
-  const waitsState = useWaitsStore();
+  const bySessionId = useMessagesStoreSelector((state) => state.bySessionId);
+  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items, realtimeTransport } = useSessionsStoreSelector((state) => ({
+    activeSessionId: state.activeSessionId,
+    bootstrapCapabilities: state.bootstrapCapabilities,
+    bootstrapLoaded: state.bootstrapLoaded,
+    items: state.items,
+    realtimeTransport: state.realtimeTransport,
+  }), shallowEqual);
+  const { busyBySessionId, contextUsageBySessionId, generatingBySessionId } = useLiveSessionStoreSelector((state) => ({
+    busyBySessionId: state.busyBySessionId,
+    generatingBySessionId: state.generatingBySessionId,
+    contextUsageBySessionId: state.contextUsageBySessionId,
+  }), shallowEqual);
+  const sessionUiSessionId = useSessionUiStoreSelector((state) => state.sessionId);
+  const activeWait = useWaitsStoreSelector((state) => activeSessionId ? state.activeBySessionId[activeSessionId] ?? null : null);
   const sessionsStoreApi = useSessionsStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const sessionUiStoreApi = useSessionUiStoreApi();
@@ -237,7 +254,7 @@ export function AppShell() {
   const activeSessionGenerating = Boolean(activeSessionId && generatingBySessionId?.[activeSessionId] === true);
   const activeSessionHasLiveBusy = Boolean(activeSessionId && Object.prototype.hasOwnProperty.call(busyBySessionId, activeSessionId));
   const activeSessionLiveBusy = Boolean(activeSessionId && busyBySessionId[activeSessionId] === true);
-  const activeWait = activeSessionId ? waitsState.activeBySessionId[activeSessionId] ?? activeSession?.active_wait ?? null : null;
+  const visibleActiveWait = activeWait ?? activeSession?.active_wait ?? null;
   const activeSessionBusy = Boolean(
     activeSessionGenerating
     || (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true),
@@ -291,7 +308,7 @@ export function AppShell() {
     if (activeQueueCount > 0) {
       items.push({ label: "Queue", value: String(activeQueueCount), tone: "attention" });
     }
-    if (activeWait) {
+    if (visibleActiveWait) {
       items.push({ label: "Wait", value: "user input", tone: "attention" });
     }
     if (activeSession.reset_required === true || activeSession.transport_state === "broken") {
@@ -312,7 +329,7 @@ export function AppShell() {
       items.push({ label: "Runtime", value: "idle", tone: "success" });
     }
     return items;
-  }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeSession, activeSessionBusy, activeSessionGenerating, activeWait]);
+  }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeSession, activeSessionBusy, activeSessionGenerating, visibleActiveWait]);
 
   const playReplyBeep = () => {
     try {
@@ -477,7 +494,7 @@ export function AppShell() {
   const shellClassName = useMemo(() => ["appShell", "editorialShell", "withGlobalNav"].join(" "), []);
 
   const renderWorkspaceDetails = () => (
-    sessionUiMatchesActiveSession || activeWait ? (
+    sessionUiMatchesActiveSession || visibleActiveWait ? (
       <Suspense fallback={<WorkspaceLoadingFallback />}>
         <LazySessionWorkspace mode="details" initialTab={workspaceInitialTab} />
       </Suspense>

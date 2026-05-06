@@ -2,6 +2,7 @@ import { api } from "../../lib/api";
 import type { MessageEvent } from "../../lib/types";
 
 const COMPOSER_DRAFTS_STORAGE_KEY = "actrail.composerDrafts.v1";
+const DRAFT_PERSIST_DEBOUNCE_MS = 250;
 
 export interface PendingComposerMessage {
   localId: string;
@@ -126,6 +127,10 @@ function nextDraftMap(draftBySessionId: Record<string, string>, sessionId: strin
     return next;
   }
 
+  if (draftBySessionId[sessionId] === value) {
+    return draftBySessionId;
+  }
+
   return {
     ...draftBySessionId,
     [sessionId]: value,
@@ -136,6 +141,8 @@ export function createComposerStore(): ComposerStore {
   let state: ComposerState = { draftBySessionId: readPersistedDrafts(), sending: false, pendingBySessionId: {} };
   const listeners = new Set<() => void>();
   let nextPendingId = 0;
+  let draftPersistTimerId: number | null = null;
+  let pendingPersistDrafts: Record<string, string> | null = null;
 
   const emit = () => {
     for (const listener of listeners) {
@@ -143,15 +150,46 @@ export function createComposerStore(): ComposerStore {
     }
   };
 
-  const updateDrafts = (sessionId: string | null | undefined, value: string) => {
+  const flushDraftPersistence = (draftBySessionId = state.draftBySessionId) => {
+    if (draftPersistTimerId !== null && typeof window !== "undefined") {
+      window.clearTimeout(draftPersistTimerId);
+    }
+    draftPersistTimerId = null;
+    pendingPersistDrafts = null;
+    persistDrafts(draftBySessionId);
+  };
+
+  const scheduleDraftPersistence = (draftBySessionId: Record<string, string>) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    pendingPersistDrafts = draftBySessionId;
+    if (draftPersistTimerId !== null) {
+      window.clearTimeout(draftPersistTimerId);
+    }
+    draftPersistTimerId = window.setTimeout(() => {
+      const drafts = pendingPersistDrafts;
+      draftPersistTimerId = null;
+      pendingPersistDrafts = null;
+      if (drafts) {
+        persistDrafts(drafts);
+      }
+    }, DRAFT_PERSIST_DEBOUNCE_MS);
+  };
+
+  const updateDrafts = (sessionId: string | null | undefined, value: string, persistMode: "defer" | "now" = "defer") => {
     const draftBySessionId = nextDraftMap(state.draftBySessionId, sessionId, value);
     if (draftBySessionId === state.draftBySessionId) {
-      return state.draftBySessionId;
+      return false;
     }
 
-    persistDrafts(draftBySessionId);
     state = { ...state, draftBySessionId };
-    return draftBySessionId;
+    if (persistMode === "now") {
+      flushDraftPersistence(draftBySessionId);
+    } else {
+      scheduleDraftPersistence(draftBySessionId);
+    }
+    return true;
   };
 
   return {
@@ -163,8 +201,9 @@ export function createComposerStore(): ComposerStore {
       };
     },
     setDraft(sessionId: string | null | undefined, value: string) {
-      updateDrafts(sessionId, value);
-      emit();
+      if (updateDrafts(sessionId, value)) {
+        emit();
+      }
     },
     copyDraft(sourceSessionId: string | null | undefined, targetSessionId: string | null | undefined) {
       const sourceId = typeof sourceSessionId === "string" ? sourceSessionId : "";
@@ -180,8 +219,8 @@ export function createComposerStore(): ComposerStore {
       if (draftBySessionId === state.draftBySessionId) {
         return;
       }
-      persistDrafts(draftBySessionId);
       state = { ...state, draftBySessionId };
+      flushDraftPersistence(draftBySessionId);
       emit();
     },
     async submit(sessionId: string, runtimeId?: string | null) {
@@ -211,7 +250,7 @@ export function createComposerStore(): ComposerStore {
             [sessionId]: [...(state.pendingBySessionId[sessionId] ?? []), pendingMessage],
           },
       };
-      persistDrafts(state.draftBySessionId);
+      flushDraftPersistence(state.draftBySessionId);
       emit();
 
       try {
@@ -249,7 +288,7 @@ export function createComposerStore(): ComposerStore {
               [sessionId]: (state.pendingBySessionId[sessionId] ?? []).filter((item) => item.localId !== pendingMessage.localId),
             },
         };
-        persistDrafts(state.draftBySessionId);
+        flushDraftPersistence(state.draftBySessionId);
         emit();
         throw error;
       }

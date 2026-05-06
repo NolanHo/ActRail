@@ -198,7 +198,12 @@ export function useAppShellNotifications({
     if (!pageVisible || (!replySoundEnabled && !desktopNotificationsEnabled)) {
       return;
     }
-    const response = await api.getNotificationsFeed(notificationFeedCursorRef.current);
+    let response;
+    try {
+      response = await api.getNotificationsFeed(notificationFeedCursorRef.current);
+    } catch {
+      return;
+    }
     let maxSeen = notificationFeedCursorRef.current;
     for (const item of response.items || []) {
       const updatedTs = Number(item.updated_ts || 0);
