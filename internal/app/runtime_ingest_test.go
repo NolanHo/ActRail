@@ -1326,12 +1326,5 @@ func TestCreateSessionConsumesHelperBackedCodexReplayAndLiveOutputIntoStateTrans
 
 func waitForAppCondition(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("condition not met before timeout")
+	waitForTestCondition(t, cond)
 }
