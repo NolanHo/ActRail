@@ -580,6 +580,28 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	return updated, previousRuntimeID, nil
 }
 
+func (s *Stub) waitForHandoffRuntimeReady(ctx context.Context, sessionID session.SessionID) error {
+	deadline := time.Now().Add(defaultHelperReadyTimeout)
+	for {
+		record, err := s.lookupSession(sessionID)
+		if err != nil {
+			return err
+		}
+		if err := transportControlError(sessionTransportSnapshot(record)); err == nil {
+			return nil
+		} else if sessionTransportSnapshot(record).State != SessionTransportStateStarting {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return Conflict("session runtime is starting")
+		}
+		time.Sleep(helperReadyPollInterval)
+	}
+}
+
 func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (HandoffSessionResponse, error) {
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
@@ -625,6 +647,10 @@ func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (H
 	}
 	newSessionID, err := session.ParseSessionID(created.Session.SessionID)
 	if err != nil {
+		return HandoffSessionResponse{}, err
+	}
+	if err := s.waitForHandoffRuntimeReady(ctx, newSessionID); err != nil {
+		_, _ = s.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: newSessionID})
 		return HandoffSessionResponse{}, err
 	}
 	if _, err := s.Send(ctx, SendRequest{SessionID: newSessionID, Text: handoffPrompt(sidecarPath)}); err != nil {

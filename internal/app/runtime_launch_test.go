@@ -40,6 +40,10 @@ func (s fakePiAgentServer) GetState(ctx context.Context, _ *piagentv1.GetStateRe
 	return &piagentv1.SessionState{SessionId: "pi-grpc-test", RuntimeState: piagentv1.RuntimeState_RUNTIME_STATE_READY, RuntimeStatusMessage: "ready"}, nil
 }
 
+func (fakePiAgentServer) Prompt(context.Context, *piagentv1.PromptRequest) (*piagentv1.CommandAck, error) {
+	return &piagentv1.CommandAck{}, nil
+}
+
 func (a launchAdapter) Backend() session.Backend {
 	return a.backend
 }
