@@ -233,6 +233,9 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
 		return InterruptResponse{}, err
 	}
+	if _, _, err := s.registry.DiscardPartialAssistantTurn(req.SessionID); err != nil {
+		return InterruptResponse{}, err
+	}
 	state, ok, err := s.registry.SetBusy(req.SessionID, false)
 	if err != nil {
 		return InterruptResponse{}, err

@@ -582,15 +582,21 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 
 func (s *Stub) waitForHandoffRuntimeReady(ctx context.Context, sessionID session.SessionID) error {
 	deadline := time.Now().Add(defaultHelperReadyTimeout)
+	seenStarting := false
 	for {
 		record, err := s.lookupSession(sessionID)
 		if err != nil {
 			return err
 		}
-		if err := transportControlError(sessionTransportSnapshot(record)); err == nil {
-			return nil
-		} else if sessionTransportSnapshot(record).State != SessionTransportStateStarting {
+		transport := sessionTransportSnapshot(record)
+		if err := transportControlError(transport); err == nil {
+			if !record.runtime.PendingPIAgentGRPCReady() && (!seenStarting || transport.State != SessionTransportStateStarting) {
+				return nil
+			}
+		} else if transport.State != SessionTransportStateStarting {
 			return err
+		} else {
+			seenStarting = true
 		}
 		if err := ctx.Err(); err != nil {
 			return err

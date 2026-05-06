@@ -631,6 +631,31 @@ func (r *sessionRegistry) ActivateQueuedWithBusy(sessionID session.SessionID, it
 	return committed, copySessionState(cp.state), true, nil
 }
 
+func (r *sessionRegistry) DiscardPartialAssistantTurn(sessionID session.SessionID) (session.State, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return session.State{}, false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return session.State{}, false, fmt.Errorf("session %q not found", sessionID)
+	}
+	if !record.transcript.DiscardPartialAssistantTurn() {
+		return copySessionState(record.state), false, nil
+	}
+	if err := syncSessionRecordState(&record, record.state.Busy()); err != nil {
+		return session.State{}, false, err
+	}
+	record.updatedAt = r.now().UTC()
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return session.State{}, false, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionState(cp.state), true, nil
+}
+
 func (r *sessionRegistry) SetBusy(sessionID session.SessionID, busy bool) (session.State, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

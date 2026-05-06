@@ -1182,7 +1182,7 @@ func (b *runtimeLineBuffer) nextLine() ([]byte, bool) {
 
 func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 	s.messageCache.Invalidate(sessionID)
-	if event.Kind == pi.EventKindMessageDelta || event.Kind == pi.EventKindTool || event.Kind == pi.EventKindUIRequest {
+	if event.Kind == pi.EventKindMessageDelta || event.Kind == pi.EventKindTool || event.Kind == pi.EventKindUIRequest || (event.Kind == pi.EventKindMessage && event.Message != nil && event.Message.Role == pi.MessageRoleAssistant && event.Message.ToolCallCount > 0) {
 		if err := s.markRuntimeActiveFromPIEvent(sessionID); err != nil {
 			return err
 		}
@@ -1305,7 +1305,7 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	if err != nil {
 		return err
 	}
-	if event.Message.Role == pi.MessageRoleAssistant && event.Message.CommitLike && strings.TrimSpace(event.Message.StopReason) != "status" {
+	if event.Message.Role == pi.MessageRoleAssistant && event.Message.CommitLike && strings.TrimSpace(event.Message.StopReason) != "status" && event.Message.ToolCallCount == 0 {
 		if record, ok := s.registry.Lookup(sessionID); ok && record.identity.Backend() == session.BackendPI {
 			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 				s.holdPIRPCIdle(sessionID, record.runtime.helper.generationID)
@@ -1589,11 +1589,17 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 		}
 		s.emitSessionState(sessionID)
 	case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
+		if event.Boundary.Kind == pi.BoundaryKindTurnCompleted && !event.Boundary.CommitLike && event.Boundary.Reason != "turn_end" {
+			return nil
+		}
 		if piRPCSession {
 			if record.runtime.helper != nil {
 				s.holdPIRPCIdle(sessionID, record.runtime.helper.generationID)
 			}
 			if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+				return err
+			}
+			if _, _, err := s.registry.DiscardPartialAssistantTurn(sessionID); err != nil {
 				return err
 			}
 			state, ok, err := s.registry.SetBusy(sessionID, false)
@@ -1614,6 +1620,9 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 			}
 			s.emitSessionState(sessionID)
 			return nil
+		}
+		if _, _, err := s.registry.DiscardPartialAssistantTurn(sessionID); err != nil {
+			return err
 		}
 		state, ok, err := s.registry.SetBusy(sessionID, false)
 		if err != nil {

@@ -14,6 +14,7 @@ import (
 )
 
 type voiceSettingsPayload struct {
+	TraceID                    string                    `json:"trace_id,omitempty"`
 	OK                         bool                      `json:"ok"`
 	TTSEnabledForNarration     bool                      `json:"tts_enabled_for_narration"`
 	TTSEnabledForFinalResponse bool                      `json:"tts_enabled_for_final_response"`
@@ -38,6 +39,7 @@ type voiceSettingsNotification struct {
 }
 
 type voiceProviderTestPayload struct {
+	TraceID    string `json:"trace_id,omitempty"`
 	OK         bool   `json:"ok"`
 	Status     string `json:"status"`
 	StatusCode int    `json:"status_code,omitempty"`

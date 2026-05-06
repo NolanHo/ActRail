@@ -106,6 +106,7 @@ type ProbeSessionStateResponse struct {
 
 type SessionStateResponse struct {
 	Busy                 bool                          `json:"busy"`
+	BusyReason           string                        `json:"busy_reason,omitempty"`
 	Queue                SessionQueueSnapshot          `json:"queue"`
 	Transport            SessionTransportSnapshot      `json:"transport"`
 	UIRequest            *SessionUIRequestSnapshot     `json:"ui_request,omitempty"`
@@ -487,11 +488,32 @@ func (s *Stub) ProbeSessionState(ctx context.Context, req ProbeSessionStateReque
 	return ProbeSessionStateResponse{ProbeID: probeID, State: s.sessionStateResponse(record)}, nil
 }
 
+func effectiveBusy(record sessionRecord) (bool, string) {
+	if record.identity.Historical() {
+		return false, ""
+	}
+	if record.state.Busy() {
+		return true, "state_busy"
+	}
+	if record.runtimeAgentRunning && record.state.Tail().Live() {
+		return true, "runtime_agent_running"
+	}
+	if record.uiRequest != nil {
+		return true, "ui_request"
+	}
+	if _, ok := record.transcript.PartialAssistantTurn(); ok {
+		return true, "partial_assistant_turn"
+	}
+	return false, ""
+}
+
 func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 	contextUsage := copyContextUsage(record.contextUsage)
 	turnTiming := copyTurnTiming(record.turnTiming)
+	busy, busyReason := effectiveBusy(record)
 	return SessionStateResponse{
-		Busy:                 record.state.Busy(),
+		Busy:                 busy,
+		BusyReason:           busyReason,
 		Queue:                queueSnapshotFromState(record.state),
 		Transport:            s.sessionTransportSnapshot(record),
 		UIRequest:            copySessionUIRequest(record.uiRequest),

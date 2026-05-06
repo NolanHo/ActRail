@@ -142,6 +142,7 @@ type BootstrapRequest struct {
 }
 
 type BootstrapSnapshot struct {
+	TraceID            string                  `json:"trace_id,omitempty"`
 	ProtocolVersion    int                     `json:"protocol_version"`
 	Capabilities       Capabilities            `json:"capabilities"`
 	WS                 WSConfig                `json:"ws"`
@@ -225,6 +226,7 @@ type SessionSummary struct {
 	FirstUserMessage    string                     `json:"first_user_message,omitempty"`
 	CWD                 string                     `json:"cwd"`
 	Busy                bool                       `json:"busy"`
+	BusyReason          string                     `json:"busy_reason,omitempty"`
 	Focused             bool                       `json:"focused,omitempty"`
 	QueueLen            int                        `json:"queue_len,omitempty"`
 	TransportState      string                     `json:"transport_state,omitempty"`
@@ -318,6 +320,7 @@ type CreatedSession struct {
 	Alias           string `json:"alias,omitempty"`
 	CWD             string `json:"cwd"`
 	Busy            bool   `json:"busy"`
+	BusyReason      string `json:"busy_reason,omitempty"`
 	Focused         bool   `json:"focused,omitempty"`
 	TransportState  string `json:"transport_state,omitempty"`
 	Probing         bool   `json:"probing,omitempty"`
@@ -687,6 +690,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 			supervisor = &response
 		}
 	}
+	busy, busyReason := effectiveBusy(record)
 	return SessionSummary{
 		SessionID:           record.identity.SessionID().String(),
 		RuntimeID:           runtimeID.String(),
@@ -698,7 +702,8 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		DisplayName:         sessionDisplayName(record),
 		FirstUserMessage:    firstUserMessageForRecord(record),
 		CWD:                 record.cwd,
-		Busy:                record.state.Busy(),
+		Busy:                busy,
+		BusyReason:          busyReason,
 		Focused:             record.focused,
 		QueueLen:            record.state.Queue().Len(),
 		TransportState:      transport.State.String(),
@@ -758,6 +763,7 @@ func (s *Stub) createdSessionFromRecord(record sessionRecord) *CreatedSession {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
 	transport := sessionTransportSnapshot(record)
+	busy, busyReason := effectiveBusy(record)
 	return &CreatedSession{
 		SessionID:       record.identity.SessionID().String(),
 		RuntimeID:       runtimeID.String(),
@@ -766,7 +772,8 @@ func (s *Stub) createdSessionFromRecord(record sessionRecord) *CreatedSession {
 		AgentBackend:    record.identity.Backend().String(),
 		Alias:           displayAlias(record),
 		CWD:             record.cwd,
-		Busy:            record.state.Busy(),
+		Busy:            busy,
+		BusyReason:      busyReason,
 		Focused:         record.focused,
 		TransportState:  transport.State.String(),
 		Probing:         s.sessionProbing(record),

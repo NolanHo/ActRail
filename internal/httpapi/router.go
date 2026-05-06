@@ -26,7 +26,8 @@ type Router struct {
 }
 
 type authStatus struct {
-	OK bool `json:"ok"`
+	TraceID string `json:"trace_id,omitempty"`
+	OK      bool   `json:"ok"`
 }
 
 type loginRequest struct {
@@ -155,7 +156,7 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("GET /api/ws", r.requireAuth(r.ws))
 	mux.Handle("/api/connect/", r.requireAuth(r.connect))
 
-	return mux
+	return traceMiddleware(mux)
 }
 
 func (r Router) requireAuth(next http.Handler) http.Handler {

@@ -17,6 +17,8 @@ import (
 	actrailv1 "actrail/proto/actrail/v1"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -52,6 +54,7 @@ type commandRequest struct {
 
 type commandResponse struct {
 	PayloadJSON string `json:"payloadJson"`
+	TraceID     string `json:"traceId,omitempty"`
 }
 
 type listSessionsRequest struct {
@@ -97,6 +100,7 @@ type sessionMessagesRequest struct {
 type connectError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	TraceID string `json:"traceId,omitempty"`
 }
 
 type HandlerOption func(*Handler)
@@ -123,16 +127,31 @@ func NewHandler(controller app.SessionController, broker *Broker, opts ...Handle
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	operation := req.Method + " " + req.URL.Path
+	ctx, span := otel.Tracer("actrail/connect").Start(req.Context(), operation, trace.WithAttributes(
+		attribute.String("http.request.method", req.Method),
+		attribute.String("url.path", req.URL.Path),
+	))
+	defer span.End()
+	traceID := span.SpanContext().TraceID().String()
+	if traceID == "00000000000000000000000000000000" {
+		traceID = ""
+	}
+	w.Header().Set("X-Trace-Id", traceID)
 	if req.Method != http.MethodPost {
+		span.SetStatus(codes.Error, "method not supported")
 		writeConnectError(w, http.StatusMethodNotAllowed, "unimplemented", "method not supported")
 		return
 	}
 	tail := strings.TrimPrefix(req.URL.Path, connectBasePath)
 	parts := strings.Split(strings.Trim(tail, "/"), "/")
 	if len(parts) != 2 {
+		span.SetStatus(codes.Error, "unknown service")
 		writeConnectError(w, http.StatusNotFound, "unimplemented", "unknown service")
 		return
 	}
+	span.SetAttributes(attribute.String("rpc.service", parts[0]), attribute.String("rpc.method", parts[1]))
+	req = req.WithContext(ctx)
 	switch parts[0] {
 	case sessionCommandService:
 		if parts[1] == "ListSessions" {
@@ -147,6 +166,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case eventService:
 		h.handleEvent(w, req, parts[1])
 	default:
+		span.SetStatus(codes.Error, "unknown service")
 		writeConnectError(w, http.StatusNotFound, "unimplemented", "unknown service")
 	}
 }
@@ -197,11 +217,12 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	h.logger.Info("connect command", zap.String("method", "ListSessions"), zap.Int("status", http.StatusOK), zap.Int64("latency_ms", time.Since(started).Milliseconds()))
+	traceID := traceIDFromContext(req.Context())
 	if protoMode {
-		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(encoded))
+		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(encoded, traceID))
 		return
 	}
-	writeConnectJSON(w, http.StatusOK, commandResponse{PayloadJSON: base64.StdEncoding.EncodeToString(encoded)})
+	writeConnectJSON(w, http.StatusOK, commandResponse{PayloadJSON: base64.StdEncoding.EncodeToString(encoded), TraceID: traceID})
 }
 
 func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method string) {
@@ -240,11 +261,12 @@ func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method
 		return
 	}
 	h.logger.Info("connect command", zap.String("method", method), zap.Int("status", http.StatusOK), zap.Int64("latency_ms", time.Since(started).Milliseconds()))
+	traceID := traceIDFromContext(req.Context())
 	if proto {
-		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(payload))
+		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(payload, traceID))
 		return
 	}
-	writeConnectJSON(w, http.StatusOK, commandResponse{PayloadJSON: base64.StdEncoding.EncodeToString(payload)})
+	writeConnectJSON(w, http.StatusOK, commandResponse{PayloadJSON: base64.StdEncoding.EncodeToString(payload), TraceID: traceID})
 }
 
 func (h *Handler) dispatchCommand(ctx context.Context, method string, sessionID session.SessionID, body commandRequest) ([]byte, error) {
@@ -430,6 +452,28 @@ func writeConnectJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+func withConnectTraceID(payload any, traceID string) any {
+	if traceID == "" || payload == nil {
+		return payload
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return payload
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err != nil || obj == nil {
+		return payload
+	}
+	if _, ok := obj["traceId"]; !ok {
+		encodedTraceID, err := json.Marshal(traceID)
+		if err != nil {
+			return payload
+		}
+		obj["traceId"] = encodedTraceID
+	}
+	return obj
+}
+
 func writeConnectProto(w http.ResponseWriter, status int, payload []byte) {
 	w.Header().Set("Content-Type", "application/proto")
 	w.WriteHeader(status)
@@ -437,7 +481,19 @@ func writeConnectProto(w http.ResponseWriter, status int, payload []byte) {
 }
 
 func writeConnectError(w http.ResponseWriter, status int, code, message string) {
-	writeConnectJSON(w, status, connectError{Code: code, Message: message})
+	writeConnectJSON(w, status, connectError{Code: code, Message: message, TraceID: w.Header().Get("X-Trace-Id")})
+}
+
+func traceIDFromContext(ctx context.Context) string {
+	span := trace.SpanContextFromContext(ctx)
+	if !span.IsValid() {
+		return ""
+	}
+	traceID := span.TraceID().String()
+	if traceID == "00000000000000000000000000000000" {
+		return ""
+	}
+	return traceID
 }
 
 func statusForCommandError(err error) int {
@@ -505,11 +561,12 @@ func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request
 		writeConnectError(w, statusForCommandError(err), codeForCommandError(err), err.Error())
 		return
 	}
+	traceID := traceIDFromContext(req.Context())
 	if protoMode {
-		writeConnectProto(w, http.StatusOK, encodeSessionMessagesResponseProto(payload))
+		writeConnectProto(w, http.StatusOK, encodeSessionMessagesResponseProto(payload, traceID))
 		return
 	}
-	writeConnectJSON(w, http.StatusOK, payload)
+	writeConnectJSON(w, http.StatusOK, withConnectTraceID(payload, traceID))
 }
 
 func decodeSessionMessagesRequest(req *http.Request, protoMode bool) (sessionMessagesRequest, error) {
@@ -549,10 +606,11 @@ func decodeSessionMessagesRequest(req *http.Request, protoMode bool) (sessionMes
 	return body, nil
 }
 
-func encodeSessionMessagesResponseProto(response app.SessionMessagesResponse) []byte {
+func encodeSessionMessagesResponseProto(response app.SessionMessagesResponse, traceID string) []byte {
 	msg := &actrailv1.SessionMessagesResponse{
 		TailSeq: response.TailSeq,
 		HasMore: response.HasMore,
+		TraceId: traceID,
 	}
 	if response.NextBeforeSeq != nil {
 		v := *response.NextBeforeSeq

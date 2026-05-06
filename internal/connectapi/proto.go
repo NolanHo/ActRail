@@ -83,8 +83,8 @@ func sessionIdentityFromProto(identity *actrailv1.SessionIdentity) SessionIdenti
 	return SessionIdentity{SessionID: identity.GetSessionId(), RuntimeID: identity.GetRuntimeId()}
 }
 
-func encodeCommandResponseProto(payload []byte) []byte {
-	data, err := proto.Marshal(&actrailv1.CommandResponse{PayloadJson: payload})
+func encodeCommandResponseProto(payload []byte, traceID string) []byte {
+	data, err := proto.Marshal(&actrailv1.CommandResponse{PayloadJson: payload, TraceId: traceID})
 	if err != nil {
 		return nil
 	}

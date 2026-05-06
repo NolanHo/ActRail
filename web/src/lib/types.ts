@@ -226,6 +226,7 @@ export interface SessionSummary {
   broker_pid?: number;
   owned?: boolean;
   busy?: boolean;
+  busy_reason?: string;
   pending_startup?: boolean;
   focused?: boolean;
   has_unread_assistant?: boolean;
@@ -261,6 +262,7 @@ export interface SessionSummary {
 }
 
 export interface SessionsResponse {
+  trace_id?: string;
   items?: SessionSummary[];
   sessions?: SessionSummary[];
   remaining_count?: number;
@@ -298,6 +300,7 @@ export interface TeamNodeResponse {
 }
 
 export interface TeamsResponse {
+  trace_id?: string;
   ok?: boolean;
   roots?: TeamNodeResponse[];
   total_count?: number;
@@ -305,6 +308,7 @@ export interface TeamsResponse {
 }
 
 export interface SessionBootstrapResponse {
+  trace_id?: string;
   protocol_version?: number;
   capabilities?: BootstrapCapabilities;
   ws?: BootstrapWebSocketConfig;
@@ -333,6 +337,7 @@ export interface SessionCapabilitySnapshot {
 }
 
 export interface SessionDetailsResponse {
+  trace_id?: string;
   session_id: string;
   runtime_id?: string | null;
   thread_id?: string | null;
@@ -360,6 +365,7 @@ export interface SessionDetailsResponse {
 }
 
 export interface CreateSessionResponse {
+  trace_id?: string;
   ok?: boolean;
   session?: SessionSummary;
   session_id?: string;
@@ -373,6 +379,7 @@ export interface CreateSessionResponse {
 }
 
 export interface DeleteSessionResponse {
+  trace_id?: string;
   ok?: boolean;
 }
 
@@ -388,6 +395,7 @@ export interface RestartSessionResponse extends CreateSessionResponse {
 }
 
 export interface RenameSessionResponse {
+  trace_id?: string;
   ok?: boolean;
   alias?: string;
 }
@@ -401,11 +409,13 @@ export interface EditSessionResponse extends RenameSessionResponse {
 }
 
 export interface FocusSessionResponse {
+  trace_id?: string;
   ok?: boolean;
   focused?: boolean;
 }
 
 export interface SwitchSessionModelResponse {
+  trace_id?: string;
   ok?: boolean;
   model?: string | null;
   provider?: string | null;
@@ -418,11 +428,13 @@ export interface CwdGroupMeta {
 }
 
 export interface LoginResponse {
+  trace_id?: string;
   ok?: boolean;
   error?: string;
 }
 
 export interface EditCwdGroupResponse {
+  trace_id?: string;
   ok?: boolean;
   cwd?: string;
   label?: string;
@@ -430,6 +442,7 @@ export interface EditCwdGroupResponse {
 }
 
 export interface LogoutResponse {
+  trace_id?: string;
   ok?: boolean;
 }
 
@@ -445,6 +458,7 @@ export interface SessionResumeCandidate {
 }
 
 export interface SessionResumeCandidatesResponse {
+  trace_id?: string;
   ok?: boolean;
   exists?: boolean;
   will_create?: boolean;
@@ -463,6 +477,7 @@ export interface SessionResumeCandidatesResponse {
 }
 
 export interface VoiceSettingsResponse {
+  trace_id?: string;
   ok?: boolean;
   tts_enabled_for_narration?: boolean;
   tts_enabled_for_final_response?: boolean;
@@ -483,12 +498,14 @@ export interface VoiceSettingsResponse {
 }
 
 export interface VoiceProviderTestResponse {
+  trace_id?: string;
   ok?: boolean;
   status?: string;
   status_code?: number;
 }
 
 export interface AudioListenerResponse {
+  trace_id?: string;
   ok?: boolean;
   active_listener_count?: number;
 }
@@ -586,6 +603,7 @@ export interface MessageEvent {
 }
 
 export interface MessagesResponse {
+  trace_id?: string;
   items?: MessageEvent[];
   events: MessageEvent[];
   offset?: number;
@@ -686,6 +704,7 @@ export interface LiveSessionResponse {
   has_older?: boolean;
   next_before?: number;
   busy?: boolean;
+  busy_reason?: string;
   token?: Record<string, unknown> | null;
   context_usage?: ContextUsagePayload | null;
   turn_timing?: TurnTimingPayload | null;
@@ -720,6 +739,7 @@ export interface WorkspaceHistoryItem {
 }
 
 export interface WorkspaceResponse {
+  trace_id?: string;
   ok?: boolean;
   session_id?: string;
   runtime_id?: string | null;
@@ -737,10 +757,12 @@ export interface SessionCommand {
 }
 
 export interface SessionCommandsResponse {
+  trace_id?: string;
   commands: SessionCommand[];
 }
 
 export interface ExecuteSessionCommandResponse {
+  trace_id?: string;
   ok?: boolean;
   command?: string;
   message?: string;

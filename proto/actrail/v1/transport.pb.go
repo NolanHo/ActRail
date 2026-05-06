@@ -472,6 +472,7 @@ func (x *SessionStateRequest) GetSession() *SessionIdentity {
 type CommandResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PayloadJson   []byte                 `protobuf:"bytes,1,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	TraceId       string                 `protobuf:"bytes,2,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -511,6 +512,13 @@ func (x *CommandResponse) GetPayloadJson() []byte {
 		return x.PayloadJson
 	}
 	return nil
+}
+
+func (x *CommandResponse) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
 }
 
 type SubscribeRequest struct {
@@ -755,6 +763,7 @@ type SessionMessagesResponse struct {
 	TailSeq       uint64                 `protobuf:"varint,2,opt,name=tail_seq,json=tailSeq,proto3" json:"tail_seq,omitempty"`
 	HasMore       bool                   `protobuf:"varint,3,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
 	NextBeforeSeq *uint64                `protobuf:"varint,4,opt,name=next_before_seq,json=nextBeforeSeq,proto3,oneof" json:"next_before_seq,omitempty"`
+	TraceId       string                 `protobuf:"bytes,5,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -817,6 +826,13 @@ func (x *SessionMessagesResponse) GetNextBeforeSeq() uint64 {
 	return 0
 }
 
+func (x *SessionMessagesResponse) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
+}
+
 var File_actrail_v1_transport_proto protoreflect.FileDescriptor
 
 const file_actrail_v1_transport_proto_rawDesc = "" +
@@ -854,9 +870,10 @@ const file_actrail_v1_transport_proto_rawDesc = "" +
 	"responseTo\x12\x14\n" +
 	"\x05value\x18\x03 \x01(\tR\x05value\"L\n" +
 	"\x13SessionStateRequest\x125\n" +
-	"\asession\x18\x01 \x01(\v2\x1b.actrail.v1.SessionIdentityR\asession\"4\n" +
+	"\asession\x18\x01 \x01(\v2\x1b.actrail.v1.SessionIdentityR\asession\"O\n" +
 	"\x0fCommandResponse\x12!\n" +
-	"\fpayload_json\x18\x01 \x01(\fR\vpayloadJson\"8\n" +
+	"\fpayload_json\x18\x01 \x01(\fR\vpayloadJson\x12\x19\n" +
+	"\btrace_id\x18\x02 \x01(\tR\atraceId\"8\n" +
 	"\x10SubscribeRequest\x12$\n" +
 	"\x0eafter_event_id\x18\x01 \x01(\x04R\fafterEventId\"\x8f\x01\n" +
 	"\rEventEnvelope\x12\x0e\n" +
@@ -883,13 +900,14 @@ const file_actrail_v1_transport_proto_rawDesc = "" +
 	"toolCallIdB\f\n" +
 	"\n" +
 	"_after_seqB\r\n" +
-	"\v_before_seq\"\xb1\x01\n" +
+	"\v_before_seq\"\xcc\x01\n" +
 	"\x17SessionMessagesResponse\x12\x1f\n" +
 	"\vevents_json\x18\x01 \x03(\fR\n" +
 	"eventsJson\x12\x19\n" +
 	"\btail_seq\x18\x02 \x01(\x04R\atailSeq\x12\x19\n" +
 	"\bhas_more\x18\x03 \x01(\bR\ahasMore\x12+\n" +
-	"\x0fnext_before_seq\x18\x04 \x01(\x04H\x00R\rnextBeforeSeq\x88\x01\x01B\x12\n" +
+	"\x0fnext_before_seq\x18\x04 \x01(\x04H\x00R\rnextBeforeSeq\x88\x01\x01\x12\x19\n" +
+	"\btrace_id\x18\x05 \x01(\tR\atraceIdB\x12\n" +
 	"\x10_next_before_seq2\xed\x04\n" +
 	"\x15SessionCommandService\x12L\n" +
 	"\fListSessions\x12\x1f.actrail.v1.ListSessionsRequest\x1a\x1b.actrail.v1.CommandResponse\x12<\n" +
