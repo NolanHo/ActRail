@@ -131,10 +131,6 @@ func (r Router) teamEventsJSON(w http.ResponseWriter, req *http.Request) {
 func (r Router) teamEventsSSE(w http.ResponseWriter, req *http.Request) {
 	actorID := strings.TrimSpace(req.URL.Query().Get("actorId"))
 	afterEventID := strings.TrimSpace(req.URL.Query().Get("afterEventId"))
-	if actorID == "" {
-		writeAppError(w, app.Invalid("actorId", "actorId required"))
-		return
-	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "unsupported", "streaming unsupported", "")
@@ -151,7 +147,13 @@ func (r Router) teamEventsSSE(w http.ResponseWriter, req *http.Request) {
 	defer heartbeat.Stop()
 	enc := json.NewEncoder(w)
 	for {
-		payload, err := r.app.TeamEvents(req.Context(), app.TeamEventsRequest{ActorID: actorID, AfterEventID: afterEventID})
+		var payload app.TeamEventsResponse
+		var err error
+		if actorID == "" {
+			payload, err = r.app.TeamEventsAll(req.Context(), app.TeamEventsRequest{AfterEventID: afterEventID})
+		} else {
+			payload, err = r.app.TeamEvents(req.Context(), app.TeamEventsRequest{ActorID: actorID, AfterEventID: afterEventID})
+		}
 		if err != nil {
 			_, _ = w.Write([]byte("event: error\n"))
 			_, _ = w.Write([]byte("data: "))
@@ -161,16 +163,20 @@ func (r Router) teamEventsSSE(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if len(payload.Events) > 0 {
-			actor, err := r.app.StatusTeam(req.Context(), app.StatusTeamRequest{ActorID: actorID})
-			if err != nil {
-				_, _ = w.Write([]byte("event: error\n"))
-				_, _ = w.Write([]byte("data: "))
-				_ = enc.Encode(map[string]string{"error": err.Error()})
-				_, _ = w.Write([]byte("\n"))
-				flusher.Flush()
-				return
+			var actor *app.TeamNode
+			if actorID != "" {
+				status, err := r.app.StatusTeam(req.Context(), app.StatusTeamRequest{ActorID: actorID})
+				if err != nil {
+					_, _ = w.Write([]byte("event: error\n"))
+					_, _ = w.Write([]byte("data: "))
+					_ = enc.Encode(map[string]string{"error": err.Error()})
+					_, _ = w.Write([]byte("\n"))
+					flusher.Flush()
+					return
+				}
+				actor = status.Actor
 			}
-			for _, event := range app.TeamEventsFromStoredEvents(payload.Events, actor.Actor) {
+			for _, event := range app.TeamEventsFromStoredEvents(payload.Events, actor) {
 				_, _ = w.Write([]byte("data: "))
 				_ = enc.Encode(event)
 				_, _ = w.Write([]byte("\n"))

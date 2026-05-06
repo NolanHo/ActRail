@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -479,6 +480,14 @@ func (s *Stub) TeamEvents(_ context.Context, req TeamEventsRequest) (TeamEventsR
 	return TeamEventsResponse{OK: true, Events: events}, nil
 }
 
+func (s *Stub) TeamEventsAll(_ context.Context, req TeamEventsRequest) (TeamEventsResponse, error) {
+	events, err := s.teams.eventsAll(req.AfterEventID)
+	if err != nil {
+		return TeamEventsResponse{}, err
+	}
+	return TeamEventsResponse{OK: true, Events: events}, nil
+}
+
 func (r *teamRegistry) resolveParentSession(rawSession, rawActor string) (session.SessionID, error) {
 	parentSession := session.SessionID(strings.TrimSpace(rawSession))
 	parentActor := strings.TrimSpace(rawActor)
@@ -781,6 +790,36 @@ func (r *teamRegistry) eventsAfter(actorID, after string) ([]TeamStoredEvent, er
 		}
 	}
 	return append([]TeamStoredEvent(nil), actor.Events[start:]...), nil
+}
+
+func (r *teamRegistry) eventsAll(after string) ([]TeamStoredEvent, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	all := make([]TeamStoredEvent, 0)
+	for _, actor := range r.actors {
+		if actor == nil {
+			continue
+		}
+		all = append(all, actor.Events...)
+	}
+	slices.SortStableFunc(all, func(a, b TeamStoredEvent) int {
+		return int(parseCounterSuffix(a.EventID, "event_") - parseCounterSuffix(b.EventID, "event_"))
+	})
+	start := 0
+	if after != "" {
+		found := false
+		for i, event := range all {
+			if event.EventID == after {
+				start = i + 1
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, NotFound("team event cursor not found")
+		}
+	}
+	return append([]TeamStoredEvent(nil), all[start:]...), nil
 }
 
 func (r *teamRegistry) get(actorID string) (*teamActor, error) {

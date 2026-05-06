@@ -173,7 +173,7 @@ function selectableNodes(nodes: TeamNode[]) {
   return nonLeaf.length ? nonLeaf : allTeamNodes(nodes).sort((a, b) => sortRank(a.status) - sortRank(b.status) || a.name.localeCompare(b.name));
 }
 
-export function useTeamsData(refreshMs = 5000): TeamsData {
+export function useTeamsData(_refreshMs = 5000): TeamsData {
   const [roots, setRoots] = useState<TeamNode[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [nonLeafCount, setNonLeafCount] = useState(0);
@@ -214,12 +214,14 @@ export function useTeamsData(refreshMs = 5000): TeamsData {
   }, [refreshToken]);
 
   useEffect(() => {
-    if (refreshMs <= 0) {
+    if (typeof window.EventSource !== "function") {
       return;
     }
-    const id = window.setInterval(() => setRefreshToken((value) => value + 1), refreshMs);
-    return () => window.clearInterval(id);
-  }, [refreshMs]);
+    const source = new window.EventSource("/api/teams/events");
+    source.onmessage = () => setRefreshToken((value) => value + 1);
+    source.onerror = () => setError("teams event stream disconnected");
+    return () => source.close();
+  }, []);
 
   return {
     roots,

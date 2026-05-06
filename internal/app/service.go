@@ -29,6 +29,7 @@ type Service interface {
 	CloseTeam(context.Context, CloseTeamRequest) (TeamCommandResponse, error)
 	StatusTeam(context.Context, StatusTeamRequest) (TeamCommandResponse, error)
 	TeamEvents(context.Context, TeamEventsRequest) (TeamEventsResponse, error)
+	TeamEventsAll(context.Context, TeamEventsRequest) (TeamEventsResponse, error)
 	SessionResumeCandidates(context.Context, SessionResumeCandidatesRequest) (SessionResumeCandidatesResponse, error)
 	SessionDetails(context.Context, SessionDetailsRequest) (SessionDetailsResponse, error)
 	SessionMessages(context.Context, SessionMessagesRequest) (SessionMessagesResponse, error)

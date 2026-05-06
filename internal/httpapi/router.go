@@ -113,6 +113,7 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("POST /api/teams/{actor_id}/abort", r.requireAuth(http.HandlerFunc(r.abortTeam)))
 	mux.Handle("POST /api/teams/{actor_id}/close", r.requireAuth(http.HandlerFunc(r.closeTeam)))
 	mux.Handle("GET /api/teams/{actor_id}/events", r.requireAuth(http.HandlerFunc(r.teamEventsJSON)))
+	mux.Handle("GET /api/teams/events", r.requireAuth(http.HandlerFunc(r.teamEventsSSE)))
 	mux.Handle("GET /api/session_resume_candidates", r.requireAuth(http.HandlerFunc(r.sessionResumeCandidates)))
 	mux.Handle("GET /api/settings/voice", r.requireAuth(http.HandlerFunc(r.voiceSettings)))
 	mux.Handle("POST /api/settings/voice", r.requireAuth(http.HandlerFunc(r.updateVoiceSettings)))

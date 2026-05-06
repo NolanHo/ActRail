@@ -115,6 +115,9 @@ func (s serviceStub) StatusTeam(ctx context.Context, req app.StatusTeamRequest) 
 func (s serviceStub) TeamEvents(ctx context.Context, req app.TeamEventsRequest) (app.TeamEventsResponse, error) {
 	return s.base.TeamEvents(ctx, req)
 }
+func (s serviceStub) TeamEventsAll(ctx context.Context, req app.TeamEventsRequest) (app.TeamEventsResponse, error) {
+	return s.base.TeamEventsAll(ctx, req)
+}
 
 func (s serviceStub) SessionResumeCandidates(ctx context.Context, req app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error) {
 	if s.resumeFunc != nil {
@@ -484,6 +487,9 @@ func (s *fixtureService) StatusTeam(_ context.Context, req app.StatusTeamRequest
 }
 
 func (s *fixtureService) TeamEvents(_ context.Context, req app.TeamEventsRequest) (app.TeamEventsResponse, error) {
+	return app.TeamEventsResponse{OK: true, Events: []app.TeamStoredEvent{{EventID: "event_1", ActorID: req.ActorID, ChildSessionID: "s_child", ParentSessionID: "s_123", Type: "team.started", Status: app.TeamStatusIdle, TS: 1760000000}}}, nil
+}
+func (s *fixtureService) TeamEventsAll(_ context.Context, req app.TeamEventsRequest) (app.TeamEventsResponse, error) {
 	return app.TeamEventsResponse{OK: true, Events: []app.TeamStoredEvent{{EventID: "event_1", ActorID: req.ActorID, ChildSessionID: "s_child", ParentSessionID: "s_123", Type: "team.started", Status: app.TeamStatusIdle, TS: 1760000000}}}, nil
 }
 
