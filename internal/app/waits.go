@@ -460,6 +460,9 @@ func (s *Stub) AskUserWait(ctx context.Context, req RuntimeWaitRequest) (Runtime
 	s.waitBlockers[wait.WaitID] = blocker
 	s.waitBlockersMu.Unlock()
 	s.emitWaitLifecycle("wait.created", req.SessionID, wait, response)
+	if response.Wait != nil && response.Wait.State != WaitPendingUnread {
+		return RuntimeWaitResult{State: runtimeWaitStateFromWaitState(string(response.Wait.State)), Answer: response.Wait.Answer, FallbackUsed: response.Wait.FallbackUsed, WaitID: wait.WaitID}, nil
+	}
 	defer s.removeRuntimeWaiter(wait.WaitID)
 
 	select {
