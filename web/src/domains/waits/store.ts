@@ -95,6 +95,7 @@ export function createWaitsStore(): WaitsStore {
 
   const applyWaitPayload = (rawWait: unknown, fallbackSessionId = "") => {
     const wait = normalizeActiveWait(rawWait, fallbackSessionId);
+    const waitRecord = normalizeWait(rawWait);
     if (!wait) {
       return;
     }
@@ -106,9 +107,19 @@ export function createWaitsStore(): WaitsStore {
       setActiveWait(sessionId, { ...wait, session_id: sessionId });
     } else {
       setActiveWait(sessionId, null);
+      const terminalRecord = waitRecord ? { ...waitRecord, session_id: waitRecord.session_id || sessionId } : { ...wait, session_id: sessionId } as WaitRecord;
+      const existing = state.waitsByThreadId[wait.thread_id] ?? [];
       state = {
         ...state,
         inbox: removeActive(state.inbox, sessionId, wait.wait_id),
+        waitsByThreadId: {
+          ...state.waitsByThreadId,
+          [wait.thread_id]: [terminalRecord, ...existing.filter((item) => item.wait_id !== wait.wait_id)],
+        },
+        selectedThreadBySessionId: {
+          ...state.selectedThreadBySessionId,
+          [sessionId]: wait.thread_id,
+        },
       };
     }
   };

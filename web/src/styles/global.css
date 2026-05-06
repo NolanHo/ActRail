@@ -2959,6 +2959,65 @@ select {
   color: inherit;
 }
 
+.askUserView {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.askUserInboxPane,
+.askUserThreadPane {
+  min-height: 0;
+  border: 1px solid var(--chrome-border);
+  border-radius: 24px;
+  background: var(--chrome-surface);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+}
+
+.askUserInboxPane {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.askUserInboxList {
+  min-height: 0;
+  max-height: calc(100vh - 8rem);
+}
+
+.askUserInboxItem.selected {
+  border-color: var(--ring);
+  background: color-mix(in srgb, var(--accent) 18%, var(--card));
+}
+
+.askUserThreadPane {
+  overflow: hidden;
+}
+
+.askUserEmpty {
+  border: 1px dashed var(--chrome-border);
+  border-radius: 18px;
+  padding: 1rem;
+  color: var(--muted-foreground);
+}
+
+.askUserEmpty h3,
+.askUserEmpty p {
+  margin: 0;
+}
+
+.askUserEmpty p {
+  margin-top: 0.35rem;
+}
+
+.askUserEmptyMain {
+  margin: 1rem;
+}
+
 .waitInboxItem strong,
 .waitInboxItem span,
 .waitHistoryItem strong {

@@ -120,6 +120,17 @@ func (c *SessionCatalog) ListActiveWaits(ctx context.Context) ([]WaitRow, error)
 	return scanWaitRows(rows)
 }
 
+func (c *SessionCatalog) ListTimedOutPendingWaits(ctx context.Context, now time.Time) ([]WaitRow, error) {
+	rows, err := c.db.QueryContext(ctx, `SELECT wait_id, thread_id, session_id, request_id, state, question, context, blocking_reason, attempted, default_if_no_reply,
+		answer, fallback_used, claimed_at, answered_at, cancelled_at, timed_out_at, orphaned_at, timeout_at, created_at, updated_at, files_json
+		FROM waits WHERE state = 'pending_unread' AND timeout_at IS NOT NULL AND timeout_at <= ? ORDER BY updated_at DESC, created_at DESC`, formatTime(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanWaitRows(rows)
+}
+
 func (c *SessionCatalog) ListSessionWaitThreads(ctx context.Context, sessionID string) ([]WaitThreadRow, error) {
 	rows, err := c.db.QueryContext(ctx, `SELECT thread_id, session_id, title, created_at, updated_at, closed_at FROM wait_threads WHERE session_id = ? ORDER BY updated_at DESC`, sessionID)
 	if err != nil {

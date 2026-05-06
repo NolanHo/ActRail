@@ -63,6 +63,39 @@ type WaitThreadSummary struct {
 	WaitCount  int                `json:"wait_count,omitempty"`
 }
 
+type RuntimeWaitState string
+
+const (
+	RuntimeWaitAnswered  RuntimeWaitState = "answered"
+	RuntimeWaitTimedOut  RuntimeWaitState = "timed_out"
+	RuntimeWaitCancelled RuntimeWaitState = "cancelled"
+	RuntimeWaitOrphaned  RuntimeWaitState = "orphaned"
+)
+
+type RuntimeWaitRequest struct {
+	SessionID           session.SessionID
+	RequestID           string
+	Question            string
+	Context             string
+	BlockingReason      string
+	Attempted           string
+	DefaultIfNoReply    string
+	TimeoutAfterMinutes *int
+	Files               []string
+}
+
+type RuntimeWaitResult struct {
+	State        RuntimeWaitState `json:"state"`
+	Answer       string           `json:"answer,omitempty"`
+	FallbackUsed string           `json:"fallback_used,omitempty"`
+	WaitID       string           `json:"wait_id"`
+}
+
+type waitBlocker struct {
+	waitID string
+	result chan RuntimeWaitResult
+}
+
 type CreateWaitRequest struct {
 	SessionID           session.SessionID `json:"-"`
 	RequestID           string            `json:"request_id,omitempty"`
@@ -118,6 +151,7 @@ type waitStore interface {
 	LookupWait(context.Context, string, string) (sqlitestore.WaitRow, bool, error)
 	UpdateWait(context.Context, sqlitestore.WaitRow) error
 	ListActiveWaits(context.Context) ([]sqlitestore.WaitRow, error)
+	ListTimedOutPendingWaits(context.Context, time.Time) ([]sqlitestore.WaitRow, error)
 	ListSessionWaitThreads(context.Context, string) ([]sqlitestore.WaitThreadRow, error)
 	ListThreadWaits(context.Context, string, string) (sqlitestore.WaitThreadRow, []sqlitestore.WaitRow, bool, error)
 }
@@ -177,6 +211,19 @@ func (m *memoryWaitStore) ListActiveWaits(_ context.Context) ([]sqlitestore.Wait
 	out := []sqlitestore.WaitRow{}
 	for _, wait := range m.waits {
 		if activeWaitState(wait.State) {
+			out = append(out, wait)
+		}
+	}
+	sortWaitRows(out)
+	return out, nil
+}
+
+func (m *memoryWaitStore) ListTimedOutPendingWaits(_ context.Context, now time.Time) ([]sqlitestore.WaitRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []sqlitestore.WaitRow{}
+	for _, wait := range m.waits {
+		if wait.State == string(WaitPendingUnread) && wait.TimeoutAt != nil && !wait.TimeoutAt.After(now) {
 			out = append(out, wait)
 		}
 	}
@@ -264,21 +311,30 @@ func (s *Stub) WaitThread(ctx context.Context, req WaitThreadRequest) (WaitThrea
 }
 
 func (s *Stub) CreateWait(ctx context.Context, req CreateWaitRequest) (WaitLifecycleResponse, error) {
+	response, wait, err := s.createWait(ctx, req)
+	if err != nil {
+		return response, err
+	}
+	s.emitWaitLifecycle("wait.created", req.SessionID, wait, response)
+	return response, nil
+}
+
+func (s *Stub) createWait(ctx context.Context, req CreateWaitRequest) (WaitLifecycleResponse, sqlitestore.WaitRow, error) {
 	if _, err := s.lookupSession(req.SessionID); err != nil {
-		return WaitLifecycleResponse{}, err
+		return WaitLifecycleResponse{}, sqlitestore.WaitRow{}, err
 	}
 	question := strings.TrimSpace(req.Question)
 	if question == "" {
-		return WaitLifecycleResponse{}, Invalid("question", "question is required")
+		return WaitLifecycleResponse{}, sqlitestore.WaitRow{}, Invalid("question", "question is required")
 	}
 	if strings.TrimSpace(req.BlockingReason) == "" {
-		return WaitLifecycleResponse{}, Invalid("blocking_reason", "blocking_reason is required")
+		return WaitLifecycleResponse{}, sqlitestore.WaitRow{}, Invalid("blocking_reason", "blocking_reason is required")
 	}
 	if strings.TrimSpace(req.Attempted) == "" {
-		return WaitLifecycleResponse{}, Invalid("attempted", "attempted is required")
+		return WaitLifecycleResponse{}, sqlitestore.WaitRow{}, Invalid("attempted", "attempted is required")
 	}
 	if strings.TrimSpace(req.DefaultIfNoReply) == "" {
-		return WaitLifecycleResponse{}, Invalid("default_if_no_reply", "default_if_no_reply is required")
+		return WaitLifecycleResponse{}, sqlitestore.WaitRow{}, Invalid("default_if_no_reply", "default_if_no_reply is required")
 	}
 	now := s.registry.now().UTC()
 	threadID := strings.TrimSpace(req.ThreadID)
@@ -299,15 +355,16 @@ func (s *Stub) CreateWait(ctx context.Context, req CreateWaitRequest) (WaitLifec
 		CreatedAt: now, UpdatedAt: now, Files: normalizeStringList(req.Files),
 	}
 	if err := s.waitStoreOrMemory().InsertWait(ctx, thread, wait); err != nil {
-		return WaitLifecycleResponse{}, Conflict("session already has an active wait")
+		return WaitLifecycleResponse{}, sqlitestore.WaitRow{}, Conflict("session already has an active wait")
 	}
 	record := waitRecordFromRow(wait)
 	active := activeWaitSummaryFromRow(wait)
-	return WaitLifecycleResponse{OK: true, Wait: &record, ActiveWait: &active}, nil
+	response := WaitLifecycleResponse{OK: true, Wait: &record, ActiveWait: &active}
+	return response, wait, nil
 }
 
 func (s *Stub) ClaimWait(ctx context.Context, req WaitLifecycleRequest) (WaitLifecycleResponse, error) {
-	return s.transitionWait(ctx, req, func(now time.Time, wait *sqlitestore.WaitRow) error {
+	return s.transitionWait(ctx, req, "wait.claimed", func(now time.Time, wait *sqlitestore.WaitRow) error {
 		if wait.State != string(WaitPendingUnread) {
 			return Conflict("only pending waits can be claimed")
 		}
@@ -322,7 +379,7 @@ func (s *Stub) AnswerWait(ctx context.Context, req WaitLifecycleRequest) (WaitLi
 	if answer == "" {
 		return WaitLifecycleResponse{}, Invalid("answer", "answer is required")
 	}
-	return s.transitionWait(ctx, req, func(now time.Time, wait *sqlitestore.WaitRow) error {
+	return s.transitionWait(ctx, req, "wait.answered", func(now time.Time, wait *sqlitestore.WaitRow) error {
 		if wait.State != string(WaitClaimed) {
 			return Conflict("only claimed waits can be answered")
 		}
@@ -334,7 +391,7 @@ func (s *Stub) AnswerWait(ctx context.Context, req WaitLifecycleRequest) (WaitLi
 }
 
 func (s *Stub) CancelWait(ctx context.Context, req WaitLifecycleRequest) (WaitLifecycleResponse, error) {
-	return s.transitionWait(ctx, req, func(now time.Time, wait *sqlitestore.WaitRow) error {
+	return s.transitionWait(ctx, req, "wait.cancelled", func(now time.Time, wait *sqlitestore.WaitRow) error {
 		if !activeWaitState(wait.State) {
 			return Conflict("only active waits can be cancelled")
 		}
@@ -344,7 +401,7 @@ func (s *Stub) CancelWait(ctx context.Context, req WaitLifecycleRequest) (WaitLi
 	})
 }
 
-func (s *Stub) transitionWait(ctx context.Context, req WaitLifecycleRequest, apply func(time.Time, *sqlitestore.WaitRow) error) (WaitLifecycleResponse, error) {
+func (s *Stub) transitionWait(ctx context.Context, req WaitLifecycleRequest, eventType string, apply func(time.Time, *sqlitestore.WaitRow) error) (WaitLifecycleResponse, error) {
 	if _, err := s.lookupSession(req.SessionID); err != nil {
 		return WaitLifecycleResponse{}, err
 	}
@@ -369,7 +426,190 @@ func (s *Stub) transitionWait(ctx context.Context, req WaitLifecycleRequest, app
 		summary := activeWaitSummaryFromRow(wait)
 		active = &summary
 	}
-	return WaitLifecycleResponse{OK: true, Wait: &record, ActiveWait: active}, nil
+	response := WaitLifecycleResponse{OK: true, Wait: &record, ActiveWait: active}
+	s.emitWaitLifecycle(eventType, req.SessionID, wait, response)
+	if !activeWaitState(wait.State) {
+		s.wakeRuntimeWaiter(wait)
+	}
+	return response, nil
+}
+
+func (s *Stub) AskUserWait(ctx context.Context, req RuntimeWaitRequest) (RuntimeWaitResult, error) {
+	response, wait, err := s.createWait(ctx, CreateWaitRequest{
+		SessionID:           req.SessionID,
+		RequestID:           req.RequestID,
+		Question:            req.Question,
+		Context:             req.Context,
+		BlockingReason:      req.BlockingReason,
+		Attempted:           req.Attempted,
+		DefaultIfNoReply:    req.DefaultIfNoReply,
+		TimeoutAfterMinutes: req.TimeoutAfterMinutes,
+		Files:               req.Files,
+	})
+	if err != nil {
+		return RuntimeWaitResult{}, err
+	}
+	if response.Wait == nil {
+		return RuntimeWaitResult{}, fmt.Errorf("created wait without wait record")
+	}
+	blocker := waitBlocker{waitID: wait.WaitID, result: make(chan RuntimeWaitResult, 1)}
+	s.waitBlockersMu.Lock()
+	if s.waitBlockers == nil {
+		s.waitBlockers = map[string]waitBlocker{}
+	}
+	s.waitBlockers[wait.WaitID] = blocker
+	s.waitBlockersMu.Unlock()
+	s.emitWaitLifecycle("wait.created", req.SessionID, wait, response)
+	if response.Wait != nil && response.Wait.State != WaitPendingUnread {
+		return RuntimeWaitResult{State: runtimeWaitStateFromWaitState(string(response.Wait.State)), Answer: response.Wait.Answer, FallbackUsed: response.Wait.FallbackUsed, WaitID: wait.WaitID}, nil
+	}
+	defer s.removeRuntimeWaiter(wait.WaitID)
+
+	select {
+	case result := <-blocker.result:
+		return result, nil
+	case <-ctx.Done():
+		_, _ = s.CancelWait(context.Background(), WaitLifecycleRequest{SessionID: req.SessionID, WaitID: wait.WaitID})
+		return RuntimeWaitResult{}, ctx.Err()
+	}
+}
+
+func (s *Stub) runWaitTimeoutSweep(ctx context.Context) {
+	if err := s.sweepWaitTimeouts(ctx); err != nil {
+		return
+	}
+}
+
+func (s *Stub) RunWaitTimeoutSweep(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runWaitTimeoutSweep(ctx)
+		}
+	}
+}
+
+func (s *Stub) sweepWaitTimeouts(ctx context.Context) error {
+	now := s.registry.now().UTC()
+	rows, err := s.waitStoreOrMemory().ListTimedOutPendingWaits(ctx, now)
+	if err != nil {
+		return err
+	}
+	for _, wait := range rows {
+		if wait.State != string(WaitPendingUnread) || wait.TimeoutAt == nil || wait.TimeoutAt.After(now) {
+			continue
+		}
+		wait.State = string(WaitTimedOut)
+		wait.FallbackUsed = wait.DefaultIfNoReply
+		wait.TimedOutAt = &now
+		wait.UpdatedAt = now
+		if err := s.waitStoreOrMemory().UpdateWait(ctx, wait); err != nil {
+			return err
+		}
+		record := waitRecordFromRow(wait)
+		response := WaitLifecycleResponse{OK: true, Wait: &record}
+		s.emitWaitLifecycle("wait.timed_out", mustSessionIDFromString(wait.SessionID), wait, response)
+		s.wakeRuntimeWaiter(wait)
+	}
+	return nil
+}
+
+func (s *Stub) orphanActiveWaits(ctx context.Context, sessionID *session.SessionID) error {
+	now := s.registry.now().UTC()
+	rows, err := s.waitStoreOrMemory().ListActiveWaits(ctx)
+	if err != nil {
+		return err
+	}
+	for _, wait := range rows {
+		if sessionID != nil && wait.SessionID != sessionID.String() {
+			continue
+		}
+		wait.State = string(WaitOrphaned)
+		wait.OrphanedAt = &now
+		wait.UpdatedAt = now
+		if err := s.waitStoreOrMemory().UpdateWait(ctx, wait); err != nil {
+			return err
+		}
+		record := waitRecordFromRow(wait)
+		response := WaitLifecycleResponse{OK: true, Wait: &record}
+		s.emitWaitLifecycle("wait.orphaned", mustSessionIDFromString(wait.SessionID), wait, response)
+		s.wakeRuntimeWaiter(wait)
+	}
+	return nil
+}
+
+func (s *Stub) removeRuntimeWaiter(waitID string) {
+	s.waitBlockersMu.Lock()
+	delete(s.waitBlockers, strings.TrimSpace(waitID))
+	s.waitBlockersMu.Unlock()
+}
+
+func (s *Stub) wakeRuntimeWaiter(wait sqlitestore.WaitRow) {
+	s.waitBlockersMu.Lock()
+	blocker, ok := s.waitBlockers[wait.WaitID]
+	if ok {
+		delete(s.waitBlockers, wait.WaitID)
+	}
+	s.waitBlockersMu.Unlock()
+	if !ok {
+		return
+	}
+	result := RuntimeWaitResult{State: runtimeWaitStateFromWaitState(wait.State), Answer: wait.Answer, FallbackUsed: wait.FallbackUsed, WaitID: blocker.waitID}
+	select {
+	case blocker.result <- result:
+	default:
+	}
+}
+
+func runtimeWaitStateFromWaitState(state string) RuntimeWaitState {
+	switch state {
+	case string(WaitAnswered):
+		return RuntimeWaitAnswered
+	case string(WaitTimedOut):
+		return RuntimeWaitTimedOut
+	case string(WaitCancelled):
+		return RuntimeWaitCancelled
+	case string(WaitOrphaned):
+		return RuntimeWaitOrphaned
+	default:
+		return RuntimeWaitState(state)
+	}
+}
+
+func mustSessionIDFromString(raw string) session.SessionID {
+	id, _ := session.ParseSessionID(raw)
+	return id
+}
+
+func (s *Stub) emitWaitLifecycle(eventType string, sessionID session.SessionID, wait sqlitestore.WaitRow, response WaitLifecycleResponse) {
+	if s == nil || s.sink == nil {
+		return
+	}
+	publisher, ok := s.sink.(interface {
+		PublishWaitLifecycle(WaitLifecycleEvent)
+		PublishWaitsUpdated(WaitsUpdatedEvent)
+	})
+	if !ok {
+		return
+	}
+	publisher.PublishWaitLifecycle(WaitLifecycleEvent{Type: eventType, SessionID: sessionID, Wait: waitRecordFromRow(wait), ActiveWait: response.ActiveWait})
+	publisher.PublishWaitsUpdated(WaitsUpdatedEvent{Waits: activeWaitsForEvent(s.waitStoreOrMemory())})
+}
+
+func activeWaitsForEvent(store waitStore) []ActiveWaitSummary {
+	rows, err := store.ListActiveWaits(context.Background())
+	if err != nil {
+		return nil
+	}
+	out := make([]ActiveWaitSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, activeWaitSummaryFromRow(row))
+	}
+	return out
 }
 
 func (s *Stub) waitStoreOrMemory() waitStore {

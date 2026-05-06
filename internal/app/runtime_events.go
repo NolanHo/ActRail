@@ -60,6 +60,17 @@ type UIResolvedEvent struct {
 	RequestID string
 }
 
+type WaitLifecycleEvent struct {
+	Type       string
+	SessionID  session.SessionID
+	Wait       WaitRecord
+	ActiveWait *ActiveWaitSummary
+}
+
+type WaitsUpdatedEvent struct {
+	Waits []ActiveWaitSummary
+}
+
 type GenerationBrokenEvent struct {
 	SessionID    session.SessionID
 	GenerationID string

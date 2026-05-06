@@ -89,6 +89,17 @@ type uiResolvedPayload struct {
 	RequestID string `json:"request_id"`
 }
 
+type waitLifecyclePayload struct {
+	SessionID  string                 `json:"session_id"`
+	StreamSeq  int64                  `json:"stream_seq"`
+	Wait       app.WaitRecord         `json:"wait"`
+	ActiveWait *app.ActiveWaitSummary `json:"active_wait,omitempty"`
+}
+
+type waitsUpdatedPayload struct {
+	Waits []app.ActiveWaitSummary `json:"waits"`
+}
+
 type generationBrokenPayload struct {
 	SessionID    string `json:"session_id"`
 	StreamSeq    int64  `json:"stream_seq"`
@@ -282,6 +293,20 @@ func (b *AppBridge) PublishUIResolved(event app.UIResolvedEvent) {
 	})
 }
 
+func (b *AppBridge) PublishWaitLifecycle(event app.WaitLifecycleEvent) {
+	b.publish(event.SessionID, session.StreamKindUI, waitFrameType(event.Type), func(cursor int64) any {
+		return waitLifecyclePayload{SessionID: event.SessionID.String(), StreamSeq: cursor, Wait: event.Wait, ActiveWait: event.ActiveWait}
+	})
+}
+
+func (b *AppBridge) PublishWaitsUpdated(event app.WaitsUpdatedEvent) {
+	if b == nil || b.publisher == nil {
+		return
+	}
+	frame := Frame{Type: FrameTypeWaitsUpdated, ID: b.frameIDs.Next(), TS: UnixTS(b.now()), Stream: SystemStream.String(), Payload: waitsUpdatedPayload{Waits: event.Waits}}
+	_, _ = b.publisher.Publish(0, frame)
+}
+
 func (b *AppBridge) PublishGenerationBroken(event app.GenerationBrokenEvent) {
 	b.publish(event.SessionID, session.StreamKindMain, FrameTypeSessionGenerationBroken, func(cursor int64) any {
 		return generationBrokenPayload{
@@ -310,6 +335,25 @@ func (b *AppBridge) PublishNotification(event app.NotificationEvent) {
 	}
 	frame := Frame{Type: FrameTypeNotification, ID: b.frameIDs.Next(), TS: UnixTS(b.now()), Stream: SystemStream.String(), Payload: notificationPayload{SessionID: event.SessionID, Title: event.Title, Body: event.Body, MessageID: event.MessageID, Kind: event.Kind}}
 	_, _ = b.publisher.Publish(0, frame)
+}
+
+func waitFrameType(raw string) FrameType {
+	switch raw {
+	case string(FrameTypeWaitCreated):
+		return FrameTypeWaitCreated
+	case string(FrameTypeWaitClaimed):
+		return FrameTypeWaitClaimed
+	case string(FrameTypeWaitAnswered):
+		return FrameTypeWaitAnswered
+	case string(FrameTypeWaitCancelled):
+		return FrameTypeWaitCancelled
+	case string(FrameTypeWaitTimedOut):
+		return FrameTypeWaitTimedOut
+	case string(FrameTypeWaitOrphaned):
+		return FrameTypeWaitOrphaned
+	default:
+		return FrameTypeWaitsUpdated
+	}
 }
 
 func (b *AppBridge) publishGenerating(sessionID session.SessionID, turnID, role string, active bool) {

@@ -79,6 +79,8 @@ type Stub struct {
 	helpers             *helperRegistry
 	messageCache        *sessionMessageCache
 	waitStore           waitStore
+	waitBlockersMu      sync.Mutex
+	waitBlockers        map[string]waitBlocker
 	supervisorStore     supervisorStore
 	schedulerStore      schedulerStore
 	teams               *teamRegistry
@@ -122,6 +124,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
 		waitStore:           newMemoryWaitStore(),
+		waitBlockers:        map[string]waitBlocker{},
 		supervisorStore:     newMemorySupervisorStore(),
 		schedulerStore:      newMemorySchedulerStore(),
 		teams:               newTeamRegistry(now),

@@ -71,6 +71,7 @@ func main() {
 	}
 
 	go service.RunSupervisorScheduler(ctx)
+	go service.RunWaitTimeoutSweep(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

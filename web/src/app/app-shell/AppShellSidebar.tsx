@@ -3,7 +3,7 @@ import { SessionsPane } from "../../components/sessions/SessionsPane";
 import { TeamsRail } from "../../components/teams/TeamsView";
 import type { TeamsData } from "../../components/teams/TeamsView";
 
-export type DesktopGlobalView = "sessions" | "teams" | "scheduler";
+export type DesktopGlobalView = "sessions" | "ask_user" | "teams" | "scheduler";
 
 interface GlobalNavRailProps {
   activeView: DesktopGlobalView;
@@ -28,6 +28,16 @@ function GlobalSchedulerIcon() {
       <path d="M12 8v4l3 2" />
       <path d="M7 4 5 6" />
       <path d="m17 4 2 2" />
+    </svg>
+  );
+}
+
+function GlobalAskUserIcon() {
+  return (
+    <svg className="globalNavIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v4A3.5 3.5 0 0 1 15.5 14H12l-4 4v-4A3.5 3.5 0 0 1 5 10.5z" />
+      <path d="M11.9 8.7c0-1.1.8-1.8 1.9-1.8 1 0 1.8.7 1.8 1.7 0 1.5-1.7 1.5-1.7 2.8" />
+      <path d="M13.9 13h.01" />
     </svg>
   );
 }
@@ -63,6 +73,16 @@ export function GlobalNavRail({
           onClick={() => onViewChange("sessions")}
         >
           <GlobalSessionsIcon />
+        </Button>
+        <Button
+          type="button"
+          variant={activeView === "ask_user" ? "default" : "outline"}
+          className="globalNavButton"
+          aria-label="AskUser view"
+          title="AskUser"
+          onClick={() => onViewChange("ask_user")}
+        >
+          <GlobalAskUserIcon />
         </Button>
         <Button
           type="button"
@@ -110,7 +130,7 @@ export function AppShellSidebar({
 }: AppShellSidebarProps) {
   return (
     <>
-      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "teams" ? <TeamsRail selectedActorId={activeTeamId} data={teamsData} onSelect={onTeamSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Scheduler</h2></div></header><p className="text-sm text-muted-foreground">Manage alarms, supervisor preset activity, and inbox delivery.</p></div>}
+      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "ask_user" ? <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Runtime waits</p><h2>AskUser</h2></div></header><p className="text-sm text-muted-foreground">Answer blocking runtime questions without leaving the global context.</p></div> : activeView === "teams" ? <TeamsRail selectedActorId={activeTeamId} data={teamsData} onSelect={onTeamSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Scheduler</h2></div></header><p className="text-sm text-muted-foreground">Manage alarms, supervisor preset activity, and inbox delivery.</p></div>}
       <footer className="sidebarFooter">
         <Button type="button" variant="outline" className="footerAction"><span className="buttonGlyph">?</span><span>Help</span></Button>
         <Button type="button" variant="outline" className="footerAction" onClick={onOpenSettings}><span className="buttonGlyph">ST</span><span>Settings</span></Button>
