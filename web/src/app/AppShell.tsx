@@ -10,6 +10,7 @@ import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShe
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
 import { SchedulerView } from "../components/scheduler/SchedulerView";
 import { TeamsThreadView, useTeamsData } from "../components/teams/TeamsView";
+import { AskUserView } from "../components/waits/AskUserView";
 import { MobileShell } from "./app-shell/MobileShell";
 import { VoiceSettingsDialog } from "./app-shell/VoiceSettingsDialog";
 import { useAppShellAudio } from "./app-shell/useAppShellAudio";
@@ -664,6 +665,8 @@ export function AppShell() {
                 <ConversationStateTray />
                 <Composer />
               </section>
+            ) : desktopGlobalView === "ask_user" ? (
+              <AskUserView />
             ) : desktopGlobalView === "teams" ? (
               <TeamsThreadView selectedActorId={selectedTeamId} data={teamsData} />
             ) : (

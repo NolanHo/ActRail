@@ -16,6 +16,7 @@ import (
 	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
+	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
 
@@ -69,6 +70,8 @@ type captureRuntimeSink struct {
 	queueStates            []QueueStateEvent
 	uiRequests             []UIRequestEvent
 	uiResolved             []UIResolvedEvent
+	waitLifecycle          []WaitLifecycleEvent
+	waitsUpdated           []WaitsUpdatedEvent
 	generationBroken       []GenerationBrokenEvent
 	transportResetRequired []TransportResetRequiredEvent
 	notifications          []NotificationEvent
@@ -110,6 +113,18 @@ func (s *captureRuntimeSink) PublishUIResolved(event UIResolvedEvent) {
 	s.uiResolved = append(s.uiResolved, event)
 }
 
+func (s *captureRuntimeSink) PublishWaitLifecycle(event WaitLifecycleEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.waitLifecycle = append(s.waitLifecycle, event)
+}
+
+func (s *captureRuntimeSink) PublishWaitsUpdated(event WaitsUpdatedEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.waitsUpdated = append(s.waitsUpdated, event)
+}
+
 func (s *captureRuntimeSink) PublishGenerationBroken(event GenerationBrokenEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,12 +153,78 @@ func (s *captureRuntimeSink) snapshot() captureRuntimeSink {
 		queueStates:            append([]QueueStateEvent(nil), s.queueStates...),
 		uiRequests:             append([]UIRequestEvent(nil), s.uiRequests...),
 		uiResolved:             append([]UIResolvedEvent(nil), s.uiResolved...),
+		waitLifecycle:          append([]WaitLifecycleEvent(nil), s.waitLifecycle...),
+		waitsUpdated:           append([]WaitsUpdatedEvent(nil), s.waitsUpdated...),
 		generationBroken:       append([]GenerationBrokenEvent(nil), s.generationBroken...),
 		transportResetRequired: append([]TransportResetRequiredEvent(nil), s.transportResetRequired...),
 		notifications:          append([]NotificationEvent(nil), s.notifications...),
 	}
 }
 
+func TestRuntimeAskUserCreatesWaitAndReturnsStructuredAnswer(t *testing.T) {
+	pty := &fakePTY{}
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetPTY(pty)
+	now := time.Unix(1760000000, 0).UTC()
+	svc := NewStubForTest(config.Load(), func() time.Time { return now }, RuntimeConfig{})
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+
+	event := pi.Event{Kind: pi.EventKindUIRequest, UIRequest: &pi.UIRequest{RequestID: "ask-runtime-1", Kind: pi.UIRequestKindAskUser, Prompt: "Proceed?", Context: "Runtime context", Metadata: map[string]any{"blocking_reason": "needs decision", "attempted": "inspected files", "default_if_no_reply": "use fallback"}}}
+	resultCh := make(chan RuntimeWaitResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := svc.AskUserWait(context.Background(), RuntimeWaitRequest{SessionID: sessionID, RequestID: event.UIRequest.RequestID, Question: event.UIRequest.Prompt, Context: event.UIRequest.Context, BlockingReason: "needs decision", Attempted: "inspected files", DefaultIfNoReply: "use fallback"})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- result
+	}()
+	waitForAppCondition(t, func() bool { return svc.activeWaitForSession(sessionID) != nil })
+	active := svc.activeWaitForSession(sessionID)
+	if active.Question != "Proceed?" || active.BlockingReason != "needs decision" || active.Attempted != "inspected files" || active.DefaultIfNoReply != "use fallback" {
+		t.Fatalf("active wait = %+v", active)
+	}
+	if _, err := svc.ClaimWait(context.Background(), WaitLifecycleRequest{SessionID: sessionID, WaitID: active.WaitID}); err != nil {
+		t.Fatalf("ClaimWait() error = %v", err)
+	}
+	if _, err := svc.AnswerWait(context.Background(), WaitLifecycleRequest{SessionID: sessionID, WaitID: active.WaitID, Answer: "Yes"}); err != nil {
+		t.Fatalf("AnswerWait() error = %v", err)
+	}
+	select {
+	case err := <-errCh:
+		t.Fatalf("AskUserWait() error = %v", err)
+	case result := <-resultCh:
+		payload, err := json.Marshal(result)
+		if err != nil {
+			t.Fatalf("Marshal(result) error = %v", err)
+		}
+		if err := (sessionRuntime{protocol: runtimeProtocolTTY, handle: handle}).RespondUI(context.Background(), event.UIRequest.RequestID, string(payload)); err != nil {
+			t.Fatalf("RespondUI() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("AskUserWait() did not return")
+	}
+	waitForAppCondition(t, func() bool { return len(pty.Writes()) > 0 })
+	writes := pty.Writes()
+	if len(writes) != 1 || !strings.Contains(writes[0], `"state":"answered"`) || !strings.Contains(writes[0], `"answer":"Yes"`) || !strings.Contains(writes[0], active.WaitID) {
+		t.Fatalf("runtime ui response writes = %#v", writes)
+	}
+	snapshot := sink.snapshot()
+	if len(snapshot.uiRequests) != 0 {
+		t.Fatalf("runtime ui request events = %#v, want none", snapshot.uiRequests)
+	}
+	if len(snapshot.waitLifecycle) < 3 {
+		t.Fatalf("wait lifecycle events = %#v", snapshot.waitLifecycle)
+	}
+}
 func TestCreateSessionConsumesPIRuntimeOutputIntoStateAndTranscript(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()

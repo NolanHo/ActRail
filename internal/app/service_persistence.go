@@ -53,6 +53,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
 		waitStore:           catalog,
+		waitBlockers:        map[string]waitBlocker{},
 		supervisorStore:     catalog,
 		schedulerStore:      catalog,
 		teams:               newTeamRegistry(now, catalog),
@@ -67,6 +68,10 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 		return nil, err
 	}
 	if err := stub.teams.rehydrate(teamSnapshots); err != nil {
+		_ = catalog.Close()
+		return nil, err
+	}
+	if err := stub.orphanActiveWaits(context.Background(), nil); err != nil {
 		_ = catalog.Close()
 		return nil, err
 	}

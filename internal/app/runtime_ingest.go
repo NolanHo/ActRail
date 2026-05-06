@@ -41,6 +41,7 @@ type runtimeEventDecoder struct {
 
 type runtimeProjection struct {
 	events            []pi.Event
+	waitRequests      []pi.Event
 	codexThreadID     string
 	codexTurnID       string
 	clearCodexTurn    bool
@@ -107,6 +108,9 @@ type runtimeHelperProjector struct {
 func mergeRuntimeProjection(dst, src runtimeProjection) runtimeProjection {
 	if len(src.events) > 0 {
 		dst.events = append(dst.events, src.events...)
+	}
+	if len(src.waitRequests) > 0 {
+		dst.waitRequests = append(dst.waitRequests, src.waitRequests...)
 	}
 	if strings.TrimSpace(src.codexThreadID) != "" {
 		dst.codexThreadID = strings.TrimSpace(src.codexThreadID)
@@ -544,6 +548,7 @@ func (s *Stub) readRuntimeOutput(sessionID session.SessionID, backend session.Ba
 	for scanner.Scan() {
 		_ = s.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine(scanner.Bytes()))
 	}
+	_ = s.orphanActiveWaits(context.Background(), &sessionID)
 }
 
 func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.Client) {
@@ -564,6 +569,7 @@ func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.
 		projection := decoder.decodeRuntimeLine(event.PayloadJSON)
 		return s.applyRuntimeProjection(sessionID, projection)
 	})
+	_ = s.orphanActiveWaits(context.Background(), &sessionID)
 }
 
 func piRPCStateSnapshotFromGRPC(state piagentgrpc.State) *piRPCStateSnapshot {
@@ -671,7 +677,13 @@ func (d *runtimeEventDecoder) decodeRuntimeLine(raw []byte) runtimeProjection {
 	if err != nil {
 		return metadata
 	}
-	metadata.events = material.Events
+	for _, event := range material.Events {
+		if event.Kind == pi.EventKindUIRequest && event.UIRequest != nil && event.UIRequest.Kind == pi.UIRequestKindAskUser {
+			metadata.waitRequests = append(metadata.waitRequests, event)
+			continue
+		}
+		metadata.events = append(metadata.events, event)
+	}
 	return metadata
 }
 
@@ -946,7 +958,13 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 			return err
 		}
 	}
-	return s.applyPIEvents(sessionID, projection.events)
+	if err := s.applyPIEvents(sessionID, projection.events); err != nil {
+		return err
+	}
+	for _, event := range projection.waitRequests {
+		s.startRuntimeAskUserWait(sessionID, event)
+	}
+	return nil
 }
 
 func (s *Stub) applyPIRPCStateFailure(sessionID session.SessionID, failure piRPCStateFailure) bool {
@@ -1718,4 +1736,96 @@ func runtimeUIQuestionOptionsSnapshot(raw []pi.UIOption) []SessionUIOptionSnapsh
 		})
 	}
 	return options
+}
+
+func (s *Stub) startRuntimeAskUserWait(sessionID session.SessionID, event pi.Event) {
+	if s == nil || event.UIRequest == nil {
+		return
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return
+	}
+	runtime := s.runtimeForSession(sessionID, record.identity.Backend(), record.runtime)
+	request := *event.UIRequest
+	go s.runRuntimeAskUserWait(sessionID, runtime, request)
+}
+
+func (s *Stub) runRuntimeAskUserWait(sessionID session.SessionID, runtime sessionRuntime, request pi.UIRequest) {
+	question := strings.TrimSpace(request.Prompt)
+	if question == "" {
+		question = strings.TrimSpace(request.Message)
+	}
+	if question == "" {
+		question = strings.TrimSpace(request.Title)
+	}
+	if question == "" {
+		question = "Runtime requested user input"
+	}
+	blockingReason := strings.TrimSpace(stringValueFromMap(request.Metadata, "blocking_reason", "blockingReason"))
+	if blockingReason == "" {
+		blockingReason = "runtime requested ask_user input"
+	}
+	attempted := strings.TrimSpace(stringValueFromMap(request.Metadata, "attempted"))
+	if attempted == "" {
+		attempted = "runtime emitted ask_user"
+	}
+	fallback := strings.TrimSpace(stringValueFromMap(request.Metadata, "default_if_no_reply", "defaultIfNoReply"))
+	if fallback == "" {
+		fallback = "No reply received. Continue with the safest reversible assumption and state the assumption."
+	}
+	result, err := s.AskUserWait(context.Background(), RuntimeWaitRequest{
+		SessionID:           sessionID,
+		RequestID:           strings.TrimSpace(request.RequestID),
+		Question:            question,
+		Context:             strings.TrimSpace(request.Context),
+		BlockingReason:      blockingReason,
+		Attempted:           attempted,
+		DefaultIfNoReply:    fallback,
+		TimeoutAfterMinutes: timeoutMinutes(request.TimeoutMS),
+	})
+	if err != nil {
+		return
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return
+	}
+	value := string(payload)
+	requestID := strings.TrimSpace(request.RequestID)
+	if requestID == "" {
+		requestID = result.WaitID
+	}
+	if err := runtime.RespondUI(context.Background(), requestID, value); err != nil {
+		_ = s.emitRuntimeControlDiagnostic(sessionID, "ask_user_wait_response", err)
+	}
+	if state, ok, err := s.registry.SetBusy(sessionID, false); err == nil && ok {
+		s.emitSessionState(sessionID)
+		if !state.Busy() {
+			s.scheduleQueuedDispatch(sessionID)
+		}
+	}
+}
+
+func stringValueFromMap(raw map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if raw == nil {
+			return ""
+		}
+		if value, ok := raw[key]; ok {
+			return strings.TrimSpace(fmt.Sprint(value))
+		}
+	}
+	return ""
+}
+
+func timeoutMinutes(timeoutMS *int) *int {
+	if timeoutMS == nil || *timeoutMS <= 0 {
+		return nil
+	}
+	minutes := (*timeoutMS + int(time.Minute/time.Millisecond) - 1) / int(time.Minute/time.Millisecond)
+	if minutes < 1 {
+		minutes = 1
+	}
+	return &minutes
 }

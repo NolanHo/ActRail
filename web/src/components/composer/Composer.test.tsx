@@ -31,6 +31,7 @@ vi.mock("./TodoComposerPanel", async (importOriginal) => {
 
 import { Composer } from "./Composer";
 import { createComposerStore } from "../../domains/composer/store";
+import { createWaitsStore } from "../../domains/waits/store";
 
 interface RenderComposerOptions {
   activeSessionId?: string | null;
@@ -66,6 +67,7 @@ interface RenderComposerOptions {
   composerStore?: any;
   compactMobile?: boolean;
   newSessionDefaults?: Record<string, unknown> | null;
+  waitsStore?: any;
 }
 
 let root: HTMLDivElement | null = null;
@@ -139,6 +141,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     composerStore: providedComposerStore,
     compactMobile = false,
     newSessionDefaults = null,
+    waitsStore = createWaitsStore(),
   } = options;
   const submit = vi.fn().mockResolvedValue(submitResult);
   const liveSessionStore = createStore(
@@ -213,6 +216,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
         composerStore={composerStore as any}
         liveSessionStore={liveSessionStore as any}
         sessionUiStore={sessionUiStore as any}
+        waitsStore={waitsStore as any}
       >
         <Composer compactMobile={compactMobile} />
       </AppProviders>,
@@ -287,6 +291,28 @@ describe("Composer", () => {
     expect(textarea.disabled).toBe(false);
     expect(queueButton.disabled).toBe(false);
     expect(sendButton.disabled).toBe(true);
+  });
+
+  it("disables normal composer while an active wait exists", async () => {
+    const waitsStore = createWaitsStore();
+    waitsStore.applyFrame({ type: "wait.created", stream: "session:sess-1:ui", payload: { wait: { wait_id: "w1", thread_id: "t1", session_id: "sess-1", state: "pending_unread", question: "Proceed?" } } } as never);
+    const { submit } = renderComposer({ waitsStore, draft: "normal draft" });
+
+    const composerRoot = getRoot();
+    const textarea = composerRoot.querySelector("textarea") as HTMLTextAreaElement;
+    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Queue")) as HTMLButtonElement;
+    const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
+
+    expect(composerRoot.textContent).toContain("Answer the active wait in Details before sending a normal message.");
+    expect(textarea.placeholder).toBe("Answer the active wait in Details");
+    expect(queueButton.disabled).toBe(true);
+    expect(sendButton.disabled).toBe(true);
+
+    await act(async () => {
+      sendButton.click();
+    });
+
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("keeps supervisor-enabled drafts editable while disabling manual send and queue", async () => {

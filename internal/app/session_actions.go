@@ -414,6 +414,9 @@ func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (Del
 	if err := record.runtime.Kill(ctx); err != nil {
 		return DeleteSessionResponse{}, err
 	}
+	if err := s.orphanActiveWaits(ctx, &req.SessionID); err != nil {
+		return DeleteSessionResponse{}, err
+	}
 	removed, ok, err := s.registry.Delete(req.SessionID)
 	if err != nil {
 		return DeleteSessionResponse{}, err
