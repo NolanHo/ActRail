@@ -576,6 +576,7 @@ export interface MessageEvent {
   stream_id?: string;
   turn_id?: string;
   event_id?: string;
+  parent_event_id?: string;
   request_id?: string;
   request_state?: string;
   session_id?: string;

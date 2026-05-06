@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
+import { TraceView } from "./TraceView";
 import { WaitCard } from "../waits/WaitCard";
 import { useComposerStoreApi, useComposerStoreSelector, useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
 import { api } from "../../lib/api";
@@ -2875,6 +2876,10 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const activeSession = items.find((session) => session.session_id === activeSessionId) ?? null;
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
+  const [selectedView, setSelectedView] = useState<"conversation" | "trace">("conversation");
+  useEffect(() => {
+    setSelectedView("conversation");
+  }, [activeSessionId]);
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsHistoricalPi = activeSession?.historical === true && activeSessionIsPi;
   const allowLegacyAskUserFallback = Boolean(activeSessionIsPi && activeSession?.transport !== "pi-rpc");
@@ -3139,13 +3144,33 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   };
 
   return (
-    <section ref={sectionRef} className="conversationTimeline relative flex min-h-0 flex-1">
+    <section ref={sectionRef} className="conversationTimeline relative flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2 text-sm">
+        <button
+          type="button"
+          className={cn("rounded-full px-3 py-1.5 transition", selectedView === "conversation" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground")}
+          onClick={() => setSelectedView("conversation")}
+          aria-pressed={selectedView === "conversation"}
+        >
+          Conversation
+        </button>
+        <button
+          type="button"
+          className={cn("rounded-full px-3 py-1.5 transition", selectedView === "trace" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground")}
+          onClick={() => setSelectedView("trace")}
+          aria-pressed={selectedView === "trace"}
+        >
+          Trace
+        </button>
+      </div>
       <ScrollArea
-        key={activeSessionId || "no-session"}
+        key={`${activeSessionId || "no-session"}:${selectedView}`}
         className={cn("conversationPane conversationScrollArea min-h-0 flex-1 px-3 py-4", !activeSessionId && "emptyState")}
       >
         {showLoadingState ? (
           renderLoadingCards()
+        ) : selectedView === "trace" ? (
+          <TraceView sessionId={activeSessionId} runtimeId={activeSessionRuntimeId} messages={messages} />
         ) : (
           <div className="messageList flex flex-col gap-3">
             {showHistoryControls || showHistoryTopReached ? (
@@ -3226,7 +3251,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
           </div>
         )}
       </ScrollArea>
-      {showPreviousUserJump || showScrollToBottom ? (
+      {selectedView === "conversation" && (showPreviousUserJump || showScrollToBottom) ? (
         <div className="conversationNavButtons">
           {showPreviousUserJump ? (
             <Button
