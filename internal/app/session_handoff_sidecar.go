@@ -3,7 +3,9 @@ package app
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,25 +137,33 @@ func handoffSourceRows(sourcePath string) ([]handoffSourceRow, error) {
 		return nil, fmt.Errorf("open handoff source %q: %w", sourcePath, err)
 	}
 	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
+	reader := bufio.NewReader(file)
 	rows := make([]handoffSourceRow, 0)
 	lineNo := 0
-	for scanner.Scan() {
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil && len(line) == 0 {
+			if !errors.Is(err, io.EOF) {
+				return nil, fmt.Errorf("read handoff source %q line %d: %w", sourcePath, lineNo+1, err)
+			}
+			break
+		}
 		lineNo++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+		trimmed := strings.TrimSpace(string(line))
+		if trimmed != "" {
+			var raw map[string]any
+			if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+				return nil, fmt.Errorf("parse handoff source %q line %d: %w", sourcePath, lineNo, err)
+			}
+			material := pi.ParseRawObject(raw)
+			rows = append(rows, handoffSourceRow{line: lineNo, raw: raw, material: material})
 		}
-		var raw map[string]any
-		if err := json.Unmarshal([]byte(line), &raw); err != nil {
-			return nil, fmt.Errorf("parse handoff source %q line %d: %w", sourcePath, lineNo, err)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return nil, fmt.Errorf("read handoff source %q line %d: %w", sourcePath, lineNo, err)
+			}
+			break
 		}
-		material := pi.ParseRawObject(raw)
-		rows = append(rows, handoffSourceRow{line: lineNo, raw: raw, material: material})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan handoff source %q: %w", sourcePath, err)
 	}
 	return rows, nil
 }

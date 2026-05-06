@@ -450,6 +450,53 @@ func TestStubSessionActionsReturnNotFoundOrUnsupported(t *testing.T) {
 
 }
 
+func TestStubHandoffSessionHandlesLargeSourceLines(t *testing.T) {
+	svc, handles, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
+	oldRecord, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	oldSourcePath := strings.TrimSpace(oldRecord.importedSourcePath)
+	if oldSourcePath == "" {
+		t.Fatal("old importedSourcePath is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(oldSourcePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(old source dir) error = %v", err)
+	}
+	largeToolResult := strings.Repeat("x", maxRuntimeLineBytes+1024)
+	body := strings.Join([]string{
+		`{"type":"session","version":3,"id":"pi-old","cwd":"/tmp/project"}`,
+		`{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"continue work"}]}}`,
+		fmt.Sprintf(`{"type":"tool_result","id":"t1","call_id":"call-1","name":"bash","text":%q}`, largeToolResult),
+		`{"type":"message","id":"u2","message":{"role":"user","content":[{"type":"text","text":"last instruction"}]}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(oldSourcePath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(old source) error = %v", err)
+	}
+
+	response, err := svc.HandoffSession(context.Background(), HandoffSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("HandoffSession() error = %v", err)
+	}
+	if !response.OK || response.Session == nil {
+		t.Fatalf("HandoffSession() = %+v", response)
+	}
+	if len(*handles) != 2 {
+		t.Fatalf("len(handles) = %d, want 2", len(*handles))
+	}
+	if _, err := os.Stat(response.SidecarPath); err != nil {
+		t.Fatalf("Stat(SidecarPath) error = %v", err)
+	}
+	newID, err := session.ParseSessionID(response.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID(new) error = %v", err)
+	}
+	if _, err := svc.lookupSession(newID); err != nil {
+		t.Fatalf("lookupSession(new) error = %v", err)
+	}
+}
+
 func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T) {
 	svc, handles, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
 	oldRecord, err := svc.lookupSession(sessionID)
