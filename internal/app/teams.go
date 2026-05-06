@@ -277,11 +277,7 @@ func (s *Stub) SpawnTeam(ctx context.Context, req SpawnTeamRequest) (TeamCommand
 		return TeamCommandResponse{}, err
 	}
 	if strings.TrimSpace(req.ParentActorID) == "" {
-		parent, ok := s.registry.Lookup(parentSessionID)
-		if !ok {
-			return TeamCommandResponse{}, NotFound(fmt.Sprintf("parent session %q not found", parentSessionID))
-		}
-		if parent.hidden {
+		if parent, ok := s.registry.Lookup(parentSessionID); ok && parent.hidden {
 			return TeamCommandResponse{}, Forbidden("parent_session_id refers to a generated child session; use parent_actor_id")
 		}
 	}

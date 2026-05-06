@@ -239,12 +239,14 @@ func TestCloseTeamKillsChildRuntimeWithoutDeletingHistory(t *testing.T) {
 	}
 }
 
-func TestSpawnTeamRejectsMissingParentSession(t *testing.T) {
+func TestSpawnTeamAcceptsExternalParentSessionID(t *testing.T) {
 	s := newStub(config.Load(), time.Now)
-	_, err := s.SpawnTeam(context.Background(), testSpawnTeamRequest("missing", "reviewer", "", "/repo"))
-	var appErr *Error
-	if !errors.As(err, &appErr) || appErr.Code != "not_found" {
-		t.Fatalf("SpawnTeam() error = %v, want not_found", err)
+	spawned, err := s.SpawnTeam(context.Background(), testSpawnTeamRequest("external_parent", "reviewer", "", "/repo"))
+	if err != nil {
+		t.Fatalf("SpawnTeam() error = %v", err)
+	}
+	if spawned.Actor == nil || spawned.Actor.ParentSessionID != "external_parent" {
+		t.Fatalf("SpawnTeam() = %+v, want actor linked to external parent", spawned)
 	}
 }
 
