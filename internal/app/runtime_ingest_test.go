@@ -170,11 +170,7 @@ func TestRuntimeAskUserCreatesWaitAndReturnsStructuredAnswer(t *testing.T) {
 	sink := &captureRuntimeSink{}
 	svc.SetRuntimeEventSink(sink)
 
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
-	if err != nil {
-		t.Fatalf("CreateSession() error = %v", err)
-	}
-	sessionID := mustSessionID(t, created.Session.SessionID)
+	sessionID := createWaitTestSessionID(t, svc)
 
 	event := pi.Event{Kind: pi.EventKindUIRequest, UIRequest: &pi.UIRequest{RequestID: "ask-runtime-1", Kind: pi.UIRequestKindAskUser, Prompt: "Proceed?", Context: "Runtime context", Metadata: map[string]any{"blocking_reason": "needs decision", "attempted": "inspected files", "default_if_no_reply": "use fallback"}}}
 	resultCh := make(chan RuntimeWaitResult, 1)

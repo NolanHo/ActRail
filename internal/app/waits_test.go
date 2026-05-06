@@ -6,19 +6,29 @@ import (
 	"time"
 
 	"actrail/internal/config"
+	"actrail/internal/domain/session"
 )
 
 func newWaitTestStub(now *time.Time) *Stub {
 	return NewStubForTest(config.Load(), func() time.Time { return *now }, RuntimeConfig{})
 }
 
+func createWaitTestSessionID(t *testing.T, svc *Stub) session.SessionID {
+	t.Helper()
+	identity, err := session.NewLiveIdentity(newID("s"), newID("r"), newID("t"), session.BackendPI.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	_, err = svc.registry.Create(sessionCreateSpec{Identity: &identity, Backend: session.BackendPI, CWD: t.TempDir(), Runtime: sessionRuntime{protocol: runtimeProtocolTTY}})
+	if err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	return identity.SessionID()
+}
+
 func createWaitTestSession(t *testing.T, svc *Stub) string {
 	t.Helper()
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
-	if err != nil {
-		t.Fatalf("CreateSession() error = %v", err)
-	}
-	return created.Session.SessionID
+	return createWaitTestSessionID(t, svc).String()
 }
 
 func createWaitRequest(t *testing.T, sessionID string) CreateWaitRequest {
