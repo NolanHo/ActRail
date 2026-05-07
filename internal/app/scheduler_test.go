@@ -31,19 +31,19 @@ func TestSchedulerSettingsDefaultAndUpdate(t *testing.T) {
 	}
 }
 
-func TestSetAlarmPersistsSchedulerItem(t *testing.T) {
+func TestCreateSelfReminderPersistsSchedulerItem(t *testing.T) {
 	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 	svc := NewStubForTest(config.Config{}, func() time.Time { return now }, RuntimeConfig{})
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	resp, err := svc.SetAlarm(context.Background(), SetAlarmRequest{SessionID: mustSchedulerSessionID(t, created.Session.SessionID), DurationSeconds: 60, Message: "check build"})
+	resp, err := svc.CreateSelfReminder(context.Background(), CreateSelfReminderRequest{SessionID: mustSchedulerSessionID(t, created.Session.SessionID), DurationSeconds: 60, Message: "check build"})
 	if err != nil {
-		t.Fatalf("SetAlarm() error = %v", err)
+		t.Fatalf("CreateSelfReminder() error = %v", err)
 	}
-	if resp.Alarm.Kind != "alarm" || resp.Alarm.State != "scheduled" || resp.Alarm.Title != "Alarm Response" {
-		t.Fatalf("alarm = %+v", resp.Alarm)
+	if resp.SelfReminder.Kind != "self_reminder" || resp.SelfReminder.State != "scheduled" || resp.SelfReminder.Title != "Self Reminder" {
+		t.Fatalf("self reminder = %+v", resp.SelfReminder)
 	}
 	snapshot, err := svc.SchedulerSnapshot(context.Background(), SchedulerSnapshotRequest{})
 	if err != nil {
@@ -54,7 +54,7 @@ func TestSetAlarmPersistsSchedulerItem(t *testing.T) {
 	}
 }
 
-func TestSchedulerSweepStagesDueAlarmsIntoInbox(t *testing.T) {
+func TestSchedulerSweepStagesDueSelfRemindersIntoInbox(t *testing.T) {
 	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 	svc := NewStubForTest(config.Config{}, func() time.Time { return now }, RuntimeConfig{})
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
@@ -62,8 +62,8 @@ func TestSchedulerSweepStagesDueAlarmsIntoInbox(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
 	sessionID := mustSchedulerSessionID(t, created.Session.SessionID)
-	if _, err := svc.SetAlarm(context.Background(), SetAlarmRequest{SessionID: sessionID, DurationSeconds: 0, Message: "check build"}); err != nil {
-		t.Fatalf("SetAlarm() error = %v", err)
+	if _, err := svc.CreateSelfReminder(context.Background(), CreateSelfReminderRequest{SessionID: sessionID, DurationSeconds: 0, Message: "check build"}); err != nil {
+		t.Fatalf("CreateSelfReminder() error = %v", err)
 	}
 
 	if err := svc.runSchedulerDeliverySweep(context.Background()); err != nil {
@@ -77,8 +77,30 @@ func TestSchedulerSweepStagesDueAlarmsIntoInbox(t *testing.T) {
 	if len(snapshot.Items) != 1 || snapshot.Items[0].State != "delivered" {
 		t.Fatalf("scheduler items = %+v", snapshot.Items)
 	}
-	if len(snapshot.Inbox) != 1 || snapshot.Inbox[0].Source != "alarm" || snapshot.Inbox[0].State != "pending" {
+	if len(snapshot.Inbox) != 1 || snapshot.Inbox[0].Source != "self_reminder" || snapshot.Inbox[0].State != "pending" {
 		t.Fatalf("inbox = %+v", snapshot.Inbox)
+	}
+}
+
+func TestCancelSelfReminder(t *testing.T) {
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	svc := NewStubForTest(config.Config{}, func() time.Time { return now }, RuntimeConfig{})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSchedulerSessionID(t, created.Session.SessionID)
+	reminder, err := svc.CreateSelfReminder(context.Background(), CreateSelfReminderRequest{SessionID: sessionID, DurationSeconds: 60, Message: "check build"})
+	if err != nil {
+		t.Fatalf("CreateSelfReminder() error = %v", err)
+	}
+
+	cancelled, err := svc.CancelSelfReminder(context.Background(), CancelSelfReminderRequest{ItemID: reminder.SelfReminder.ItemID})
+	if err != nil {
+		t.Fatalf("CancelSelfReminder() error = %v", err)
+	}
+	if cancelled.SelfReminder.State != "cancelled" {
+		t.Fatalf("cancelled self reminder = %+v", cancelled.SelfReminder)
 	}
 }
 
@@ -91,8 +113,8 @@ func TestSchedulerSweepDeliversIdleInboxItemsToSession(t *testing.T) {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
 	sessionID := mustSchedulerSessionID(t, created.Session.SessionID)
-	if _, err := svc.SetAlarm(context.Background(), SetAlarmRequest{SessionID: sessionID, DurationSeconds: 0, Message: "check build"}); err != nil {
-		t.Fatalf("SetAlarm() error = %v", err)
+	if _, err := svc.CreateSelfReminder(context.Background(), CreateSelfReminderRequest{SessionID: sessionID, DurationSeconds: 0, Message: "check build"}); err != nil {
+		t.Fatalf("CreateSelfReminder() error = %v", err)
 	}
 	if err := svc.runSchedulerDeliverySweep(context.Background()); err != nil {
 		t.Fatalf("stage runSchedulerDeliverySweep() error = %v", err)
@@ -116,7 +138,7 @@ func TestSchedulerSweepDeliversIdleInboxItemsToSession(t *testing.T) {
 	if len(messages.Items) != 1 || messages.Items[0].Role != "user" || messages.Items[0].Text == "" {
 		t.Fatalf("messages = %+v", messages.Items)
 	}
-	if messages.Items[0].Text != "<Inbox>\n<title>Alarm Response</title>\n<source>alarm</source>\n<message>check build</message>\n</Inbox>" {
+	if messages.Items[0].Text != "<Inbox>\n<title>Self Reminder</title>\n<source>self_reminder</source>\n<message>check build</message>\n</Inbox>" {
 		t.Fatalf("delivered text = %q", messages.Items[0].Text)
 	}
 }

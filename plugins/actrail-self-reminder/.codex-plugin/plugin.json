@@ -1,0 +1,39 @@
+{
+  "name": "actrail-self-reminder",
+  "version": "0.1.0",
+  "description": "Schedule ActRail self-reminders for Codex sessions through the Scheduler API.",
+  "author": {
+    "name": "Nolan Ho",
+    "email": "nolan@example.com",
+    "url": "https://github.com/NolanHo"
+  },
+  "homepage": "https://github.com/NolanHo/ActRail",
+  "repository": "https://github.com/NolanHo/ActRail",
+  "license": "MIT",
+  "keywords": [
+    "actrail",
+    "scheduler",
+    "self-reminder",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ActRail Self Reminder",
+    "shortDescription": "Schedule future notes for ActRail sessions",
+    "longDescription": "Create, list, and cancel Scheduler-owned self-reminders that later enter an ActRail session through Inbox idle delivery.",
+    "developerName": "Nolan Ho",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/NolanHo/ActRail",
+    "privacyPolicyURL": "https://github.com/NolanHo/ActRail",
+    "termsOfServiceURL": "https://github.com/NolanHo/ActRail",
+    "defaultPrompt": [
+      "Schedule a self-reminder for this ActRail session."
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

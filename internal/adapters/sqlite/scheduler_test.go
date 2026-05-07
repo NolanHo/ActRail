@@ -18,11 +18,11 @@ func TestSchedulerAndInboxPersist(t *testing.T) {
 	if err := catalog.UpsertSchedulerSettings(context.Background(), settings); err != nil {
 		t.Fatalf("UpsertSchedulerSettings() error = %v", err)
 	}
-	alarm := SchedulerItemRow{ItemID: "alarm_1", SessionID: "sess-1", Kind: "alarm", Title: "Alarm Response", Message: "check", DueAt: now.Add(time.Minute), State: "scheduled", CreatedBy: "agent", CreatedAt: now, UpdatedAt: now}
-	if err := catalog.InsertSchedulerItem(context.Background(), alarm); err != nil {
+	selfReminder := SchedulerItemRow{ItemID: "self_reminder_1", SessionID: "sess-1", Kind: "self_reminder", Title: "Self Reminder", Message: "check", DueAt: now.Add(time.Minute), State: "scheduled", CreatedBy: "agent", CreatedAt: now, UpdatedAt: now}
+	if err := catalog.InsertSchedulerItem(context.Background(), selfReminder); err != nil {
 		t.Fatalf("InsertSchedulerItem() error = %v", err)
 	}
-	inbox := InboxItemRow{ItemID: "inbox_1", SessionID: "sess-1", Source: "alarm", SourceID: "alarm_1", Title: "Alarm Response", Message: "check", DueAt: now.Add(time.Minute), State: "pending", CreatedAt: now, UpdatedAt: now}
+	inbox := InboxItemRow{ItemID: "inbox_1", SessionID: "sess-1", Source: "self_reminder", SourceID: "self_reminder_1", Title: "Self Reminder", Message: "check", DueAt: now.Add(time.Minute), State: "pending", CreatedAt: now, UpdatedAt: now}
 	if err := catalog.InsertInboxItem(context.Background(), inbox); err != nil {
 		t.Fatalf("InsertInboxItem() error = %v", err)
 	}
@@ -46,26 +46,33 @@ func TestSchedulerAndInboxPersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSchedulerItems() error = %v", err)
 	}
-	if len(items) != 1 || items[0].ItemID != "alarm_1" {
+	if len(items) != 1 || items[0].ItemID != "self_reminder_1" {
 		t.Fatalf("scheduler items = %+v", items)
+	}
+	item, ok, err := reloaded.LookupSchedulerItem(context.Background(), "self_reminder_1")
+	if err != nil {
+		t.Fatalf("LookupSchedulerItem() error = %v", err)
+	}
+	if !ok || item.Kind != "self_reminder" {
+		t.Fatalf("lookup scheduler item = %+v ok=%v", item, ok)
 	}
 	dueItems, err := reloaded.ListDueSchedulerItems(context.Background(), now.Add(2*time.Minute), 10)
 	if err != nil {
 		t.Fatalf("ListDueSchedulerItems() error = %v", err)
 	}
-	if len(dueItems) != 1 || dueItems[0].ItemID != "alarm_1" {
+	if len(dueItems) != 1 || dueItems[0].ItemID != "self_reminder_1" {
 		t.Fatalf("due scheduler items = %+v", dueItems)
 	}
-	alarm.State = "delivered"
-	alarm.UpdatedAt = now.Add(2 * time.Minute)
-	if err := reloaded.UpdateSchedulerItem(context.Background(), alarm); err != nil {
+	selfReminder.State = "delivered"
+	selfReminder.UpdatedAt = now.Add(2 * time.Minute)
+	if err := reloaded.UpdateSchedulerItem(context.Background(), selfReminder); err != nil {
 		t.Fatalf("UpdateSchedulerItem() error = %v", err)
 	}
 	inboxItems, err := reloaded.ListInboxItems(context.Background(), "sess-1", 10)
 	if err != nil {
 		t.Fatalf("ListInboxItems() error = %v", err)
 	}
-	if len(inboxItems) != 1 || inboxItems[0].SourceID != "alarm_1" {
+	if len(inboxItems) != 1 || inboxItems[0].SourceID != "self_reminder_1" {
 		t.Fatalf("inbox items = %+v", inboxItems)
 	}
 	readyItems, err := reloaded.ListReadyInboxItems(context.Background(), now.Add(2*time.Minute), 10)

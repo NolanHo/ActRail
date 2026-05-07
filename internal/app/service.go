@@ -67,7 +67,8 @@ type Service interface {
 	SchedulerSnapshot(context.Context, SchedulerSnapshotRequest) (SchedulerSnapshotResponse, error)
 	UpdateSchedulerSettings(context.Context, UpdateSchedulerSettingsRequest) (SchedulerSettings, error)
 	SessionInbox(context.Context, SessionInboxRequest) (SessionInboxResponse, error)
-	SetAlarm(context.Context, SetAlarmRequest) (SetAlarmResponse, error)
+	CreateSelfReminder(context.Context, CreateSelfReminderRequest) (SelfReminderResponse, error)
+	CancelSelfReminder(context.Context, CancelSelfReminderRequest) (SelfReminderResponse, error)
 }
 
 type Stub struct {

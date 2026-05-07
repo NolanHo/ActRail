@@ -44,6 +44,17 @@ func (m *memorySchedulerStore) InsertSchedulerItem(_ context.Context, row sqlite
 	return nil
 }
 
+func (m *memorySchedulerStore) LookupSchedulerItem(_ context.Context, itemID string) (sqlitestore.SchedulerItemRow, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, row := range m.schedule {
+		if row.ItemID == itemID {
+			return row, true, nil
+		}
+	}
+	return sqlitestore.SchedulerItemRow{}, false, nil
+}
+
 func (m *memorySchedulerStore) ListSchedulerItems(_ context.Context, limit int) ([]sqlitestore.SchedulerItemRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

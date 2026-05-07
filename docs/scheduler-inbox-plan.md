@@ -14,7 +14,7 @@ Global Scheduler is a top-level view in the left global view rail, at the same l
 
 Workspace Inbox is a per-session pane opened from the active session toolbar. It shows pending, delivered, cancelled, and failed inbox items for the active session.
 
-Supervisor is not a workspace primary tool. It becomes a Scheduler preset and an Inbox source. Existing per-session policy remains, but supervisor output emits an inbox item instead of directly injecting a prompt.
+Supervisor is not a workspace primary tool. It belongs to ActRail policy and scheduling, not to an agent-visible skill. Self-reminders are Scheduler events that can become deferred input for the target session.
 
 ## Backend objects
 
@@ -24,13 +24,12 @@ Supervisor is not a workspace primary tool. It becomes a Scheduler preset and an
 idle_before_delivery_seconds = 30
 ```
 
-`scheduler_items` stores producer schedules such as alarms and supervisor preset runs.
+`scheduler_items` stores producer schedules such as self-reminders.
 
 `scheduler_items.kind` values:
 
 ```text
-alarm
-supervisor
+self_reminder
 ```
 
 `inbox_items` stores session-scoped deliverable messages.
@@ -38,7 +37,7 @@ supervisor
 `inbox_items.source` values:
 
 ```text
-alarm
+self_reminder
 supervisor
 manual
 ```
@@ -59,8 +58,8 @@ Dispatcher sends one user message per delivered inbox item:
 
 ```xml
 <Inbox>
-<title>Alarm Response</title>
-<source>alarm</source>
+<title>Self Reminder</title>
+<source>self_reminder</source>
 <message>...</message>
 </Inbox>
 ```
@@ -104,16 +103,16 @@ Delivery must atomically claim the inbox item, recheck session state, send the e
    - add Workspace Inbox toolbar button and pane
    - show read-only persisted backend snapshots
 
-3. Alarm producer:
-   - server API for creating alarms
-   - server-side entry point equivalent to SetAlarm(duration, message)
-   - due alarms emit inbox items
+3. Self-reminder producer:
+   - server API for creating self-reminders
+   - server-side entry point equivalent to CreateSelfReminder(duration, message)
+   - due self-reminders emit inbox items
 
 4. Dispatcher:
    - idle timer and busy/queue/wait/transport gate
    - atomic claim and delivered/failed state transitions
 
 5. Supervisor migration:
-   - supervisor run with inject decision creates inbox item
-   - remove direct supervisor prompt injection path
-   - expose supervisor as Scheduler preset and Inbox source filter
+   - keep Supervisor as ActRail-owned synthetic-user capability
+   - do not expose Supervisor as an agent skill
+   - route any future Supervisor injection through a session-wide input commit gate
