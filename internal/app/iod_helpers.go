@@ -312,7 +312,11 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 	}
 	for _, record := range s.registry.List() {
 		sessionID := record.identity.SessionID()
-		if record.identity.Historical() || record.runtime.UsesPIAgentGRPC() || startupTransportAlreadyTerminal(record.transport) {
+		if record.identity.Historical() || record.runtime.UsesPIAgentGRPC() {
+			continue
+		}
+		_, hasAttachment := attachments[sessionID]
+		if !hasAttachment && startupTransportAlreadyTerminal(record.transport) {
 			continue
 		}
 		transport := startupTransportForSession(sessionID, bindings, attachments, fencedBySession[sessionID])
