@@ -192,6 +192,54 @@ describe("NewSessionDialog", () => {
     expect((root.querySelector('select[name="reasoningEffort"]') as HTMLSelectElement).value).toBe("high");
   });
 
+  it("lets default Codex launches inherit provider and model from Codex config", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.createSession).mockResolvedValue({ session_id: "new", backend: "codex", ok: true } as any);
+    vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
+      exists: true,
+      will_create: false,
+      git_repo: false,
+      sessions: [],
+    } as any);
+    const sessionsStore = createSessionsStore({
+      items: [],
+      activeSessionId: null,
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/root/docs"],
+      tmuxAvailable: false,
+      newSessionDefaults: {
+        default_backend: "codex",
+        backends: {
+          codex: { provider_choice: "crs", provider_choices: ["crs"], model: "gpt-5.5", models: ["gpt-5.5"] },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await flush();
+
+    const form = root.querySelector("form") as HTMLFormElement;
+    await submitForm(form);
+    await flush();
+
+    expect(api.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      agent_backend: "codex",
+      provider: undefined,
+      model: undefined,
+      reasoning_effort: undefined,
+    }));
+  });
+
   it("does not load or select backend history while Start is active", async () => {
     const { api } = await import("../../lib/api");
     vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
@@ -582,7 +630,7 @@ describe("NewSessionDialog", () => {
       cwd: "/tmp/project",
       title: "Inbox cleanup",
       agent_backend: "codex",
-      provider: "chatgpt",
+      provider: undefined,
       model: undefined,
       reasoning_effort: undefined,
       resume_session_id: undefined,
@@ -779,7 +827,7 @@ describe("NewSessionDialog", () => {
       cwd: "/tmp/project",
       title: "fresh-name",
       agent_backend: "codex",
-      provider: "chatgpt",
+      provider: undefined,
       model: undefined,
       reasoning_effort: undefined,
       resume_session_id: undefined,

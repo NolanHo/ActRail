@@ -193,6 +193,17 @@ describe("createMessagesStore", () => {
     expect(store.getState().bySessionId.s1).toEqual([{ id: "m1", role: "user", seq: 1 }, { id: "m2", seq: 2 }]);
   });
 
+  it("dedupes SessionMessages rows by event id before seq", async () => {
+    const store = createMessagesStore();
+
+    store.applyLive("s1", [{ seq: 1, event_id: "codex:message:user-1", role: "user", text: "continue" } as any], { replace: true, offset: 1 });
+    store.applySnapshot("s1", [{ seq: 2, event_id: "codex:message:user-1", role: "user", text: "continue" } as any], { offset: 2 });
+
+    expect(store.getState().bySessionId.s1).toEqual([
+      { seq: 2, event_id: "codex:message:user-1", role: "user", text: "continue" },
+    ]);
+  });
+
   it("replaces snapshot pages that do not expose a stable merge key", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({ events: [{ role: "assistant", text: "hello" }], offset: 1 } as never)

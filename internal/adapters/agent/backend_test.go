@@ -119,14 +119,14 @@ func TestCodexCommandArgsUseConfigOverrideForProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_provider="openrouter"`, "-c", `model_reasoning_effort="high"`, "--model", "gpt-5", "app-server"}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `approval_policy="never"`, "-c", `sandbox_mode="danger-full-access"`, "-c", `model_provider="openrouter"`, "-c", `model_reasoning_effort="high"`, "--model", "gpt-5", "app-server"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}
 }
 
 func TestCodexCommandArgsIncludeListenURL(t *testing.T) {
-	opts, err := NewOptionsWithRuntimeFlags("openai", "gpt-5", "", "", "", "unix:///tmp/actrail/child.sock", true)
+	opts, err := NewOptionsWithRuntimeFlags("openai", "gpt-5", "", "", "", "unix:///tmp/actrail/s_1/g_1/child.sock", true)
 	if err != nil {
 		t.Fatalf("NewOptionsWithRuntimeFlags() error = %v", err)
 	}
@@ -134,14 +134,14 @@ func TestCodexCommandArgsIncludeListenURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_provider="openai"`, "-c", `model_reasoning_effort="high"`, "--model", "gpt-5", "app-server", "--listen", "unix:///tmp/actrail/child.sock"}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `approval_policy="never"`, "-c", `sandbox_mode="danger-full-access"`, "-c", `model_provider="openai"`, "-c", `model_reasoning_effort="high"`, "--model", "gpt-5", "app-server", "--listen", "unix:///tmp/actrail/s_1/g_1/child.sock"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}
 }
 
 func TestCodexCommandArgsCanDisableDangerousBypass(t *testing.T) {
-	opts, err := NewOptionsWithRuntimeFlags("openai", "gpt-5", "", "", "", "unix:///tmp/actrail/child.sock", false)
+	opts, err := NewOptionsWithRuntimeFlags("openai", "gpt-5", "", "", "", "unix:///tmp/actrail/s_1/g_1/child.sock", false)
 	if err != nil {
 		t.Fatalf("NewOptionsWithRuntimeFlags() error = %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCodexCommandArgsCanDisableDangerousBypass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"-c", `model_provider="openai"`, "-c", `model_reasoning_effort="high"`, "--model", "gpt-5", "app-server", "--listen", "unix:///tmp/actrail/child.sock"}
+	want := []string{"-c", `model_provider="openai"`, "-c", `model_reasoning_effort="high"`, "--model", "gpt-5", "app-server", "--listen", "unix:///tmp/actrail/s_1/g_1/child.sock"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}

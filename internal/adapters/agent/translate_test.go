@@ -79,7 +79,7 @@ func TestCatalogLaunchSpecForCodex(t *testing.T) {
 	if spec.Command().Path() != "/usr/local/bin/codex" {
 		t.Fatalf("command path = %q, want %q", spec.Command().Path(), "/usr/local/bin/codex")
 	}
-	wantArgs := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_provider="openrouter"`, "-c", `model_reasoning_effort="high"`, "--model", "gpt-5", "app-server"}
+	wantArgs := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `approval_policy="never"`, "-c", `sandbox_mode="danger-full-access"`, "-c", `model_provider="openrouter"`, "-c", `model_reasoning_effort="high"`, "--model", "gpt-5", "app-server"}
 	if !reflect.DeepEqual(spec.Command().Args(), wantArgs) {
 		t.Fatalf("command args = %#v, want %#v", spec.Command().Args(), wantArgs)
 	}

@@ -493,6 +493,71 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 	}
 }
 
+func TestCodexChildLaunchSpecUsesUniqueIODSocketPerGeneration(t *testing.T) {
+	launcher := processRuntimeLauncher{iodRuntimeRoot: "/tmp/actrail-data/runtime/iod", catalog: agent.DefaultCatalog(), codexDangerousBypass: true}
+	env, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("InheritEnv() error = %v", err)
+	}
+	launcher.env = env
+	ioSpec, err := process.PipeIO(process.LogPaths{})
+	if err != nil {
+		t.Fatalf("PipeIO() error = %v", err)
+	}
+	launcher.io = ioSpec
+	launcher.resolveBinPath = func(backend session.Backend) (string, error) {
+		if backend != session.BackendCodex {
+			t.Fatalf("ResolveBinPath() backend = %q, want codex", backend)
+		}
+		return "/tmp/codex", nil
+	}
+
+	firstSession := mustSessionID(t, "s_codex_socket_1")
+	secondSession := mustSessionID(t, "s_codex_socket_2")
+	generationID, err := iod.NewGenerationID("g_codex_socket")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	firstPaths, err := iod.NewGenerationPaths(launcher.iodRuntimeRoot, firstSession, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths(first) error = %v", err)
+	}
+	secondPaths, err := iod.NewGenerationPaths(launcher.iodRuntimeRoot, secondSession, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths(second) error = %v", err)
+	}
+
+	firstSpec, err := launcher.childLaunchSpecForGeneration(runtimeLaunchRequest{SessionID: firstSession, Backend: session.BackendCodex, CWD: "/tmp/project"}, &firstPaths)
+	if err != nil {
+		t.Fatalf("childLaunchSpecForGeneration(first) error = %v", err)
+	}
+	secondSpec, err := launcher.childLaunchSpecForGeneration(runtimeLaunchRequest{SessionID: secondSession, Backend: session.BackendCodex, CWD: "/tmp/project"}, &secondPaths)
+	if err != nil {
+		t.Fatalf("childLaunchSpecForGeneration(second) error = %v", err)
+	}
+
+	firstListen := listenURLFromArgs(firstSpec.Command().Args())
+	secondListen := listenURLFromArgs(secondSpec.Command().Args())
+	if firstListen == "" || secondListen == "" {
+		t.Fatalf("listen urls = (%q, %q), want both set", firstListen, secondListen)
+	}
+	if firstListen == secondListen {
+		t.Fatalf("listen url = %q for both sessions, want unique per session", firstListen)
+	}
+	if firstListen != "unix://"+firstPaths.ChildSocketPath || secondListen != "unix://"+secondPaths.ChildSocketPath {
+		t.Fatalf("listen urls = (%q, %q), want (%q, %q)", firstListen, secondListen, "unix://"+firstPaths.ChildSocketPath, "unix://"+secondPaths.ChildSocketPath)
+	}
+}
+
+func listenURLFromArgs(args []string) string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--listen" {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
 func TestNewRuntimeLauncherResolvesIODRuntimeRootToAbsolutePath(t *testing.T) {
 	launcher := newRuntimeLauncher(RuntimeConfig{IODRuntimeRoot: "./data/runtime/iod", UseIODHelper: true})
 	processLauncher, ok := launcher.(processRuntimeLauncher)
@@ -563,7 +628,7 @@ func TestRuntimeLauncherCodexDangerousBypassDefaultsOnAndCanDisable(t *testing.T
 	if err != nil {
 		t.Fatalf("childLaunchSpec(default) error = %v", err)
 	}
-	wantDefault := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_reasoning_effort="high"`, "app-server"}
+	wantDefault := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `approval_policy="never"`, "-c", `sandbox_mode="danger-full-access"`, "-c", `model_reasoning_effort="high"`, "app-server"}
 	if !reflect.DeepEqual(spec.Command().Args(), wantDefault) {
 		t.Fatalf("default codex args = %#v, want %#v", spec.Command().Args(), wantDefault)
 	}
@@ -619,7 +684,7 @@ func TestCreateSessionCodexDangerousBypassDefaultsOnWithZeroConfig(t *testing.T)
 	if len(runner.Starts) != 1 {
 		t.Fatalf("len(runner.Starts) = %d, want 1", len(runner.Starts))
 	}
-	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_reasoning_effort="high"`, "app-server"}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `approval_policy="never"`, "-c", `sandbox_mode="danger-full-access"`, "-c", `model_reasoning_effort="high"`, "app-server"}
 	if !reflect.DeepEqual(runner.Starts[0].Command().Args(), want) {
 		t.Fatalf("codex args = %#v, want %#v", runner.Starts[0].Command().Args(), want)
 	}

@@ -1054,6 +1054,47 @@ func TestCreateSessionConsumesCodexRuntimeOutputIntoStateTranscriptAndEvents(t *
 	}
 }
 
+func TestCodexUserMessageEchoDoesNotDuplicateActRailPrompt(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+
+	if _, err := svc.AppendSessionMessage(sessionID, "user", "message", "continue"); err != nil {
+		t.Fatalf("AppendSessionMessage() error = %v", err)
+	}
+	_, _ = stdoutW.Write([]byte(
+		"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-echo\",\"turnId\":\"turn-codex-echo\",\"item\":{\"type\":\"userMessage\",\"id\":\"user-echo-1\",\"text\":\"continue\"}}}" + "\n" +
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-echo\",\"turnId\":\"turn-codex-echo\",\"item\":{\"type\":\"agentMessage\",\"id\":\"assistant-echo-1\",\"text\":\"done\"}}}" + "\n"))
+	_ = stdoutW.Close()
+
+	waitForAppCondition(t, func() bool {
+		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		return err == nil && len(messages.Items) == 2
+	})
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 2 {
+		t.Fatalf("SessionMessages().Items = %+v, want prompt plus assistant only", messages.Items)
+	}
+	if messages.Items[0].Role != "user" || messages.Items[0].Text != "continue" || messages.Items[1].Role != "assistant" || messages.Items[1].Text != "done" {
+		t.Fatalf("SessionMessages().Items = %+v, want deduped user echo followed by assistant", messages.Items)
+	}
+}
+
 func TestCodexSessionWaitsForThreadBeforeInput(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()

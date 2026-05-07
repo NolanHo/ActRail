@@ -13,6 +13,7 @@ import (
 
 	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/piagentgrpc"
+	"actrail/internal/domain/message"
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
@@ -1934,6 +1935,10 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 		return nil
 	}
 	if event.Message.Role == pi.MessageRoleUser {
+		if s.duplicateRuntimeUserMessage(sessionID, event.Message.Text) {
+			s.emitSessionState(sessionID)
+			return nil
+		}
 		committed, err := s.AppendSessionMessage(sessionID, role, "message", event.Message.Text)
 		if err != nil {
 			return err
@@ -1990,6 +1995,29 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	s.emitAssistantFinalNotification(sessionID, committed)
 	s.emitSessionState(sessionID)
 	return nil
+}
+
+func (s *Stub) duplicateRuntimeUserMessage(sessionID session.SessionID, text string) bool {
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return false
+	}
+	return duplicateRuntimeUserMessage(record.transcript.Items(), text)
+}
+
+func duplicateRuntimeUserMessage(items []message.CommittedMessage, text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item.Role().String() != "user" || item.Kind().String() != "message" {
+			continue
+		}
+		return strings.TrimSpace(item.Text()) == trimmed
+	}
+	return false
 }
 
 func (s *Stub) emitAssistantFinalNotification(sessionID session.SessionID, msg SessionMessage) {
