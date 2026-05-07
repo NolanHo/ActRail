@@ -67,10 +67,11 @@ function restartSessionProgressLabel(session: SessionSummary) {
 }
 
 export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: SessionsPaneProps) {
-  const { items, activeSessionId, remainingCount = 0 } = useSessionsStoreSelector((state) => ({
+  const { items, activeSessionId, remainingCount = 0, newSessionDefaults } = useSessionsStoreSelector((state) => ({
     items: state.items,
     activeSessionId: state.activeSessionId,
     remainingCount: state.remainingCount,
+    newSessionDefaults: state.newSessionDefaults,
   }), shallowEqual);
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
@@ -211,7 +212,7 @@ export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: 
         agent_backend: backend,
         model: String(source.model || session.model || "").trim() || undefined,
         provider: String(source.provider || session.provider_choice || "").trim() || undefined,
-        reasoning_effort: backendSupportsReasoningEffort(backend)
+        reasoning_effort: backendSupportsReasoningEffort(backend, newSessionDefaults)
           ? String((source as { reasoning_effort?: string | null }).reasoning_effort || session.reasoning_effort || "").trim() || undefined
           : undefined,
         title: String(source.title || source.alias || session.title || session.alias || "").trim() || undefined,

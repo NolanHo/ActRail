@@ -186,9 +186,29 @@ type LaunchConfig struct {
 }
 
 type NewSessionDefaults struct {
-	DefaultBackend     string                           `json:"default_backend,omitempty"`
-	Backends           map[string]LaunchBackendDefaults `json:"backends,omitempty"`
-	PIAgentGRPCDefault bool                             `json:"pi_agent_grpc_default"`
+	DefaultBackend      string                               `json:"default_backend,omitempty"`
+	Backends            map[string]LaunchBackendDefaults     `json:"backends,omitempty"`
+	BackendCapabilities map[string]BackendCapabilitySnapshot `json:"backend_capabilities,omitempty"`
+	PIAgentGRPCDefault  bool                                 `json:"pi_agent_grpc_default"`
+}
+
+type BackendCapabilitySnapshot struct {
+	LaunchProvider        bool `json:"launch_provider"`
+	LaunchModel           bool `json:"launch_model"`
+	LaunchReasoningEffort bool `json:"launch_reasoning_effort"`
+	RuntimeStreaming      bool `json:"runtime_streaming"`
+	RuntimeToolTrace      bool `json:"runtime_tool_trace"`
+	RuntimeReasoningTrace bool `json:"runtime_reasoning_trace"`
+	RuntimeContextUsage   bool `json:"runtime_context_usage"`
+	RuntimeUIRequests     bool `json:"runtime_ui_requests"`
+	RuntimeInterrupt      bool `json:"runtime_interrupt"`
+	RuntimeProbe          bool `json:"runtime_probe"`
+	IODStdio              bool `json:"iod_stdio"`
+	IODUnix               bool `json:"iod_unix"`
+	GRPC                  bool `json:"grpc"`
+	Supervisor            bool `json:"supervisor"`
+	ResumeHistory         bool `json:"resume_history"`
+	Worktree              bool `json:"worktree"`
 }
 
 type LaunchBackendDefaults struct {

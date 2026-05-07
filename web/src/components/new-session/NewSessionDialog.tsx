@@ -636,7 +636,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   resume_session_id: selectedResumeId || undefined,
                   provider: providerChoice.trim() || backendDefaults.provider_choice?.trim() || undefined,
                   model: model.trim() || undefined,
-                  reasoning_effort: backendSupportsReasoningEffort(backend) ? reasoningEffort.trim() || undefined : undefined,
+                  reasoning_effort: backendSupportsReasoningEffort(backend, newSessionDefaults) ? reasoningEffort.trim() || undefined : undefined,
                   pi_agent_grpc: backend === "pi" ? usePIAgentGRPC : undefined,
                 });
                 const optimisticSession = buildOptimisticCreatedSession(response, {

@@ -9,8 +9,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSessionUiStore, useSessionsStore, useWaitsStore } from "../../app/providers";
 import { api } from "../../lib/api";
 import { calculateContextTokenUsage, type ContextTokenUsageResult } from "../../lib/context-token-usage";
+import { backendCapability, normalizeLaunchBackend } from "../../lib/launch";
 import { getSessionDisplayName } from "../../lib/session-display";
-import type { MessageEvent, SessionSummary, SessionUiRequest } from "../../lib/types";
+import type { BackendCapabilitySnapshot, MessageEvent, SessionSummary, SessionUiRequest } from "../../lib/types";
 
 type MetadataEntry = [string, unknown];
 
@@ -172,6 +173,47 @@ function renderKeyValueList(entries: MetadataEntry[]) {
   );
 }
 
+const capabilityEntries: Array<[keyof BackendCapabilitySnapshot, string]> = [
+  ["launch_provider", "launch provider"],
+  ["launch_model", "launch model"],
+  ["launch_reasoning_effort", "launch reasoning"],
+  ["runtime_streaming", "streaming"],
+  ["runtime_tool_trace", "tool trace"],
+  ["runtime_reasoning_trace", "reasoning trace"],
+  ["runtime_context_usage", "context usage"],
+  ["runtime_ui_requests", "UI requests"],
+  ["runtime_interrupt", "interrupt"],
+  ["runtime_probe", "state probe"],
+  ["iod_stdio", "IOD stdio"],
+  ["iod_unix", "IOD unix"],
+  ["grpc", "gRPC"],
+  ["supervisor", "supervisor"],
+  ["resume_history", "resume history"],
+  ["worktree", "worktree"],
+];
+
+function BackendCapabilitiesPanel({ backend, capabilities }: { backend: string; capabilities: BackendCapabilitySnapshot | null }) {
+  return (
+    <WorkspaceSection title="Backend Capabilities" badge={backend}>
+      {capabilities ? (
+        <div className="workspaceCapabilityGrid">
+          {capabilityEntries.map(([key, label]) => {
+            const enabled = capabilities[key] === true;
+            return (
+              <div key={key} className="workspaceCapabilityItem" data-enabled={enabled ? "true" : "false"}>
+                <span>{label}</span>
+                <Badge variant={enabled ? "secondary" : "outline"}>{enabled ? "yes" : "no"}</Badge>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">No backend capability matrix available.</p>
+      )}
+    </WorkspaceSection>
+  );
+}
+
 
 function WorkspaceSection({ title, badge, children }: { title: string; badge?: string; children: ComponentChildren }) {
   return (
@@ -260,7 +302,7 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
     files?: string[];
   };
   const { sessionId, runtimeId, diagnostics, queue, loading } = sessionUiState;
-  const { items, activeSessionId } = useSessionsStore();
+  const { items, activeSessionId, newSessionDefaults } = useSessionsStore();
   const waitsState = useWaitsStore();
   const workspaceSessionId = sessionId ?? activeSessionId;
   const activeSession = workspaceSessionId ? items.find((item) => item.session_id === workspaceSessionId) ?? null : null;
@@ -271,6 +313,8 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
   const sessionMeta = sessionEntries(activeSession, workspaceSessionId);
   const runtimeMeta = runtimeEntries(activeSession, runtimeId, diagnostics);
   const diagnosticMeta = diagnosticEntries(diagnostics, typeof activeSession?.session_file_path === "string" && activeSession.session_file_path.trim().length > 0);
+  const activeBackend = normalizeLaunchBackend(activeSession?.agent_backend ?? (typeof diagnostics?.agent_backend === "string" ? diagnostics.agent_backend : undefined));
+  const activeBackendCapabilities = backendCapability(newSessionDefaults, activeBackend);
   const [contextUsageResult, setContextUsageResult] = useState<ContextTokenUsageResult | null>(null);
   const [contextUsageCalculating, setContextUsageCalculating] = useState(false);
   const [contextUsageError, setContextUsageError] = useState("");
@@ -330,6 +374,8 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
               <WorkspaceSection title="Runtime" badge={runtimeMeta.length ? `${runtimeMeta.length}` : undefined}>
                 {runtimeMeta.length ? renderKeyValueList(runtimeMeta) : <p className="text-sm text-muted-foreground">No runtime metadata available.</p>}
               </WorkspaceSection>
+
+              <BackendCapabilitiesPanel backend={activeBackend} capabilities={activeBackendCapabilities} />
 
               <WorkspaceSection title="Queue" badge={queueItems.length ? `${queueItems.length}` : undefined}>
                 {queueItems.length ? (

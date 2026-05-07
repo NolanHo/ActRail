@@ -1,8 +1,19 @@
+import type { BackendCapabilitySnapshot, NewSessionDefaults } from "./types";
+
 export function normalizeLaunchBackend(backend: string | null | undefined) {
   return String(backend || "codex").trim().toLowerCase() === "pi" ? "pi" : "codex";
 }
 
-export function backendSupportsReasoningEffort(backend: string | null | undefined) {
+export function backendCapability(defaults: NewSessionDefaults | null | undefined, backend: string | null | undefined): BackendCapabilitySnapshot | null {
+  const normalizedBackend = normalizeLaunchBackend(backend);
+  return defaults?.backend_capabilities?.[normalizedBackend] ?? null;
+}
+
+export function backendSupportsReasoningEffort(backend: string | null | undefined, defaults?: NewSessionDefaults | null) {
+  const capability = backendCapability(defaults, backend);
+  if (capability && typeof capability.launch_reasoning_effort === "boolean") {
+    return capability.launch_reasoning_effort;
+  }
   return normalizeLaunchBackend(backend) === "pi";
 }
 

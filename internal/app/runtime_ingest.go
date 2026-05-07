@@ -766,6 +766,17 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
+func firstLine(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if idx := strings.IndexByte(value, '\n'); idx >= 0 {
+		return strings.TrimSpace(value[:idx])
+	}
+	return value
+}
+
 func stringValue(value any) string {
 	if s, ok := value.(string); ok {
 		return s
@@ -810,6 +821,7 @@ func normalizeRuntimeTimestampSeconds(value float64) float64 {
 }
 
 type codexAppServerLine struct {
+	ID     string          `json:"id"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
@@ -837,13 +849,9 @@ type codexAgentMessageDeltaParams struct {
 }
 
 type codexItemNotification struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId"`
-	Item     struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-		Text string `json:"text"`
-	} `json:"item"`
+	ThreadID string         `json:"threadId"`
+	TurnID   string         `json:"turnId"`
+	Item     map[string]any `json:"item"`
 }
 
 func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
@@ -865,9 +873,17 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 				return runtimeProjection{}, true
 			}
 			turnID := strings.TrimSpace(params.Turn.ID)
-			return runtimeProjection{
+			projection := runtimeProjection{
 				codexTurnID: turnID,
 				events:      []pi.Event{{Kind: pi.EventKindBoundary, RawType: line.Method, TurnID: turnID, Boundary: &pi.Boundary{Kind: pi.BoundaryKindTurnStarted}}},
+			}
+			if timing := codexTurnTiming(line.Params); timing != nil {
+				projection.turnTiming = timing
+			}
+			return runtimeProjection{
+				codexTurnID: turnID,
+				events:      projection.events,
+				turnTiming:  projection.turnTiming,
 			}, true
 		case "turn/completed":
 			var params codexTurnEnvelope
@@ -875,11 +891,19 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 				return runtimeProjection{}, true
 			}
 			turnID := strings.TrimSpace(params.Turn.ID)
-			return runtimeProjection{
+			events := []pi.Event{{Kind: pi.EventKindBoundary, RawType: line.Method, TurnID: turnID, Boundary: &pi.Boundary{Kind: pi.BoundaryKindTurnCompleted, CommitLike: true, Reason: "turn_end"}}}
+			if errEvent := codexTurnErrorEvent(line.Method, line.Params, turnID); errEvent != nil {
+				events = append([]pi.Event{*errEvent}, events...)
+			}
+			projection := runtimeProjection{
 				clearCodexTurn: true,
 				codexTurnID:    turnID,
-				events:         []pi.Event{{Kind: pi.EventKindBoundary, RawType: line.Method, TurnID: turnID, Boundary: &pi.Boundary{Kind: pi.BoundaryKindTurnCompleted}}},
-			}, true
+				events:         events,
+			}
+			if timing := codexTurnTiming(line.Params); timing != nil {
+				projection.turnTiming = timing
+			}
+			return projection, true
 		case "item/agentMessage/delta":
 			var params codexAgentMessageDeltaParams
 			if err := json.Unmarshal(line.Params, &params); err != nil {
@@ -895,21 +919,54 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 				TurnID:  strings.TrimSpace(params.TurnID),
 				Delta:   &pi.MessageDelta{Role: pi.MessageRoleAssistant, Text: params.Delta},
 			}}}, true
+		case "item/started":
+			events := codexItemEvents(line.Method, line.Params, false)
+			if len(events) == 0 {
+				return runtimeProjection{}, true
+			}
+			return runtimeProjection{events: events}, true
 		case "item/completed":
-			var params codexItemNotification
+			events := codexItemEvents(line.Method, line.Params, true)
+			if len(events) == 0 {
+				return runtimeProjection{}, true
+			}
+			return runtimeProjection{events: events}, true
+		case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
+			event := codexReasoningDeltaEvent(line.Method, line.Params)
+			if event == nil {
+				return runtimeProjection{}, true
+			}
+			return runtimeProjection{events: []pi.Event{*event}}, true
+		case "command/exec/outputDelta", "item/commandExecution/outputDelta", "item/fileChange/outputDelta", "item/mcpToolCall/progress":
+			event := codexOutputDeltaEvent(line.Method, line.Params)
+			if event == nil {
+				return runtimeProjection{}, true
+			}
+			return runtimeProjection{events: []pi.Event{*event}}, true
+		case "thread/tokenUsage/updated":
+			usage := codexContextUsage(line.Params)
+			if usage == nil {
+				return runtimeProjection{}, true
+			}
+			return runtimeProjection{contextUsage: usage}, true
+		case "model/rerouted":
+			var params map[string]any
 			if err := json.Unmarshal(line.Params, &params); err != nil {
 				return runtimeProjection{}, true
 			}
-			if strings.TrimSpace(params.Item.Type) != "agentMessage" || strings.TrimSpace(params.Item.Text) == "" {
+			toModel := strings.TrimSpace(stringValue(params["toModel"]))
+			message := strings.TrimSpace(fmt.Sprintf("Codex rerouted model from %s to %s", stringValue(params["fromModel"]), toModel))
+			projection := runtimeProjection{model: toModel}
+			if toModel != "" {
+				projection.events = []pi.Event{{Kind: pi.EventKindMessage, RawType: line.Method, TurnID: strings.TrimSpace(stringValue(params["turnId"])), Message: &pi.Message{Role: pi.MessageRoleAssistant, Text: message, StopReason: "status"}}}
+			}
+			return projection, true
+		case "error", "warning", "guardian/warning", "configWarning", "deprecationNotice", "thread/realtime/error":
+			event := codexDiagnosticEvent(line.Method, line.Params)
+			if event == nil {
 				return runtimeProjection{}, true
 			}
-			return runtimeProjection{events: []pi.Event{{
-				Kind:    pi.EventKindMessage,
-				RawType: line.Method,
-				RawID:   strings.TrimSpace(params.Item.ID),
-				TurnID:  strings.TrimSpace(params.TurnID),
-				Message: &pi.Message{ID: strings.TrimSpace(params.Item.ID), Role: pi.MessageRoleAssistant, Text: params.Item.Text, Class: pi.MessageClassCommitted, CommitLike: true},
-			}}}, true
+			return runtimeProjection{events: []pi.Event{*event}}, true
 		default:
 			return runtimeProjection{}, true
 		}
@@ -926,6 +983,438 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 		return runtimeProjection{codexInitialized: true}, true
 	}
 	return runtimeProjection{}, false
+}
+
+func codexItemEvents(method string, raw json.RawMessage, completed bool) []pi.Event {
+	var params codexItemNotification
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
+	}
+	item := params.Item
+	itemType := strings.TrimSpace(stringValue(item["type"]))
+	itemID := strings.TrimSpace(stringValue(item["id"]))
+	turnID := strings.TrimSpace(params.TurnID)
+	switch itemType {
+	case "agentMessage":
+		if !completed {
+			return nil
+		}
+		text := strings.TrimSpace(stringValue(item["text"]))
+		if text == "" {
+			return nil
+		}
+		return []pi.Event{{
+			Kind:    pi.EventKindMessage,
+			RawType: method,
+			RawID:   itemID,
+			TurnID:  turnID,
+			Message: &pi.Message{ID: itemID, Role: pi.MessageRoleAssistant, Text: text, Class: pi.MessageClassCommitted, CommitLike: true},
+		}}
+	case "reasoning", "plan":
+		text := codexReasoningText(item)
+		if text == "" {
+			return nil
+		}
+		return []pi.Event{codexReasoningEvent(method, itemID, turnID, text)}
+	case "userMessage":
+		if !completed {
+			return nil
+		}
+		text := strings.TrimSpace(stringValue(item["text"]))
+		if text == "" {
+			text = codexJSONSummary(item["content"])
+		}
+		if text == "" {
+			return nil
+		}
+		return []pi.Event{{
+			Kind:    pi.EventKindMessage,
+			RawType: method,
+			RawID:   itemID,
+			TurnID:  turnID,
+			Message: &pi.Message{ID: itemID, Role: pi.MessageRoleUser, Text: text, Class: pi.MessageClassUserPrompt, CommitLike: true},
+		}}
+	default:
+		if !codexToolLikeItem(itemType) {
+			return nil
+		}
+		tool := codexToolEventFromItem(itemType, item, completed)
+		if tool == nil {
+			return nil
+		}
+		return []pi.Event{{
+			Kind:    pi.EventKindTool,
+			RawType: method,
+			RawID:   itemID,
+			TurnID:  turnID,
+			Tool:    tool,
+		}}
+	}
+}
+
+func codexToolLikeItem(itemType string) bool {
+	switch itemType {
+	case "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "webSearch", "imageView", "imageGeneration", "contextCompaction", "enteredReviewMode", "exitedReviewMode":
+		return true
+	default:
+		return false
+	}
+}
+
+func codexToolEventFromItem(itemType string, item map[string]any, completed bool) *pi.ToolEvent {
+	itemID := strings.TrimSpace(stringValue(item["id"]))
+	name := codexToolName(itemType, item)
+	text := codexToolText(itemType, item, completed)
+	args := codexToolArguments(itemType, item, completed)
+	return &pi.ToolEvent{
+		CallID:    itemID,
+		Name:      name,
+		Text:      text,
+		Arguments: args,
+		Result:    completed,
+		IsError:   codexToolIsError(item),
+	}
+}
+
+func codexToolName(itemType string, item map[string]any) string {
+	switch itemType {
+	case "mcpToolCall":
+		server := strings.TrimSpace(stringValue(item["server"]))
+		tool := strings.TrimSpace(stringValue(item["tool"]))
+		if server != "" && tool != "" {
+			return server + "." + tool
+		}
+		if tool != "" {
+			return tool
+		}
+	case "dynamicToolCall":
+		namespace := strings.TrimSpace(stringValue(item["namespace"]))
+		tool := strings.TrimSpace(stringValue(item["tool"]))
+		if namespace != "" && tool != "" {
+			return namespace + "." + tool
+		}
+		if tool != "" {
+			return tool
+		}
+	case "collabAgentToolCall":
+		if tool := strings.TrimSpace(stringValue(item["tool"])); tool != "" {
+			return "collabAgent." + tool
+		}
+	case "webSearch":
+		return "webSearch"
+	case "imageView":
+		return "imageView"
+	case "imageGeneration":
+		return "imageGeneration"
+	case "contextCompaction":
+		return "contextCompaction"
+	}
+	if itemType != "" {
+		return itemType
+	}
+	return "codex_tool"
+}
+
+func codexToolText(itemType string, item map[string]any, completed bool) string {
+	if completed {
+		for _, key := range []string{"aggregatedOutput", "result", "review"} {
+			if text := strings.TrimSpace(stringValue(item[key])); text != "" {
+				return text
+			}
+		}
+		if text := codexJSONSummary(item["contentItems"]); text != "" {
+			return text
+		}
+		if text := codexJSONSummary(item["changes"]); text != "" {
+			return text
+		}
+		if errText := codexJSONSummary(item["error"]); errText != "" {
+			return errText
+		}
+	}
+	for _, key := range []string{"command", "query", "path", "prompt", "revisedPrompt"} {
+		if text := strings.TrimSpace(stringValue(item[key])); text != "" {
+			return text
+		}
+	}
+	if status := strings.TrimSpace(stringValue(item["status"])); status != "" {
+		return codexToolName(itemType, item) + ": " + status
+	}
+	return codexToolName(itemType, item)
+}
+
+func codexToolArguments(itemType string, item map[string]any, completed bool) map[string]any {
+	args := map[string]any{}
+	for _, key := range []string{"command", "cwd", "server", "tool", "namespace", "arguments", "query", "path", "changes", "status", "exitCode", "durationMs", "success", "processId", "source", "model", "reasoningEffort", "prompt"} {
+		if value, ok := item[key]; ok && value != nil {
+			args[key] = value
+		}
+	}
+	if completed {
+		for _, key := range []string{"aggregatedOutput", "result", "error", "contentItems", "savedPath"} {
+			if value, ok := item[key]; ok && value != nil {
+				args[key] = value
+			}
+		}
+	}
+	if len(args) == 0 && itemType != "" {
+		args["type"] = itemType
+	}
+	return args
+}
+
+func codexToolIsError(item map[string]any) bool {
+	status := strings.ToLower(strings.TrimSpace(stringValue(item["status"])))
+	if strings.Contains(status, "fail") || strings.Contains(status, "error") || strings.Contains(status, "denied") {
+		return true
+	}
+	if value, ok := item["success"].(bool); ok && !value {
+		return true
+	}
+	if code := numericValue(item["exitCode"]); code != 0 {
+		return true
+	}
+	errorValue, ok := item["error"]
+	if !ok || errorValue == nil {
+		return false
+	}
+	if text := strings.TrimSpace(stringValue(errorValue)); text != "" && text != "null" {
+		return true
+	}
+	if record, _ := errorValue.(map[string]any); len(record) > 0 {
+		return true
+	}
+	return false
+}
+
+func codexReasoningDeltaEvent(method string, raw json.RawMessage) *pi.Event {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
+	}
+	text := strings.TrimSpace(stringValue(params["delta"]))
+	if text == "" {
+		return nil
+	}
+	itemID := strings.TrimSpace(stringValue(params["itemId"]))
+	turnID := strings.TrimSpace(stringValue(params["turnId"]))
+	event := codexReasoningEvent(method, itemID, turnID, text)
+	return &event
+}
+
+func codexReasoningEvent(method, itemID, turnID, text string) pi.Event {
+	return pi.Event{
+		Kind:    pi.EventKindMessage,
+		RawType: method,
+		RawID:   strings.TrimSpace(itemID),
+		TurnID:  strings.TrimSpace(turnID),
+		Message: &pi.Message{ID: strings.TrimSpace(itemID), Role: pi.MessageRoleAssistant, Text: text, Class: pi.MessageClassNarration, StopReason: "reasoning", CommitLike: true},
+	}
+}
+
+func codexReasoningText(item map[string]any) string {
+	for _, key := range []string{"text", "summary", "content"} {
+		if text := codexJSONText(item[key]); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func codexOutputDeltaEvent(method string, raw json.RawMessage) *pi.Event {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
+	}
+	text := strings.TrimSpace(stringValue(params["delta"]))
+	if text == "" {
+		text = strings.TrimSpace(stringValue(params["message"]))
+	}
+	if text == "" {
+		return nil
+	}
+	itemID := strings.TrimSpace(stringValue(params["itemId"]))
+	if itemID == "" {
+		itemID = strings.TrimSpace(stringValue(params["callId"]))
+	}
+	name := "codex_output"
+	if strings.Contains(method, "command") {
+		name = "commandExecution"
+	} else if strings.Contains(method, "fileChange") {
+		name = "fileChange"
+	} else if strings.Contains(method, "mcpToolCall") {
+		name = "mcpToolCall"
+	}
+	return &pi.Event{
+		Kind:    pi.EventKindTool,
+		RawType: method,
+		TurnID:  strings.TrimSpace(stringValue(params["turnId"])),
+		Tool:    &pi.ToolEvent{CallID: itemID, Name: name, Text: text, Result: true},
+	}
+}
+
+func codexContextUsage(raw json.RawMessage) *SessionContextUsageSnapshot {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
+	}
+	tokenUsage, _ := params["tokenUsage"].(map[string]any)
+	if tokenUsage == nil {
+		tokenUsage, _ = params["usage"].(map[string]any)
+	}
+	if tokenUsage == nil {
+		return nil
+	}
+	total, _ := tokenUsage["total"].(map[string]any)
+	used := intValueFromAny(total["totalTokens"])
+	if used <= 0 {
+		used = intValueFromAny(total["inputTokens"]) + intValueFromAny(total["outputTokens"]) + intValueFromAny(total["reasoningOutputTokens"])
+	}
+	contextWindow := intValueFromAny(tokenUsage["modelContextWindow"])
+	if used <= 0 && contextWindow <= 0 {
+		return nil
+	}
+	usage := &SessionContextUsageSnapshot{}
+	if used > 0 {
+		usage.UsedTokens = &used
+	}
+	if contextWindow > 0 {
+		usage.TotalTokens = &contextWindow
+	}
+	if used > 0 && contextWindow > 0 {
+		percent := int((float64(used)/float64(contextWindow))*100 + 0.5)
+		usage.PercentUsed = &percent
+	}
+	return usage
+}
+
+func codexDiagnosticEvent(method string, raw json.RawMessage) *pi.Event {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
+	}
+	message := codexDiagnosticMessage(params)
+	if message == "" {
+		return nil
+	}
+	turnID := strings.TrimSpace(stringValue(params["turnId"]))
+	itemID := strings.TrimSpace(stringValue(params["itemId"]))
+	if itemID == "" {
+		itemID = strings.TrimSpace(stringValue(params["requestId"]))
+	}
+	return &pi.Event{
+		Kind:    pi.EventKindError,
+		RawType: method,
+		RawID:   itemID,
+		TurnID:  turnID,
+		Error:   &pi.ErrorMessage{Message: message, Source: "codex_app_server", StopReason: method},
+	}
+}
+
+func codexDiagnosticMessage(params map[string]any) string {
+	if text := strings.TrimSpace(stringValue(params["message"])); text != "" {
+		return text
+	}
+	if text := strings.TrimSpace(stringValue(params["reason"])); text != "" {
+		return text
+	}
+	if errRecord, _ := params["error"].(map[string]any); errRecord != nil {
+		if text := strings.TrimSpace(stringValue(errRecord["message"])); text != "" {
+			return text
+		}
+		return codexJSONSummary(errRecord)
+	}
+	if errText := strings.TrimSpace(stringValue(params["error"])); errText != "" {
+		return errText
+	}
+	return codexJSONSummary(params)
+}
+
+func codexTurnErrorEvent(method string, raw json.RawMessage, turnID string) *pi.Event {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
+	}
+	turn, _ := params["turn"].(map[string]any)
+	if turn == nil {
+		return nil
+	}
+	status := strings.ToLower(strings.TrimSpace(stringValue(turn["status"])))
+	if !strings.Contains(status, "fail") && !strings.Contains(status, "error") && !strings.Contains(status, "abort") {
+		return nil
+	}
+	message := "Codex turn failed"
+	if errRecord, _ := turn["error"].(map[string]any); errRecord != nil {
+		if text := strings.TrimSpace(stringValue(errRecord["message"])); text != "" {
+			message = text
+		}
+	} else if text := strings.TrimSpace(stringValue(turn["error"])); text != "" {
+		message = text
+	}
+	return &pi.Event{Kind: pi.EventKindError, RawType: method, TurnID: turnID, Error: &pi.ErrorMessage{Message: message, Source: "codex_app_server", StopReason: status}}
+}
+
+func codexTurnTiming(raw json.RawMessage) *SessionTurnTimingSnapshot {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
+	}
+	turn, _ := params["turn"].(map[string]any)
+	if turn == nil {
+		return nil
+	}
+	timing := &SessionTurnTimingSnapshot{}
+	if started := numericValueDefault(turn["startedAt"]); started > 0 {
+		timing.StartedTS = normalizeRuntimeTimestampSeconds(started)
+	}
+	if completed := numericValueDefault(turn["completedAt"]); completed > 0 {
+		value := normalizeRuntimeTimestampSeconds(completed)
+		timing.LastEventTS = &value
+	}
+	if timing.StartedTS == 0 && timing.LastEventTS == nil {
+		return nil
+	}
+	return timing
+}
+
+func codexJSONText(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if text := codexJSONText(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	case map[string]any:
+		for _, key := range []string{"text", "content", "message", "summary"} {
+			if text := codexJSONText(v[key]); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func codexJSONSummary(value any) string {
+	if text := codexJSONText(value); text != "" {
+		return text
+	}
+	if value == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(encoded))
+}
+
+func numericValueDefault(value any) float64 {
+	return numericValue(value)
 }
 
 func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection runtimeProjection) error {
@@ -1246,6 +1735,23 @@ func (s *Stub) applyPIDelta(sessionID session.SessionID, event pi.Event) error {
 
 func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error {
 	if event.Message == nil || strings.TrimSpace(event.Message.Text) == "" {
+		return nil
+	}
+	if strings.TrimSpace(event.Message.StopReason) == "reasoning" {
+		committed, err := s.AppendSessionMessage(sessionID, "system", "reasoning", event.Message.Text)
+		if err != nil {
+			return err
+		}
+		committed.Role = ""
+		committed.Type = "reasoning"
+		committed.EventID = piMessageEventID(event)
+		committed.ParentEventID = piParentEventID(event)
+		committed.Summary = firstLine(strings.TrimSpace(event.Message.Text))
+		committed.Details = map[string]any{
+			"raw_type": strings.TrimSpace(event.RawType),
+		}
+		s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
+		s.emitSessionState(sessionID)
 		return nil
 	}
 	if strings.TrimSpace(event.Message.StopReason) == "status" {
