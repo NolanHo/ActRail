@@ -214,6 +214,11 @@ export interface SchedulerSnapshotResponse {
   inbox: InboxItem[];
 }
 
+export interface SetAlarmResponse {
+  ok?: boolean;
+  alarm: SchedulerItem;
+}
+
 export interface SessionInboxResponse {
   ok?: boolean;
   items: InboxItem[];

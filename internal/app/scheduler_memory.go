@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	sqlitestore "actrail/internal/adapters/sqlite"
 )
@@ -62,9 +63,86 @@ func (m *memorySchedulerStore) ListSchedulerItems(_ context.Context, limit int) 
 	return rows, nil
 }
 
+func (m *memorySchedulerStore) ListDueSchedulerItems(_ context.Context, now time.Time, limit int) ([]sqlitestore.SchedulerItemRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := []sqlitestore.SchedulerItemRow{}
+	for _, row := range m.schedule {
+		if row.State == "scheduled" && !row.DueAt.After(now) {
+			rows = append(rows, row)
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].DueAt.Equal(rows[j].DueAt) {
+			return rows[i].CreatedAt.Before(rows[j].CreatedAt)
+		}
+		return rows[i].DueAt.Before(rows[j].DueAt)
+	})
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
+func (m *memorySchedulerStore) UpdateSchedulerItem(_ context.Context, row sqlitestore.SchedulerItemRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.schedule {
+		if m.schedule[i].ItemID == row.ItemID {
+			m.schedule[i] = row
+			return nil
+		}
+	}
+	m.schedule = append(m.schedule, row)
+	return nil
+}
+
 func (m *memorySchedulerStore) InsertInboxItem(_ context.Context, row sqlitestore.InboxItemRow) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.inbox = append(m.inbox, row)
+	return nil
+}
+
+func (m *memorySchedulerStore) ListReadyInboxItems(_ context.Context, now time.Time, limit int) ([]sqlitestore.InboxItemRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := []sqlitestore.InboxItemRow{}
+	for _, row := range m.inbox {
+		if row.State == "pending" && !row.DueAt.After(now) {
+			rows = append(rows, row)
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].DueAt.Equal(rows[j].DueAt) {
+			if rows[i].Priority == rows[j].Priority {
+				return rows[i].CreatedAt.Before(rows[j].CreatedAt)
+			}
+			return rows[i].Priority > rows[j].Priority
+		}
+		return rows[i].DueAt.Before(rows[j].DueAt)
+	})
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, nil
+}
+
+func (m *memorySchedulerStore) UpdateInboxItem(_ context.Context, row sqlitestore.InboxItemRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.inbox {
+		if m.inbox[i].ItemID == row.ItemID {
+			m.inbox[i] = row
+			return nil
+		}
+	}
 	m.inbox = append(m.inbox, row)
 	return nil
 }
