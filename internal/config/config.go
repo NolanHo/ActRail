@@ -79,10 +79,11 @@ type Features struct {
 }
 
 type Launch struct {
-	DefaultBackend    string
-	AvailableBackends []string
-	Providers         []string
-	Models            []string
+	DefaultBackend       string
+	AvailableBackends    []string
+	Providers            []string
+	Models               []string
+	CodexDangerousBypass bool
 }
 
 type Storage struct {
@@ -119,10 +120,11 @@ func Load() Config {
 			WorkspaceWrite:    false,
 		},
 		Launch: Launch{
-			DefaultBackend:    envString("ACTRAIL_DEFAULT_BACKEND", "pi"),
-			AvailableBackends: csvEnv("ACTRAIL_AVAILABLE_BACKENDS", []string{"pi", "codex"}),
-			Providers:         csvEnv("ACTRAIL_AVAILABLE_PROVIDERS", nil),
-			Models:            csvEnv("ACTRAIL_AVAILABLE_MODELS", nil),
+			DefaultBackend:       envString("ACTRAIL_DEFAULT_BACKEND", "pi"),
+			AvailableBackends:    csvEnv("ACTRAIL_AVAILABLE_BACKENDS", []string{"pi", "codex"}),
+			Providers:            csvEnv("ACTRAIL_AVAILABLE_PROVIDERS", nil),
+			Models:               csvEnv("ACTRAIL_AVAILABLE_MODELS", nil),
+			CodexDangerousBypass: envBool("ACTRAIL_CODEX_DANGEROUS_BYPASS", true),
 		},
 		Storage: Storage{
 			DataDir: envString("ACTRAIL_DATA_DIR", defaultDataDir),
@@ -202,6 +204,21 @@ func envString(key, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func envBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	switch strings.ToLower(value) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func envInt(key string, fallback int) int {

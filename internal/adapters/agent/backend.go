@@ -164,7 +164,11 @@ func (codexAdapter) CommandArgs(opts Options) ([]string, error) {
 	if err := (codexAdapter{}).ValidateOptions(opts); err != nil {
 		return nil, err
 	}
-	args := []string{"app-server"}
+	args := make([]string, 0, 7)
+	if opts.DangerousBypass() {
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+	}
+	args = append(args, "app-server")
 	if listenURL := opts.ListenURL(); listenURL != "" {
 		args = append(args, "--listen", listenURL)
 	}

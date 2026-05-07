@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +114,7 @@ func newStub(cfg config.Config, now func() time.Time) *Stub {
 }
 
 func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
+	runtimeCfg = runtimeConfigFromAppConfig(cfg, runtimeCfg)
 	if strings.TrimSpace(runtimeCfg.IODRuntimeRoot) == "" {
 		runtimeCfg.IODRuntimeRoot = cfg.Storage.IODRuntimeRoot()
 	}
@@ -136,6 +138,17 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		recentCwds:          []string{},
 		cwdGroups:           map[string]CwdGroupMeta{},
 	}
+}
+
+func runtimeConfigFromAppConfig(cfg config.Config, runtimeCfg RuntimeConfig) RuntimeConfig {
+	if runtimeCfg.CodexDangerousBypass == nil {
+		enabled := true
+		if !reflect.DeepEqual(cfg, config.Config{}) {
+			enabled = cfg.Launch.CodexDangerousBypass
+		}
+		runtimeCfg.CodexDangerousBypass = &enabled
+	}
+	return runtimeCfg
 }
 
 type BootstrapRequest struct {

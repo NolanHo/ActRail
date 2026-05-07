@@ -62,9 +62,9 @@ func TestCatalogLaunchSpecForCodex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PipeIO() error = %v", err)
 	}
-	opts, err := NewOptions("openrouter", "gpt-5", "")
+	opts, err := NewOptionsWithRuntimeFlags("openrouter", "gpt-5", "", "", "", "", true)
 	if err != nil {
-		t.Fatalf("NewOptions() error = %v", err)
+		t.Fatalf("NewOptionsWithRuntimeFlags() error = %v", err)
 	}
 	req, err := NewRequest(session.BackendCodex, "/usr/local/bin/codex", "/tmp/work", env, ioSpec, opts)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestCatalogLaunchSpecForCodex(t *testing.T) {
 	if spec.Command().Path() != "/usr/local/bin/codex" {
 		t.Fatalf("command path = %q, want %q", spec.Command().Path(), "/usr/local/bin/codex")
 	}
-	wantArgs := []string{"app-server", "-c", `model_provider="openrouter"`, "--model", "gpt-5"}
+	wantArgs := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server", "-c", `model_provider="openrouter"`, "--model", "gpt-5"}
 	if !reflect.DeepEqual(spec.Command().Args(), wantArgs) {
 		t.Fatalf("command args = %#v, want %#v", spec.Command().Args(), wantArgs)
 	}

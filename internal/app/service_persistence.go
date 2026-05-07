@@ -15,6 +15,7 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 	if err := cfg.Storage.EnsureDir(); err != nil {
 		return nil, fmt.Errorf("ensure actrail data dir: %w", err)
 	}
+	runtimeCfg = runtimeConfigFromAppConfig(cfg, runtimeCfg)
 	if strings.TrimSpace(runtimeCfg.IODRuntimeRoot) == "" {
 		runtimeCfg.IODRuntimeRoot = cfg.Storage.IODRuntimeRoot()
 	}

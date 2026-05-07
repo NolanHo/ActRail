@@ -152,6 +152,7 @@ Other useful backend settings:
 | `ACTRAIL_AVAILABLE_PROVIDERS` | unset | Optional provider list exposed in launch defaults. |
 | `ACTRAIL_AVAILABLE_MODELS` | unset | Optional model list exposed in launch defaults. |
 | `ACTRAIL_DEFAULT_BACKEND` | `pi` | Default backend in launch defaults. |
+| `ACTRAIL_CODEX_DANGEROUS_BYPASS` | `true` | Adds `--dangerously-bypass-approvals-and-sandbox` before `app-server` for Codex launches. Set to `false` to disable. |
 | `ACTRAIL_WS_PATH` | `/api/ws` | WebSocket endpoint advertised by bootstrap. |
 | `ACTRAIL_IOD_BIN` | unset | Optional explicit path to the `actrail-iod` helper binary used for session launch. |
 

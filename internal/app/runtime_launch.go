@@ -56,6 +56,7 @@ type RuntimeConfig struct {
 	PIAgentGRPCReadyTimeout time.Duration
 	IODRuntimeRoot          string
 	UseIODHelper            bool
+	CodexDangerousBypass    *bool
 	NewGenerationID         func(session.SessionID) (iod.GenerationID, error)
 	CurrentHelperBinding    func(session.SessionID) (*RuntimeHelperBinding, error)
 }
@@ -85,6 +86,7 @@ type processRuntimeLauncher struct {
 	piAgentGRPCDialer       piagentgrpc.Dialer
 	piAgentGRPCTarget       string
 	piAgentGRPCReadyTimeout time.Duration
+	codexDangerousBypass    bool
 	resolveLaunchEnv        func(session.Backend, process.Environment) (process.Environment, error)
 	env                     process.Environment
 	io                      process.IO
@@ -323,6 +325,10 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 	if readyTimeout <= 0 {
 		readyTimeout = defaultHelperReadyTimeout
 	}
+	codexDangerousBypass := true
+	if cfg.CodexDangerousBypass != nil {
+		codexDangerousBypass = *cfg.CodexDangerousBypass
+	}
 
 	return processRuntimeLauncher{
 		catalog:                 catalog,
@@ -337,6 +343,7 @@ func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 		piAgentGRPCDialer:       cfg.PIAgentGRPCDialer,
 		piAgentGRPCTarget:       cfg.PIAgentGRPCTarget,
 		piAgentGRPCReadyTimeout: readyTimeout,
+		codexDangerousBypass:    codexDangerousBypass,
 		resolveLaunchEnv:        resolveLaunchEnv,
 		env:                     env,
 		io:                      ioSpec,
@@ -636,7 +643,8 @@ func (l processRuntimeLauncher) childLaunchSpecForGeneration(req runtimeLaunchRe
 	if req.Backend == session.BackendCodex && paths != nil {
 		listenURL = "unix://" + paths.ChildSocketPath
 	}
-	options, err := agent.NewOptionsWithRuntimeListen(req.Provider, req.Model, req.ReasoningEffort, req.SessionPath, grpcSocketPath, listenURL)
+	dangerousBypass := req.Backend == session.BackendCodex && l.codexDangerousBypass
+	options, err := agent.NewOptionsWithRuntimeFlags(req.Provider, req.Model, req.ReasoningEffort, req.SessionPath, grpcSocketPath, listenURL, dangerousBypass)
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
