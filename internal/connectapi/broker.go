@@ -51,9 +51,7 @@ func (b *Broker) ObserveEvent(event realtime.Event) {
 		PayloadJSON: base64.StdEncoding.EncodeToString(payload),
 	}
 	b.events = append(b.events, envelope)
-	if len(b.events) > b.limit {
-		b.events = append([]EventEnvelope(nil), b.events[len(b.events)-b.limit:]...)
-	}
+	b.trimLocked()
 	for ch := range b.subscribers {
 		select {
 		case ch <- envelope:
@@ -109,8 +107,16 @@ func (b *Broker) resyncLocked(after uint64, reason string) EventEnvelope {
 		PayloadJSON: base64.StdEncoding.EncodeToString(payload),
 	}
 	b.events = append(b.events, event)
-	if len(b.events) > b.limit {
-		b.events = append([]EventEnvelope(nil), b.events[len(b.events)-b.limit:]...)
-	}
+	b.trimLocked()
 	return event
+}
+
+func (b *Broker) trimLocked() {
+	if len(b.events) <= b.limit {
+		return
+	}
+	drop := len(b.events) - b.limit
+	copy(b.events, b.events[drop:])
+	clear(b.events[len(b.events)-drop:])
+	b.events = b.events[:b.limit]
 }
