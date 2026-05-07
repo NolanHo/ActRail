@@ -389,8 +389,8 @@ describe("api", () => {
     });
   });
 
-  it("posts session alarms", async () => {
-    const payload = { ok: true, alarm: { item_id: "alarm_1", session_id: "sess-1", kind: "alarm", state: "scheduled" } };
+  it("posts scheduler self-reminders", async () => {
+    const payload = { ok: true, self_reminder: { item_id: "self_reminder_1", session_id: "sess-1", kind: "self_reminder", state: "scheduled" } };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -398,15 +398,37 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.createSessionAlarm("sess-1", { duration_seconds: 60, title: "Review", message: "check build" })).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("api/sessions/sess-1/alarms", {
+    const request = { session_id: "sess-1", duration_seconds: 60, title: "Review", message: "check build", created_by: "agent" };
+    await expect(api.createSelfReminder(request)).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/scheduler/self-reminders", {
       method: "POST",
       signal: undefined,
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ duration_seconds: 60, title: "Review", message: "check build" }),
+      body: JSON.stringify(request),
+    });
+  });
+
+  it("cancels scheduler self-reminders", async () => {
+    const payload = { ok: true, self_reminder: { item_id: "self_reminder_1", kind: "self_reminder", state: "cancelled" } };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.cancelSelfReminder("self_reminder_1")).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/scheduler/self-reminders/self_reminder_1/cancel", {
+      method: "POST",
+      signal: undefined,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: "{}",
     });
   });
 

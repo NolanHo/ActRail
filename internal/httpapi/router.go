@@ -76,10 +76,12 @@ type schedulerSettingsRequest struct {
 	IdleBeforeDeliverySeconds *int `json:"idle_before_delivery_seconds"`
 }
 
-type setAlarmRequest struct {
+type createSelfReminderRequest struct {
+	SessionID       string `json:"session_id"`
 	DurationSeconds int    `json:"duration_seconds"`
 	Title           string `json:"title"`
 	Message         string `json:"message"`
+	CreatedBy       string `json:"created_by"`
 }
 
 func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHandlers ...http.Handler) http.Handler {
@@ -128,8 +130,9 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("POST /api/sessions/{session_id}/supervisor/run-once", r.requireAuth(http.HandlerFunc(r.runSupervisorOnce)))
 	mux.Handle("GET /api/scheduler", r.requireAuth(http.HandlerFunc(r.schedulerSnapshot)))
 	mux.Handle("POST /api/scheduler/settings", r.requireAuth(http.HandlerFunc(r.updateSchedulerSettings)))
+	mux.Handle("POST /api/scheduler/self-reminders", r.requireAuth(http.HandlerFunc(r.createSelfReminder)))
+	mux.Handle("POST /api/scheduler/self-reminders/{item_id}/cancel", r.requireAuth(http.HandlerFunc(r.cancelSelfReminder)))
 	mux.Handle("GET /api/sessions/{session_id}/inbox", r.requireAuth(http.HandlerFunc(r.sessionInbox)))
-	mux.Handle("POST /api/sessions/{session_id}/alarms", r.requireAuth(http.HandlerFunc(r.setSessionAlarm)))
 	mux.Handle("GET /api/sessions/{session_id}/state", r.requireAuth(http.HandlerFunc(r.sessionState)))
 	mux.Handle("POST /api/sessions/{session_id}/state/probe", r.requireAuth(http.HandlerFunc(r.probeSessionState)))
 	mux.Handle("GET /api/sessions/{session_id}/workspace", r.requireAuth(http.HandlerFunc(r.sessionWorkspace)))
@@ -1307,17 +1310,31 @@ func (r Router) sessionInbox(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (r Router) setSessionAlarm(w http.ResponseWriter, req *http.Request) {
-	sessionID, ok := routeSessionID(w, req)
-	if !ok {
-		return
-	}
-	var body setAlarmRequest
+func (r Router) createSelfReminder(w http.ResponseWriter, req *http.Request) {
+	var body createSelfReminderRequest
 	if err := decodeJSONBody(req, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
-	payload, err := r.app.SetAlarm(req.Context(), app.SetAlarmRequest{SessionID: sessionID, DurationSeconds: body.DurationSeconds, Title: body.Title, Message: body.Message, CreatedBy: "api"})
+	sessionID, err := session.ParseSessionID(strings.TrimSpace(body.SessionID))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error(), "session_id")
+		return
+	}
+	createdBy := strings.TrimSpace(body.CreatedBy)
+	if createdBy == "" {
+		createdBy = "api"
+	}
+	payload, err := r.app.CreateSelfReminder(req.Context(), app.CreateSelfReminderRequest{SessionID: sessionID, DurationSeconds: body.DurationSeconds, Title: body.Title, Message: body.Message, CreatedBy: createdBy})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) cancelSelfReminder(w http.ResponseWriter, req *http.Request) {
+	payload, err := r.app.CancelSelfReminder(req.Context(), app.CancelSelfReminderRequest{ItemID: req.PathValue("item_id")})
 	if err != nil {
 		writeAppError(w, err)
 		return

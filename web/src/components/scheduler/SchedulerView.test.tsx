@@ -9,7 +9,7 @@ vi.mock("../../lib/api", () => ({
   api: {
     getScheduler: vi.fn().mockResolvedValue({ ok: true, settings: { idle_before_delivery_seconds: 30 }, items: [], inbox: [] }),
     saveSchedulerSettings: vi.fn().mockResolvedValue({ idle_before_delivery_seconds: 45 }),
-    createSessionAlarm: vi.fn().mockResolvedValue({ ok: true, alarm: { item_id: "alarm_1", session_id: "sess-1", kind: "alarm", state: "scheduled", due_ts: 0, created_ts: 0, updated_ts: 0 } }),
+    createSelfReminder: vi.fn().mockResolvedValue({ ok: true, self_reminder: { item_id: "self_reminder_1", session_id: "sess-1", kind: "self_reminder", state: "scheduled", due_ts: 0, created_ts: 0, updated_ts: 0 } }),
     listSessions: vi.fn().mockResolvedValue({ items: [{ session_id: "sess-1", alias: "Pi Work", agent_backend: "pi" }, { session_id: "sess-2", alias: "Codex Work", agent_backend: "codex" }] }),
     getSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.test/v1", model: "model-a", api_key_configured: true, complete: true }),
     saveSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.test/v1", model: "model-b", api_key_configured: true, complete: true }),
@@ -89,11 +89,11 @@ describe("SchedulerView", () => {
       expect(api.getSessionSupervisor).toHaveBeenCalledWith("sess-1");
       expect(api.getSupervisorRuns).toHaveBeenCalledWith("sess-1", 20);
     });
-    expect(root.textContent).toContain("Create alarm");
+    expect(root.textContent).toContain("Create self-reminder");
     expect(root.textContent).toContain("Supervisor provider");
   });
 
-  it("saves settings and creates an alarm from the global view", async () => {
+  it("saves settings and creates a self-reminder from the global view", async () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
 
@@ -111,13 +111,13 @@ describe("SchedulerView", () => {
     });
     await setValue(inputByLabel(root, "Message"), "check build");
     await act(async () => {
-      clickTestId(root, "scheduler-alarm-create");
+      clickTestId(root, "scheduler-self-reminder-create");
       await flush();
     });
 
     await waitForAssertion(() => {
       expect(api.saveSchedulerSettings).toHaveBeenCalledWith({ idle_before_delivery_seconds: 45 });
-      expect(api.createSessionAlarm).toHaveBeenCalledWith("sess-1", { duration_seconds: 60, title: "Alarm Response", message: "check build" });
+      expect(api.createSelfReminder).toHaveBeenCalledWith({ session_id: "sess-1", duration_seconds: 60, title: "Self Reminder", message: "check build" });
     });
   });
 

@@ -10,12 +10,18 @@ import (
 	"actrail/internal/domain/session"
 )
 
-const defaultSchedulerIdleBeforeDeliverySeconds = 30
+const (
+	defaultSchedulerIdleBeforeDeliverySeconds = 30
+	defaultSelfReminderTitle                  = "Self Reminder"
+	schedulerItemKindSelfReminder             = "self_reminder"
+	schedulerInboxSourceSelfReminder          = "self_reminder"
+)
 
 type schedulerStore interface {
 	LookupSchedulerSettings(context.Context) (sqlitestore.SchedulerSettingsRow, bool, error)
 	UpsertSchedulerSettings(context.Context, sqlitestore.SchedulerSettingsRow) error
 	InsertSchedulerItem(context.Context, sqlitestore.SchedulerItemRow) error
+	LookupSchedulerItem(context.Context, string) (sqlitestore.SchedulerItemRow, bool, error)
 	ListSchedulerItems(context.Context, int) ([]sqlitestore.SchedulerItemRow, error)
 	ListDueSchedulerItems(context.Context, time.Time, int) ([]sqlitestore.SchedulerItemRow, error)
 	UpdateSchedulerItem(context.Context, sqlitestore.SchedulerItemRow) error
@@ -88,7 +94,7 @@ type InboxItem struct {
 	UpdatedTS          float64 `json:"updated_ts"`
 }
 
-type SetAlarmRequest struct {
+type CreateSelfReminderRequest struct {
 	SessionID       session.SessionID
 	DurationSeconds int
 	Title           string
@@ -96,9 +102,13 @@ type SetAlarmRequest struct {
 	CreatedBy       string
 }
 
-type SetAlarmResponse struct {
-	OK    bool          `json:"ok"`
-	Alarm SchedulerItem `json:"alarm"`
+type SelfReminderResponse struct {
+	OK           bool          `json:"ok"`
+	SelfReminder SchedulerItem `json:"self_reminder"`
+}
+
+type CancelSelfReminderRequest struct {
+	ItemID string
 }
 
 func (s *Stub) SchedulerSnapshot(ctx context.Context, req SchedulerSnapshotRequest) (SchedulerSnapshotResponse, error) {
@@ -146,29 +156,29 @@ func (s *Stub) SessionInbox(ctx context.Context, req SessionInboxRequest) (Sessi
 	return SessionInboxResponse{OK: true, Items: inboxItemResponses(items)}, nil
 }
 
-func (s *Stub) SetAlarm(ctx context.Context, req SetAlarmRequest) (SetAlarmResponse, error) {
+func (s *Stub) CreateSelfReminder(ctx context.Context, req CreateSelfReminderRequest) (SelfReminderResponse, error) {
 	if strings.TrimSpace(req.Message) == "" {
-		return SetAlarmResponse{}, Invalid("message", "message required")
+		return SelfReminderResponse{}, Invalid("message", "message required")
 	}
 	if req.DurationSeconds < 0 {
-		return SetAlarmResponse{}, Invalid("duration_seconds", "duration_seconds must be non-negative")
+		return SelfReminderResponse{}, Invalid("duration_seconds", "duration_seconds must be non-negative")
 	}
 	if _, err := s.lookupSession(req.SessionID); err != nil {
-		return SetAlarmResponse{}, err
+		return SelfReminderResponse{}, err
 	}
 	now := s.registry.now()
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
-		title = "Alarm Response"
+		title = defaultSelfReminderTitle
 	}
 	createdBy := strings.TrimSpace(req.CreatedBy)
 	if createdBy == "" {
 		createdBy = "agent"
 	}
 	row := sqlitestore.SchedulerItemRow{
-		ItemID:    newID("alarm"),
+		ItemID:    newID("self_reminder"),
 		SessionID: req.SessionID.String(),
-		Kind:      "alarm",
+		Kind:      schedulerItemKindSelfReminder,
 		Title:     title,
 		Message:   strings.TrimSpace(req.Message),
 		DueAt:     now.Add(time.Duration(req.DurationSeconds) * time.Second),
@@ -178,9 +188,36 @@ func (s *Stub) SetAlarm(ctx context.Context, req SetAlarmRequest) (SetAlarmRespo
 		UpdatedAt: now,
 	}
 	if err := s.schedulerStore.InsertSchedulerItem(ctx, row); err != nil {
-		return SetAlarmResponse{}, err
+		return SelfReminderResponse{}, err
 	}
-	return SetAlarmResponse{OK: true, Alarm: schedulerItemResponse(row)}, nil
+	return SelfReminderResponse{OK: true, SelfReminder: schedulerItemResponse(row)}, nil
+}
+
+func (s *Stub) CancelSelfReminder(ctx context.Context, req CancelSelfReminderRequest) (SelfReminderResponse, error) {
+	itemID := strings.TrimSpace(req.ItemID)
+	if itemID == "" {
+		return SelfReminderResponse{}, Invalid("item_id", "item_id required")
+	}
+	item, ok, err := s.schedulerStore.LookupSchedulerItem(ctx, itemID)
+	if err != nil {
+		return SelfReminderResponse{}, err
+	}
+	if !ok {
+		return SelfReminderResponse{}, NotFound("self reminder not found")
+	}
+	if item.Kind != schedulerItemKindSelfReminder {
+		return SelfReminderResponse{}, Conflict("scheduler item is not a self reminder")
+	}
+	if item.State != "scheduled" {
+		return SelfReminderResponse{}, Conflict("only scheduled self reminders can be cancelled")
+	}
+	now := s.registry.now()
+	item.State = "cancelled"
+	item.UpdatedAt = now
+	if err := s.schedulerStore.UpdateSchedulerItem(ctx, item); err != nil {
+		return SelfReminderResponse{}, err
+	}
+	return SelfReminderResponse{OK: true, SelfReminder: schedulerItemResponse(item)}, nil
 }
 
 func (s *Stub) RunSchedulerDeliverySweep(ctx context.Context) {
@@ -210,7 +247,7 @@ func (s *Stub) stageDueSchedulerItems(ctx context.Context, now time.Time) error 
 		return err
 	}
 	for _, item := range items {
-		if item.Kind != "alarm" {
+		if item.Kind != schedulerItemKindSelfReminder {
 			item.State = "unsupported"
 			item.UpdatedAt = now
 			if err := s.schedulerStore.UpdateSchedulerItem(ctx, item); err != nil {
@@ -238,7 +275,7 @@ func (s *Stub) stageDueSchedulerItems(ctx context.Context, now time.Time) error 
 		inbox := sqlitestore.InboxItemRow{
 			ItemID:    newID("inbox"),
 			SessionID: item.SessionID,
-			Source:    "alarm",
+			Source:    schedulerInboxSourceSelfReminder,
 			SourceID:  item.ItemID,
 			Title:     item.Title,
 			Message:   item.Message,

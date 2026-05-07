@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -94,6 +95,23 @@ func (c *SessionCatalog) InsertSchedulerItem(ctx context.Context, row SchedulerI
 		return fmt.Errorf("insert scheduler item %q: %w", row.ItemID, err)
 	}
 	return nil
+}
+
+func (c *SessionCatalog) LookupSchedulerItem(ctx context.Context, itemID string) (SchedulerItemRow, bool, error) {
+	if c == nil || c.db == nil {
+		return SchedulerItemRow{}, false, fmt.Errorf("sqlite catalog is not initialized")
+	}
+	var row SchedulerItemRow
+	queryRow := c.db.QueryRowContext(ctx, `SELECT item_id, session_id, kind, source_ref, title, message, due_at, state, created_by, created_at, updated_at
+		FROM scheduler_items WHERE item_id = ?`, itemID)
+	row, err := scanSchedulerItemRow(queryRow)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SchedulerItemRow{}, false, nil
+		}
+		return SchedulerItemRow{}, false, err
+	}
+	return row, true, nil
 }
 
 func (c *SessionCatalog) ListSchedulerItems(ctx context.Context, limit int) ([]SchedulerItemRow, error) {

@@ -317,8 +317,12 @@ func (s serviceStub) SessionInbox(ctx context.Context, req app.SessionInboxReque
 	return s.base.SessionInbox(ctx, req)
 }
 
-func (s serviceStub) SetAlarm(ctx context.Context, req app.SetAlarmRequest) (app.SetAlarmResponse, error) {
-	return s.base.SetAlarm(ctx, req)
+func (s serviceStub) CreateSelfReminder(ctx context.Context, req app.CreateSelfReminderRequest) (app.SelfReminderResponse, error) {
+	return s.base.CreateSelfReminder(ctx, req)
+}
+
+func (s serviceStub) CancelSelfReminder(ctx context.Context, req app.CancelSelfReminderRequest) (app.SelfReminderResponse, error) {
+	return s.base.CancelSelfReminder(ctx, req)
 }
 
 type fixtureService struct {
@@ -349,7 +353,8 @@ type fixtureService struct {
 	schedulerReq      app.SchedulerSnapshotRequest
 	schedulerSetReq   app.UpdateSchedulerSettingsRequest
 	inboxReq          app.SessionInboxRequest
-	alarmReq          app.SetAlarmRequest
+	selfReminderReq   app.CreateSelfReminderRequest
+	cancelReminderReq app.CancelSelfReminderRequest
 }
 
 func (s *fixtureService) Bootstrap(_ context.Context, _ app.BootstrapRequest) app.BootstrapSnapshot {
@@ -806,12 +811,17 @@ func (s *fixtureService) UpdateSchedulerSettings(_ context.Context, req app.Upda
 
 func (s *fixtureService) SessionInbox(_ context.Context, req app.SessionInboxRequest) (app.SessionInboxResponse, error) {
 	s.inboxReq = req
-	return app.SessionInboxResponse{OK: true, Items: []app.InboxItem{{ItemID: "inbox_1", SessionID: req.SessionID.String(), Source: "alarm", Title: "Alarm Response", State: "pending"}}}, nil
+	return app.SessionInboxResponse{OK: true, Items: []app.InboxItem{{ItemID: "inbox_1", SessionID: req.SessionID.String(), Source: "self_reminder", Title: "Self Reminder", State: "pending"}}}, nil
 }
 
-func (s *fixtureService) SetAlarm(_ context.Context, req app.SetAlarmRequest) (app.SetAlarmResponse, error) {
-	s.alarmReq = req
-	return app.SetAlarmResponse{OK: true, Alarm: app.SchedulerItem{ItemID: "alarm_1", SessionID: req.SessionID.String(), Kind: "alarm", Title: "Alarm Response", Message: req.Message, State: "scheduled"}}, nil
+func (s *fixtureService) CreateSelfReminder(_ context.Context, req app.CreateSelfReminderRequest) (app.SelfReminderResponse, error) {
+	s.selfReminderReq = req
+	return app.SelfReminderResponse{OK: true, SelfReminder: app.SchedulerItem{ItemID: "self_reminder_1", SessionID: req.SessionID.String(), Kind: "self_reminder", Title: "Self Reminder", Message: req.Message, State: "scheduled"}}, nil
+}
+
+func (s *fixtureService) CancelSelfReminder(_ context.Context, req app.CancelSelfReminderRequest) (app.SelfReminderResponse, error) {
+	s.cancelReminderReq = req
+	return app.SelfReminderResponse{OK: true, SelfReminder: app.SchedulerItem{ItemID: req.ItemID, Kind: "self_reminder", State: "cancelled"}}, nil
 }
 
 func newTestRouter(cfg config.Config, svc app.Service) http.Handler {
@@ -864,6 +874,37 @@ func TestSupervisorRoutesReturnProviderAndSessionConfig(t *testing.T) {
 	h.ServeHTTP(runOnceRes, runOnceReq)
 	if runOnceRes.Code != http.StatusOK || svc.supervisorOnceReq.SessionID.String() != "s_123" || !svc.supervisorOnceReq.DryRun {
 		t.Fatalf("POST run-once status=%d req=%+v body=%s", runOnceRes.Code, svc.supervisorOnceReq, runOnceRes.Body.String())
+	}
+}
+
+func TestSchedulerRoutesCreateAndCancelSelfReminder(t *testing.T) {
+	svc := &fixtureService{}
+	h := newTestRouter(config.Load(), svc)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/scheduler/self-reminders", strings.NewReader(`{"session_id":"s_123","duration_seconds":60,"title":"Review","message":"check build","created_by":"agent"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRes := httptest.NewRecorder()
+	h.ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusOK {
+		t.Fatalf("POST self-reminders status=%d body=%s", createRes.Code, createRes.Body.String())
+	}
+	if svc.selfReminderReq.SessionID.String() != "s_123" || svc.selfReminderReq.DurationSeconds != 60 || svc.selfReminderReq.Title != "Review" || svc.selfReminderReq.Message != "check build" || svc.selfReminderReq.CreatedBy != "agent" {
+		t.Fatalf("self reminder req = %+v", svc.selfReminderReq)
+	}
+	var createBody app.SelfReminderResponse
+	decodeJSON(t, createRes, &createBody)
+	if !createBody.OK || createBody.SelfReminder.Kind != "self_reminder" {
+		t.Fatalf("create response = %+v", createBody)
+	}
+
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/scheduler/self-reminders/self_reminder_1/cancel", nil)
+	cancelRes := httptest.NewRecorder()
+	h.ServeHTTP(cancelRes, cancelReq)
+	if cancelRes.Code != http.StatusOK {
+		t.Fatalf("POST self-reminder cancel status=%d body=%s", cancelRes.Code, cancelRes.Body.String())
+	}
+	if svc.cancelReminderReq.ItemID != "self_reminder_1" {
+		t.Fatalf("cancel reminder req = %+v", svc.cancelReminderReq)
 	}
 }
 

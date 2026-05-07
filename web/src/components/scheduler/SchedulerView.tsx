@@ -44,15 +44,15 @@ interface SchedulerSnapshot {
 export function SchedulerView() {
   const [snapshot, setSnapshot] = useState<SchedulerSnapshot>({ settings: null, items: [], inbox: [] });
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selectedAlarmSessionId, setSelectedAlarmSessionId] = useState("");
+  const [selectedReminderSessionId, setSelectedReminderSessionId] = useState("");
   const [selectedSupervisorSessionId, setSelectedSupervisorSessionId] = useState("");
   const [status, setStatus] = useState("Loading scheduler...");
   const [schedulerStatus, setSchedulerStatus] = useState("");
   const [settingsDraft, setSettingsDraft] = useState("30");
-  const [alarmTitle, setAlarmTitle] = useState("Alarm Response");
-  const [alarmMessage, setAlarmMessage] = useState("");
-  const [alarmDelaySeconds, setAlarmDelaySeconds] = useState("60");
-  const [alarmStatus, setAlarmStatus] = useState("");
+  const [reminderTitle, setReminderTitle] = useState("Self Reminder");
+  const [reminderMessage, setReminderMessage] = useState("");
+  const [reminderDelaySeconds, setReminderDelaySeconds] = useState("60");
+  const [reminderStatus, setReminderStatus] = useState("");
   const [provider, setProvider] = useState<SupervisorProviderResponse | null>(null);
   const [providerBaseUrl, setProviderBaseUrl] = useState("");
   const [providerModel, setProviderModel] = useState("");
@@ -81,7 +81,7 @@ export function SchedulerView() {
     const response = await api.listSessions({ limit: 100 }, undefined, false);
     const nextSessions = response.items || response.sessions || [];
     setSessions(nextSessions);
-    setSelectedAlarmSessionId((current) => {
+    setSelectedReminderSessionId((current) => {
       if (current && nextSessions.some((session) => session.session_id === current)) return current;
       return nextSessions[0]?.session_id || "";
     });
@@ -158,27 +158,28 @@ export function SchedulerView() {
     }
   };
 
-  const createAlarm = async () => {
-    if (!selectedAlarmSessionId) {
-      setAlarmStatus("Select a session");
+  const createSelfReminder = async () => {
+    if (!selectedReminderSessionId) {
+      setReminderStatus("Select a session");
       return;
     }
-    if (!alarmMessage.trim()) {
-      setAlarmStatus("Message required");
+    if (!reminderMessage.trim()) {
+      setReminderStatus("Message required");
       return;
     }
-    setAlarmStatus("Creating alarm...");
+    setReminderStatus("Creating self-reminder...");
     try {
-      await api.createSessionAlarm(selectedAlarmSessionId, {
-        duration_seconds: numericDraft(alarmDelaySeconds, 0, 0),
-        title: alarmTitle,
-        message: alarmMessage,
+      await api.createSelfReminder({
+        session_id: selectedReminderSessionId,
+        duration_seconds: numericDraft(reminderDelaySeconds, 0, 0),
+        title: reminderTitle,
+        message: reminderMessage,
       });
-      setAlarmMessage("");
+      setReminderMessage("");
       await loadScheduler();
-      setAlarmStatus("Alarm scheduled");
+      setReminderStatus("Self-reminder scheduled");
     } catch (error) {
-      setAlarmStatus(error instanceof Error ? error.message : "Unable to create alarm");
+      setReminderStatus(error instanceof Error ? error.message : "Unable to create self-reminder");
     }
   };
 
@@ -244,7 +245,7 @@ export function SchedulerView() {
         <div>
           <p className="sectionEyebrow">Global view</p>
           <h2>Scheduler</h2>
-          <p>Alarms, supervisor preset activity, and inbox delivery state across sessions.</p>
+          <p>Self-reminders, supervisor preset activity, and inbox delivery state across sessions.</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => void loadAll()}>Refresh</Button>
       </header>
@@ -275,33 +276,33 @@ export function SchedulerView() {
 
         <section className="workspaceCard space-y-4 p-4">
           <div>
-            <h3>Create alarm</h3>
-            <p className="text-sm text-muted-foreground">Alarms are staged into inbox at due time and delivered when the session is idle.</p>
+            <h3>Create self-reminder</h3>
+            <p className="text-sm text-muted-foreground">Self-reminders are staged into inbox at due time and delivered when the session is idle.</p>
           </div>
           <div className="fieldGrid threeCol">
             <label className="fieldBlock">
               <span className="fieldLabel">Session</span>
-              <select value={selectedAlarmSessionId} onChange={(event) => setSelectedAlarmSessionId(event.currentTarget.value)}>
+              <select value={selectedReminderSessionId} onChange={(event) => setSelectedReminderSessionId(event.currentTarget.value)}>
                 {sessions.map((session) => <option key={session.session_id} value={session.session_id}>{sessionBackendLabel(session)}</option>)}
               </select>
             </label>
             <label className="fieldBlock">
               <span className="fieldLabel">Due in seconds</span>
-              <Input type="number" min={0} value={alarmDelaySeconds} onInput={(event) => setAlarmDelaySeconds(event.currentTarget.value)} />
+              <Input type="number" min={0} value={reminderDelaySeconds} onInput={(event) => setReminderDelaySeconds(event.currentTarget.value)} />
             </label>
-            <Button type="button" data-testid="scheduler-alarm-create" onClick={() => void createAlarm()} disabled={!selectedAlarmSessionId}>Create</Button>
+            <Button type="button" data-testid="scheduler-self-reminder-create" onClick={() => void createSelfReminder()} disabled={!selectedReminderSessionId}>Create</Button>
           </div>
           <div className="fieldGrid twoCol">
             <label className="fieldBlock">
               <span className="fieldLabel">Title</span>
-              <Input value={alarmTitle} onInput={(event) => setAlarmTitle(event.currentTarget.value)} />
+              <Input value={reminderTitle} onInput={(event) => setReminderTitle(event.currentTarget.value)} />
             </label>
             <label className="fieldBlock">
               <span className="fieldLabel">Message</span>
-              <Input value={alarmMessage} onInput={(event) => setAlarmMessage(event.currentTarget.value)} />
+              <Input value={reminderMessage} onInput={(event) => setReminderMessage(event.currentTarget.value)} />
             </label>
           </div>
-          {alarmStatus ? <p className="text-sm text-muted-foreground">{alarmStatus}</p> : null}
+          {reminderStatus ? <p className="text-sm text-muted-foreground">{reminderStatus}</p> : null}
         </section>
 
         <section className="workspaceCard space-y-4 p-4">

@@ -214,9 +214,9 @@ export interface SchedulerSnapshotResponse {
   inbox: InboxItem[];
 }
 
-export interface SetAlarmResponse {
+export interface SelfReminderResponse {
   ok?: boolean;
-  alarm: SchedulerItem;
+  self_reminder: SchedulerItem;
 }
 
 export interface SessionInboxResponse {

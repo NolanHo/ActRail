@@ -1,0 +1,4 @@
+interface:
+  display_name: "ActRail Self Reminder"
+  short_description: "Schedule ActRail self-reminders through Scheduler."
+  default_prompt: "Use this skill when the user asks to schedule, list, or cancel an ActRail self-reminder for a Codex session."
