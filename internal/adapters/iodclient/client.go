@@ -151,6 +151,8 @@ func (c *Client) Replay(ctx context.Context, request iod.ReplayRequestPacket, vi
 			return iod.ReplayDonePacket{}, err
 		}
 		switch v := packet.(type) {
+		case iod.StatePacket, iod.GenerationBreakPacket:
+			continue
 		case iod.ReplayItemPacket:
 			if v.SessionID != request.SessionID || v.GenerationID != request.GenerationID {
 				return iod.ReplayDonePacket{}, fmt.Errorf("replay item does not match %q/%q", request.SessionID, request.GenerationID)

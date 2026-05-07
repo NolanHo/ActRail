@@ -98,6 +98,56 @@ func TestVerifyHelloProofRejectsMismatch(t *testing.T) {
 	}
 }
 
+func TestClientReplaySkipsLiveStatePackets(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	sessionID := mustSessionID(t, "s_123")
+	generationID := mustGenerationID(t, "g_7")
+	replayItem := mustReplayItemPacket(t, sessionID, generationID, 6, 3)
+	replayDone := mustReplayDonePacket(t, sessionID, generationID, 5, 6)
+	liveState := mustStatePacket(t, sessionID, generationID, 4)
+
+	go func() {
+		enc := json.NewEncoder(serverConn)
+		dec := json.NewDecoder(serverConn)
+		var replayReq iod.ReplayRequestPacket
+		if err := dec.Decode(&replayReq); err != nil {
+			return
+		}
+		if replayReq.AfterOffset != 5 {
+			return
+		}
+		if err := enc.Encode(liveState); err != nil {
+			return
+		}
+		if err := enc.Encode(replayItem); err != nil {
+			return
+		}
+		if err := enc.Encode(liveState); err != nil {
+			return
+		}
+		_ = enc.Encode(replayDone)
+	}()
+
+	client := NewClient(clientConn)
+	var replayOffsets []iod.WALOffset
+	done, err := client.Replay(context.Background(), mustReplayRequestPacket(t, sessionID, generationID, 5), func(packet iod.ReplayItemPacket) error {
+		replayOffsets = append(replayOffsets, packet.Item.WALOffset)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	if len(replayOffsets) != 1 || replayOffsets[0] != 6 {
+		t.Fatalf("replay offsets = %#v, want [6]", replayOffsets)
+	}
+	if done.LastOffset != 6 {
+		t.Fatalf("Replay().LastOffset = %d, want 6", done.LastOffset)
+	}
+}
+
 func mustSessionID(t *testing.T, raw string) session.SessionID {
 	t.Helper()
 	sessionID, err := session.ParseSessionID(raw)
@@ -198,6 +248,20 @@ func mustReplayItemPacket(t *testing.T, sessionID session.SessionID, generationI
 	packet, err := iod.NewReplayItemPacket(sessionID, generationID, item)
 	if err != nil {
 		t.Fatalf("NewReplayItemPacket() error = %v", err)
+	}
+	return packet
+}
+
+func mustStatePacket(t *testing.T, sessionID session.SessionID, generationID iod.GenerationID, seqValue uint64) iod.StatePacket {
+	t.Helper()
+	seq := iod.EventSeq(seqValue)
+	fact, err := iod.NewHelperFact(iod.FactOutputDelta, &seq, json.RawMessage(`{"delta":"live"}`))
+	if err != nil {
+		t.Fatalf("NewHelperFact() error = %v", err)
+	}
+	packet, err := iod.NewStatePacket(sessionID, generationID, fact)
+	if err != nil {
+		t.Fatalf("NewStatePacket() error = %v", err)
 	}
 	return packet
 }
