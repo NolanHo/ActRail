@@ -200,6 +200,11 @@ function mergeNewSessionDefaults(incoming: NewSessionDefaults | null, cached: Ne
   return {
     default_backend: incoming.default_backend || cached.default_backend,
     backends,
+    backend_capabilities: {
+      ...(cached.backend_capabilities ?? {}),
+      ...(incoming.backend_capabilities ?? {}),
+    },
+    pi_agent_grpc_default: incoming.pi_agent_grpc_default ?? cached.pi_agent_grpc_default,
   };
 }
 

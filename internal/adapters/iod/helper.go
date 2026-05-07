@@ -27,12 +27,13 @@ type ChildIOMode string
 const (
 	ChildIOModePTY   ChildIOMode = "pty"
 	ChildIOModeStdio ChildIOMode = "stdio"
+	ChildIOModeUnix  ChildIOMode = "unix"
 )
 
 func ParseChildIOMode(raw string) (ChildIOMode, error) {
 	mode := ChildIOMode(strings.ToLower(strings.TrimSpace(raw)))
 	switch mode {
-	case ChildIOModePTY, ChildIOModeStdio:
+	case ChildIOModePTY, ChildIOModeStdio, ChildIOModeUnix:
 		return mode, nil
 	case "":
 		return ChildIOModePTY, nil
@@ -71,12 +72,13 @@ type Helper struct {
 	runner          process.Runner
 	now             func() time.Time
 
-	wal      *WAL
-	listener net.Listener
-	handle   process.Handle
-	proof    HelloProof
-	manifest GenerationManifest
-	history  *sessionHistoryCache
+	wal       *WAL
+	listener  net.Listener
+	handle    process.Handle
+	childConn net.Conn
+	proof     HelloProof
+	manifest  GenerationManifest
+	history   *sessionHistoryCache
 
 	mu                sync.Mutex
 	conns             map[*helperConn]struct{}
@@ -205,7 +207,7 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 	}
 	var ioSpec process.IO
 	var err error
-	if childIOMode == ChildIOModeStdio {
+	if childIOMode == ChildIOModeStdio || childIOMode == ChildIOModeUnix {
 		ioSpec, err = process.PipeIO(process.LogPaths{})
 	} else {
 		ioSpec, err = process.PTYIO(size, process.LogPaths{})
@@ -279,6 +281,12 @@ func (h *Helper) Run(ctx context.Context) error {
 		h.history.Start(ctx)
 		defer h.history.Stop()
 	}
+	if h.childIOMode == ChildIOModeUnix {
+		_ = os.Remove(h.paths.ChildSocketPath)
+		defer func() {
+			_ = os.Remove(h.paths.ChildSocketPath)
+		}()
+	}
 	handle, err := h.runner.Start(ctx, h.launchSpec)
 	if err != nil {
 		return fmt.Errorf("start helper child: %w", err)
@@ -291,6 +299,13 @@ func (h *Helper) Run(ctx context.Context) error {
 	}
 	if h.childIOMode == ChildIOModeStdio && (handle.Stdin() == nil || handle.Stdout() == nil) {
 		return fmt.Errorf("helper child must expose stdio transport")
+	}
+	if h.childIOMode == ChildIOModeUnix {
+		conn, err := h.dialChildSocket(ctx)
+		if err != nil {
+			return err
+		}
+		h.childConn = conn
 	}
 	h.handle = handle
 	start := h.now().UTC()
@@ -348,6 +363,9 @@ func (h *Helper) Run(ctx context.Context) error {
 		h.wg.Add(2)
 		go h.readPipe(runCtx, "stdout", h.handle.Stdout())
 		go h.readPipe(runCtx, "stderr", h.handle.Stderr())
+	} else if h.childIOMode == ChildIOModeUnix {
+		h.wg.Add(1)
+		go h.readChildSocket(runCtx)
 	} else {
 		h.wg.Add(1)
 		go h.readPTY(runCtx)
@@ -403,11 +421,38 @@ func (h *Helper) shutdown() error {
 		if pty := h.handle.PTY(); pty != nil {
 			_ = pty.Close()
 		}
+		if h.childConn != nil {
+			_ = h.childConn.Close()
+		}
 		if !h.isChildExited() {
 			_ = h.handle.Kill()
 		}
 	}
 	return nil
+}
+
+func (h *Helper) dialChildSocket(ctx context.Context) (net.Conn, error) {
+	path := strings.TrimSpace(h.paths.ChildSocketPath)
+	if path == "" {
+		return nil, fmt.Errorf("child socket path is required")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for {
+		var dialer net.Dialer
+		conn, err := dialer.DialContext(ctx, "unix", path)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("dial child socket %q: %w", path, err)
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("dial child socket %q: %w", path, lastErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (h *Helper) acceptLoop(ctx context.Context) {
@@ -641,6 +686,8 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 	var writer io.Writer
 	if h.childIOMode == ChildIOModeStdio {
 		writer = h.handle.Stdin()
+	} else if h.childIOMode == ChildIOModeUnix {
+		writer = h.childConn
 	} else {
 		writer = h.handle.PTY()
 	}
@@ -740,6 +787,15 @@ func (h *Helper) readPipe(ctx context.Context, stream string, reader io.Reader) 
 		return
 	}
 	h.readOutput(ctx, stream, reader, false)
+}
+
+func (h *Helper) readChildSocket(ctx context.Context) {
+	defer h.wg.Done()
+	if h.childConn == nil {
+		_ = h.emitGenerationBreak(GenerationBreakAttachLost)
+		return
+	}
+	h.readOutput(ctx, "unix", h.childConn, false)
 }
 
 func (h *Helper) readOutput(ctx context.Context, stream string, reader io.Reader, pty bool) {

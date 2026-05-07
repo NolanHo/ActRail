@@ -125,6 +125,21 @@ func TestCodexCommandArgsUseConfigOverrideForProvider(t *testing.T) {
 	}
 }
 
+func TestCodexCommandArgsIncludeListenURL(t *testing.T) {
+	opts, err := NewOptionsWithRuntimeListen("openai", "gpt-5", "", "", "", "unix:///tmp/actrail/child.sock")
+	if err != nil {
+		t.Fatalf("NewOptionsWithRuntimeListen() error = %v", err)
+	}
+	args, err := (codexAdapter{}).CommandArgs(opts)
+	if err != nil {
+		t.Fatalf("CommandArgs() error = %v", err)
+	}
+	want := []string{"app-server", "--listen", "unix:///tmp/actrail/child.sock", "-c", `model_provider="openai"`, "--model", "gpt-5"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
+	}
+}
+
 func mustRequest(t *testing.T, backend session.Backend, opts Options) Request {
 	t.Helper()
 	env, err := process.InheritEnv()

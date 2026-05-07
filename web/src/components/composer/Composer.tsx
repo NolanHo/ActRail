@@ -348,7 +348,16 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const activeSession = useSessionsStoreSelector(
     (state) => state.items.find((session) => session.session_id === state.activeSessionId) ?? null,
   );
-  const activeSessionLiveBusy = useLiveSessionStoreSelector((state) => activeSessionId ? state.busyBySessionId?.[activeSessionId] === true : false);
+  const { hasActiveSessionLiveBusy, activeSessionLiveBusy } = useLiveSessionStoreSelector((state) => {
+    if (!activeSessionId) {
+      return { hasActiveSessionLiveBusy: false, activeSessionLiveBusy: false };
+    }
+
+    return {
+      hasActiveSessionLiveBusy: Object.prototype.hasOwnProperty.call(state.busyBySessionId ?? {}, activeSessionId),
+      activeSessionLiveBusy: state.busyBySessionId?.[activeSessionId] === true,
+    };
+  }, shallowEqual);
   const sending = useComposerStoreSelector((state) => state.sending);
   const draft = useComposerStoreSelector((state) => activeSessionId ? state.draftBySessionId?.[activeSessionId] ?? "" : "");
   const activeWait = useWaitsStoreSelector((state) => activeSessionId ? state.activeBySessionId?.[activeSessionId] ?? null : null);
@@ -383,14 +392,15 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const supervisorBlockReason = "Supervisor is controlling this session. Disable Supervisor to send manually.";
   const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(visibleActiveWait) || supervisorEnabled;
   const activeSessionSendBlockReason = supervisorEnabled ? supervisorBlockReason : visibleActiveWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : activeSessionPending ? "Session runtime is starting." : "";
-  const activeSessionBusy = Boolean(activeSession && (activeSession.busy || activeSessionLiveBusy));
+  const activeSessionBusy = Boolean(activeSession && (hasActiveSessionLiveBusy ? activeSessionLiveBusy : activeSession.busy === true));
   const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
     ? Math.max(0, Math.round(activeSession.queue_len))
     : 0;
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
+  const activeSessionIsCodex = activeSession?.agent_backend === "codex";
   const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
   const activeAttachmentCount = activeSessionId ? attachedFilesBySessionId[activeSessionId] ?? 0 : 0;
-  const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi" && !supervisorEnabled);
+  const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi" && activeSession?.agent_backend !== "codex" && !supervisorEnabled);
   const slashQuery = getSlashDraftQuery(draft);
   const slashCommandDraft = isSlashCommandDraft(draft);
   const todoSnapshot = useMemo(() => {
@@ -877,9 +887,11 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
       ? supervisorBlockReason
       : activeSessionIsPi
         ? "Attachments are not available for Pi sessions"
-        : attachmentUploading
-          ? "Uploading attachment..."
-          : "Attach file";
+        : activeSessionIsCodex
+          ? "Attachments are not available for Codex sessions"
+          : attachmentUploading
+            ? "Uploading attachment..."
+            : "Attach file";
 
   return (
     <div className="composerStack space-y-3">

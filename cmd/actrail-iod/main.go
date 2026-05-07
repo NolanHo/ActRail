@@ -29,7 +29,7 @@ func main() {
 		childCWDRaw           = flag.String("child-cwd", "", "child working directory; defaults to current working directory")
 		legacyCWDRaw          = flag.String("cwd", "", "deprecated alias for -child-cwd")
 		childEnvModeRaw       = flag.String("child-env-mode", string(process.EnvModeInherit), "child environment mode: inherit or replace")
-		childIOModeRaw        = flag.String("child-io-mode", string(iod.ChildIOModePTY), "child IO mode: pty or stdio")
+		childIOModeRaw        = flag.String("child-io-mode", string(iod.ChildIOModePTY), "child IO mode: pty, stdio, or unix")
 		sessionHistoryPathRaw = flag.String("session-history-path", "", "Pi session JSONL path for helper history cache")
 		protocolVersion       = flag.Int("protocol-version", iod.DefaultProtocolVersion, "helper protocol version")
 		rows                  = flag.Uint("pty-rows", 24, "initial PTY rows")

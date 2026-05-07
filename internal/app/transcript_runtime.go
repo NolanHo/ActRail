@@ -64,6 +64,10 @@ func sessionMessageFromCommitted(item message.CommittedMessage) SessionMessage {
 	case "pi_event":
 		msg.Role = ""
 		msg.Type = "pi_event"
+	case "reasoning":
+		msg.Role = ""
+		msg.Type = "reasoning"
+		msg.Summary = item.Text()
 	case "tool", "tool_result":
 		msg.Role = ""
 		msg.Type = item.Kind().String()

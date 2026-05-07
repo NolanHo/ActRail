@@ -213,6 +213,10 @@ describe("NewSessionDialog", () => {
           pi: { provider_choice: "openai", model: "gpt-5.4" },
           codex: {},
         },
+        backend_capabilities: {
+          pi: { resume_history: true },
+          codex: { resume_history: false },
+        },
       },
     });
 
@@ -231,6 +235,51 @@ describe("NewSessionDialog", () => {
 
     expect(api.getSessionResumeCandidates).not.toHaveBeenCalled();
     expect(root.textContent).not.toContain("Old history");
+  });
+
+  it("hides resume history when the selected backend does not support it", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
+      exists: true,
+      will_create: false,
+      git_repo: false,
+      sessions: [{ session_id: "history:codex:old", title: "Codex history" }],
+    } as any);
+    const sessionsStore = createSessionsStore({
+      items: [],
+      activeSessionId: null,
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/root/docs"],
+      tmuxAvailable: true,
+      newSessionDefaults: {
+        default_backend: "codex",
+        backends: {
+          codex: {},
+          pi: {},
+        },
+        backend_capabilities: {
+          codex: { resume_history: false },
+          pi: { resume_history: true },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await wait(220);
+    await flush();
+
+    expect(root.textContent).not.toContain("Resume");
+    expect(api.getSessionResumeCandidates).not.toHaveBeenCalled();
   });
 
   it("creates a session and selects the returned session id", async () => {
@@ -291,7 +340,7 @@ describe("NewSessionDialog", () => {
     expect(root.textContent).toContain("Provider");
     expect(root.textContent).toContain("Reasoning effort");
     expect(root.textContent).toContain("Launch mode");
-    expect(root.textContent).toContain("Git worktree branch");
+    expect(root.textContent).not.toContain("Git worktree branch");
     expect(root.textContent).toContain("Speed");
 
     const cwdInput = root.querySelector('input[placeholder="/path/to/project"]') as HTMLInputElement;
@@ -315,14 +364,8 @@ describe("NewSessionDialog", () => {
 
     const fastCheckbox = root.querySelector('input[name="fastMode"]') as HTMLInputElement;
     const tmuxCheckbox = root.querySelector('input[name="createInTmux"]') as HTMLInputElement;
-    const worktreeCheckbox = root.querySelector('input[name="useWorktree"]') as HTMLInputElement;
     await setCheckboxValue(fastCheckbox, true);
     await setCheckboxValue(tmuxCheckbox, true);
-    await setCheckboxValue(worktreeCheckbox, true);
-    await flush();
-
-    const worktreeInput = root.querySelector('input[name="worktreeBranch"]') as HTMLInputElement;
-    await setInputValue(worktreeInput, "feature/inbox-cleanup");
     await flush();
 
     const form = root.querySelector("form") as HTMLFormElement;
@@ -1110,6 +1153,10 @@ describe("NewSessionDialog", () => {
           pi: { provider_choice: "macaron" },
           codex: { provider_choice: "chatgpt" },
         },
+        backend_capabilities: {
+          pi: { resume_history: true },
+          codex: { resume_history: false },
+        },
       },
     });
 
@@ -1174,6 +1221,9 @@ describe("NewSessionDialog", () => {
         default_backend: "pi",
         backends: {
           pi: { provider_choice: "macaron", model: "gpt-5.4", reasoning_effort: "high" },
+        },
+        backend_capabilities: {
+          pi: { resume_history: true },
         },
       },
     });
@@ -1254,6 +1304,10 @@ describe("NewSessionDialog", () => {
         backends: {
           pi: { provider_choice: "macaron", model: "gpt-5.4", reasoning_effort: "high" },
           codex: { provider_choice: "chatgpt" },
+        },
+        backend_capabilities: {
+          pi: { resume_history: true },
+          codex: { resume_history: false },
         },
       },
     });

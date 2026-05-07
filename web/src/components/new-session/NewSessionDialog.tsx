@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
-import { backendSupportsReasoningEffort } from "../../lib/launch";
+import { backendCapability, backendSupportsReasoningEffort } from "../../lib/launch";
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { CreateSessionResponse, LaunchBackendDefaults, SessionResumeCandidate, SessionResumeCandidatesResponse, SessionSummary } from "../../lib/types";
 
@@ -207,8 +207,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeTitleFilter, setResumeTitleFilter] = useState("");
   const [refreshingPiModels, setRefreshingPiModels] = useState(false);
-  const [useWorktree, setUseWorktree] = useState(false);
-  const [worktreeBranch, setWorktreeBranch] = useState("");
   const [cwdInfo, setCwdInfo] = useState<SessionCwdInfo>({
     exists: false,
     willCreate: false,
@@ -254,7 +252,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   ]), [backend, backendDefaults, model, providerChoice]);
   const supportsFast = !!backendDefaults.supports_fast;
   const supportsTmux = tmuxAvailable;
-  const supportsWorktree = backend === "codex";
+  const supportsResumeHistory = backendCapability(newSessionDefaults, backend)?.resume_history === true;
   const sessionNamePlaceholder = baseName(cwd) || "session-name";
   const filteredResumeCandidates = useMemo(() => {
     const query = resumeTitleFilter.trim().toLowerCase();
@@ -312,8 +310,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeLoading(false);
     setResumeTitleFilter("");
     setRefreshingPiModels(false);
-    setUseWorktree(false);
-    setWorktreeBranch("");
     setCwdInfo({ exists: false, willCreate: false, gitRepo: false, gitRoot: "", gitBranch: "" });
     setSubmitting(false);
     setError("");
@@ -369,11 +365,18 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   }, [createInTmux, supportsTmux]);
 
   useEffect(() => {
-    if (!supportsWorktree) {
-      setUseWorktree(false);
-      setWorktreeBranch("");
+    if (surfaceTab !== "resume" || supportsResumeHistory) {
+      return;
     }
-  }, [supportsWorktree]);
+    setSurfaceTab("start");
+    setResumeSessionId("");
+    setResumeCandidates([]);
+    setResumeOffset(0);
+    setResumeRemaining(0);
+    setResumeScanRemaining(0);
+    setResumeLoading(false);
+    setLookupError("");
+  }, [surfaceTab, supportsResumeHistory]);
 
   useEffect(() => {
     if (!open || bootstrapLoaded) {
@@ -394,7 +397,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
 
   useEffect(() => {
     if (!open) return;
-    if (surfaceTab !== "resume") {
+    if (surfaceTab !== "resume" || !supportsResumeHistory) {
       setResumeCandidates([]);
       setResumeSessionId("");
       setResumeRemaining(0);
@@ -462,7 +465,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [backend, cwd, open, resumeOffset, surfaceTab]);
+  }, [backend, cwd, open, resumeOffset, surfaceTab, supportsResumeHistory]);
 
   if (!open) return null;
 
@@ -512,8 +515,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeSessionId("");
     setResumeOffset(0);
     setResumeRemaining(0);
-    setUseWorktree(false);
-    setWorktreeBranch("");
     setError("");
   };
 
@@ -556,7 +557,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   <Badge variant="secondary" className="capitalize">{backend}</Badge>
                   {supportsFast ? <Badge variant="outline">Fast available</Badge> : null}
                   {supportsTmux ? <Badge variant="outline">tmux ready</Badge> : null}
-                  {supportsWorktree ? <Badge variant="outline">worktree support</Badge> : null}
                 </div>
               </div>
               <div className="agentBackendTabs grid min-w-[14rem] grid-cols-2 gap-2 rounded-2xl bg-muted/60 p-1">
@@ -583,14 +583,16 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
               >
                 Start
               </Button>
-              <Button
-                type="button"
-                variant={surfaceTab === "resume" ? "default" : "ghost"}
-                className="h-10 rounded-[1rem]"
-                onClick={() => setSurfaceTab("resume")}
-              >
-                Resume
-              </Button>
+              {supportsResumeHistory ? (
+                <Button
+                  type="button"
+                  variant={surfaceTab === "resume" ? "default" : "ghost"}
+                  className="h-10 rounded-[1rem]"
+                  onClick={() => setSurfaceTab("resume")}
+                >
+                  Resume
+                </Button>
+              ) : null}
             </div>
           </DialogHeader>
 
@@ -601,16 +603,11 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
             onSubmit={async (event) => {
               event.preventDefault();
               const trimmedCwd = cwd.trim();
-              const trimmedWorktreeBranch = worktreeBranch.trim();
               if (!trimmedCwd) {
                 setError("Working directory is required.");
                 return;
               }
               const selectedResumeId = surfaceTab === "resume" ? resumeSessionId : "";
-              if (surfaceTab === "start" && supportsWorktree && useWorktree && !trimmedWorktreeBranch) {
-                setError("Branch name is required.");
-                return;
-              }
               if (surfaceTab === "resume" && !selectedResumeId) {
                 setError("Select a resume candidate first.");
                 return;
@@ -636,7 +633,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   resume_session_id: selectedResumeId || undefined,
                   provider: providerChoice.trim() || backendDefaults.provider_choice?.trim() || undefined,
                   model: model.trim() || undefined,
-                  reasoning_effort: backendSupportsReasoningEffort(backend) ? reasoningEffort.trim() || undefined : undefined,
+                  reasoning_effort: backendSupportsReasoningEffort(backend, newSessionDefaults) ? reasoningEffort.trim() || undefined : undefined,
                   pi_agent_grpc: backend === "pi" ? usePIAgentGRPC : undefined,
                 });
                 const optimisticSession = buildOptimisticCreatedSession(response, {
@@ -948,37 +945,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   ) : null}
                 </div>
               </section>
-
-              {supportsWorktree ? (
-                <>
-                  <Separator className="bg-border/70" />
-                  <section className="dialogSection space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-semibold text-foreground">Git worktree branch</h3>
-                        <p className="mt-1 text-sm text-muted-foreground">Spin up an isolated branch when you want clean diffs for a new task.</p>
-                      </div>
-                      <Badge variant="outline">Codex only</Badge>
-                    </div>
-                    <ToggleField
-                      label={resumeSessionId ? "Unavailable while resuming a session" : "Create a new worktree for this session"}
-                      name="useWorktree"
-                      checked={useWorktree}
-                      disabled={!!resumeSessionId}
-                      description={resumeSessionId ? "Resume uses the existing working tree." : "A new worktree keeps the session isolated from your current checkout."}
-                      onChange={setUseWorktree}
-                    />
-                    <Input
-                      name="worktreeBranch"
-                      value={worktreeBranch}
-                      onInput={(event) => setWorktreeBranch(event.currentTarget.value)}
-                      onChange={(event) => setWorktreeBranch(event.currentTarget.value)}
-                      placeholder="feature/my-branch"
-                      disabled={!useWorktree || !!resumeSessionId}
-                    />
-                  </section>
-                </>
-              ) : null}
 
                 </>
               )}

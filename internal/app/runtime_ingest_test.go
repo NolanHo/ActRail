@@ -1054,6 +1054,211 @@ func TestCreateSessionConsumesCodexRuntimeOutputIntoStateTranscriptAndEvents(t *
 	}
 }
 
+func TestCreateSessionAppliesCodexThreadStatusChangedToBusyState(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-status-1\",\"status\":{\"type\":\"idle\"}}}}" + "\n" +
+		"{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-codex-status-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[]}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy
+	})
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() active error = %v", err)
+	}
+	if !state.Busy {
+		t.Fatal("SessionState().Busy = false, want true after Codex active status")
+	}
+	if !svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = false, want true after Codex active status")
+	}
+
+	_, _ = stdoutW.Write([]byte("{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-codex-status-1\",\"status\":{\"type\":\"idle\"}}}" + "\n"))
+	_ = stdoutW.Close()
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy
+	})
+
+	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() idle error = %v", err)
+	}
+	if state.Busy {
+		t.Fatal("SessionState().Busy = true, want false after Codex idle status")
+	}
+	if svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = true, want false after Codex idle status")
+	}
+}
+
+func TestProbeSessionStateRequestsCodexThreadReadAndAppliesResponse(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	pty := &recordingPTY{reader: stdoutR}
+	handle.SetPTY(pty)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-read-1\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		if !ok || record.runtime.codex == nil {
+			return false
+		}
+		_, threadID, _ := record.runtime.codex.snapshot()
+		return threadID == "thread-codex-read-1"
+	})
+
+	probed, err := svc.ProbeSessionState(context.Background(), ProbeSessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("ProbeSessionState() error = %v", err)
+	}
+	if probed.ProbeID == "" {
+		t.Fatal("ProbeSessionState().ProbeID = empty")
+	}
+	waitForAppCondition(t, func() bool {
+		for _, write := range pty.Writes() {
+			if strings.Contains(write, `"method":"thread/read"`) && strings.Contains(write, `"threadId":"thread-codex-read-1"`) && strings.Contains(write, `"includeTurns":true`) {
+				return true
+			}
+		}
+		return false
+	})
+
+	_, _ = stdoutW.Write([]byte("{\"id\":\"thread-read-3\",\"result\":{\"thread\":{\"id\":\"thread-codex-read-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[]},\"turns\":[{\"id\":\"turn-codex-read-1\",\"status\":\"inProgress\"}]}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy
+	})
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatalf("Lookup(%q) ok = false", sessionID)
+	}
+	_, _, turnID := record.runtime.codex.snapshot()
+	if turnID != "turn-codex-read-1" {
+		t.Fatalf("codex active turn = %q, want turn-codex-read-1", turnID)
+	}
+
+	_, _ = stdoutW.Write([]byte("{\"id\":\"thread-read-4\",\"result\":{\"thread\":{\"id\":\"thread-codex-read-1\",\"status\":{\"type\":\"idle\"},\"turns\":[{\"id\":\"turn-codex-read-1\",\"status\":\"completed\"}]}}}" + "\n"))
+	_ = stdoutW.Close()
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy
+	})
+	record, ok = svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatalf("Lookup(%q) after idle ok = false", sessionID)
+	}
+	_, _, turnID = record.runtime.codex.snapshot()
+	if turnID != "" {
+		t.Fatalf("codex active turn after idle = %q, want empty", turnID)
+	}
+}
+
+func TestCreateSessionMapsCodexToolReasoningUsageAndErrors(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-2\"}}}" + "\n" +
+		"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-2\",\"turn\":{\"id\":\"turn-codex-2\",\"status\":\"inProgress\",\"startedAt\":1760000001,\"error\":null}}}" + "\n" +
+		"{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-codex-2\",\"turnId\":\"turn-codex-2\",\"item\":{\"type\":\"commandExecution\",\"id\":\"cmd-1\",\"command\":\"go test ./...\",\"cwd\":\"/root/code/ActRail\",\"status\":\"inProgress\"}}}" + "\n" +
+		"{\"method\":\"item/commandExecution/outputDelta\",\"params\":{\"threadId\":\"thread-codex-2\",\"turnId\":\"turn-codex-2\",\"itemId\":\"cmd-1\",\"delta\":\"ok\\n\"}}" + "\n" +
+		"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-2\",\"turnId\":\"turn-codex-2\",\"item\":{\"type\":\"commandExecution\",\"id\":\"cmd-1\",\"command\":\"go test ./...\",\"cwd\":\"/root/code/ActRail\",\"status\":\"completed\",\"aggregatedOutput\":\"ok\\n\",\"exitCode\":0,\"durationMs\":1200}}}" + "\n" +
+		"{\"method\":\"item/reasoning/summaryTextDelta\",\"params\":{\"threadId\":\"thread-codex-2\",\"turnId\":\"turn-codex-2\",\"itemId\":\"reason-1\",\"delta\":\"Inspecting runtime schema\",\"summaryIndex\":0}}" + "\n" +
+		"{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-codex-2\",\"turnId\":\"turn-codex-2\",\"tokenUsage\":{\"total\":{\"totalTokens\":2048,\"inputTokens\":1024,\"cachedInputTokens\":0,\"outputTokens\":512,\"reasoningOutputTokens\":512},\"last\":{\"totalTokens\":128,\"inputTokens\":64,\"cachedInputTokens\":0,\"outputTokens\":64,\"reasoningOutputTokens\":0},\"modelContextWindow\":8192}}}" + "\n" +
+		"{\"method\":\"warning\",\"params\":{\"message\":\"Codex warning surfaced\",\"threadId\":\"thread-codex-2\",\"turnId\":\"turn-codex-2\"}}" + "\n" +
+		"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-2\",\"turnId\":\"turn-codex-2\",\"item\":{\"type\":\"agentMessage\",\"id\":\"msg-1\",\"text\":\"done\"}}}" + "\n" +
+		"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-2\",\"turn\":{\"id\":\"turn-codex-2\",\"status\":\"completed\",\"startedAt\":1760000001,\"completedAt\":1760000002,\"error\":null}}}" + "\n"))
+	_ = stdoutW.Close()
+
+	waitForAppCondition(t, func() bool {
+		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		if err != nil {
+			return false
+		}
+		return len(messages.Items) >= 5
+	})
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	kinds := make([]string, 0, len(messages.Items))
+	for _, item := range messages.Items {
+		kinds = append(kinds, item.Type)
+	}
+	wantKinds := []string{"tool", "tool_result", "tool_result", "reasoning", "error", ""}
+	if len(kinds) != len(wantKinds) {
+		t.Fatalf("message kinds = %#v, want %#v", kinds, wantKinds)
+	}
+	for index, want := range wantKinds {
+		if kinds[index] != want {
+			t.Fatalf("message kinds = %#v, want %#v", kinds, wantKinds)
+		}
+	}
+	if messages.Items[0].Text != "go test ./..." || messages.Items[0].Type != "tool" {
+		t.Fatalf("tool call message = %+v", messages.Items[0])
+	}
+	if messages.Items[3].Type != "reasoning" || messages.Items[3].Text != "Inspecting runtime schema" {
+		t.Fatalf("reasoning message = %+v", messages.Items[3])
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.ContextUsage == nil || state.ContextUsage.UsedTokens == nil || *state.ContextUsage.UsedTokens != 2048 || state.ContextUsage.TotalTokens == nil || *state.ContextUsage.TotalTokens != 8192 || state.ContextUsage.PercentUsed == nil || *state.ContextUsage.PercentUsed != 25 {
+		t.Fatalf("SessionState().ContextUsage = %+v", state.ContextUsage)
+	}
+	if state.TurnTiming == nil || state.TurnTiming.StartedTS != 1760000001 || state.TurnTiming.LastEventTS == nil || *state.TurnTiming.LastEventTS != 1760000002 {
+		t.Fatalf("SessionState().TurnTiming = %+v", state.TurnTiming)
+	}
+}
+
 func TestCreateSessionConsumesHelperBackedPIReplayAndLiveOutputIntoStateTranscriptAndEvents(t *testing.T) {
 	generationID := mustHelperGenerationID(t, "g_helper_ingest")
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
@@ -1235,7 +1440,7 @@ func TestCreateSessionConsumesHelperBackedCodexReplayAndLiveOutputIntoStateTrans
 
 	enc := json.NewEncoder(serverConn)
 	seq1 := iod.EventSeq(1)
-	fact1, err := iod.NewHelperFact(iod.FactOutputDelta, &seq1, json.RawMessage(`{"stream":"stdout","data":"{\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}\n{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-helper-1\"}}}\n{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turn\":{\"id\":\"turn-codex-helper-1\",\"status\":\"inProgress\",\"error\":null}}}\n{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turnId\":\"turn-codex-helper-1\",\"itemId\":\"item-codex-helper-1\",\"delta\":\"Helper-backed Codex \"}}\n"}`))
+	fact1, err := iod.NewHelperFact(iod.FactOutputDelta, &seq1, json.RawMessage(`{"stream":"unix","data":"{\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}\n{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-helper-1\"}}}\n{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turn\":{\"id\":\"turn-codex-helper-1\",\"status\":\"inProgress\",\"error\":null}}}\n{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turnId\":\"turn-codex-helper-1\",\"itemId\":\"item-codex-helper-1\",\"delta\":\"Helper-backed Codex \"}}\n"}`))
 	if err != nil {
 		t.Fatalf("NewHelperFact(first) error = %v", err)
 	}
@@ -1251,7 +1456,7 @@ func TestCreateSessionConsumesHelperBackedCodexReplayAndLiveOutputIntoStateTrans
 		t.Fatalf("Encode(first) error = %v", err)
 	}
 	seq2 := iod.EventSeq(2)
-	fact2, err := iod.NewHelperFact(iod.FactOutputDelta, &seq2, json.RawMessage(`{"stream":"stdout","data":"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turnId\":\"turn-codex-helper-1\",\"itemId\":\"item-codex-helper-1\",\"delta\":\"reached the session transcript.\"}}\n{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turnId\":\"turn-codex-helper-1\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-helper-1\",\"text\":\"Helper-backed Codex reached the session transcript.\"}}}\n{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turn\":{\"id\":\"turn-codex-helper-1\",\"status\":\"completed\",\"error\":null}}}\n"}`))
+	fact2, err := iod.NewHelperFact(iod.FactOutputDelta, &seq2, json.RawMessage(`{"stream":"unix","data":"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turnId\":\"turn-codex-helper-1\",\"itemId\":\"item-codex-helper-1\",\"delta\":\"reached the session transcript.\"}}\n{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turnId\":\"turn-codex-helper-1\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-helper-1\",\"text\":\"Helper-backed Codex reached the session transcript.\"}}}\n{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-helper-1\",\"turn\":{\"id\":\"turn-codex-helper-1\",\"status\":\"completed\",\"error\":null}}}\n"}`))
 	if err != nil {
 		t.Fatalf("NewHelperFact(second) error = %v", err)
 	}

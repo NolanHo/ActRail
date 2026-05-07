@@ -462,7 +462,11 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 		t.Fatalf("NewGenerationID() error = %v", err)
 	}
 	piChild := mustLaunchSpecForHelperContractTest(t, "/tmp/pi", []string{"--mode", "rpc"}, "/tmp/project-pi", childEnv, ioSpec)
-	codexChild := mustLaunchSpecForHelperContractTest(t, "/tmp/codex", []string{"app-server", "--stdio"}, "/tmp/project-codex", childEnv, ioSpec)
+	paths, err := iod.NewGenerationPaths(launcher.iodRuntimeRoot, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	codexChild := mustLaunchSpecForHelperContractTest(t, "/tmp/codex", []string{"app-server", "--listen", "unix://" + paths.ChildSocketPath}, "/tmp/project-codex", childEnv, ioSpec)
 
 	piSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendPI, CWD: "/tmp/project-pi"}, "/tmp/actrail-iod", generationID, piChild)
 	if err != nil {
@@ -474,7 +478,7 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 	}
 
 	assertHelperLaunchContract(t, piSpec.Command().Args(), piChild, iod.ChildIOModeStdio)
-	assertHelperLaunchContract(t, codexSpec.Command().Args(), codexChild, "")
+	assertHelperLaunchContract(t, codexSpec.Command().Args(), codexChild, iod.ChildIOModeUnix)
 	if !reflect.DeepEqual(piSpec.Environment().Vars(), launcherEnv.Vars()) {
 		t.Fatalf("helper environment vars = %#v, want launcher env vars %#v", piSpec.Environment().Vars(), launcherEnv.Vars())
 	}

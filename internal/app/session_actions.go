@@ -588,6 +588,29 @@ func (s *Stub) waitForHandoffRuntimeReady(ctx context.Context, sessionID session
 		if err != nil {
 			return err
 		}
+		if record.runtime.PendingPIAgentGRPCReady() {
+			readyCtx, cancel := context.WithDeadline(ctx, deadline)
+			err := record.runtime.WaitForPIAgentGRPCReady(readyCtx)
+			cancel()
+			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				if time.Now().After(deadline) {
+					return Conflict("session runtime is starting")
+				}
+				return err
+			}
+			record.runtime.piAgentGRPCReady = nil
+			updated, ok, err := s.registry.SetRuntimeTransport(sessionID, record.runtime, transportSnapshotPIAgentGRPCAttached())
+			if err != nil {
+				return err
+			}
+			if ok {
+				s.emitSessionState(updated.identity.SessionID())
+			}
+			return nil
+		}
 		transport := sessionTransportSnapshot(record)
 		if err := transportControlError(transport); err == nil {
 			if !record.runtime.PendingPIAgentGRPCReady() && (!seenStarting || transport.State != SessionTransportStateStarting) {

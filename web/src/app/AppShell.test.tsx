@@ -187,6 +187,12 @@ function renderAppShell({
   queue = null,
   files = [],
   requests = [],
+  newSessionDefaults = {
+    backend_capabilities: {
+      pi: { runtime_probe: true },
+      codex: { runtime_probe: true },
+    },
+  },
 }: {
   activeSessionId?: string | null;
   agentBackend?: string;
@@ -210,6 +216,7 @@ function renderAppShell({
   queue?: Record<string, unknown> | null;
   files?: string[];
   requests?: unknown[];
+  newSessionDefaults?: unknown;
 } = {}) {
   const sessionItems = items ?? [{ session_id: "sess-1", alias: "Legacy shell", agent_backend: agentBackend, busy: true }];
   const messageState = messages ?? Object.fromEntries(sessionItems.map((session) => [session.session_id, []]));
@@ -220,7 +227,7 @@ function renderAppShell({
       activeSessionId,
       loading: false,
       bootstrapLoaded: true,
-      newSessionDefaults: null,
+      newSessionDefaults,
     },
     { refresh: vi.fn().mockResolvedValue(undefined), refreshBootstrap: vi.fn().mockResolvedValue(undefined), select: vi.fn() },
   );
@@ -858,8 +865,23 @@ describe("AppShell", () => {
     expect(getRoot().querySelector(".conversationTitle")?.textContent).not.toContain("先整理一下今晚要发的内容");
   });
 
-  it("probes pi runtime state from the toolbar", async () => {
+  it("probes runtime state from the toolbar when backend capability allows it", async () => {
     const { liveSessionStore } = renderAppShell({ items: [{ session_id: "sess-1", alias: "Legacy shell", agent_backend: "pi", busy: false }] });
+    await flush();
+
+    const button = getRoot().querySelector<HTMLButtonElement>('[aria-label="Probe runtime state"]');
+    expect(button).not.toBeNull();
+
+    act(() => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(liveSessionStore.probe).toHaveBeenCalledWith("sess-1");
+  });
+
+  it("probes codex runtime state from the toolbar when backend capability allows it", async () => {
+    const { liveSessionStore } = renderAppShell({ items: [{ session_id: "sess-1", alias: "Codex shell", agent_backend: "codex", busy: false }] });
     await flush();
 
     const button = getRoot().querySelector<HTMLButtonElement>('[aria-label="Probe runtime state"]');

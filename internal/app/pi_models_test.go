@@ -65,3 +65,17 @@ func TestBootstrapRefreshPIModelsDiscoversAndCachesProviderModels(t *testing.T) 
 		t.Fatalf("cached models = %#v requests=%d", models, requests)
 	}
 }
+
+func TestBootstrapIncludesBackendCapabilityMatrix(t *testing.T) {
+	stub := NewStubForTest(config.Load(), func() time.Time { return time.Unix(1770000000, 0) }, RuntimeConfig{})
+	bootstrap := stub.Bootstrap(context.Background(), BootstrapRequest{})
+
+	codex := bootstrap.NewSessionDefaults.BackendCapabilities["codex"]
+	if !codex.LaunchProvider || !codex.LaunchModel || codex.LaunchReasoningEffort || !codex.RuntimeToolTrace || !codex.RuntimeReasoningTrace || !codex.RuntimeContextUsage || !codex.RuntimeProbe || !codex.IODUnix || codex.IODStdio || codex.GRPC {
+		t.Fatalf("codex capability matrix = %+v", codex)
+	}
+	pi := bootstrap.NewSessionDefaults.BackendCapabilities["pi"]
+	if !pi.LaunchProvider || !pi.LaunchModel || !pi.LaunchReasoningEffort || !pi.RuntimeToolTrace || !pi.RuntimeUIRequests || !pi.RuntimeProbe || !pi.IODStdio || !pi.GRPC || pi.IODUnix {
+		t.Fatalf("pi capability matrix = %+v", pi)
+	}
+}

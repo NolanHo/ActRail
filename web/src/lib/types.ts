@@ -17,7 +17,26 @@ export interface LaunchBackendDefaults {
 export interface NewSessionDefaults {
   default_backend?: string;
   backends?: Record<string, LaunchBackendDefaults>;
+  backend_capabilities?: Record<string, BackendCapabilitySnapshot>;
   pi_agent_grpc_default?: boolean;
+}
+
+export interface BackendCapabilitySnapshot {
+  launch_provider?: boolean;
+  launch_model?: boolean;
+  launch_reasoning_effort?: boolean;
+  runtime_streaming?: boolean;
+  runtime_tool_trace?: boolean;
+  runtime_reasoning_trace?: boolean;
+  runtime_context_usage?: boolean;
+  runtime_ui_requests?: boolean;
+  runtime_interrupt?: boolean;
+  runtime_probe?: boolean;
+  iod_stdio?: boolean;
+  iod_unix?: boolean;
+  grpc?: boolean;
+  supervisor?: boolean;
+  resume_history?: boolean;
 }
 
 export interface BootstrapCapabilities {

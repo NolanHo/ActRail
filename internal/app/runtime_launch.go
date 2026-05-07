@@ -556,10 +556,6 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	if runtimeRoot == "" {
 		return sessionRuntime{}, fmt.Errorf("iod runtime root is required")
 	}
-	childLaunchSpec, err := l.childLaunchSpec(req)
-	if err != nil {
-		return sessionRuntime{}, err
-	}
 	helperBinPath, err := l.resolveIODHelperBinPath()
 	if err != nil {
 		return sessionRuntime{}, err
@@ -569,6 +565,10 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 		return sessionRuntime{}, err
 	}
 	paths, err := iod.NewGenerationPaths(runtimeRoot, req.SessionID, generationID)
+	if err != nil {
+		return sessionRuntime{}, err
+	}
+	childLaunchSpec, err := l.childLaunchSpecForGeneration(req, &paths)
 	if err != nil {
 		return sessionRuntime{}, err
 	}
@@ -620,6 +620,10 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 }
 
 func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (process.LaunchSpec, error) {
+	return l.childLaunchSpecForGeneration(req, nil)
+}
+
+func (l processRuntimeLauncher) childLaunchSpecForGeneration(req runtimeLaunchRequest, paths *iod.GenerationPaths) (process.LaunchSpec, error) {
 	binPath, err := l.resolveBinPath(req.Backend)
 	if err != nil {
 		return process.LaunchSpec{}, err
@@ -628,7 +632,11 @@ func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (proce
 	if req.PIAgentGRPC {
 		grpcSocketPath = piagentgrpc.SocketPathForTarget(l.PIAgentGRPCTarget(req.SessionID))
 	}
-	options, err := agent.NewOptionsWithTransport(req.Provider, req.Model, req.ReasoningEffort, req.SessionPath, grpcSocketPath)
+	listenURL := ""
+	if req.Backend == session.BackendCodex && paths != nil {
+		listenURL = "unix://" + paths.ChildSocketPath
+	}
+	options, err := agent.NewOptionsWithRuntimeListen(req.Provider, req.Model, req.ReasoningEffort, req.SessionPath, grpcSocketPath, listenURL)
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
@@ -664,6 +672,8 @@ func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helpe
 	}
 	if req.Backend == session.BackendPI {
 		commandArgs = append(commandArgs, helperFlagChildIOMode, string(iod.ChildIOModeStdio))
+	} else if req.Backend == session.BackendCodex {
+		commandArgs = append(commandArgs, helperFlagChildIOMode, string(iod.ChildIOModeUnix))
 	}
 	if sessionPath := strings.TrimSpace(req.SessionPath); sessionPath != "" {
 		commandArgs = append(commandArgs, helperFlagSessionHistoryPath, sessionPath)
@@ -824,6 +834,25 @@ func (r sessionRuntime) RequestPIRPCState(ctx context.Context, id string) error 
 		return r.helper.command(ctx, iod.CommandSend, encoded)
 	}
 	return r.writeRPCCommand(ctx, command)
+}
+
+func (r sessionRuntime) RequestCodexThreadState(ctx context.Context) error {
+	if r.protocol != runtimeProtocolCodexRPC {
+		return nil
+	}
+	_, threadID, _ := r.codex.snapshot()
+	if threadID == "" {
+		return errRuntimeInputUnavailable
+	}
+	request := map[string]any{
+		"method": "thread/read",
+		"id":     r.codex.nextRequestID("thread-read"),
+		"params": map[string]any{
+			"threadId":     threadID,
+			"includeTurns": true,
+		},
+	}
+	return r.writeCodexCommand(ctx, request)
 }
 
 func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {

@@ -14,6 +14,7 @@ const (
 	defaultManifestFilename = "generation-manifest.json"
 	defaultWALFilename      = "transport.wal"
 	defaultSocketFilename   = "io"
+	defaultChildSocketName  = "child.sock"
 )
 
 // GenerationPaths groups the per-generation runtime artifacts owned by one helper.
@@ -22,6 +23,7 @@ type GenerationPaths struct {
 	ManifestPath      string
 	WALPath           string
 	ControlSocketPath string
+	ChildSocketPath   string
 }
 
 func NewGenerationPaths(root string, sessionID session.SessionID, generationID GenerationID) (GenerationPaths, error) {
@@ -45,6 +47,7 @@ func NewGenerationPaths(root string, sessionID session.SessionID, generationID G
 		ManifestPath:      filepath.Join(runtimeDir, defaultManifestFilename),
 		WALPath:           filepath.Join(runtimeDir, defaultWALFilename),
 		ControlSocketPath: filepath.Join(runtimeDir, defaultSocketFilename),
+		ChildSocketPath:   filepath.Join(runtimeDir, defaultChildSocketName),
 	}
 	if err := paths.Validate(); err != nil {
 		return GenerationPaths{}, err
@@ -61,6 +64,7 @@ func (p GenerationPaths) Validate() error {
 		{label: "manifest path", value: p.ManifestPath},
 		{label: "wal path", value: p.WALPath},
 		{label: "control socket path", value: p.ControlSocketPath},
+		{label: "child socket path", value: p.ChildSocketPath},
 	} {
 		if strings.TrimSpace(item.value) == "" {
 			return fmt.Errorf("%s is required", item.label)

@@ -310,9 +310,57 @@ func (s *Stub) newSessionDefaults(ctx context.Context, req BootstrapRequest) New
 		addBackend("codex")
 	}
 	addBackend(s.cfg.Launch.DefaultBackend)
+	capabilities := map[string]BackendCapabilitySnapshot{}
+	for backend := range backends {
+		capabilities[backend] = backendCapabilitySnapshot(backend)
+	}
 	return NewSessionDefaults{
-		DefaultBackend:     s.cfg.Launch.DefaultBackend,
-		Backends:           backends,
-		PIAgentGRPCDefault: true,
+		DefaultBackend:      s.cfg.Launch.DefaultBackend,
+		Backends:            backends,
+		BackendCapabilities: capabilities,
+		PIAgentGRPCDefault:  true,
+	}
+}
+
+func backendCapabilitySnapshot(backend string) BackendCapabilitySnapshot {
+	switch strings.TrimSpace(backend) {
+	case "pi":
+		return BackendCapabilitySnapshot{
+			LaunchProvider:        true,
+			LaunchModel:           true,
+			LaunchReasoningEffort: true,
+			RuntimeStreaming:      true,
+			RuntimeToolTrace:      true,
+			RuntimeReasoningTrace: true,
+			RuntimeContextUsage:   true,
+			RuntimeUIRequests:     true,
+			RuntimeInterrupt:      true,
+			RuntimeProbe:          true,
+			IODStdio:              true,
+			IODUnix:               false,
+			GRPC:                  true,
+			Supervisor:            true,
+			ResumeHistory:         true,
+		}
+	case "codex":
+		return BackendCapabilitySnapshot{
+			LaunchProvider:        true,
+			LaunchModel:           true,
+			LaunchReasoningEffort: false,
+			RuntimeStreaming:      true,
+			RuntimeToolTrace:      true,
+			RuntimeReasoningTrace: true,
+			RuntimeContextUsage:   true,
+			RuntimeUIRequests:     false,
+			RuntimeInterrupt:      true,
+			RuntimeProbe:          true,
+			IODStdio:              false,
+			IODUnix:               true,
+			GRPC:                  false,
+			Supervisor:            false,
+			ResumeHistory:         false,
+		}
+	default:
+		return BackendCapabilitySnapshot{}
 	}
 }

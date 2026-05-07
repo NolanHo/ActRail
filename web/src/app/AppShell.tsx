@@ -40,6 +40,7 @@ import {
 import { getSessionRuntimeId } from "../lib/session-identity";
 import { getSessionDisplayName } from "../lib/session-display";
 import { applyUserDisplaySettings, readUserDisplaySettings, writeUserDisplaySettings } from "../lib/user-settings";
+import { backendCapability } from "../lib/launch";
 
 type WorkspaceTab = "metadata";
 type FinalResponseSignature = {
@@ -147,11 +148,12 @@ function EmptyDetailsWorkspace() {
 }
 
 export function AppShell() {
-  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items, realtimeTransport } = useSessionsStoreSelector((state) => ({
+  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items, newSessionDefaults, realtimeTransport } = useSessionsStoreSelector((state) => ({
     activeSessionId: state.activeSessionId,
     bootstrapCapabilities: state.bootstrapCapabilities,
     bootstrapLoaded: state.bootstrapLoaded,
     items: state.items,
+    newSessionDefaults: state.newSessionDefaults,
     realtimeTransport: state.realtimeTransport,
   }), shallowEqual);
   const liveActiveSessionState = useLiveSessionStoreSelector((state) => {
@@ -318,6 +320,7 @@ export function AppShell() {
   }, [sessionsStoreApi]);
 
   const activeSession = items.find((session) => session.session_id === activeSessionId) ?? null;
+  const activeBackendCapabilities = backendCapability(newSessionDefaults, activeSession?.agent_backend);
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
   const activeSessionPending = activeSession?.pending_startup === true;
   const activeSessionGenerating = Boolean(activeSessionId && liveActiveSessionState.generating === true);
@@ -727,7 +730,7 @@ export function AppShell() {
                   activeSessionId={activeSessionId}
                   activeTitle={activeTitle}
                   canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
-                  canProbeRuntime={Boolean(activeSessionId && activeSession?.agent_backend === "pi" && !activeSessionPending)}
+                  canProbeRuntime={Boolean(activeSessionId && activeBackendCapabilities?.runtime_probe === true && !activeSessionPending)}
                   probingRuntime={runtimeProbePending}
                   showInterruptAction={showInterruptAction}
                   statusItems={conversationStatusItems}

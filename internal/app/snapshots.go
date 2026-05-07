@@ -461,10 +461,16 @@ func (s *Stub) ProbeSessionState(ctx context.Context, req ProbeSessionStateReque
 	if err != nil {
 		return ProbeSessionStateResponse{}, err
 	}
-	if record.identity.Backend() != session.BackendPI || record.runtime.protocol != runtimeProtocolPIRPC {
-		return ProbeSessionStateResponse{}, Invalid("runtime", "get_state probe requires Pi RPC runtime")
-	}
 	probeID := fmt.Sprintf("actrail-manual-state-%d", time.Now().UTC().UnixNano())
+	if record.identity.Backend() == session.BackendCodex && record.runtime.protocol == runtimeProtocolCodexRPC {
+		if err := record.runtime.RequestCodexThreadState(ctx); err != nil {
+			return ProbeSessionStateResponse{}, mapRuntimeControlError(err)
+		}
+		return ProbeSessionStateResponse{ProbeID: probeID, State: s.sessionStateResponse(record)}, nil
+	}
+	if record.identity.Backend() != session.BackendPI || record.runtime.protocol != runtimeProtocolPIRPC {
+		return ProbeSessionStateResponse{}, Invalid("runtime", "state probe requires Pi RPC or Codex app-server runtime")
+	}
 	if record.runtime.piAgentGRPC != nil {
 		state, err := record.runtime.RequestPIRPCStateSnapshot(ctx)
 		if err != nil {
