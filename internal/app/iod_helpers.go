@@ -438,9 +438,10 @@ func (s *helperReplayState) accept(packet iod.ReplayItemPacket) error {
 		return fmt.Errorf("validate replay fact at wal offset %d: %w", packet.Item.WALOffset, err)
 	}
 	if s.project != nil {
-		if err := s.project(packet); err != nil {
-			return fmt.Errorf("project replay fact at wal offset %d: %w", packet.Item.WALOffset, err)
-		}
+		// Replay cursor continuity is guarded by the helper WAL. Projection is a
+		// best-effort UI cache rebuild; stale Codex event shapes or interleaved
+		// side events must not fence a surviving runtime.
+		_ = s.project(packet)
 	}
 	s.lastOffset = packet.Item.WALOffset
 	return nil

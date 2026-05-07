@@ -286,11 +286,70 @@ func TestHelperReplayStateDoesNotAdvanceOffsetOnProjectionFailure(t *testing.T) 
 		return fmt.Errorf("reject wal offset %d", packet.Item.WALOffset)
 	})
 	packet := mustReplayItemPacket(t, sessionID, generationID, 6, 9)
-	if err := state.accept(packet); err == nil {
-		t.Fatal("accept() error = nil, want projector failure")
+	if err := state.accept(packet); err != nil {
+		t.Fatalf("accept() error = %v, want projection failure ignored", err)
 	}
-	if state.lastOffset != 5 {
-		t.Fatalf("last replay offset = %d, want 5 after projector failure", state.lastOffset)
+	if state.lastOffset != 6 {
+		t.Fatalf("last replay offset = %d, want 6 after projector failure", state.lastOffset)
+	}
+}
+
+func TestCodexReattachIgnoresProjectionError(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_projection_error")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID, LastReplayOffset: 5}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-reattach"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000007)
+	replayPartial := mustReplayOutputPacket(t, sessionID, generationID, 6, 3,
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-projection-error\"}}}\n"+
+			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turn\":{\"id\":\"turn-codex-projection-error\",\"status\":\"inProgress\",\"error\":null}}}\n"+
+			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"itemId\":\"item-codex-projection-error\",\"delta\":\"Recovered \"}}\n")
+	replayToolDuringPartial := mustReplayOutputPacket(t, sessionID, generationID, 7, 4,
+		"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"item\":{\"type\":\"commandExecution\",\"id\":\"tool-codex-projection-error\",\"command\":\"echo stale\",\"aggregatedOutput\":\"stale tool result\",\"status\":\"completed\"}}}\n")
+	replayFinal := mustReplayOutputPacket(t, sessionID, generationID, 8, 5,
+		"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"itemId\":\"item-codex-projection-error\",\"delta\":\"after projection error.\"}}\n"+
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-projection-error\",\"text\":\"Recovered after projection error.\"}}}\n"+
+			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turn\":{\"id\":\"turn-codex-projection-error\",\"status\":\"completed\",\"error\":null}}}\n")
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{
+		AfterOffset: 5,
+		Items:       []iod.ReplayItemPacket{replayPartial, replayToolDuringPartial, replayFinal},
+		Done:        mustReplayDonePacket(t, sessionID, generationID, 5, 8),
+	})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	attachment, ok := rehydrated.helpers.Attachment(sessionID)
+	if !ok {
+		t.Fatalf("helper attachment for %q not found", sessionID)
+	}
+	if attachment.Binding.LastReplayOffset != 8 {
+		t.Fatalf("attachment last replay offset = %d, want 8", attachment.Binding.LastReplayOffset)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState().Transport = %+v, want attached after projection error", state.Transport)
+	}
+	messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "Recovered after projection error." {
+		t.Fatalf("SessionMessages().Items = %#v, want replay to continue through projection error", messages.Items)
 	}
 }
 
