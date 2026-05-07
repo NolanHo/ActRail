@@ -63,6 +63,13 @@ func TestSchedulerAndInboxPersist(t *testing.T) {
 	if len(dueItems) != 1 || dueItems[0].ItemID != "self_reminder_1" {
 		t.Fatalf("due scheduler items = %+v", dueItems)
 	}
+	dueCount, err := reloaded.CountDueSchedulerItemsForSession(context.Background(), "sess-1", now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("CountDueSchedulerItemsForSession() error = %v", err)
+	}
+	if dueCount != 1 {
+		t.Fatalf("due count = %d, want 1", dueCount)
+	}
 	selfReminder.State = "delivered"
 	selfReminder.UpdatedAt = now.Add(2 * time.Minute)
 	if err := reloaded.UpdateSchedulerItem(context.Background(), selfReminder); err != nil {
@@ -81,6 +88,13 @@ func TestSchedulerAndInboxPersist(t *testing.T) {
 	}
 	if len(readyItems) != 1 || readyItems[0].ItemID != "inbox_1" {
 		t.Fatalf("ready inbox items = %+v", readyItems)
+	}
+	openInboxCount, err := reloaded.CountOpenInboxItemsForSession(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("CountOpenInboxItemsForSession() error = %v", err)
+	}
+	if openInboxCount != 1 {
+		t.Fatalf("open inbox count = %d, want 1", openInboxCount)
 	}
 	deliveredAt := now.Add(3 * time.Minute)
 	inbox.State = "delivered"

@@ -98,6 +98,18 @@ func (m *memorySchedulerStore) ListDueSchedulerItems(_ context.Context, now time
 	return rows, nil
 }
 
+func (m *memorySchedulerStore) CountDueSchedulerItemsForSession(_ context.Context, sessionID string, now time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for _, row := range m.schedule {
+		if row.SessionID == sessionID && row.State == "scheduled" && !row.DueAt.After(now) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *memorySchedulerStore) UpdateSchedulerItem(_ context.Context, row sqlitestore.SchedulerItemRow) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -143,6 +155,18 @@ func (m *memorySchedulerStore) ListReadyInboxItems(_ context.Context, now time.T
 		rows = rows[:limit]
 	}
 	return rows, nil
+}
+
+func (m *memorySchedulerStore) CountOpenInboxItemsForSession(_ context.Context, sessionID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for _, row := range m.inbox {
+		if row.SessionID == sessionID && (row.State == "pending" || row.State == "claimed") {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (m *memorySchedulerStore) UpdateInboxItem(_ context.Context, row sqlitestore.InboxItemRow) error {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
+	"actrail/internal/domain/session"
 )
 
 func newSupervisorTestStub(now time.Time) *Stub {
@@ -74,6 +77,7 @@ func TestSessionSupervisorRejectsNonPIBackend(t *testing.T) {
 }
 
 func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
+	t.Setenv("PI_HOME", t.TempDir())
 	now := time.Unix(1760000000, 0).UTC()
 	svc := newSupervisorTestStub(now)
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
@@ -141,6 +145,117 @@ func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
 	}
 }
 
+func TestRunSupervisorOnceRecordsEvaluatingBeforeModelAndInjectsAfterCommitGate(t *testing.T) {
+	svc, sessionID, _, pty := newControlFixture(t)
+	record := writeSupervisorPIHistory(t, svc, sessionID, "a1", "partial answer")
+	seenEvaluating := make(chan error, 1)
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		rows, err := svc.supervisorStore.ListSupervisorRuns(context.Background(), sessionID.String(), 10)
+		if err != nil {
+			seenEvaluating <- err
+		} else if len(rows) != 1 || rows[0].Status != supervisorRunStatusEvaluating || rows[0].AnchorAssistantEventID != "pi:message:a1" {
+			seenEvaluating <- fmt.Errorf("supervisor rows during model call = %+v", rows)
+		} else {
+			seenEvaluating <- nil
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"action\":\"inject\",\"message\":\"继续验证\",\"reason\":\"assistant stopped before verification\"}"}}]}`))
+	}))
+	defer modelServer.Close()
+	enableSupervisorForTest(t, svc, sessionID, modelServer.URL)
+
+	run, err := svc.RunSupervisorOnce(context.Background(), SupervisorRunOnceRequest{SessionID: sessionID, DryRun: false})
+	if err != nil {
+		t.Fatalf("RunSupervisorOnce() error = %v", err)
+	}
+	if err := <-seenEvaluating; err != nil {
+		t.Fatal(err)
+	}
+	if run.Run.Status != supervisorRunStatusInjected || run.Run.Action != "inject" || run.Run.InjectedText != "继续验证" {
+		t.Fatalf("RunSupervisorOnce() = %+v, want injected", run)
+	}
+	writes := pty.Writes()
+	if len(writes) != 1 || writes[0] != "{\"type\":\"prompt\",\"message\":\"继续验证\"}\n" {
+		t.Fatalf("pty writes = %#v, want injected prompt", writes)
+	}
+	supervisor, err := svc.SessionSupervisor(context.Background(), SessionSupervisorRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionSupervisor() error = %v", err)
+	}
+	if supervisor.ConsecutiveInjections != 1 {
+		t.Fatalf("ConsecutiveInjections = %d, want 1", supervisor.ConsecutiveInjections)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: record.identity.SessionID(), Limit: 20})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 3 || len(messages.Items[1].SupervisorRuns) != 1 || messages.Items[1].SupervisorRuns[0].Status != supervisorRunStatusInjected {
+		t.Fatalf("annotated messages = %+v", messages.Items)
+	}
+}
+
+func TestRunSupervisorOnceSkipsLiveInjectWhenInboxIsOpen(t *testing.T) {
+	svc, sessionID, _, pty := newControlFixture(t)
+	writeSupervisorPIHistory(t, svc, sessionID, "a1", "partial answer")
+	modelServer := supervisorInjectServer(t, "继续")
+	defer modelServer.Close()
+	enableSupervisorForTest(t, svc, sessionID, modelServer.URL)
+	now := svc.registry.now()
+	if err := svc.schedulerStore.InsertInboxItem(context.Background(), sqlitestore.InboxItemRow{
+		ItemID:    "inbox_pending",
+		SessionID: sessionID.String(),
+		Source:    "self_reminder",
+		SourceID:  "self_reminder_pending",
+		Title:     "Self Reminder",
+		Message:   "higher priority",
+		DueAt:     now,
+		State:     "pending",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("InsertInboxItem() error = %v", err)
+	}
+
+	run, err := svc.RunSupervisorOnce(context.Background(), SupervisorRunOnceRequest{SessionID: sessionID, DryRun: false})
+	if err != nil {
+		t.Fatalf("RunSupervisorOnce() error = %v", err)
+	}
+	if run.Run.Status != supervisorRunStatusSkippedBlocked || !strings.Contains(run.Run.Error, "inbox") {
+		t.Fatalf("RunSupervisorOnce() = %+v, want skipped_blocked inbox", run)
+	}
+	if writes := pty.Writes(); len(writes) != 0 {
+		t.Fatalf("pty writes = %#v, want no injection", writes)
+	}
+	supervisor, err := svc.SessionSupervisor(context.Background(), SessionSupervisorRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionSupervisor() error = %v", err)
+	}
+	if supervisor.ConsecutiveInjections != 0 {
+		t.Fatalf("ConsecutiveInjections = %d, want 0", supervisor.ConsecutiveInjections)
+	}
+}
+
+func TestRunSupervisorOnceSkipsLiveInjectWhenAnchorChangesBeforeCommit(t *testing.T) {
+	svc, sessionID, _, pty := newControlFixture(t)
+	record := writeSupervisorPIHistory(t, svc, sessionID, "a1", "partial answer")
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		writeSupervisorPIHistoryBody(t, record.importedSourcePath, record.cwd, "a2", "newer assistant answer")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"action\":\"inject\",\"message\":\"继续\",\"reason\":\"assistant stopped before verification\"}"}}]}`))
+	}))
+	defer modelServer.Close()
+	enableSupervisorForTest(t, svc, sessionID, modelServer.URL)
+
+	run, err := svc.RunSupervisorOnce(context.Background(), SupervisorRunOnceRequest{SessionID: sessionID, DryRun: false})
+	if err != nil {
+		t.Fatalf("RunSupervisorOnce() error = %v", err)
+	}
+	if run.Run.Status != supervisorRunStatusSkippedStale || !strings.Contains(run.Run.Error, "anchor changed") {
+		t.Fatalf("RunSupervisorOnce() = %+v, want skipped_stale", run)
+	}
+	if writes := pty.Writes(); len(writes) != 0 {
+		t.Fatalf("pty writes = %#v, want no injection", writes)
+	}
+}
+
 func TestRunSupervisorOnceRejectsAssistantWithoutPIMessageEventID(t *testing.T) {
 	svc := newSupervisorTestStub(time.Unix(1760000000, 0).UTC())
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
@@ -202,5 +317,57 @@ func TestUpdateSessionSupervisorPersistsConfig(t *testing.T) {
 	}
 	if !read.Enabled || read.MaxConsecutiveInjections != 12 || read.Goal != goal {
 		t.Fatalf("SessionSupervisor() = %+v", read)
+	}
+}
+
+func supervisorInjectServer(t *testing.T, message string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		escaped, _ := json.Marshal(map[string]string{
+			"action":  "inject",
+			"message": message,
+			"reason":  "assistant stopped before verification",
+		})
+		response, _ := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": string(escaped)}}},
+		})
+		_, _ = w.Write(response)
+	}))
+}
+
+func enableSupervisorForTest(t *testing.T, svc *Stub, sessionID session.SessionID, baseURL string) {
+	t.Helper()
+	apiKey := "secret"
+	if _, err := svc.UpdateSupervisorProvider(context.Background(), UpdateSupervisorProviderRequest{BaseURL: baseURL, APIKey: &apiKey, Model: "model-a"}); err != nil {
+		t.Fatalf("UpdateSupervisorProvider() error = %v", err)
+	}
+	enabled := true
+	if _, err := svc.UpdateSessionSupervisor(context.Background(), UpdateSessionSupervisorRequest{SessionID: sessionID, Enabled: &enabled}); err != nil {
+		t.Fatalf("UpdateSessionSupervisor() error = %v", err)
+	}
+}
+
+func writeSupervisorPIHistory(t *testing.T, svc *Stub, sessionID session.SessionID, assistantID, assistantText string) sessionRecord {
+	t.Helper()
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	writeSupervisorPIHistoryBody(t, record.importedSourcePath, record.cwd, assistantID, assistantText)
+	return record
+}
+
+func writeSupervisorPIHistoryBody(t *testing.T, path string, cwd string, assistantID string, assistantText string) {
+	t.Helper()
+	assistantTextJSON, err := json.Marshal(assistantText)
+	if err != nil {
+		t.Fatalf("Marshal assistant text error = %v", err)
+	}
+	body := fmt.Sprintf(`{"type":"session","version":3,"id":"pi-supervisor","cwd":%q}
+{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"start"}]}}
+{"type":"message","id":%q,"parentId":"u1","message":{"role":"assistant","content":[{"type":"text","text":%s}],"stopReason":"stop"}}
+`, cwd, assistantID, string(assistantTextJSON))
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", path, err)
 	}
 }

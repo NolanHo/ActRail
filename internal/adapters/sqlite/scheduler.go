@@ -168,6 +168,18 @@ func (c *SessionCatalog) ListDueSchedulerItems(ctx context.Context, now time.Tim
 	return items, nil
 }
 
+func (c *SessionCatalog) CountDueSchedulerItemsForSession(ctx context.Context, sessionID string, now time.Time) (int, error) {
+	if c == nil || c.db == nil {
+		return 0, fmt.Errorf("sqlite catalog is not initialized")
+	}
+	var count int
+	err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM scheduler_items WHERE session_id = ? AND state = 'scheduled' AND due_at <= ?`, sessionID, formatTime(now)).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count due scheduler items for session %q: %w", sessionID, err)
+	}
+	return count, nil
+}
+
 func (c *SessionCatalog) UpdateSchedulerItem(ctx context.Context, row SchedulerItemRow) error {
 	if c == nil || c.db == nil {
 		return fmt.Errorf("sqlite catalog is not initialized")
@@ -231,6 +243,18 @@ func (c *SessionCatalog) ListReadyInboxItems(ctx context.Context, now time.Time,
 		return nil, fmt.Errorf("iterate ready inbox items: %w", err)
 	}
 	return items, nil
+}
+
+func (c *SessionCatalog) CountOpenInboxItemsForSession(ctx context.Context, sessionID string) (int, error) {
+	if c == nil || c.db == nil {
+		return 0, fmt.Errorf("sqlite catalog is not initialized")
+	}
+	var count int
+	err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM inbox_items WHERE session_id = ? AND state IN ('pending', 'claimed')`, sessionID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count open inbox items for session %q: %w", sessionID, err)
+	}
+	return count, nil
 }
 
 func (c *SessionCatalog) UpdateInboxItem(ctx context.Context, row InboxItemRow) error {

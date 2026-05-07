@@ -106,6 +106,33 @@ func (c *SessionCatalog) InsertSupervisorRun(ctx context.Context, row Supervisor
 	return err
 }
 
+func (c *SessionCatalog) UpdateSupervisorRun(ctx context.Context, row SupervisorRunRow) error {
+	res, err := c.db.ExecContext(ctx, `UPDATE supervisor_runs SET
+		session_id = ?,
+		anchor_assistant_event_id = ?,
+		anchor_assistant_ts = ?,
+		anchor_assistant_text_hash = ?,
+		status = ?,
+		action = ?,
+		injected_text = ?,
+		reason = ?,
+		error = ?,
+		model = ?,
+		base_url = ?,
+		snapshot_json = ?,
+		raw_output = ?,
+		created_at = ?
+		WHERE run_id = ?`,
+		row.SessionID, row.AnchorAssistantEventID, row.AnchorAssistantTS, row.AnchorAssistantTextHash, row.Status, row.Action, row.InjectedText, row.Reason, row.Error, row.Model, row.BaseURL, row.SnapshotJSON, row.RawOutput, formatTime(row.CreatedAt), row.RunID)
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+		return fmt.Errorf("update supervisor run %q: not found", row.RunID)
+	}
+	return nil
+}
+
 func (c *SessionCatalog) ListSupervisorRuns(ctx context.Context, sessionID string, limit int) ([]SupervisorRunRow, error) {
 	if limit <= 0 {
 		limit = 100

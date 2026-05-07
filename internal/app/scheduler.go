@@ -24,9 +24,11 @@ type schedulerStore interface {
 	LookupSchedulerItem(context.Context, string) (sqlitestore.SchedulerItemRow, bool, error)
 	ListSchedulerItems(context.Context, int) ([]sqlitestore.SchedulerItemRow, error)
 	ListDueSchedulerItems(context.Context, time.Time, int) ([]sqlitestore.SchedulerItemRow, error)
+	CountDueSchedulerItemsForSession(context.Context, string, time.Time) (int, error)
 	UpdateSchedulerItem(context.Context, sqlitestore.SchedulerItemRow) error
 	InsertInboxItem(context.Context, sqlitestore.InboxItemRow) error
 	ListReadyInboxItems(context.Context, time.Time, int) ([]sqlitestore.InboxItemRow, error)
+	CountOpenInboxItemsForSession(context.Context, string) (int, error)
 	UpdateInboxItem(context.Context, sqlitestore.InboxItemRow) error
 	ListInboxItems(context.Context, string, int) ([]sqlitestore.InboxItemRow, error)
 }
@@ -128,6 +130,8 @@ func (s *Stub) SchedulerSnapshot(ctx context.Context, req SchedulerSnapshotReque
 }
 
 func (s *Stub) UpdateSchedulerSettings(ctx context.Context, req UpdateSchedulerSettingsRequest) (SchedulerSettings, error) {
+	s.deferredInputMu.Lock()
+	defer s.deferredInputMu.Unlock()
 	settings, err := s.schedulerSettings(ctx)
 	if err != nil {
 		return SchedulerSettings{}, err
@@ -166,6 +170,8 @@ func (s *Stub) CreateSelfReminder(ctx context.Context, req CreateSelfReminderReq
 	if _, err := s.lookupSession(req.SessionID); err != nil {
 		return SelfReminderResponse{}, err
 	}
+	s.deferredInputMu.Lock()
+	defer s.deferredInputMu.Unlock()
 	now := s.registry.now()
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
@@ -198,6 +204,8 @@ func (s *Stub) CancelSelfReminder(ctx context.Context, req CancelSelfReminderReq
 	if itemID == "" {
 		return SelfReminderResponse{}, Invalid("item_id", "item_id required")
 	}
+	s.deferredInputMu.Lock()
+	defer s.deferredInputMu.Unlock()
 	item, ok, err := s.schedulerStore.LookupSchedulerItem(ctx, itemID)
 	if err != nil {
 		return SelfReminderResponse{}, err
@@ -234,6 +242,8 @@ func (s *Stub) RunSchedulerDeliverySweep(ctx context.Context) {
 }
 
 func (s *Stub) runSchedulerDeliverySweep(ctx context.Context) error {
+	s.deferredInputMu.Lock()
+	defer s.deferredInputMu.Unlock()
 	now := s.registry.now().UTC()
 	if err := s.stageDueSchedulerItems(ctx, now); err != nil {
 		return err

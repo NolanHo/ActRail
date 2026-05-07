@@ -91,7 +91,13 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 	return response, err
 }
 
+type sendLockedPrecondition func(sessionRecord) error
+
 func (s *Stub) send(ctx context.Context, req SendRequest, followUp bool) (SendResponse, error) {
+	return s.sendWithPrecondition(ctx, req, followUp, nil)
+}
+
+func (s *Stub) sendWithPrecondition(ctx context.Context, req SendRequest, followUp bool, precondition sendLockedPrecondition) (SendResponse, error) {
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
 		return SendResponse{}, Invalid("text", "text required")
@@ -103,6 +109,11 @@ func (s *Stub) send(ctx context.Context, req SendRequest, followUp bool) (SendRe
 	watchCodexTurnStart := false
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
 		record.runtime = s.runtimeForRecord(record)
+		if precondition != nil {
+			if err := precondition(record); err != nil {
+				return err
+			}
+		}
 		if s.activeWaitForSession(req.SessionID) != nil {
 			return Conflict("session is waiting on user")
 		}
