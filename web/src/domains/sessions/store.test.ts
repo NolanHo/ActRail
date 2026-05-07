@@ -189,6 +189,47 @@ describe("createSessionsStore", () => {
     expect(second.getState().newSessionDefaults?.backends?.pi.provider_models).toEqual({ openai: ["gpt-5.4"] });
   });
 
+  it("keeps current codex launch defaults ahead of stale cached provider values", async () => {
+    window.localStorage.setItem("actrail.newSessionDefaults.v1", JSON.stringify({
+      default_backend: "codex",
+      backends: {
+        codex: {
+          provider_choice: "chatgpt",
+          model_provider: "chatgpt",
+          model: "gpt-old",
+          provider_choices: ["chatgpt"],
+          model_providers: ["chatgpt"],
+          models: ["gpt-old"],
+        },
+      },
+    }));
+    vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
+      new_session_defaults: {
+        default_backend: "codex",
+        backends: {
+          codex: {
+            provider_choice: "crs",
+            model_provider: "crs",
+            model: "gpt-5.5",
+            provider_choices: ["crs"],
+            model_providers: ["crs"],
+            models: ["gpt-5.5"],
+          },
+        },
+      },
+    } as never);
+
+    const store = createSessionsStore();
+    await store.refreshBootstrap();
+
+    const codex = store.getState().newSessionDefaults?.backends?.codex;
+    expect(codex?.provider_choice).toBe("crs");
+    expect(codex?.model_provider).toBe("crs");
+    expect(codex?.model).toBe("gpt-5.5");
+    expect(codex?.provider_choices).toContain("chatgpt");
+    expect(codex?.provider_choices).toContain("crs");
+  });
+
   it("loads more rows through flat pagination", async () => {
     vi.mocked(api.listSessions)
       .mockResolvedValueOnce({

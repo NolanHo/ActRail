@@ -168,15 +168,15 @@ func (codexAdapter) CommandArgs(opts Options) ([]string, error) {
 	if opts.DangerousBypass() {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	}
-	args = append(args, "app-server")
-	if listenURL := opts.ListenURL(); listenURL != "" {
-		args = append(args, "--listen", listenURL)
-	}
 	if provider := opts.Provider(); provider != "" {
 		args = append(args, "-c", tomlStringConfig("model_provider", provider))
 	}
 	if model := opts.Model(); model != "" {
 		args = append(args, "--model", model)
+	}
+	args = append(args, "app-server")
+	if listenURL := opts.ListenURL(); listenURL != "" {
+		args = append(args, "--listen", listenURL)
 	}
 	return args, nil
 }

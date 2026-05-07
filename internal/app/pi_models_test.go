@@ -13,6 +13,50 @@ import (
 	"actrail/internal/config"
 )
 
+func TestBootstrapReadsCodexLaunchDefaultsFromConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `
+model_provider = "crs"
+model_reasoning_effort = "xhigh"
+preferred_auth_method = "apikey"
+model = "gpt-5.5"
+
+[model_providers.crs]
+name = "OpenAI"
+base_url = "https://pi-api.macaron.xin"
+`
+	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := NewStubForTest(config.Load(), func() time.Time { return time.Unix(1770000000, 0) }, RuntimeConfig{})
+	bootstrap := stub.Bootstrap(context.Background(), BootstrapRequest{})
+	codex := bootstrap.NewSessionDefaults.Backends["codex"]
+
+	if codex.ProviderChoice != "crs" || codex.ModelProvider != "crs" {
+		t.Fatalf("codex provider defaults = %q/%q, want crs/crs", codex.ProviderChoice, codex.ModelProvider)
+	}
+	if codex.Model != "gpt-5.5" {
+		t.Fatalf("codex model = %q, want gpt-5.5", codex.Model)
+	}
+	if !containsString(codex.ProviderChoices, "crs") || !containsString(codex.ModelProviders, "crs") {
+		t.Fatalf("codex provider choices = %#v model providers = %#v, want crs", codex.ProviderChoices, codex.ModelProviders)
+	}
+	if !containsString(codex.Models, "gpt-5.5") {
+		t.Fatalf("codex models = %#v, want gpt-5.5", codex.Models)
+	}
+	if got := codex.ProviderModels["crs"]; len(got) != 1 || got[0] != "gpt-5.5" {
+		t.Fatalf("codex provider models = %#v, want crs -> gpt-5.5", codex.ProviderModels)
+	}
+	if codex.PreferredAuthMethod != "apikey" || codex.ReasoningEffort != "xhigh" {
+		t.Fatalf("codex auth/reasoning = %q/%q, want apikey/xhigh", codex.PreferredAuthMethod, codex.ReasoningEffort)
+	}
+}
+
 func TestBootstrapRefreshPIModelsDiscoversAndCachesProviderModels(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

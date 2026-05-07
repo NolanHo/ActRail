@@ -193,8 +193,9 @@ function mergeNewSessionDefaults(incoming: NewSessionDefaults | null, cached: Ne
       model_providers: mergeStringArrays(next.model_providers, prior.model_providers),
       models: mergeStringArrays(next.models, prior.models),
       provider_models: mergeProviderModels(next.provider_models, prior.provider_models),
-      model: next.model || prior.model,
-      provider_choice: next.provider_choice || prior.provider_choice,
+      model: Object.prototype.hasOwnProperty.call(next, "model") ? next.model : prior.model,
+      provider_choice: Object.prototype.hasOwnProperty.call(next, "provider_choice") ? next.provider_choice : prior.provider_choice,
+      model_provider: Object.prototype.hasOwnProperty.call(next, "model_provider") ? next.model_provider : prior.model_provider,
     }];
   }));
   return {
