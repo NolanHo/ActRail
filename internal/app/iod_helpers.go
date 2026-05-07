@@ -391,14 +391,20 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 
 	updatedBinding := binding
 	if s != nil {
-		replayState := newHelperReplayState(binding.LastReplayOffset, func(packet iod.ReplayItemPacket) error {
+		replayAfterOffset := binding.LastReplayOffset
+		if record, ok := s.registry.Lookup(binding.SessionID); ok && record.transcript.TailSeq().Uint64() == 0 {
+			if _, partial := record.transcript.PartialAssistantTurn(); !partial {
+				replayAfterOffset = 0
+			}
+		}
+		replayState := newHelperReplayState(replayAfterOffset, func(packet iod.ReplayItemPacket) error {
 			record, ok := s.registry.Lookup(binding.SessionID)
 			if !ok {
 				return fmt.Errorf("session %q not found while replaying helper WAL", binding.SessionID)
 			}
 			return s.applyRuntimeHelperPacket(binding.SessionID, record.identity.Backend(), packet)
 		})
-		request, err := iod.NewReplayRequestPacket(binding.SessionID, binding.GenerationID, binding.LastReplayOffset)
+		request, err := iod.NewReplayRequestPacket(binding.SessionID, binding.GenerationID, replayAfterOffset)
 		if err != nil {
 			_ = client.Close()
 			return attachedHelper{}, binding, helperFenceReplayFailed, err
