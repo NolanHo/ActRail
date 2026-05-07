@@ -744,6 +744,13 @@ function isProcessUpdateCustomMessage(event: MessageEvent): boolean {
     && event.custom_type.startsWith("ad-process:");
 }
 
+function isCodexSubagentMessage(event: MessageEvent): boolean {
+  const details = asRecord(event.details);
+  return eventKind(event) === "custom_message"
+    && typeof details?.custom_type === "string"
+    && details.custom_type === "codex-subagent-message";
+}
+
 function piEventCompactVariant(event: MessageEvent): (typeof PI_EVENT_COMPACT_VARIANTS)[keyof typeof PI_EVENT_COMPACT_VARIANTS] | null {
   if (eventKind(event) !== "pi_event") {
     return null;
@@ -779,7 +786,7 @@ function compactTraceKind(event: MessageEvent): CompactTraceKind | null {
   if (MACHINE_TRACE_KINDS.has(kind)) {
     return kind as CompactTraceKind;
   }
-  if (isProcessUpdateCustomMessage(event)) {
+  if (isProcessUpdateCustomMessage(event) && !isCodexSubagentMessage(event)) {
     return "custom_message";
   }
   if (piEventCompactVariant(event) || COMPACT_EVENT_KINDS.has(kind)) {
@@ -2628,6 +2635,23 @@ function renderTodoSnapshotCard(event: MessageEvent, options: MarkdownRenderOpti
 
 function renderCustomMessageCard(event: MessageEvent, options: MarkdownRenderOptions) {
   const customType = typeof event.custom_type === "string" ? event.custom_type : "";
+  const details = asRecord(event.details);
+
+  if (isCodexSubagentMessage(event)) {
+    const role = firstNonEmptyText(details?.role, event.summary, "message");
+    const threadID = firstNonEmptyText(details?.thread_id);
+    const title = role.toLowerCase() === "user" ? "Codex Subagent Prompt" : "Codex Subagent";
+    return (
+      <MessageSurface kind="custom_message" className="codexSubagentMessage">
+        {renderCardHeader("custom_message", title, threadID ? `thread ${threadID}` : "subagent", event.ts)}
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Role</span>
+          <strong>{role}</strong>
+        </div>
+        {event.text ? renderRichText(event.text, "messageBody", options) : null}
+      </MessageSurface>
+    );
+  }
 
   if (customType === "claude-todo-v2-task-assignment") {
     return (

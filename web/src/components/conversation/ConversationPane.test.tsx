@@ -95,6 +95,56 @@ describe("ConversationPane", () => {
     expect(text).toContain("All done.");
   });
 
+  it("renders Codex subagent messages as subagent cards instead of user bubbles", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-1", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-1": [
+            { role: "user", text: "Review this PR" },
+            {
+              type: "custom_message",
+              text: "Subagent prompt",
+              summary: "user",
+              details: { custom_type: "codex-subagent-message", role: "user", thread_id: "sub-thread-1" },
+            },
+            {
+              type: "custom_message",
+              text: "Subagent result",
+              summary: "assistant",
+              details: { custom_type: "codex-subagent-message", role: "assistant", thread_id: "sub-thread-1" },
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-1": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root!,
+    );
+
+    expect(root.querySelectorAll("[data-testid='message-surface'][data-kind='user']")).toHaveLength(1);
+    const subagentCards = root.querySelectorAll("[data-testid='message-surface'][data-kind='custom_message'].codexSubagentMessage");
+    expect(subagentCards).toHaveLength(2);
+    const text = root.textContent || "";
+    expect(text).toContain("Codex Subagent Prompt");
+    expect(text).toContain("Codex Subagent");
+    expect(text).toContain("Subagent prompt");
+    expect(text).toContain("Subagent result");
+    expect(text).toContain("thread sub-thread-1");
+  });
+
   it("does not re-render the timeline when draft text changes without pending messages", () => {
     const sessionsStore = createStaticStore(
       { items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }], activeSessionId: "sess-1", loading: false, newSessionDefaults: null },

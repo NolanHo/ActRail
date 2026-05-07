@@ -2355,6 +2355,11 @@ button.conversationStatusChip {
   border-color: var(--message-card-team-border);
 }
 
+.messageCard.codexSubagentMessage {
+  background: color-mix(in srgb, var(--card) 94%, #f0fdfa);
+  border-color: color-mix(in srgb, var(--border) 70%, #0f766e);
+}
+
 .messageCard.todo_snapshot {
   background: var(--message-card-todo-bg);
   border-color: var(--message-card-todo-border);

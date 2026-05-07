@@ -1,7 +1,9 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
@@ -74,6 +76,67 @@ func sessionMessageFromCommitted(item message.CommittedMessage) SessionMessage {
 		msg.Name = item.Text()
 		msg.Summary = item.Text()
 		msg.Details = map[string]any{"name": item.Text()}
+	case "custom_message":
+		msg.Role = ""
+		msg.Type = "custom_message"
+		if payload, ok := decodeCodexSubagentMessage(item.Text()); ok {
+			applyCodexSubagentMessageFields(&msg, payload)
+		}
 	}
 	return msg
+}
+
+type codexSubagentMessagePayload struct {
+	Kind     string `json:"kind"`
+	Role     string `json:"role"`
+	Text     string `json:"text"`
+	ThreadID string `json:"thread_id"`
+	TurnID   string `json:"turn_id,omitempty"`
+	ItemID   string `json:"item_id,omitempty"`
+}
+
+func encodeCodexSubagentMessage(payload codexSubagentMessagePayload) (string, error) {
+	payload.Kind = "codex_subagent_message"
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode codex subagent message: %w", err)
+	}
+	return string(body), nil
+}
+
+func decodeCodexSubagentMessage(text string) (codexSubagentMessagePayload, bool) {
+	var payload codexSubagentMessagePayload
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &payload); err != nil {
+		return codexSubagentMessagePayload{}, false
+	}
+	if payload.Kind != "codex_subagent_message" || strings.TrimSpace(payload.Text) == "" {
+		return codexSubagentMessagePayload{}, false
+	}
+	return payload, true
+}
+
+func applyCodexSubagentMessageFields(msg *SessionMessage, payload codexSubagentMessagePayload) {
+	if msg == nil {
+		return
+	}
+	role := strings.TrimSpace(payload.Role)
+	text := strings.TrimSpace(payload.Text)
+	threadID := strings.TrimSpace(payload.ThreadID)
+	msg.Role = ""
+	msg.Type = "custom_message"
+	msg.Text = text
+	msg.Name = "Codex Subagent"
+	msg.Summary = role
+	msg.Details = map[string]any{
+		"custom_type": "codex-subagent-message",
+		"role":        role,
+		"text":        text,
+		"thread_id":   threadID,
+	}
+	if turnID := strings.TrimSpace(payload.TurnID); turnID != "" {
+		msg.Details["turn_id"] = turnID
+	}
+	if itemID := strings.TrimSpace(payload.ItemID); itemID != "" {
+		msg.Details["item_id"] = itemID
+	}
 }

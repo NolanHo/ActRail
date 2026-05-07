@@ -94,6 +94,7 @@ type Event struct {
 	RawID      string
 	ParentID   string
 	SessionID  string
+	ThreadID   string
 	TurnID     string
 	Message    *Message
 	Delta      *MessageDelta

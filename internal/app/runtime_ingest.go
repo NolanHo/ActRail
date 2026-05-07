@@ -953,11 +953,12 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 				return runtimeProjection{}, true
 			}
 			return runtimeProjection{events: []pi.Event{{
-				Kind:    pi.EventKindMessageDelta,
-				RawType: line.Method,
-				RawID:   strings.TrimSpace(params.ItemID),
-				TurnID:  strings.TrimSpace(params.TurnID),
-				Delta:   &pi.MessageDelta{Role: pi.MessageRoleAssistant, Text: params.Delta},
+				Kind:     pi.EventKindMessageDelta,
+				RawType:  line.Method,
+				RawID:    strings.TrimSpace(params.ItemID),
+				ThreadID: strings.TrimSpace(params.ThreadID),
+				TurnID:   strings.TrimSpace(params.TurnID),
+				Delta:    &pi.MessageDelta{Role: pi.MessageRoleAssistant, Text: params.Delta},
 			}}}, true
 		case "item/started":
 			events := codexItemEvents(line.Method, line.Params, false)
@@ -1042,6 +1043,7 @@ func codexItemEvents(method string, raw json.RawMessage, completed bool) []pi.Ev
 	item := params.Item
 	itemType := strings.TrimSpace(stringValue(item["type"]))
 	itemID := strings.TrimSpace(stringValue(item["id"]))
+	threadID := strings.TrimSpace(params.ThreadID)
 	turnID := strings.TrimSpace(params.TurnID)
 	switch itemType {
 	case "agentMessage":
@@ -1053,11 +1055,12 @@ func codexItemEvents(method string, raw json.RawMessage, completed bool) []pi.Ev
 			return nil
 		}
 		return []pi.Event{{
-			Kind:    pi.EventKindMessage,
-			RawType: method,
-			RawID:   itemID,
-			TurnID:  turnID,
-			Message: &pi.Message{ID: itemID, Role: pi.MessageRoleAssistant, Text: text, Class: pi.MessageClassCommitted, CommitLike: true},
+			Kind:     pi.EventKindMessage,
+			RawType:  method,
+			RawID:    itemID,
+			ThreadID: threadID,
+			TurnID:   turnID,
+			Message:  &pi.Message{ID: itemID, Role: pi.MessageRoleAssistant, Text: text, Class: pi.MessageClassCommitted, CommitLike: true},
 		}}
 	case "reasoning", "plan":
 		text := codexReasoningText(item)
@@ -1077,11 +1080,12 @@ func codexItemEvents(method string, raw json.RawMessage, completed bool) []pi.Ev
 			return nil
 		}
 		return []pi.Event{{
-			Kind:    pi.EventKindMessage,
-			RawType: method,
-			RawID:   itemID,
-			TurnID:  turnID,
-			Message: &pi.Message{ID: itemID, Role: pi.MessageRoleUser, Text: text, Class: pi.MessageClassUserPrompt, CommitLike: true},
+			Kind:     pi.EventKindMessage,
+			RawType:  method,
+			RawID:    itemID,
+			ThreadID: threadID,
+			TurnID:   turnID,
+			Message:  &pi.Message{ID: itemID, Role: pi.MessageRoleUser, Text: text, Class: pi.MessageClassUserPrompt, CommitLike: true},
 		}}
 	default:
 		if !codexToolLikeItem(itemType) {
@@ -1092,11 +1096,12 @@ func codexItemEvents(method string, raw json.RawMessage, completed bool) []pi.Ev
 			return nil
 		}
 		return []pi.Event{{
-			Kind:    pi.EventKindTool,
-			RawType: method,
-			RawID:   itemID,
-			TurnID:  turnID,
-			Tool:    tool,
+			Kind:     pi.EventKindTool,
+			RawType:  method,
+			RawID:    itemID,
+			ThreadID: threadID,
+			TurnID:   turnID,
+			Tool:     tool,
 		}}
 	}
 }
@@ -1248,6 +1253,7 @@ func codexReasoningDeltaEvent(method string, raw json.RawMessage) *pi.Event {
 	itemID := strings.TrimSpace(stringValue(params["itemId"]))
 	turnID := strings.TrimSpace(stringValue(params["turnId"]))
 	event := codexReasoningEvent(method, itemID, turnID, text)
+	event.ThreadID = strings.TrimSpace(stringValue(params["threadId"]))
 	return &event
 }
 
@@ -1876,6 +1882,10 @@ func (s *Stub) applyPIDelta(sessionID session.SessionID, event pi.Event) error {
 	if event.Delta == nil {
 		return nil
 	}
+	if !s.codexRuntimeEventInMainThread(sessionID, event) {
+		s.emitSessionState(sessionID)
+		return nil
+	}
 	turnID := runtimeTurnID(event)
 	if turnID == "" {
 		return nil
@@ -1935,6 +1945,13 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 		return nil
 	}
 	if event.Message.Role == pi.MessageRoleUser {
+		if !s.codexRuntimeUserMessageInMainThread(sessionID, event) {
+			if err := s.applyCodexSubagentMessage(sessionID, event); err != nil {
+				return err
+			}
+			s.emitSessionState(sessionID)
+			return nil
+		}
 		if s.duplicateRuntimeUserMessage(sessionID, event.Message.Text) {
 			s.emitSessionState(sessionID)
 			return nil
@@ -1966,6 +1983,13 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	}
 
 	turnID := runtimeTurnID(event)
+	if event.Message.Role == pi.MessageRoleAssistant && !s.codexRuntimeMessageInMainThread(sessionID, event) {
+		if err := s.applyCodexSubagentMessage(sessionID, event); err != nil {
+			return err
+		}
+		s.emitSessionState(sessionID)
+		return nil
+	}
 	committed, committedNew, err := s.commitRuntimeMessage(sessionID, turnID, role, event.Message.Text)
 	if err != nil {
 		return err
@@ -1995,6 +2019,102 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	s.emitAssistantFinalNotification(sessionID, committed)
 	s.emitSessionState(sessionID)
 	return nil
+}
+
+func (s *Stub) applyCodexSubagentMessage(sessionID session.SessionID, event pi.Event) error {
+	if event.Message == nil || strings.TrimSpace(event.Message.Text) == "" {
+		return nil
+	}
+	if strings.TrimSpace(event.RawType) != "item/completed" {
+		return nil
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return nil
+	}
+	threadID := strings.TrimSpace(event.ThreadID)
+	if threadID == "" {
+		return nil
+	}
+	_, mainThreadID, _ := record.runtime.codex.snapshot()
+	if threadID == strings.TrimSpace(mainThreadID) {
+		return nil
+	}
+	payload := codexSubagentMessagePayload{
+		Role:     strings.TrimSpace(string(event.Message.Role)),
+		Text:     strings.TrimSpace(event.Message.Text),
+		ThreadID: threadID,
+		TurnID:   strings.TrimSpace(event.TurnID),
+		ItemID:   strings.TrimSpace(event.RawID),
+	}
+	encoded, err := encodeCodexSubagentMessage(payload)
+	if err != nil {
+		return err
+	}
+	committed, err := s.AppendSessionMessage(sessionID, "system", "custom_message", encoded)
+	if err != nil {
+		return err
+	}
+	committed.Role = ""
+	committed.Type = "custom_message"
+	committed.EventID = piMessageEventID(event)
+	committed.ParentEventID = piParentEventID(event)
+	applyCodexSubagentMessageFields(&committed, payload)
+	s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
+	return nil
+}
+
+func (s *Stub) codexRuntimeEventInMainThread(sessionID session.SessionID, event pi.Event) bool {
+	if strings.TrimSpace(event.RawType) != "item/completed" {
+		rawType := strings.TrimSpace(event.RawType)
+		if rawType != "item/agentMessage/delta" && rawType != "item/reasoning/summaryTextDelta" && rawType != "item/reasoning/textDelta" {
+			return true
+		}
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return true
+	}
+	eventThreadID := strings.TrimSpace(event.ThreadID)
+	if eventThreadID == "" {
+		return true
+	}
+	_, mainThreadID, _ := record.runtime.codex.snapshot()
+	mainThreadID = strings.TrimSpace(mainThreadID)
+	if mainThreadID == "" {
+		return true
+	}
+	return eventThreadID == mainThreadID
+}
+
+func (s *Stub) codexRuntimeMessageInMainThread(sessionID session.SessionID, event pi.Event) bool {
+	if event.Message == nil {
+		return true
+	}
+	return s.codexRuntimeEventInMainThread(sessionID, event)
+}
+
+func (s *Stub) codexRuntimeUserMessageInMainThread(sessionID session.SessionID, event pi.Event) bool {
+	if strings.TrimSpace(event.RawType) != "item/completed" {
+		return true
+	}
+	if event.Message == nil || event.Message.Role != pi.MessageRoleUser {
+		return true
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return true
+	}
+	eventThreadID := strings.TrimSpace(event.ThreadID)
+	if eventThreadID == "" {
+		return true
+	}
+	_, mainThreadID, _ := record.runtime.codex.snapshot()
+	mainThreadID = strings.TrimSpace(mainThreadID)
+	if mainThreadID == "" {
+		return true
+	}
+	return eventThreadID == mainThreadID
 }
 
 func (s *Stub) duplicateRuntimeUserMessage(sessionID session.SessionID, text string) bool {
