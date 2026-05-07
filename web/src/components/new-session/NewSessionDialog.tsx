@@ -574,13 +574,25 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
               setError("");
               try {
                 const trimmedSessionName = surfaceTab === "start" ? sessionName.trim() || undefined : undefined;
+                const launchSettingsTouched = touchedLaunchSettingsRef.current;
+                const codexLaunch = backend === "codex";
+                const providerOverride = codexLaunch
+                  ? launchSettingsTouched.providerChoice
+                    ? providerChoice.trim() || undefined
+                    : undefined
+                  : providerChoice.trim() || backendDefaults.provider_choice?.trim() || undefined;
+                const modelOverride = codexLaunch
+                  ? launchSettingsTouched.model
+                    ? model.trim() || undefined
+                    : undefined
+                  : model.trim() || undefined;
                 const response = await api.createSession({
                   cwd: trimmedCwd,
                   title: trimmedSessionName,
                   agent_backend: backend,
                   resume_session_id: selectedResumeId || undefined,
-                  provider: providerChoice.trim() || backendDefaults.provider_choice?.trim() || undefined,
-                  model: model.trim() || undefined,
+                  provider: providerOverride,
+                  model: modelOverride,
                   reasoning_effort: backendSupportsReasoningEffort(backend, newSessionDefaults) ? reasoningEffort.trim() || undefined : undefined,
                   pi_agent_grpc: backend === "pi" ? usePIAgentGRPC : undefined,
                 });

@@ -96,13 +96,6 @@ function stableMessageKey(event: MessageEvent | undefined): string | null {
   if (semanticKey) {
     return semanticKey;
   }
-  if (typeof event.seq === "number" && Number.isFinite(event.seq)) {
-    return `seq:${Math.floor(event.seq)}`;
-  }
-  const streamId = typeof event.stream_id === "string" ? event.stream_id.trim() : "";
-  if (event.role === "assistant" && event.streaming === true && streamId) {
-    return `stream:${streamId}`;
-  }
   const eventId = typeof event.event_id === "string" ? event.event_id.trim() : "";
   if (eventId) {
     return `event_id:${eventId}`;
@@ -110,6 +103,13 @@ function stableMessageKey(event: MessageEvent | undefined): string | null {
   const id = typeof event.id === "string" ? event.id.trim() : "";
   if (id) {
     return `id:${id}`;
+  }
+  if (typeof event.seq === "number" && Number.isFinite(event.seq)) {
+    return `seq:${Math.floor(event.seq)}`;
+  }
+  const streamId = typeof event.stream_id === "string" ? event.stream_id.trim() : "";
+  if (event.role === "assistant" && event.streaming === true && streamId) {
+    return `stream:${streamId}`;
   }
   return null;
 }

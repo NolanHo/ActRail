@@ -170,9 +170,13 @@ func (codexAdapter) CommandArgs(opts Options) ([]string, error) {
 	if err := (codexAdapter{}).ValidateOptions(opts); err != nil {
 		return nil, err
 	}
-	args := make([]string, 0, 7)
+	args := make([]string, 0, 11)
 	if opts.DangerousBypass() {
-		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+		args = append(args,
+			"--dangerously-bypass-approvals-and-sandbox",
+			"-c", tomlStringConfig("approval_policy", "never"),
+			"-c", tomlStringConfig("sandbox_mode", "danger-full-access"),
+		)
 	}
 	if provider := opts.Provider(); provider != "" {
 		args = append(args, "-c", tomlStringConfig("model_provider", provider))
