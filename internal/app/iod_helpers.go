@@ -392,10 +392,8 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 	updatedBinding := binding
 	if s != nil {
 		replayAfterOffset := binding.LastReplayOffset
-		if record, ok := s.registry.Lookup(binding.SessionID); ok && record.transcript.TailSeq().Uint64() == 0 {
-			if _, partial := record.transcript.PartialAssistantTurn(); !partial {
-				replayAfterOffset = 0
-			}
+		if record, ok := s.registry.Lookup(binding.SessionID); ok {
+			replayAfterOffset = helperReplayAfterOffset(record, binding)
 		}
 		replayState := newHelperReplayState(replayAfterOffset, func(packet iod.ReplayItemPacket) error {
 			record, ok := s.registry.Lookup(binding.SessionID)
@@ -430,6 +428,16 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 	}, updatedBinding, "", nil
 }
 
+func helperReplayAfterOffset(record sessionRecord, binding helperGenerationBinding) iod.WALOffset {
+	if record.transcript.TailSeq().Uint64() != 0 {
+		return binding.LastReplayOffset
+	}
+	if _, partial := record.transcript.PartialAssistantTurn(); partial {
+		return binding.LastReplayOffset
+	}
+	return 0
+}
+
 type helperReplayState struct {
 	lastOffset iod.WALOffset
 	project    func(iod.ReplayItemPacket) error
@@ -439,30 +447,30 @@ func newHelperReplayState(afterOffset iod.WALOffset, project func(iod.ReplayItem
 	return helperReplayState{lastOffset: afterOffset, project: project}
 }
 
-func (s *helperReplayState) accept(packet iod.ReplayItemPacket) error {
-	expected := s.lastOffset + 1
+func (r *helperReplayState) accept(packet iod.ReplayItemPacket) error {
+	expected := r.lastOffset + 1
 	if packet.Item.WALOffset != expected {
-		return fmt.Errorf("%w: got wal offset %d after %d", errHelperReplayGap, packet.Item.WALOffset, s.lastOffset)
+		return fmt.Errorf("%w: got wal offset %d after %d", errHelperReplayGap, packet.Item.WALOffset, r.lastOffset)
 	}
 	if err := packet.Item.Fact.Validate(); err != nil {
 		return fmt.Errorf("validate replay fact at wal offset %d: %w", packet.Item.WALOffset, err)
 	}
-	if s.project != nil {
+	if r.project != nil {
 		// Replay cursor continuity is guarded by the helper WAL. Projection is a
 		// best-effort UI cache rebuild; stale Codex event shapes or interleaved
 		// side events must not fence a surviving runtime.
-		_ = s.project(packet)
+		_ = r.project(packet)
 	}
-	s.lastOffset = packet.Item.WALOffset
+	r.lastOffset = packet.Item.WALOffset
 	return nil
 }
 
-func (s helperReplayState) finish(done iod.ReplayDonePacket) error {
+func (r helperReplayState) finish(done iod.ReplayDonePacket) error {
 	if done.CorruptTail {
 		return fmt.Errorf("%w after wal offset %d", errHelperReplayCorruptTail, done.AfterOffset)
 	}
-	if done.LastOffset != s.lastOffset {
-		return fmt.Errorf("%w: replay done last offset %d does not match accepted offset %d", errHelperReplayGap, done.LastOffset, s.lastOffset)
+	if done.LastOffset != r.lastOffset {
+		return fmt.Errorf("%w: replay done last offset %d does not match accepted offset %d", errHelperReplayGap, done.LastOffset, r.lastOffset)
 	}
 	return nil
 }

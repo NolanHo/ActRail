@@ -14,6 +14,7 @@ import (
 	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
+	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
 )
 
@@ -279,7 +280,34 @@ func TestServerReattachProjectsCodexReplayAndLiveOutput(t *testing.T) {
 	}
 }
 
-func TestHelperReplayStateDoesNotAdvanceOffsetOnProjectionFailure(t *testing.T) {
+func TestHelperReplayAfterOffset(t *testing.T) {
+	sessionID := mustSessionID(t, "s_replay_after_offset")
+	generationID := mustHelperGenerationID(t, "g_replay_after_offset")
+	binding := helperGenerationBinding{SessionID: sessionID, GenerationID: generationID, LastReplayOffset: 7}
+
+	empty := sessionRecord{transcript: message.NewTranscript()}
+	if got := helperReplayAfterOffset(empty, binding); got != 0 {
+		t.Fatalf("helperReplayAfterOffset(empty transcript) = %d, want 0", got)
+	}
+
+	withMessage := sessionRecord{transcript: message.NewTranscript()}
+	if _, err := withMessage.transcript.AppendMessage(message.RoleUser.String(), message.KindMessage.String(), "hello", time.Unix(1760000000, 0).UTC()); err != nil {
+		t.Fatalf("AppendMessage() error = %v", err)
+	}
+	if got := helperReplayAfterOffset(withMessage, binding); got != 7 {
+		t.Fatalf("helperReplayAfterOffset(committed transcript) = %d, want 7", got)
+	}
+
+	withPartial := sessionRecord{transcript: message.NewTranscript()}
+	if _, err := withPartial.transcript.AppendAssistantDelta("turn_replay_after_offset", "partial"); err != nil {
+		t.Fatalf("AppendAssistantDelta() error = %v", err)
+	}
+	if got := helperReplayAfterOffset(withPartial, binding); got != 7 {
+		t.Fatalf("helperReplayAfterOffset(partial transcript) = %d, want 7", got)
+	}
+}
+
+func TestHelperReplayStateAdvancesOffsetWhenProjectionFails(t *testing.T) {
 	sessionID := mustSessionID(t, "s_1")
 	generationID := mustHelperGenerationID(t, "g_projection_failure")
 	state := newHelperReplayState(5, func(packet iod.ReplayItemPacket) error {
