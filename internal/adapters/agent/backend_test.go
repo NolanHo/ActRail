@@ -119,7 +119,7 @@ func TestCodexCommandArgsUseConfigOverrideForProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server", "-c", `model_provider="openrouter"`, "--model", "gpt-5"}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_provider="openrouter"`, "--model", "gpt-5", "app-server"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}
@@ -134,7 +134,7 @@ func TestCodexCommandArgsIncludeListenURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server", "--listen", "unix:///tmp/actrail/child.sock", "-c", `model_provider="openai"`, "--model", "gpt-5"}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_provider="openai"`, "--model", "gpt-5", "app-server", "--listen", "unix:///tmp/actrail/child.sock"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}
@@ -149,7 +149,7 @@ func TestCodexCommandArgsCanDisableDangerousBypass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"app-server", "--listen", "unix:///tmp/actrail/child.sock", "-c", `model_provider="openai"`, "--model", "gpt-5"}
+	want := []string{"-c", `model_provider="openai"`, "--model", "gpt-5", "app-server", "--listen", "unix:///tmp/actrail/child.sock"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}

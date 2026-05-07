@@ -283,12 +283,7 @@ func (s *Stub) piLaunchBackendDefaults(ctx context.Context, refresh bool) Launch
 }
 
 func (s *Stub) newSessionDefaults(ctx context.Context, req BootstrapRequest) NewSessionDefaults {
-	codex := LaunchBackendDefaults{
-		ProviderChoice:  chooseFirst(s.cfg.Launch.Providers),
-		ProviderChoices: uniqueSortedStrings(s.cfg.Launch.Providers),
-		Model:           chooseFirst(s.cfg.Launch.Models),
-		Models:          uniqueSortedStrings(s.cfg.Launch.Models),
-	}
+	codex := s.codexLaunchBackendDefaults()
 	backends := map[string]LaunchBackendDefaults{}
 	addBackend := func(backend string) {
 		switch strings.TrimSpace(backend) {
@@ -319,6 +314,44 @@ func (s *Stub) newSessionDefaults(ctx context.Context, req BootstrapRequest) New
 		Backends:            backends,
 		BackendCapabilities: capabilities,
 		PIAgentGRPCDefault:  true,
+	}
+}
+
+func (s *Stub) codexLaunchBackendDefaults() LaunchBackendDefaults {
+	cfg := readCodexConfig()
+	providers := uniqueSortedStrings(append(append([]string{}, s.cfg.Launch.Providers...), cfg.Providers...))
+	models := uniqueSortedStrings(s.cfg.Launch.Models)
+	if cfg.Model != "" {
+		models = uniqueSortedStrings(append(models, cfg.Model))
+	}
+	providerModels := cloneProviderModels(cfg.ProviderModels)
+	if cfg.ModelProvider != "" && cfg.Model != "" {
+		if providerModels == nil {
+			providerModels = map[string][]string{}
+		}
+		providerModels[cfg.ModelProvider] = uniqueSortedStrings(append(providerModels[cfg.ModelProvider], cfg.Model))
+	}
+	defaultProvider := chooseFirst(s.cfg.Launch.Providers)
+	if defaultProvider == "" {
+		defaultProvider = cfg.ModelProvider
+	}
+	if defaultProvider == "" {
+		defaultProvider = chooseFirst(providers)
+	}
+	defaultModel := chooseFirst(s.cfg.Launch.Models)
+	if defaultModel == "" {
+		defaultModel = cfg.Model
+	}
+	return LaunchBackendDefaults{
+		ProviderChoice:      defaultProvider,
+		ProviderChoices:     providers,
+		Model:               defaultModel,
+		Models:              models,
+		ProviderModels:      providerModels,
+		ModelProvider:       defaultProvider,
+		ModelProviders:      providers,
+		PreferredAuthMethod: cfg.PreferredAuthMethod,
+		ReasoningEffort:     cfg.ModelReasoningEffort,
 	}
 }
 

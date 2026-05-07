@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -373,7 +374,38 @@ func defaultRuntimeBinPath(backend session.Backend) (string, error) {
 	if err := backend.Validate(); err != nil {
 		return "", err
 	}
+	if backend == session.BackendCodex {
+		if path := strings.TrimSpace(os.Getenv("ACTRAIL_CODEX_BIN")); path != "" {
+			return path, nil
+		}
+		if path, err := exec.LookPath("codex"); err == nil {
+			return path, nil
+		}
+		if path, ok := firstExecutableCodexPath(); ok {
+			return path, nil
+		}
+	}
 	return backend.String(), nil
+}
+
+func firstExecutableCodexPath() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return "", false
+	}
+	candidates := []string{filepath.Join(home, ".local", "bin", "codex")}
+	nvmMatches, _ := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "codex"))
+	sort.Strings(nvmMatches)
+	for i := len(nvmMatches) - 1; i >= 0; i-- {
+		candidates = append(candidates, nvmMatches[i])
+	}
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func defaultIODHelperBinPath() (string, error) {
@@ -709,6 +741,11 @@ func (l processRuntimeLauncher) waitForHelperReady(ctx context.Context, handle p
 		readyCtx, cancel = context.WithTimeout(ctx, defaultHelperReadyTimeout)
 		defer cancel()
 	}
+	exitCh := make(chan helperExitResult, 1)
+	go func() {
+		status, err := handle.Wait(context.Background())
+		exitCh <- helperExitResult{status: status, err: err}
+	}()
 	ticker := time.NewTicker(helperReadyPollInterval)
 	defer ticker.Stop()
 	for {
@@ -720,11 +757,31 @@ func (l processRuntimeLauncher) waitForHelperReady(ctx context.Context, handle p
 			}
 		}
 		select {
+		case result := <-exitCh:
+			return iod.GenerationManifest{}, iod.HelloPacket{}, nil, fmt.Errorf("iod helper exited before ready: %s", formatHelperExitResult(result))
 		case <-readyCtx.Done():
 			return iod.GenerationManifest{}, iod.HelloPacket{}, nil, readyCtx.Err()
 		case <-ticker.C:
 		}
 	}
+}
+
+type helperExitResult struct {
+	status process.ExitStatus
+	err    error
+}
+
+func formatHelperExitResult(result helperExitResult) string {
+	parts := []string{}
+	if result.status.Signal != "" {
+		parts = append(parts, "signal "+result.status.Signal)
+	} else {
+		parts = append(parts, fmt.Sprintf("exit code %d", result.status.Code))
+	}
+	if result.err != nil {
+		parts = append(parts, result.err.Error())
+	}
+	return strings.Join(parts, ": ")
 }
 
 func (l processRuntimeLauncher) attachHelper(ctx context.Context, manifest iod.GenerationManifest) (*iodclient.Client, iod.HelloPacket, error) {

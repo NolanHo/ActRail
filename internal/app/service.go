@@ -225,18 +225,19 @@ type BackendCapabilitySnapshot struct {
 }
 
 type LaunchBackendDefaults struct {
-	ProviderChoice   string              `json:"provider_choice,omitempty"`
-	ProviderChoices  []string            `json:"provider_choices,omitempty"`
-	Model            string              `json:"model,omitempty"`
-	Models           []string            `json:"models,omitempty"`
-	ProviderModels   map[string][]string `json:"provider_models,omitempty"`
-	ModelProvider    string              `json:"model_provider,omitempty"`
-	ModelProviders   []string            `json:"model_providers,omitempty"`
-	ReasoningEffort  string              `json:"reasoning_effort,omitempty"`
-	ReasoningEfforts []string            `json:"reasoning_efforts,omitempty"`
-	ServiceTier      string              `json:"service_tier,omitempty"`
-	SupportsFast     bool                `json:"supports_fast,omitempty"`
-	ModelsCachedAt   int64               `json:"models_cached_at,omitempty"`
+	ProviderChoice      string              `json:"provider_choice,omitempty"`
+	ProviderChoices     []string            `json:"provider_choices,omitempty"`
+	Model               string              `json:"model,omitempty"`
+	Models              []string            `json:"models,omitempty"`
+	ProviderModels      map[string][]string `json:"provider_models,omitempty"`
+	ModelProvider       string              `json:"model_provider,omitempty"`
+	ModelProviders      []string            `json:"model_providers,omitempty"`
+	PreferredAuthMethod string              `json:"preferred_auth_method,omitempty"`
+	ReasoningEffort     string              `json:"reasoning_effort,omitempty"`
+	ReasoningEfforts    []string            `json:"reasoning_efforts,omitempty"`
+	ServiceTier         string              `json:"service_tier,omitempty"`
+	SupportsFast        bool                `json:"supports_fast,omitempty"`
+	ModelsCachedAt      int64               `json:"models_cached_at,omitempty"`
 }
 
 type UIConfig struct {

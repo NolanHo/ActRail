@@ -511,6 +511,49 @@ func TestNewRuntimeLauncherResolvesIODRuntimeRootToAbsolutePath(t *testing.T) {
 	}
 }
 
+func TestDefaultRuntimeBinPathFindsCodexFromNVM(t *testing.T) {
+	home := t.TempDir()
+	codexPath := filepath.Join(home, ".nvm", "versions", "node", "v25.9.0", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(codexPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(codex bin dir) error = %v", err)
+	}
+	if err := os.WriteFile(codexPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(codex) error = %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("ACTRAIL_CODEX_BIN", "")
+
+	got, err := defaultRuntimeBinPath(session.BackendCodex)
+	if err != nil {
+		t.Fatalf("defaultRuntimeBinPath(codex) error = %v", err)
+	}
+	if got != codexPath {
+		t.Fatalf("defaultRuntimeBinPath(codex) = %q, want %q", got, codexPath)
+	}
+}
+
+func TestRuntimeLauncherReturnsHelperExitBeforeReady(t *testing.T) {
+	sessionID := mustSessionID(t, "s_helper_exit_before_ready")
+	generationID := mustHelperGenerationID(t, "g_helper_exit_before_ready")
+	paths, err := iod.NewGenerationPaths(t.TempDir(), sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetWaitResult(process.ExitStatus{Code: 2}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	_, _, _, err = (processRuntimeLauncher{}).waitForHelperReady(ctx, handle, paths)
+	if err == nil {
+		t.Fatal("waitForHelperReady() error = nil, want helper exit error")
+	}
+	if !strings.Contains(err.Error(), "iod helper exited before ready") || !strings.Contains(err.Error(), "exit code 2") {
+		t.Fatalf("waitForHelperReady() error = %v, want helper exit code", err)
+	}
+}
+
 func TestRuntimeLauncherCodexDangerousBypassDefaultsOnAndCanDisable(t *testing.T) {
 	sessionID := mustSessionID(t, "s_codex_bypass")
 	defaultLauncher := newRuntimeLauncher(RuntimeConfig{
