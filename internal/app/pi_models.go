@@ -341,7 +341,6 @@ func backendCapabilitySnapshot(backend string) BackendCapabilitySnapshot {
 			GRPC:                  true,
 			Supervisor:            true,
 			ResumeHistory:         true,
-			Worktree:              false,
 		}
 	case "codex":
 		return BackendCapabilitySnapshot{
@@ -354,13 +353,12 @@ func backendCapabilitySnapshot(backend string) BackendCapabilitySnapshot {
 			RuntimeContextUsage:   true,
 			RuntimeUIRequests:     false,
 			RuntimeInterrupt:      true,
-			RuntimeProbe:          false,
+			RuntimeProbe:          true,
 			IODStdio:              false,
 			IODUnix:               true,
 			GRPC:                  false,
 			Supervisor:            false,
 			ResumeHistory:         false,
-			Worktree:              true,
 		}
 	default:
 		return BackendCapabilitySnapshot{}

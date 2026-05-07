@@ -397,9 +397,10 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
     ? Math.max(0, Math.round(activeSession.queue_len))
     : 0;
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
+  const activeSessionIsCodex = activeSession?.agent_backend === "codex";
   const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
   const activeAttachmentCount = activeSessionId ? attachedFilesBySessionId[activeSessionId] ?? 0 : 0;
-  const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi" && !supervisorEnabled);
+  const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi" && activeSession?.agent_backend !== "codex" && !supervisorEnabled);
   const slashQuery = getSlashDraftQuery(draft);
   const slashCommandDraft = isSlashCommandDraft(draft);
   const todoSnapshot = useMemo(() => {
@@ -886,9 +887,11 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
       ? supervisorBlockReason
       : activeSessionIsPi
         ? "Attachments are not available for Pi sessions"
-        : attachmentUploading
-          ? "Uploading attachment..."
-          : "Attach file";
+        : activeSessionIsCodex
+          ? "Attachments are not available for Codex sessions"
+          : attachmentUploading
+            ? "Uploading attachment..."
+            : "Attach file";
 
   return (
     <div className="composerStack space-y-3">

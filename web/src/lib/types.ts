@@ -37,7 +37,6 @@ export interface BackendCapabilitySnapshot {
   grpc?: boolean;
   supervisor?: boolean;
   resume_history?: boolean;
-  worktree?: boolean;
 }
 
 export interface BootstrapCapabilities {

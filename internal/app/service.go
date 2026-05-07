@@ -208,7 +208,6 @@ type BackendCapabilitySnapshot struct {
 	GRPC                  bool `json:"grpc"`
 	Supervisor            bool `json:"supervisor"`
 	ResumeHistory         bool `json:"resume_history"`
-	Worktree              bool `json:"worktree"`
 }
 
 type LaunchBackendDefaults struct {

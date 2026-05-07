@@ -15,6 +15,7 @@ import (
 type recordingPTY struct {
 	mu     sync.Mutex
 	writes []string
+	reader io.Reader
 }
 
 type codexTurnExpectation struct {
@@ -24,7 +25,12 @@ type codexTurnExpectation struct {
 	Reply    string
 }
 
-func (p *recordingPTY) Read(_ []byte) (int, error) { return 0, io.EOF }
+func (p *recordingPTY) Read(data []byte) (int, error) {
+	if p.reader == nil {
+		return 0, io.EOF
+	}
+	return p.reader.Read(data)
+}
 
 func (p *recordingPTY) Write(data []byte) (int, error) {
 	p.mu.Lock()

@@ -836,6 +836,25 @@ func (r sessionRuntime) RequestPIRPCState(ctx context.Context, id string) error 
 	return r.writeRPCCommand(ctx, command)
 }
 
+func (r sessionRuntime) RequestCodexThreadState(ctx context.Context) error {
+	if r.protocol != runtimeProtocolCodexRPC {
+		return nil
+	}
+	_, threadID, _ := r.codex.snapshot()
+	if threadID == "" {
+		return errRuntimeInputUnavailable
+	}
+	request := map[string]any{
+		"method": "thread/read",
+		"id":     r.codex.nextRequestID("thread-read"),
+		"params": map[string]any{
+			"threadId":     threadID,
+			"includeTurns": true,
+		},
+	}
+	return r.writeCodexCommand(ctx, request)
+}
+
 func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {
 	return r.sendPrompt(ctx, text, nil, false)
 }

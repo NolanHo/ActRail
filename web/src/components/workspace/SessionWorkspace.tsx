@@ -189,7 +189,6 @@ const capabilityEntries: Array<[keyof BackendCapabilitySnapshot, string]> = [
   ["grpc", "gRPC"],
   ["supervisor", "supervisor"],
   ["resume_history", "resume history"],
-  ["worktree", "worktree"],
 ];
 
 function BackendCapabilitiesPanel({ backend, capabilities }: { backend: string; capabilities: BackendCapabilitySnapshot | null }) {

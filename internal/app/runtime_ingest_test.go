@@ -1054,6 +1054,137 @@ func TestCreateSessionConsumesCodexRuntimeOutputIntoStateTranscriptAndEvents(t *
 	}
 }
 
+func TestCreateSessionAppliesCodexThreadStatusChangedToBusyState(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-status-1\",\"status\":{\"type\":\"idle\"}}}}" + "\n" +
+		"{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-codex-status-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[]}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy
+	})
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() active error = %v", err)
+	}
+	if !state.Busy {
+		t.Fatal("SessionState().Busy = false, want true after Codex active status")
+	}
+	if !svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = false, want true after Codex active status")
+	}
+
+	_, _ = stdoutW.Write([]byte("{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-codex-status-1\",\"status\":{\"type\":\"idle\"}}}" + "\n"))
+	_ = stdoutW.Close()
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy
+	})
+
+	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() idle error = %v", err)
+	}
+	if state.Busy {
+		t.Fatal("SessionState().Busy = true, want false after Codex idle status")
+	}
+	if svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = true, want false after Codex idle status")
+	}
+}
+
+func TestProbeSessionStateRequestsCodexThreadReadAndAppliesResponse(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	pty := &recordingPTY{reader: stdoutR}
+	handle.SetPTY(pty)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-read-1\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		if !ok || record.runtime.codex == nil {
+			return false
+		}
+		_, threadID, _ := record.runtime.codex.snapshot()
+		return threadID == "thread-codex-read-1"
+	})
+
+	probed, err := svc.ProbeSessionState(context.Background(), ProbeSessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("ProbeSessionState() error = %v", err)
+	}
+	if probed.ProbeID == "" {
+		t.Fatal("ProbeSessionState().ProbeID = empty")
+	}
+	waitForAppCondition(t, func() bool {
+		for _, write := range pty.Writes() {
+			if strings.Contains(write, `"method":"thread/read"`) && strings.Contains(write, `"threadId":"thread-codex-read-1"`) && strings.Contains(write, `"includeTurns":true`) {
+				return true
+			}
+		}
+		return false
+	})
+
+	_, _ = stdoutW.Write([]byte("{\"id\":\"thread-read-3\",\"result\":{\"thread\":{\"id\":\"thread-codex-read-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[]},\"turns\":[{\"id\":\"turn-codex-read-1\",\"status\":\"inProgress\"}]}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy
+	})
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatalf("Lookup(%q) ok = false", sessionID)
+	}
+	_, _, turnID := record.runtime.codex.snapshot()
+	if turnID != "turn-codex-read-1" {
+		t.Fatalf("codex active turn = %q, want turn-codex-read-1", turnID)
+	}
+
+	_, _ = stdoutW.Write([]byte("{\"id\":\"thread-read-4\",\"result\":{\"thread\":{\"id\":\"thread-codex-read-1\",\"status\":{\"type\":\"idle\"},\"turns\":[{\"id\":\"turn-codex-read-1\",\"status\":\"completed\"}]}}}" + "\n"))
+	_ = stdoutW.Close()
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy
+	})
+	record, ok = svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatalf("Lookup(%q) after idle ok = false", sessionID)
+	}
+	_, _, turnID = record.runtime.codex.snapshot()
+	if turnID != "" {
+		t.Fatalf("codex active turn after idle = %q, want empty", turnID)
+	}
+}
+
 func TestCreateSessionMapsCodexToolReasoningUsageAndErrors(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()

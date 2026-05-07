@@ -758,10 +758,22 @@ describe("Composer", () => {
     }
   });
 
-  it("uploads a selected file for codex sessions and shows the attachment count", async () => {
-    const attachSessionFile = vi.spyOn(api, "attachSessionFile").mockResolvedValue({ ok: true, path: "/tmp/notes.txt" } as any);
+  it("disables attachments for codex sessions", () => {
     renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "codex", busy: false }],
+    });
+    const composerRoot = getRoot();
+
+    const attachButton = composerRoot.querySelector(".composerAttachButton") as HTMLButtonElement;
+
+    expect(attachButton.disabled).toBe(true);
+    expect(attachButton.title).toContain("Codex");
+  });
+
+  it("uploads a selected file for generic sessions and shows the attachment count", async () => {
+    const attachSessionFile = vi.spyOn(api, "attachSessionFile").mockResolvedValue({ ok: true, path: "/tmp/notes.txt" } as any);
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "custom", busy: false }],
       draft: "Hello",
     });
     const composerRoot = getRoot();

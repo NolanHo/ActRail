@@ -45,6 +45,7 @@ type runtimeProjection struct {
 	codexThreadID     string
 	codexTurnID       string
 	clearCodexTurn    bool
+	codexBusy         *bool
 	codexInitialized  bool
 	model             string
 	provider          string
@@ -120,6 +121,10 @@ func mergeRuntimeProjection(dst, src runtimeProjection) runtimeProjection {
 	}
 	if src.clearCodexTurn {
 		dst.clearCodexTurn = true
+	}
+	if src.codexBusy != nil {
+		busy := *src.codexBusy
+		dst.codexBusy = &busy
 	}
 	if src.codexInitialized {
 		dst.codexInitialized = true
@@ -829,8 +834,20 @@ type codexAppServerLine struct {
 
 type codexThreadEnvelope struct {
 	Thread struct {
-		ID string `json:"id"`
+		ID     string           `json:"id"`
+		Status any              `json:"status"`
+		Turns  []codexTurnState `json:"turns"`
 	} `json:"thread"`
+}
+
+type codexTurnState struct {
+	ID     string `json:"id"`
+	Status any    `json:"status"`
+}
+
+type codexThreadStatusChangedParams struct {
+	ThreadID string `json:"threadId"`
+	Status   any    `json:"status"`
 }
 
 type codexTurnEnvelope struct {
@@ -866,7 +883,29 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 			if err := json.Unmarshal(line.Params, &params); err != nil {
 				return runtimeProjection{}, true
 			}
-			return runtimeProjection{codexThreadID: strings.TrimSpace(params.Thread.ID)}, true
+			projection := runtimeProjection{codexThreadID: strings.TrimSpace(params.Thread.ID)}
+			if busy, ok := codexThreadBusy(params.Thread.Status, params.Thread.Turns); ok {
+				projection.codexBusy = &busy
+			}
+			if turnID := codexActiveTurnID(params.Thread.Turns); turnID != "" {
+				projection.codexTurnID = turnID
+			} else if projection.codexBusy != nil && !*projection.codexBusy {
+				projection.clearCodexTurn = true
+			}
+			return projection, true
+		case "thread/status/changed":
+			var params codexThreadStatusChangedParams
+			if err := json.Unmarshal(line.Params, &params); err != nil {
+				return runtimeProjection{}, true
+			}
+			projection := runtimeProjection{codexThreadID: strings.TrimSpace(params.ThreadID)}
+			if busy, ok := codexStatusBusy(params.Status); ok {
+				projection.codexBusy = &busy
+				if !busy {
+					projection.clearCodexTurn = true
+				}
+			}
+			return projection, true
 		case "turn/started":
 			var params codexTurnEnvelope
 			if err := json.Unmarshal(line.Params, &params); err != nil {
@@ -877,14 +916,12 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 				codexTurnID: turnID,
 				events:      []pi.Event{{Kind: pi.EventKindBoundary, RawType: line.Method, TurnID: turnID, Boundary: &pi.Boundary{Kind: pi.BoundaryKindTurnStarted}}},
 			}
+			busy := true
+			projection.codexBusy = &busy
 			if timing := codexTurnTiming(line.Params); timing != nil {
 				projection.turnTiming = timing
 			}
-			return runtimeProjection{
-				codexTurnID: turnID,
-				events:      projection.events,
-				turnTiming:  projection.turnTiming,
-			}, true
+			return projection, true
 		case "turn/completed":
 			var params codexTurnEnvelope
 			if err := json.Unmarshal(line.Params, &params); err != nil {
@@ -900,6 +937,8 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 				codexTurnID:    turnID,
 				events:         events,
 			}
+			busy := false
+			projection.codexBusy = &busy
 			if timing := codexTurnTiming(line.Params); timing != nil {
 				projection.turnTiming = timing
 			}
@@ -961,7 +1000,7 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 				projection.events = []pi.Event{{Kind: pi.EventKindMessage, RawType: line.Method, TurnID: strings.TrimSpace(stringValue(params["turnId"])), Message: &pi.Message{Role: pi.MessageRoleAssistant, Text: message, StopReason: "status"}}}
 			}
 			return projection, true
-		case "error", "warning", "guardian/warning", "configWarning", "deprecationNotice", "thread/realtime/error":
+		case "error", "warning", "guardianWarning", "guardian/warning", "configWarning", "deprecationNotice", "thread/realtime/error":
 			event := codexDiagnosticEvent(line.Method, line.Params)
 			if event == nil {
 				return runtimeProjection{}, true
@@ -974,7 +1013,16 @@ func decodeCodexAppServerLine(raw []byte) (runtimeProjection, bool) {
 	if len(line.Result) > 0 && string(line.Result) != "null" {
 		var thread codexThreadEnvelope
 		if err := json.Unmarshal(line.Result, &thread); err == nil && strings.TrimSpace(thread.Thread.ID) != "" {
-			return runtimeProjection{codexThreadID: strings.TrimSpace(thread.Thread.ID)}, true
+			projection := runtimeProjection{codexThreadID: strings.TrimSpace(thread.Thread.ID)}
+			if busy, ok := codexThreadBusy(thread.Thread.Status, thread.Thread.Turns); ok {
+				projection.codexBusy = &busy
+			}
+			if turnID := codexActiveTurnID(thread.Thread.Turns); turnID != "" {
+				projection.codexTurnID = turnID
+			} else if projection.codexBusy != nil && !*projection.codexBusy {
+				projection.clearCodexTurn = true
+			}
+			return projection, true
 		}
 		var turn codexTurnEnvelope
 		if err := json.Unmarshal(line.Result, &turn); err == nil && strings.TrimSpace(turn.Turn.ID) != "" {
@@ -1413,6 +1461,55 @@ func codexJSONSummary(value any) string {
 	return strings.TrimSpace(string(encoded))
 }
 
+func codexThreadBusy(status any, turns []codexTurnState) (bool, bool) {
+	if busy, ok := codexStatusBusy(status); ok {
+		return busy, true
+	}
+	for _, turn := range turns {
+		if codexTurnInProgress(turn.Status) {
+			return true, true
+		}
+	}
+	if turns != nil {
+		return false, true
+	}
+	return false, false
+}
+
+func codexActiveTurnID(turns []codexTurnState) string {
+	for index := len(turns) - 1; index >= 0; index-- {
+		if codexTurnInProgress(turns[index].Status) {
+			return strings.TrimSpace(turns[index].ID)
+		}
+	}
+	return ""
+}
+
+func codexStatusBusy(status any) (bool, bool) {
+	switch v := status.(type) {
+	case string:
+		switch strings.TrimSpace(v) {
+		case "active", "inProgress":
+			return true, true
+		case "idle", "notLoaded", "systemError", "completed", "interrupted", "failed":
+			return false, true
+		}
+	case map[string]any:
+		switch strings.TrimSpace(stringValue(v["type"])) {
+		case "active", "inProgress":
+			return true, true
+		case "idle", "notLoaded", "systemError", "completed", "interrupted", "failed":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func codexTurnInProgress(status any) bool {
+	busy, ok := codexStatusBusy(status)
+	return ok && busy
+}
+
 func numericValueDefault(value any) float64 {
 	return numericValue(value)
 }
@@ -1449,6 +1546,11 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 	}
 	if err := s.applyPIEvents(sessionID, projection.events); err != nil {
 		return err
+	}
+	if projection.codexBusy != nil {
+		if err := s.applyCodexBusy(sessionID, *projection.codexBusy); err != nil {
+			return err
+		}
 	}
 	for _, event := range projection.waitRequests {
 		s.startRuntimeAskUserWait(sessionID, event)
@@ -1558,6 +1660,35 @@ func (s *Stub) emitPIRPCStateProbeWarning(sessionID session.SessionID, generatio
 		"reason":        resolvedReason,
 	}
 	s.emitMessageCommit(sessionID, "", committed)
+	return nil
+}
+
+func (s *Stub) applyCodexBusy(sessionID session.SessionID, busy bool) error {
+	if s == nil {
+		return nil
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return nil
+	}
+	if err := s.setRuntimeAgentRunning(sessionID, busy); err != nil {
+		return err
+	}
+	record, ok = s.registry.Lookup(sessionID)
+	if !ok {
+		return nil
+	}
+	if record.state.Busy() == busy {
+		return nil
+	}
+	updated, ok, err := s.registry.SetBusy(sessionID, busy)
+	if err != nil || !ok {
+		return err
+	}
+	s.emitSessionState(sessionID)
+	if !updated.Busy() {
+		s.scheduleQueuedDispatch(sessionID)
+	}
 	return nil
 }
 

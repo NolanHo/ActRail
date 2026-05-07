@@ -44,7 +44,13 @@ func (s *Stub) sessionProbing(record sessionRecord) bool {
 
 func sessionProbing(record sessionRecord) bool {
 	transport := sessionTransportSnapshot(record)
-	return !record.identity.Historical() && record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil && !transport.ResetRequired && transport.State == SessionTransportStateAttached && !record.state.Busy()
+	if record.identity.Historical() || transport.ResetRequired || transport.State != SessionTransportStateAttached || record.state.Busy() {
+		return false
+	}
+	if record.identity.Backend() == session.BackendPI {
+		return record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil
+	}
+	return record.identity.Backend() == session.BackendCodex && record.runtime.protocol == runtimeProtocolCodexRPC && record.runtime.codex != nil
 }
 
 func sessionTransportSnapshot(record sessionRecord) SessionTransportSnapshot {
