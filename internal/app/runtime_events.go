@@ -25,11 +25,14 @@ type SessionResumeCursorWriter interface {
 }
 
 type SessionStateEvent struct {
-	SessionID session.SessionID
-	Busy      bool
-	QueueLen  int
-	TailSeq   uint64
-	Transport SessionTransportSnapshot
+	SessionID          session.SessionID
+	Busy               bool
+	BusyReason         string
+	RuntimeState       string
+	RuntimeStateReason string
+	QueueLen           int
+	TailSeq            uint64
+	Transport          SessionTransportSnapshot
 }
 
 type MessageDeltaEvent struct {
@@ -107,12 +110,17 @@ func (s *Stub) emitSessionState(sessionID session.SessionID) {
 	if !ok {
 		return
 	}
+	busy, busyReason := effectiveBusy(record)
+	runtimeState, runtimeStateReason := runtimeStateFields(record)
 	s.sink.PublishSessionState(SessionStateEvent{
-		SessionID: sessionID,
-		Busy:      record.state.Busy(),
-		QueueLen:  record.state.Queue().Len(),
-		TailSeq:   record.transcript.TailSeq().Uint64(),
-		Transport: sessionTransportSnapshot(record),
+		SessionID:          sessionID,
+		Busy:               busy,
+		BusyReason:         busyReason,
+		RuntimeState:       runtimeState,
+		RuntimeStateReason: runtimeStateReason,
+		QueueLen:           record.state.Queue().Len(),
+		TailSeq:            record.transcript.TailSeq().Uint64(),
+		Transport:          sessionTransportSnapshot(record),
 	})
 }
 

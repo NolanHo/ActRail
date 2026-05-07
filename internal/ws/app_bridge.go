@@ -16,6 +16,9 @@ type sessionStatePayload struct {
 	SessionID       string                       `json:"session_id"`
 	StreamSeq       int64                        `json:"stream_seq"`
 	Busy            bool                         `json:"busy"`
+	BusyReason      string                       `json:"busy_reason,omitempty"`
+	RuntimeState    string                       `json:"runtime_state,omitempty"`
+	RuntimeReason   string                       `json:"runtime_state_reason,omitempty"`
 	QueueLen        int                          `json:"queue_len"`
 	TailSeq         uint64                       `json:"tail_seq"`
 	Transport       app.SessionTransportSnapshot `json:"transport"`
@@ -216,6 +219,9 @@ func (b *AppBridge) PublishSessionState(event app.SessionStateEvent) {
 			SessionID:       event.SessionID.String(),
 			StreamSeq:       cursor,
 			Busy:            event.Busy,
+			BusyReason:      event.BusyReason,
+			RuntimeState:    event.RuntimeState,
+			RuntimeReason:   event.RuntimeStateReason,
 			QueueLen:        event.QueueLen,
 			TailSeq:         event.TailSeq,
 			Transport:       event.Transport,

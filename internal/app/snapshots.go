@@ -30,6 +30,8 @@ type SessionDetailsResponse struct {
 	Model               string                    `json:"model,omitempty"`
 	ReasoningEffort     string                    `json:"reasoning_effort,omitempty"`
 	Busy                bool                      `json:"busy"`
+	RuntimeState        string                    `json:"runtime_state,omitempty"`
+	RuntimeStateReason  string                    `json:"runtime_state_reason,omitempty"`
 	Focused             bool                      `json:"focused,omitempty"`
 	QueueLength         int                       `json:"queue_length"`
 	PriorityOffset      float64                   `json:"priority_offset,omitempty"`
@@ -108,6 +110,8 @@ type ProbeSessionStateResponse struct {
 type SessionStateResponse struct {
 	Busy                 bool                          `json:"busy"`
 	BusyReason           string                        `json:"busy_reason,omitempty"`
+	RuntimeState         string                        `json:"runtime_state,omitempty"`
+	RuntimeStateReason   string                        `json:"runtime_state_reason,omitempty"`
 	Queue                SessionQueueSnapshot          `json:"queue"`
 	Transport            SessionTransportSnapshot      `json:"transport"`
 	UIRequest            *SessionUIRequestSnapshot     `json:"ui_request,omitempty"`
@@ -268,6 +272,8 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 	}
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
+	busy, _ := effectiveBusy(record)
+	runtimeState, runtimeStateReason := runtimeStateFields(record)
 	return SessionDetailsResponse{
 		SessionID:           record.identity.SessionID().String(),
 		RuntimeID:           runtimeID.String(),
@@ -281,7 +287,9 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 		Provider:            record.provider,
 		Model:               record.model,
 		ReasoningEffort:     record.reasoningEffort,
-		Busy:                record.state.Busy(),
+		Busy:                busy,
+		RuntimeState:        runtimeState,
+		RuntimeStateReason:  runtimeStateReason,
 		Focused:             record.focused,
 		QueueLength:         record.state.Queue().Len(),
 		PriorityOffset:      record.priorityOffset,
@@ -500,6 +508,13 @@ func effectiveBusy(record sessionRecord) (bool, string) {
 	if record.identity.Historical() {
 		return false, ""
 	}
+	if record.identity.Backend() == session.BackendCodex {
+		activity := codexVisibleActivity(record)
+		if activity.Busy {
+			return true, activity.Reason
+		}
+		return false, ""
+	}
 	if record.state.Busy() {
 		return true, "state_busy"
 	}
@@ -515,13 +530,24 @@ func effectiveBusy(record sessionRecord) (bool, string) {
 	return false, ""
 }
 
+func runtimeStateFields(record sessionRecord) (string, string) {
+	if record.identity.Backend() != session.BackendCodex || record.identity.Historical() {
+		return "", ""
+	}
+	activity := codexVisibleActivity(record)
+	return string(activity.Phase), activity.Reason
+}
+
 func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 	contextUsage := copyContextUsage(record.contextUsage)
 	turnTiming := copyTurnTiming(record.turnTiming)
 	busy, busyReason := effectiveBusy(record)
+	runtimeState, runtimeStateReason := runtimeStateFields(record)
 	return SessionStateResponse{
 		Busy:                 busy,
 		BusyReason:           busyReason,
+		RuntimeState:         runtimeState,
+		RuntimeStateReason:   runtimeStateReason,
 		Queue:                queueSnapshotFromState(record.state),
 		Transport:            s.sessionTransportSnapshot(record),
 		UIRequest:            copySessionUIRequest(record.uiRequest),

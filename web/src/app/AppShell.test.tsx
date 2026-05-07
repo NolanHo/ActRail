@@ -215,6 +215,8 @@ function renderAppShell({
     provider_choice?: string | null;
     reasoning_effort?: string | null;
     runtime_id?: string | null;
+    runtime_state?: string | null;
+    runtime_state_reason?: string | null;
     iod?: { build_date?: string; git_sha?: string; start_ts?: number; mode?: string } | null;
     transport_state?: string | null;
     reset_required?: boolean;
@@ -260,6 +262,8 @@ function renderAppShell({
       tokenBySessionId: {},
       contextUsageBySessionId: {},
       turnTimingBySessionId: {},
+      runtimeStateBySessionId: Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state])),
+      runtimeStateReasonBySessionId: Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state_reason])),
     },
     {
       loadInitial: vi.fn().mockResolvedValue(undefined),
@@ -964,6 +968,14 @@ describe("AppShell", () => {
     const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
     expect(runtimeChip?.textContent).toContain("ended");
     expect(runtimeChip?.textContent).not.toContain("idle");
+  });
+
+  it("shows the backend runtime phase for a busy codex session", async () => {
+    renderAppShell({ items: [{ session_id: "sess-1", alias: "Codex send", agent_backend: "codex", busy: true, runtime_state: "turn_starting" }] });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip?.textContent).toContain("turn_starting");
   });
 
   it("opens runtime settings from the model chip and saves provider model and reasoning effort", async () => {

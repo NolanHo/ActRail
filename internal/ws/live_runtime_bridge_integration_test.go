@@ -302,8 +302,8 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 	})
 	var statePayload sessionStatePayload
 	decodeBridgePayload(t, firstBridgeFrameOfType(t, interruptFrames, FrameTypeSessionState), &statePayload)
-	if statePayload.Busy {
-		t.Fatalf("interrupt session.state payload = %+v", statePayload)
+	if !statePayload.Busy || statePayload.BusyReason != "ui_request" {
+		t.Fatalf("interrupt session.state payload = %+v, want ui_request busy", statePayload)
 	}
 	waitForBridgeCondition(t, func() bool {
 		state, err := svc.SessionState(context.Background(), app.SessionStateRequest{SessionID: parsed})

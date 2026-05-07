@@ -262,6 +262,8 @@ type SessionSummary struct {
 	CWD                 string                     `json:"cwd"`
 	Busy                bool                       `json:"busy"`
 	BusyReason          string                     `json:"busy_reason,omitempty"`
+	RuntimeState        string                     `json:"runtime_state,omitempty"`
+	RuntimeStateReason  string                     `json:"runtime_state_reason,omitempty"`
 	Focused             bool                       `json:"focused,omitempty"`
 	QueueLen            int                        `json:"queue_len,omitempty"`
 	TransportState      string                     `json:"transport_state,omitempty"`
@@ -356,6 +358,8 @@ type CreatedSession struct {
 	CWD             string `json:"cwd"`
 	Busy            bool   `json:"busy"`
 	BusyReason      string `json:"busy_reason,omitempty"`
+	RuntimeState    string `json:"runtime_state,omitempty"`
+	RuntimeReason   string `json:"runtime_state_reason,omitempty"`
 	Focused         bool   `json:"focused,omitempty"`
 	TransportState  string `json:"transport_state,omitempty"`
 	Probing         bool   `json:"probing,omitempty"`
@@ -612,13 +616,17 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	s.startRuntimeIngest(record.identity.SessionID(), backend, runtime)
 	s.startPIAgentGRPCReadyTransition(record.identity.SessionID(), runtime)
 	s.startCodexThreadBootstrap(record.identity.SessionID(), runtime)
+	responseRecord := record
+	if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
+		responseRecord = updated
+	}
 	stream, err := session.MainStream(record.identity)
 	if err != nil {
 		return CreateSessionResponse{}, err
 	}
 	return CreateSessionResponse{
 		OK:      true,
-		Session: s.createdSessionFromRecord(record),
+		Session: s.createdSessionFromRecord(responseRecord),
 		WSAttach: &SessionAttachRequest{
 			SessionID:            record.identity.SessionID().String(),
 			SuggestSubscriptions: []string{stream.String()},
@@ -729,6 +737,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		}
 	}
 	busy, busyReason := effectiveBusy(record)
+	runtimeState, runtimeStateReason := runtimeStateFields(record)
 	return SessionSummary{
 		SessionID:           record.identity.SessionID().String(),
 		RuntimeID:           runtimeID.String(),
@@ -742,6 +751,8 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		CWD:                 record.cwd,
 		Busy:                busy,
 		BusyReason:          busyReason,
+		RuntimeState:        runtimeState,
+		RuntimeStateReason:  runtimeStateReason,
 		Focused:             record.focused,
 		QueueLen:            record.state.Queue().Len(),
 		TransportState:      transport.State.String(),
@@ -802,6 +813,7 @@ func (s *Stub) createdSessionFromRecord(record sessionRecord) *CreatedSession {
 	threadID, _ := record.identity.ThreadID()
 	transport := sessionTransportSnapshot(record)
 	busy, busyReason := effectiveBusy(record)
+	runtimeState, runtimeStateReason := runtimeStateFields(record)
 	return &CreatedSession{
 		SessionID:       record.identity.SessionID().String(),
 		RuntimeID:       runtimeID.String(),
@@ -812,6 +824,8 @@ func (s *Stub) createdSessionFromRecord(record sessionRecord) *CreatedSession {
 		CWD:             record.cwd,
 		Busy:            busy,
 		BusyReason:      busyReason,
+		RuntimeState:    runtimeState,
+		RuntimeReason:   runtimeStateReason,
 		Focused:         record.focused,
 		TransportState:  transport.State.String(),
 		Probing:         s.sessionProbing(record),

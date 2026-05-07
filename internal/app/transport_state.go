@@ -44,7 +44,8 @@ func (s *Stub) sessionProbing(record sessionRecord) bool {
 
 func sessionProbing(record sessionRecord) bool {
 	transport := sessionTransportSnapshot(record)
-	if record.identity.Historical() || transport.ResetRequired || transport.State != SessionTransportStateAttached || record.state.Busy() {
+	busy, _ := effectiveBusy(record)
+	if record.identity.Historical() || transport.ResetRequired || transport.State != SessionTransportStateAttached || busy {
 		return false
 	}
 	if record.identity.Backend() == session.BackendPI {

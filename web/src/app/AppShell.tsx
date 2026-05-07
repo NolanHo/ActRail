@@ -165,16 +165,19 @@ export function AppShell() {
         contextUsage: null,
         generating: undefined,
         hasBusy: false,
+        runtimeState: undefined,
       };
     }
     const busyBySessionId = state.busyBySessionId ?? {};
     const contextUsageBySessionId = state.contextUsageBySessionId ?? {};
     const generatingBySessionId = state.generatingBySessionId ?? {};
+    const runtimeStateBySessionId = state.runtimeStateBySessionId ?? {};
     return {
       busy: busyBySessionId[activeSessionId],
       contextUsage: contextUsageBySessionId[activeSessionId] ?? null,
       generating: generatingBySessionId[activeSessionId],
       hasBusy: Object.prototype.hasOwnProperty.call(busyBySessionId, activeSessionId),
+      runtimeState: runtimeStateBySessionId[activeSessionId],
     };
   }, shallowEqual);
   const monitoredFinalResponseSignatures = useMessagesStoreSelector((state) => {
@@ -399,7 +402,12 @@ export function AppShell() {
     } else if (activeSessionGenerating) {
       items.push({ label: "Runtime", value: "generating", tone: "busy" });
     } else if (activeSessionBusy) {
-      items.push({ label: "Runtime", value: "busy", tone: "busy" });
+      const runtimeState = typeof liveActiveSessionState.runtimeState === "string" && liveActiveSessionState.runtimeState.trim()
+        ? liveActiveSessionState.runtimeState.trim()
+        : typeof activeSession.runtime_state === "string" && activeSession.runtime_state.trim()
+          ? activeSession.runtime_state.trim()
+          : "busy";
+      items.push({ label: "Runtime", value: runtimeState, tone: "busy" });
     } else {
       items.push({ label: "Runtime", value: "idle", tone: "success" });
     }

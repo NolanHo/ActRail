@@ -134,8 +134,20 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 		return err
 	}
 	if projection.codexBusy != nil {
-		if err := s.applyCodexBusy(sessionID, *projection.codexBusy); err != nil {
-			return err
+		applyBusy := true
+		if strings.TrimSpace(projection.codexThreadID) != "" {
+			record, ok := s.registry.Lookup(sessionID)
+			if ok && record.identity.Backend() == session.BackendCodex && record.runtime.codex != nil {
+				_, mainThreadID, _ := record.runtime.codex.snapshot()
+				if strings.TrimSpace(mainThreadID) != "" && strings.TrimSpace(projection.codexThreadID) != strings.TrimSpace(mainThreadID) {
+					applyBusy = false
+				}
+			}
+		}
+		if applyBusy {
+			if err := s.applyCodexBusy(sessionID, *projection.codexBusy); err != nil {
+				return err
+			}
 		}
 	}
 	for _, event := range projection.waitRequests {

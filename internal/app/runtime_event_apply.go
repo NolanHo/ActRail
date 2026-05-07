@@ -415,6 +415,7 @@ func (s *Stub) applyPIUIRequest(sessionID session.SessionID, event pi.Event) err
 	if err := s.SetSessionUIRequest(sessionID, snapshot); err != nil {
 		return err
 	}
+	_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseWaitingUser, "ui_request", "ui_request")
 	s.emitUIRequest(UIRequestEvent{SessionID: sessionID, Request: snapshot})
 	s.emitSessionState(sessionID)
 	return nil
@@ -431,6 +432,7 @@ func (s *Stub) applyPIUIResolved(sessionID session.SessionID, event pi.Event) er
 	if err := s.ClearSessionUIRequest(sessionID, requestID); err != nil {
 		return err
 	}
+	_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseRunning, "codex_running", "ui_resolved")
 	s.emitUIResolved(sessionID, requestID)
 	s.emitSessionState(sessionID)
 	s.scheduleQueuedDispatch(sessionID)

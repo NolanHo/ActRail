@@ -775,6 +775,9 @@ func (r sessionRuntime) RequestCodexThreadState(ctx context.Context) error {
 	if r.protocol != runtimeProtocolCodexRPC {
 		return nil
 	}
+	if r.codex == nil {
+		return errRuntimeInputUnavailable
+	}
 	_, threadID, _ := r.codex.snapshot()
 	if threadID == "" {
 		return errRuntimeInputUnavailable
@@ -808,6 +811,9 @@ func (r sessionRuntime) sendPrompt(ctx context.Context, text string, stale func(
 		return fmt.Errorf("runtime prompt is required")
 	}
 	if r.protocol == runtimeProtocolCodexRPC {
+		if r.codex == nil {
+			return errRuntimeInputUnavailable
+		}
 		_, threadID, _ := r.codex.snapshot()
 		if threadID == "" {
 			return errRuntimeInputUnavailable
@@ -924,6 +930,9 @@ func (r sessionRuntime) EnsureCodexThread(ctx context.Context) error {
 	if r.protocol != runtimeProtocolCodexRPC {
 		return nil
 	}
+	if r.codex == nil {
+		return errRuntimeInputUnavailable
+	}
 	for _, request := range r.codex.bootstrapRequests() {
 		if err := r.writeCodexCommand(ctx, request); err != nil {
 			return err
@@ -935,6 +944,9 @@ func (r sessionRuntime) EnsureCodexThread(ctx context.Context) error {
 func (r sessionRuntime) EnsureCodexThreadStarted(ctx context.Context) error {
 	if r.protocol != runtimeProtocolCodexRPC {
 		return nil
+	}
+	if r.codex == nil {
+		return errRuntimeInputUnavailable
 	}
 	request := r.codex.threadStartRequest()
 	if request == nil {
@@ -965,6 +977,9 @@ func (r sessionRuntime) Interrupt(ctx context.Context) error {
 		return err
 	}
 	if r.protocol == runtimeProtocolCodexRPC {
+		if r.codex == nil {
+			return nil
+		}
 		_, threadID, turnID := r.codex.snapshot()
 		if threadID == "" || turnID == "" {
 			return nil

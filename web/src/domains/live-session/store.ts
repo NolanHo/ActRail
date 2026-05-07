@@ -27,6 +27,8 @@ export interface LiveSessionState {
   tokenBySessionId: Record<string, Record<string, unknown> | null>;
   contextUsageBySessionId: Record<string, ContextUsagePayload | null>;
   turnTimingBySessionId: Record<string, TurnTimingPayload | null>;
+  runtimeStateBySessionId: Record<string, string | undefined>;
+  runtimeStateReasonBySessionId: Record<string, string | undefined>;
 }
 
 export interface LiveSessionStore {
@@ -227,6 +229,18 @@ function transportBusyValue(payload: LiveSessionResponse | Record<string, unknow
   return busy;
 }
 
+function normalizedRuntimeState(payload: LiveSessionResponse | Record<string, unknown> | null) {
+  return payload && typeof payload.runtime_state === "string" && payload.runtime_state.trim()
+    ? payload.runtime_state.trim()
+    : undefined;
+}
+
+function normalizedRuntimeStateReason(payload: LiveSessionResponse | Record<string, unknown> | null) {
+  return payload && typeof payload.runtime_state_reason === "string" && payload.runtime_state_reason.trim()
+    ? payload.runtime_state_reason.trim()
+    : undefined;
+}
+
 function normalizeSnapshotRequests(payload: LiveSessionResponse) {
   if (Array.isArray(payload.requests)) {
     return payload.requests.map((request) => normalizeRequest(request)).filter((request): request is SessionUiRequest => request !== null);
@@ -251,6 +265,8 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     tokenBySessionId: {},
     contextUsageBySessionId: {},
     turnTimingBySessionId: {},
+    runtimeStateBySessionId: {},
+    runtimeStateReasonBySessionId: {},
   };
   const listeners = new Set<() => void>();
   const inFlightBySessionId: Record<string, Promise<void> | undefined> = {};
@@ -340,6 +356,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       turnTimingBySessionId: {
         ...state.turnTimingBySessionId,
         [sessionId]: toObjectRecord(statePayload.turn_timing) as TurnTimingPayload | null,
+      },
+      runtimeStateBySessionId: {
+        ...state.runtimeStateBySessionId,
+        [sessionId]: normalizedRuntimeState(statePayload),
+      },
+      runtimeStateReasonBySessionId: {
+        ...state.runtimeStateReasonBySessionId,
+        [sessionId]: normalizedRuntimeStateReason(statePayload),
       },
     };
     emit();
@@ -560,6 +584,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.errorBySessionId,
             [sessionId]: transportErrorMessage(payload),
           },
+          runtimeStateBySessionId: {
+            ...state.runtimeStateBySessionId,
+            [sessionId]: normalizedRuntimeState(payload),
+          },
+          runtimeStateReasonBySessionId: {
+            ...state.runtimeStateReasonBySessionId,
+            [sessionId]: normalizedRuntimeStateReason(payload),
+          },
         };
         emit();
         return;
@@ -724,6 +756,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
               ? payload.reason
               : "session generation broken",
           },
+          runtimeStateBySessionId: {
+            ...state.runtimeStateBySessionId,
+            [sessionId]: "ended",
+          },
         };
         emit();
         return;
@@ -754,6 +790,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.uiStreamCursorsBySessionId,
             [sessionId]: 0,
           },
+          runtimeStateBySessionId: {
+            ...state.runtimeStateBySessionId,
+            [sessionId]: "failed",
+          },
         };
         emit();
       }
@@ -778,6 +818,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         generatingBySessionId: {
           ...state.generatingBySessionId,
           [sessionId]: false,
+        },
+        runtimeStateBySessionId: {
+          ...state.runtimeStateBySessionId,
+          [sessionId]: undefined,
+        },
+        runtimeStateReasonBySessionId: {
+          ...state.runtimeStateReasonBySessionId,
+          [sessionId]: undefined,
         },
       };
       emit();

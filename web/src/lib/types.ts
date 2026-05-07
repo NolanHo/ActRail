@@ -251,6 +251,8 @@ export interface SessionSummary {
   owned?: boolean;
   busy?: boolean;
   busy_reason?: string;
+  runtime_state?: string | null;
+  runtime_state_reason?: string | null;
   pending_startup?: boolean;
   focused?: boolean;
   has_unread_assistant?: boolean;
@@ -734,6 +736,8 @@ export interface LiveSessionResponse {
   next_before?: number;
   busy?: boolean;
   busy_reason?: string;
+  runtime_state?: string | null;
+  runtime_state_reason?: string | null;
   token?: Record<string, unknown> | null;
   context_usage?: ContextUsagePayload | null;
   turn_timing?: TurnTimingPayload | null;

@@ -15,14 +15,17 @@ func (s *Stub) scheduleQueuedDispatch(sessionID session.SessionID) {
 
 func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 	var (
-		committed   SessionMessage
-		queue       SessionQueueSnapshot
-		activated   bool
-		pollRuntime sessionRuntime
-		pollPIState bool
+		committed           SessionMessage
+		queue               SessionQueueSnapshot
+		activated           bool
+		pollRuntime         sessionRuntime
+		pollPIState         bool
+		codexRuntime        sessionRuntime
+		watchCodexTurnStart bool
 	)
 	if err := s.withSessionInputLock(sessionID, func(record sessionRecord) error {
-		if record.state.Busy() || record.uiRequest != nil {
+		busy, _ := effectiveBusy(record)
+		if busy || record.uiRequest != nil {
 			return nil
 		}
 		items := record.state.Queue().Items()
@@ -34,12 +37,26 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil
 		}
+		if err := s.prepareRuntimeSend(context.Background(), sessionID, record.runtime); err != nil {
+			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_queued_prepare_failed", "queued_prepare_failed")
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_prepare_send", err)
+			return nil
+		}
+		if record.runtime.protocol == runtimeProtocolCodexRPC {
+			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseSending, "codex_queued_sending", "queued_send")
+		}
 		if err := record.runtime.SendPromptWithStaleCheck(context.Background(), queued.Text(), func() bool {
 			current, err := s.lookupSession(sessionID)
 			return err != nil || !sameRuntime(record, current)
 		}); err != nil {
+			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_queued_send_failed", "queued_send_failed")
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil
+		}
+		if record.runtime.protocol == runtimeProtocolCodexRPC {
+			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseTurnStarting, "codex_queued_turn_starting", "queued_turn_starting")
+			codexRuntime = record.runtime
+			watchCodexTurnStart = true
 		}
 		busyOnSend := record.identity.Backend() != session.BackendPI
 		if record.identity.Backend() == session.BackendPI {
@@ -68,6 +85,9 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 	s.emitSessionState(sessionID)
 	if pollPIState {
 		s.startPIRPCStatePolling(sessionID, pollRuntime)
+	}
+	if watchCodexTurnStart {
+		s.startCodexTurnStartWatch(sessionID, codexRuntime)
 	}
 }
 

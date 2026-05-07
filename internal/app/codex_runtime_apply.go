@@ -6,6 +6,8 @@ import (
 
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 func (s *Stub) applyCodexBusy(sessionID session.SessionID, busy bool) error {
@@ -16,25 +18,11 @@ func (s *Stub) applyCodexBusy(sessionID session.SessionID, busy bool) error {
 	if !ok || record.identity.Backend() != session.BackendCodex {
 		return nil
 	}
-	if err := s.setRuntimeAgentRunning(sessionID, busy); err != nil {
-		return err
-	}
-	record, ok = s.registry.Lookup(sessionID)
-	if !ok {
-		return nil
-	}
-	if record.state.Busy() == busy {
-		return nil
-	}
-	updated, ok, err := s.registry.SetBusy(sessionID, busy)
-	if err != nil || !ok {
-		return err
-	}
-	s.emitSessionState(sessionID)
-	if !updated.Busy() {
-		s.scheduleQueuedDispatch(sessionID)
-	}
-	return nil
+	var changed bool
+	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+		_, changed = state.applyProtocolBusy(busy)
+	})
+	return s.syncCodexRuntimeActivity(sessionID, "protocol_busy", changed)
 }
 
 func (s *Stub) withCodexRuntimeState(sessionID session.SessionID, apply func(*codexRuntimeState)) {
@@ -55,15 +43,22 @@ func (s *Stub) withCodexRuntimeState(sessionID session.SessionID, apply func(*co
 
 func (s *Stub) noteCodexInitialized(sessionID session.SessionID) {
 	var runtime sessionRuntime
+	changed := false
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+		before := state.activity()
 		state.markInitialized()
+		after := state.activity()
+		changed = before != after
 	})
+	_ = s.syncCodexRuntimeActivity(sessionID, "initialized", changed)
 	if record, ok := s.registry.Lookup(sessionID); ok {
 		runtime = record.runtime
 	}
 	if runtime.protocol == runtimeProtocolCodexRPC && runtime.canWriteInput() {
+		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseThreadStarting, "codex_thread_starting", "thread_start")
 		go func() {
 			if err := runtime.EnsureCodexThreadStarted(context.Background()); err != nil {
+				_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_thread_start_failed", "thread_start_failed")
 				_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_thread_start", err)
 			}
 		}()
@@ -71,33 +66,151 @@ func (s *Stub) noteCodexInitialized(sessionID session.SessionID) {
 }
 
 func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string) {
+	changed := false
+	accepted := false
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
-		state.setThreadID(threadID)
+		before := state.activity()
+		var stateChanged bool
+		accepted, stateChanged = state.setThreadID(threadID)
+		if !accepted {
+			return
+		}
+		after := state.activity()
+		changed = stateChanged || before != after
 	})
+	if !accepted {
+		return
+	}
 	record, ok := s.registry.Lookup(sessionID)
 	if !ok || record.identity.Backend() != session.BackendCodex {
 		return
 	}
 	transport := sessionTransportSnapshot(record)
 	if transport.State != SessionTransportStateStarting {
+		_ = s.syncCodexRuntimeActivity(sessionID, "thread_id", changed)
 		return
 	}
 	if _, err := s.setSessionTransport(sessionID, transportSnapshotCodexAttached()); err != nil {
 		return
 	}
-	s.emitSessionState(sessionID)
+	_ = s.syncCodexRuntimeActivity(sessionID, "thread_attached", true)
 }
 
 func (s *Stub) noteCodexTurnID(sessionID session.SessionID, turnID string) {
+	changed := false
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+		before := state.activity()
 		state.setActiveTurnID(turnID)
+		after := state.activity()
+		changed = before != after
 	})
+	_ = s.syncCodexRuntimeActivity(sessionID, "turn_started", changed)
 }
 
 func (s *Stub) clearCodexTurnID(sessionID session.SessionID, turnID string) {
+	changed := false
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+		before := state.activity()
 		state.clearActiveTurnID(turnID)
+		after := state.activity()
+		changed = before != after
 	})
+	_ = s.syncCodexRuntimeActivity(sessionID, "turn_cleared", changed)
+}
+
+func (s *Stub) transitionCodexRuntime(sessionID session.SessionID, phase codexRuntimePhase, reason string, cause string) error {
+	if s == nil {
+		return nil
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return nil
+	}
+	changed := false
+	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+		_, changed = state.transition(phase, reason)
+	})
+	return s.syncCodexRuntimeActivity(sessionID, cause, changed)
+}
+
+func (s *Stub) syncCodexRuntimeActivity(sessionID session.SessionID, cause string, forceEmit bool) error {
+	if s == nil {
+		return nil
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return nil
+	}
+	visible := codexVisibleActivity(record)
+	registryBusy := codexRegistryBusy(record, visible.Busy)
+	rawBusy := record.state.Busy()
+
+	tracer := otel.Tracer("actrail/app")
+	ctx, span := tracer.Start(context.Background(), "app.codexRuntime.sync")
+	_ = ctx
+	span.SetAttributes(
+		attribute.String("session.id", sessionID.String()),
+		attribute.String("codex.runtime.phase", string(visible.Phase)),
+		attribute.String("codex.runtime.reason", visible.Reason),
+		attribute.Bool("codex.runtime.busy", visible.Busy),
+		attribute.Bool("session.state.busy", rawBusy),
+		attribute.Bool("session.state.target_busy", registryBusy),
+		attribute.String("codex.runtime.cause", strings.TrimSpace(cause)),
+	)
+	defer span.End()
+
+	if err := s.setRuntimeAgentRunning(sessionID, visible.Busy); err != nil {
+		return err
+	}
+	updatedStateBusy := rawBusy
+	if rawBusy != registryBusy {
+		updated, setOK, err := s.registry.SetBusy(sessionID, registryBusy)
+		if err != nil || !setOK {
+			return err
+		}
+		updatedStateBusy = updated.Busy()
+		forceEmit = true
+	}
+	if forceEmit {
+		s.emitSessionState(sessionID)
+	}
+	if !updatedStateBusy {
+		s.scheduleQueuedDispatch(sessionID)
+	}
+	return nil
+}
+
+func codexRegistryBusy(record sessionRecord, visibleBusy bool) bool {
+	if record.identity.Historical() {
+		return false
+	}
+	if _, ok := record.transcript.PartialAssistantTurn(); ok {
+		return true
+	}
+	return visibleBusy
+}
+
+func codexVisibleActivity(record sessionRecord) codexRuntimeActivity {
+	if record.identity.Historical() || record.identity.Backend() != session.BackendCodex {
+		return codexRuntimeActivity{Phase: codexRuntimePhaseIdle}
+	}
+	if record.uiRequest != nil {
+		return codexRuntimeActivity{Phase: codexRuntimePhaseWaitingUser, Reason: "ui_request", Busy: true}
+	}
+	if _, ok := record.transcript.PartialAssistantTurn(); ok {
+		return codexRuntimeActivity{Phase: codexRuntimePhaseRunning, Reason: "partial_assistant_turn", Busy: true}
+	}
+	if record.runtime.codex == nil {
+		if record.state.Busy() {
+			return codexRuntimeActivity{Phase: codexRuntimePhaseRunning, Reason: "state_busy", Busy: true}
+		}
+		return codexRuntimeActivity{Phase: codexRuntimePhaseIdle}
+	}
+	activity := record.runtime.codex.activity()
+	if activity.Busy {
+		return activity
+	}
+	return codexRuntimeActivity{Phase: activity.Phase}
 }
 
 func (s *Stub) applyCodexSubagentMessage(sessionID session.SessionID, event pi.Event) error {
@@ -113,6 +226,9 @@ func (s *Stub) applyCodexSubagentMessage(sessionID session.SessionID, event pi.E
 	}
 	threadID := strings.TrimSpace(event.ThreadID)
 	if threadID == "" {
+		return nil
+	}
+	if record.runtime.codex == nil {
 		return nil
 	}
 	_, mainThreadID, _ := record.runtime.codex.snapshot()
@@ -158,6 +274,9 @@ func (s *Stub) codexRuntimeEventInMainThread(sessionID session.SessionID, event 
 	if eventThreadID == "" {
 		return true
 	}
+	if record.runtime.codex == nil {
+		return true
+	}
 	_, mainThreadID, _ := record.runtime.codex.snapshot()
 	mainThreadID = strings.TrimSpace(mainThreadID)
 	if mainThreadID == "" {
@@ -186,6 +305,9 @@ func (s *Stub) codexRuntimeUserMessageInMainThread(sessionID session.SessionID, 
 	}
 	eventThreadID := strings.TrimSpace(event.ThreadID)
 	if eventThreadID == "" {
+		return true
+	}
+	if record.runtime.codex == nil {
 		return true
 	}
 	_, mainThreadID, _ := record.runtime.codex.snapshot()

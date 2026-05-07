@@ -6,3 +6,4 @@ web/.tsbuild
 web/playwright-report
 web/test-results
 /data/
+/.codex/skills/openobserve-actrail/

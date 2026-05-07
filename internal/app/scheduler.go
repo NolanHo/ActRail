@@ -360,7 +360,8 @@ func (s *Stub) inboxItemReadyForDelivery(item sqlitestore.InboxItemRow, settings
 	if err != nil {
 		return false, err
 	}
-	if record.state.Busy() || record.state.Queue().Len() > 0 || record.uiRequest != nil || s.activeWaitForSession(sessionID) != nil {
+	busy, _ := effectiveBusy(record)
+	if busy || record.state.Queue().Len() > 0 || record.uiRequest != nil || s.activeWaitForSession(sessionID) != nil {
 		return false, nil
 	}
 	idleSince := sessionDisplayUpdatedAt(record)
