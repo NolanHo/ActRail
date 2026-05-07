@@ -14,7 +14,7 @@ Self-reminder is a Scheduler event type, and it is not Supervisor. A created sel
 Use the bundled CLI from the ActRail repository:
 
 ```bash
-python3 plugins/actrail-self-reminder/scripts/actrail_self_reminder.py --help
+actrail-self-reminder --help
 ```
 
 Environment:
@@ -35,10 +35,10 @@ Environment:
 Examples:
 
 ```bash
-python3 plugins/actrail-self-reminder/scripts/actrail_self_reminder.py sessions
-python3 plugins/actrail-self-reminder/scripts/actrail_self_reminder.py list --session-id "$ACTRAIL_SESSION_ID"
-python3 plugins/actrail-self-reminder/scripts/actrail_self_reminder.py create --session-id "$ACTRAIL_SESSION_ID" --after 10m --message "Check whether the build finished."
-python3 plugins/actrail-self-reminder/scripts/actrail_self_reminder.py cancel self_reminder_123
+actrail-self-reminder sessions
+actrail-self-reminder list --session-id "$ACTRAIL_SESSION_ID"
+actrail-self-reminder create --session-id "$ACTRAIL_SESSION_ID" --after 10m --message "Check whether the build finished."
+actrail-self-reminder cancel self_reminder_123
 ```
 
 Do not expose Supervisor through this skill. Supervisor is an ActRail-native user simulation capability and should remain invisible to the agent being supervised.
