@@ -1,4 +1,4 @@
-import { useMemo } from "preact/hooks";
+import { useEffect, useMemo } from "preact/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSessionsStoreApi, useWaitsStore, useWaitsStoreApi } from "../../app/providers";
@@ -14,6 +14,9 @@ export function AskUserView() {
   const waitsState = useWaitsStore();
   const waitsStore = useWaitsStoreApi();
   const sessionsStore = useSessionsStoreApi();
+  useEffect(() => {
+    void waitsStore.loadInbox();
+  }, [waitsStore]);
   const selectedWait = useMemo(() => {
     const selectedSessionId = Object.entries(waitsState.selectedThreadBySessionId).find(([, threadId]) => Boolean(threadId))?.[0] ?? "";
     if (selectedSessionId) {

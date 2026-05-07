@@ -69,6 +69,17 @@ describe("createWaitsStore", () => {
     expect(store.getState().inbox.map((wait) => wait.wait_id)).toEqual(["w2", "w3"]);
     expect(store.getState().activeBySessionId.s2?.state).toBe("claimed");
     expect(store.getState().activeBySessionId.s3?.state).toBe("pending_unread");
+
+    store.applyFrame({
+      type: "waits.updated",
+      stream: "system",
+      payload: {
+        waits: [],
+      },
+    } as never);
+
+    expect(store.getState().inbox).toEqual([]);
+    expect(store.getState().activeBySessionId).toEqual({});
   });
 
   it("loads thread, claims, answers, and cancels through API", async () => {
@@ -108,5 +119,33 @@ describe("createWaitsStore", () => {
     await store.cancelWait("s1", "w2", "r1");
     expect(api.cancelWait).toHaveBeenCalledWith("s1", "w2", "r1");
     expect(store.getState().inbox).toEqual([]);
+  });
+
+  it("treats a loaded inbox as the authoritative active wait snapshot", async () => {
+    vi.mocked(api.getWaitInbox).mockResolvedValue({
+      ok: true,
+      waits: [],
+    } as never);
+    const store = createWaitsStore();
+    store.applyFrame({
+      type: "wait.created",
+      stream: "session:s1:ui",
+      payload: {
+        wait: {
+          wait_id: "w1",
+          thread_id: "t1",
+          session_id: "s1",
+          state: "pending_unread",
+          question: "Proceed?",
+        },
+      },
+    } as never);
+
+    await store.loadInbox();
+
+    expect(api.getWaitInbox).toHaveBeenCalledTimes(1);
+    expect(store.getState().inbox).toEqual([]);
+    expect(store.getState().activeBySessionId).toEqual({});
+    expect(store.getState().loading).toBe(false);
   });
 });
