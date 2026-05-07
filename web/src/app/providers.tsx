@@ -74,6 +74,18 @@ function useStoreSelector<TState, TSelected>(
   return useSyncExternalStore(store.subscribe, getSnapshot);
 }
 
+export function shallowEqual<TSelected extends Record<string, unknown>>(left: TSelected, right: TSelected) {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  return leftKeys.every((key) => Object.is(left[key], right[key]));
+}
+
 export function useSessionsStore() {
   const store = useContext(SessionsStoreContext);
   return useSyncExternalStore(store.subscribe, store.getState);

@@ -95,6 +95,70 @@ describe("ConversationPane", () => {
     expect(text).toContain("All done.");
   });
 
+  it("does not re-render the timeline when draft text changes without pending messages", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }], activeSessionId: "sess-1", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-1": [
+            { role: "user", text: "Hello" },
+            { role: "assistant", text: "All done." },
+          ],
+        },
+        offsetsBySessionId: { "sess-1": 2 },
+        hasOlderBySessionId: {},
+        olderBeforeBySessionId: {},
+        loadingOlderBySessionId: {},
+        loadingBySessionId: {},
+        loadedBySessionId: { "sess-1": true },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+    const composerStore = createMutableStore(
+      { draftBySessionId: {}, sending: false, pendingBySessionId: {} },
+      (getState, setState) => ({
+        setDraft: (sessionId: string, value: string) => {
+          setState({
+            ...getState(),
+            draftBySessionId: {
+              ...getState().draftBySessionId,
+              [sessionId]: value,
+            },
+          });
+        },
+        submit: () => Promise.resolve(),
+        clearAcknowledgedPending: () => undefined,
+      }),
+    );
+    const paneRenders = vi.fn();
+    const PaneProbe = () => {
+      paneRenders();
+      return <ConversationPane />;
+    };
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any} composerStore={composerStore as any}>
+        <PaneProbe />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.textContent).toContain("All done.");
+    expect(paneRenders).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      composerStore.setDraft("sess-1", "typing");
+    });
+
+    expect(paneRenders).toHaveBeenCalledTimes(1);
+  });
+
   it("renders legacy-visible activity events in the main conversation flow", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-2", loading: false, newSessionDefaults: null },

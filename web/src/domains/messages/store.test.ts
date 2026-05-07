@@ -31,7 +31,7 @@ describe("createMessagesStore", () => {
 
     await store.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 3000, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
     expect(snapshots).toEqual([
       { loading: true, messages: [] },
       { loading: false, messages: [{ id: "m1" }, { id: "m2" }] },
@@ -82,9 +82,9 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s2");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true, undefined, undefined, undefined, 3000, undefined, true, undefined, 0);
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true, undefined, undefined, undefined, 3000, undefined, true, undefined, 0);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 1, undefined, 3000, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 1, undefined, 200, undefined, true, undefined, 0);
     expect(store.getState()).toEqual({
       bySessionId: {
         s1: [{ id: "m1" }, { id: "m2" }],
@@ -168,7 +168,7 @@ describe("createMessagesStore", () => {
     const pollPromise = store.poll("s1");
 
     expect(api.listMessages).toHaveBeenCalledTimes(1);
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 3000, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
 
     resolveFirst!({ events: [{ id: "m1" }], offset: 1 });
     await Promise.all([initialPromise, pollPromise]);
@@ -188,8 +188,8 @@ describe("createMessagesStore", () => {
     await store.poll("s1");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1, undefined, 3000, undefined, true, undefined, 1);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 2, undefined, 3000, undefined, true, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1, undefined, 200, undefined, true, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 2, undefined, 200, undefined, true, undefined, 1);
     expect(store.getState().bySessionId.s1).toEqual([{ id: "m1", role: "user", seq: 1 }, { id: "m2", seq: 2 }]);
   });
 
@@ -391,7 +391,7 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s1");
     await store.loadOlder("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", true, undefined, undefined, 2, 3000, undefined, true, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", true, undefined, undefined, 2, 500, undefined, true, undefined, 1);
     expect(store.getState().bySessionId.s1).toEqual([{ id: "m0" }, { id: "m1" }, { id: "m2", role: "user", seq: 1 }, { id: "m3", seq: 2 }]);
     expect(store.getState().hasOlderBySessionId.s1).toBe(false);
     expect(store.getState().olderBeforeBySessionId.s1).toBe(0);
@@ -425,8 +425,8 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s1");
     await store.loadOlder("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", true, undefined, undefined, 2, 3000, undefined, true, undefined, 1);
-    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", true, undefined, undefined, 4, 3000, undefined, true, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", true, undefined, undefined, 2, 500, undefined, true, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", true, undefined, undefined, 4, 500, undefined, true, undefined, 1);
     expect(store.getState().bySessionId.s1).toEqual([
       { id: "m1", role: "user", text: "anchor" },
       { id: "tool-1", type: "tool", name: "read" },

@@ -6,16 +6,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 import {
-  useComposerStore,
+  shallowEqual,
   useComposerStoreApi,
-  useLiveSessionStore,
   useLiveSessionStoreApi,
-  useSessionUiStore,
+  useComposerStoreSelector,
+  useLiveSessionStoreSelector,
   useSessionUiStoreApi,
-  useSessionsStore,
+  useSessionUiStoreSelector,
   useSessionsStoreApi,
-  useWaitsStore,
+  useSessionsStoreSelector,
   useWaitsStoreApi,
+  useWaitsStoreSelector,
 } from "../../app/providers";
 import { getRealtimeConnectionState } from "../../domains/realtime/client";
 import { api } from "../../lib/api";
@@ -342,15 +343,19 @@ interface ComposerProps {
 }
 
 export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: ComposerProps = {}) {
-  const { activeSessionId, items } = useSessionsStore();
-  const { busyBySessionId = {} } = useLiveSessionStore() as {
-    busyBySessionId?: Record<string, boolean>;
-  };
-  const composerState = useComposerStore();
-  const waitsState = useWaitsStore();
   const waitsStoreApi = useWaitsStoreApi();
-  const sending = composerState.sending;
-  const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
+  const activeSessionId = useSessionsStoreSelector((state) => state.activeSessionId);
+  const activeSession = useSessionsStoreSelector(
+    (state) => state.items.find((session) => session.session_id === state.activeSessionId) ?? null,
+  );
+  const activeSessionLiveBusy = useLiveSessionStoreSelector((state) => activeSessionId ? state.busyBySessionId?.[activeSessionId] === true : false);
+  const sending = useComposerStoreSelector((state) => state.sending);
+  const draft = useComposerStoreSelector((state) => activeSessionId ? state.draftBySessionId?.[activeSessionId] ?? "" : "");
+  const activeWait = useWaitsStoreSelector((state) => activeSessionId ? state.activeBySessionId?.[activeSessionId] ?? null : null);
+  const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStoreSelector((state) => ({
+    sessionId: state.sessionId,
+    diagnostics: state.diagnostics,
+  }), shallowEqual);
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
@@ -370,17 +375,15 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const postSendRefreshTimeoutsRef = useRef<number[]>([]);
-  const activeSession = items.find((session) => session.session_id === activeSessionId) ?? null;
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
-  const draft = activeSessionId ? composerState.draftBySessionId?.[activeSessionId] ?? "" : "";
   const activeSessionPending = activeSession?.pending_startup === true;
-  const activeWait = activeSessionId ? waitsState.activeBySessionId[activeSessionId] ?? activeSession?.active_wait ?? null : null;
+  const visibleActiveWait = activeWait ?? activeSession?.active_wait ?? null;
   const activeSessionBackendUnavailable = sessionBackendUnavailable(activeSession);
   const supervisorEnabled = activeSession?.supervisor?.enabled === true;
   const supervisorBlockReason = "Supervisor is controlling this session. Disable Supervisor to send manually.";
-  const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(activeWait) || supervisorEnabled;
-  const activeSessionSendBlockReason = supervisorEnabled ? supervisorBlockReason : activeWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : activeSessionPending ? "Session runtime is starting." : "";
-  const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
+  const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(visibleActiveWait) || supervisorEnabled;
+  const activeSessionSendBlockReason = supervisorEnabled ? supervisorBlockReason : visibleActiveWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : activeSessionPending ? "Session runtime is starting." : "";
+  const activeSessionBusy = Boolean(activeSession && (activeSession.busy || activeSessionLiveBusy));
   const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
     ? Math.max(0, Math.round(activeSession.queue_len))
     : 0;
@@ -426,7 +429,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
     activeSessionIsPi && slashQuery !== null && !slashMenuDismissed && (commandsLoading || visibleCommands.length > 0),
   );
   const composerMode = deriveComposerMode({
-    waitingUser: Boolean(activeWait),
+    waitingUser: Boolean(visibleActiveWait),
     disabled: activeSessionBackendUnavailable,
     sending,
     slashMenu: commandMenuOpen,
@@ -717,7 +720,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   };
 
   const queueCurrentDraft = () => {
-    if (!activeSessionId || !draft.trim() || sending || activeWait || supervisorEnabled) {
+    if (!activeSessionId || !draft.trim() || sending || visibleActiveWait || supervisorEnabled) {
       return;
     }
 
@@ -898,14 +901,14 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
           }}
         />
       ) : null}
-      {compactMobile && activeWait && activeSessionId ? (
+      {compactMobile && visibleActiveWait && activeSessionId ? (
         <>
           <MobileWaitActionPanel
-            wait={activeWait}
+            wait={visibleActiveWait}
             disabled={mobileWaitSubmitting}
-            onClaim={() => void runMobileWaitAction(() => waitsStoreApi.claimWait(activeSessionId, activeWait.wait_id, activeSessionRuntimeId))}
-            onCancel={() => void runMobileWaitAction(() => waitsStoreApi.cancelWait(activeSessionId, activeWait.wait_id, activeSessionRuntimeId))}
-            onAnswer={(answer) => void runMobileWaitAction(() => waitsStoreApi.answerWait(activeSessionId, activeWait.wait_id, answer, activeSessionRuntimeId))}
+            onClaim={() => void runMobileWaitAction(() => waitsStoreApi.claimWait(activeSessionId, visibleActiveWait.wait_id, activeSessionRuntimeId))}
+            onCancel={() => void runMobileWaitAction(() => waitsStoreApi.cancelWait(activeSessionId, visibleActiveWait.wait_id, activeSessionRuntimeId))}
+            onAnswer={(answer) => void runMobileWaitAction(() => waitsStoreApi.answerWait(activeSessionId, visibleActiveWait.wait_id, answer, activeSessionRuntimeId))}
           />
           {mobileWaitError ? <p className="text-sm font-medium text-destructive">{mobileWaitError}</p> : null}
         </>
@@ -932,7 +935,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                 className="composerAttachButton"
                 aria-label="Attach file"
                 title={attachButtonTitle}
-                disabled={!attachmentsSupported || attachmentUploading || sending || Boolean(activeWait)}
+                disabled={!attachmentsSupported || attachmentUploading || sending || Boolean(visibleActiveWait)}
                 onClick={handleAttachClick}
               >
                 <span>Attach</span>
@@ -945,7 +948,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                 textareaRef={textareaRef}
                 value={draft}
                 rows={mobileComposerAutosize ? 2 : undefined}
-                placeholder={activeWait ? "Answer the active wait in Details" : "Enter your instructions here"}
+                placeholder={visibleActiveWait ? "Answer the active wait in Details" : "Enter your instructions here"}
                 className="composerTextarea"
                 onInput={(event) => {
                   syncComposerTextareaHeight(event.currentTarget, mobileComposerAutosize);
@@ -995,7 +998,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                   event.preventDefault();
                   submitCurrentDraft();
                 }}
-                disabled={sending || Boolean(activeWait)}
+                disabled={sending || Boolean(visibleActiveWait)}
               />
             </div>
             <div className={cn("composerControlsColumn", compactMobile && "compactMobile") }>
@@ -1019,7 +1022,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                     size="sm"
                     className="composerQueueButton"
                     aria-label="Queue message"
-                    disabled={sending || Boolean(activeWait) || supervisorEnabled || !draft.trim()}
+                    disabled={sending || Boolean(visibleActiveWait) || supervisorEnabled || !draft.trim()}
                     title={supervisorEnabled ? supervisorBlockReason : activeSessionBackendUnavailable ? "Queue this draft until the session backend is restarted." : undefined}
                     onClick={queueCurrentDraft}
                   >

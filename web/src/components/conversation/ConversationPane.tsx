@@ -15,12 +15,22 @@ import { cn } from "@/lib/utils";
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
 import { TraceView } from "./TraceView";
 import { WaitCard } from "../waits/WaitCard";
-import { useComposerStoreApi, useComposerStoreSelector, useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
+import {
+  shallowEqual,
+  useComposerStoreApi,
+  useComposerStoreSelector,
+  useLiveSessionStoreApi,
+  useLiveSessionStoreSelector,
+  useMessagesStoreApi,
+  useMessagesStoreSelector,
+  useSessionsStoreSelector,
+} from "../../app/providers";
 import { api } from "../../lib/api";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import type { MessageEvent, TodoSnapshotItem } from "../../lib/types";
 
-const EMPTY_PENDING_BY_SESSION_ID: Record<string, never[]> = {};
+const EMPTY_PENDING_MESSAGES: never[] = [];
+const EMPTY_MESSAGES: MessageEvent[] = [];
 
 const MAIN_TIMELINE_KINDS = new Set([
   "user",
@@ -2854,27 +2864,47 @@ interface ConversationPaneProps {
 }
 
 export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
-  const { activeSessionId, items } = useSessionsStore();
-  const liveSessionState = useLiveSessionStore() as {
-    busyBySessionId?: Record<string, boolean>;
-    generatingBySessionId?: Record<string, boolean>;
-    errorBySessionId?: Record<string, string>;
-  };
-  const busyBySessionId = liveSessionState.busyBySessionId ?? {};
-  const generatingBySessionId = liveSessionState.generatingBySessionId ?? {};
-  const errorBySessionId = liveSessionState.errorBySessionId ?? {};
+  const activeSessionId = useSessionsStoreSelector((state) => state.activeSessionId);
+  const activeSession = useSessionsStoreSelector(
+    (state) => state.items.find((session) => session.session_id === state.activeSessionId) ?? null,
+  );
+  const { isGenerating, hasLiveBusy, liveBusy, liveSessionError } = useLiveSessionStoreSelector((state) => activeSessionId ? ({
+    isGenerating: state.generatingBySessionId?.[activeSessionId] === true,
+    hasLiveBusy: Object.prototype.hasOwnProperty.call(state.busyBySessionId ?? {}, activeSessionId),
+    liveBusy: state.busyBySessionId?.[activeSessionId] === true,
+    liveSessionError: String(state.errorBySessionId?.[activeSessionId] || "").trim(),
+  }) : {
+    isGenerating: false,
+    hasLiveBusy: false,
+    liveBusy: false,
+    liveSessionError: "",
+  }, shallowEqual);
   const composerStoreApi = useComposerStoreApi();
-  const pendingBySessionId = useComposerStoreSelector((state) => state.pendingBySessionId ?? EMPTY_PENDING_BY_SESSION_ID);
-  const messagesState = useMessagesStore();
-  const bySessionId = messagesState.bySessionId;
-  const hasOlderBySessionId = messagesState.hasOlderBySessionId ?? {};
-  const olderBeforeBySessionId = messagesState.olderBeforeBySessionId ?? {};
-  const loadingOlderBySessionId = messagesState.loadingOlderBySessionId ?? {};
-  const loadingBySessionId = (messagesState as { loadingBySessionId?: Record<string, boolean> }).loadingBySessionId ?? {};
-  const loadedBySessionId = (messagesState as { loadedBySessionId?: Record<string, boolean> }).loadedBySessionId ?? {};
+  const pendingMessages = useComposerStoreSelector((state) => activeSessionId ? state.pendingBySessionId?.[activeSessionId] ?? EMPTY_PENDING_MESSAGES : EMPTY_PENDING_MESSAGES);
+  const {
+    persistedMessages,
+    hasOlder,
+    olderCursor,
+    olderLoading,
+    activeSessionLoading,
+    activeSessionLoaded,
+  } = useMessagesStoreSelector((state) => activeSessionId ? ({
+    persistedMessages: state.bySessionId[activeSessionId] ?? EMPTY_MESSAGES,
+    hasOlder: state.hasOlderBySessionId?.[activeSessionId] === true,
+    olderCursor: state.olderBeforeBySessionId?.[activeSessionId] ?? 0,
+    olderLoading: state.loadingOlderBySessionId?.[activeSessionId] === true,
+    activeSessionLoading: state.loadingBySessionId?.[activeSessionId] === true,
+    activeSessionLoaded: state.loadedBySessionId?.[activeSessionId] === true,
+  }) : {
+    persistedMessages: EMPTY_MESSAGES,
+    hasOlder: false,
+    olderCursor: 0,
+    olderLoading: false,
+    activeSessionLoading: false,
+    activeSessionLoaded: false,
+  }, shallowEqual);
   const messagesStoreApi = useMessagesStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
-  const activeSession = items.find((session) => session.session_id === activeSessionId) ?? null;
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
   const [selectedView, setSelectedView] = useState<"conversation" | "trace">("conversation");
   useEffect(() => {
@@ -2883,15 +2913,10 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsHistoricalPi = activeSession?.historical === true && activeSessionIsPi;
   const allowLegacyAskUserFallback = Boolean(activeSessionIsPi && activeSession?.transport !== "pi-rpc");
-  const isGenerating = Boolean(activeSessionId && generatingBySessionId[activeSessionId] === true);
-  const hasLiveBusy = Boolean(activeSessionId && Object.prototype.hasOwnProperty.call(busyBySessionId, activeSessionId));
-  const liveBusy = Boolean(activeSessionId && busyBySessionId[activeSessionId] === true);
   const isBusy = Boolean(
     isGenerating
     || (hasLiveBusy ? liveBusy : activeSession?.busy === true),
   );
-  const persistedMessages = activeSessionId ? bySessionId[activeSessionId] ?? [] : [];
-  const pendingMessages = activeSessionId ? pendingBySessionId[activeSessionId] ?? [] : [];
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
   const messages = useMemo(
     () => sortEventsByTimestamp(filterLocalUserEchoes(filterResolvedBridgePseudoEvents([...persistedMessages, ...pendingMessages], activeSessionIsPi)).filter(shouldRenderInMainConversation)),
@@ -2974,15 +2999,9 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [attemptedLoadOlder, setAttemptedLoadOlder] = useState(false);
   const [sessionSwitchLoadingId, setSessionSwitchLoadingId] = useState<string | null>(activeSessionId);
-  const hasOlder = activeSessionId ? hasOlderBySessionId[activeSessionId] === true : false;
-  const olderCursor = activeSessionId ? olderBeforeBySessionId[activeSessionId] ?? 0 : 0;
-  const olderLoading = activeSessionId ? loadingOlderBySessionId[activeSessionId] === true : false;
-  const activeSessionLoading = activeSessionId ? loadingBySessionId[activeSessionId] === true : false;
-  const activeSessionLoaded = activeSessionId ? loadedBySessionId[activeSessionId] === true : false;
   const showHistoryControls = Boolean(activeSessionId && messages.length && (hasOlder || olderCursor > 0 || olderLoading));
   const showHistoryTopReached = Boolean(activeSessionId && messages.length && attemptedLoadOlder && !olderLoading && !hasOlder && olderCursor <= 0);
   const waitingForInitialHistoricalReplay = activeSessionIsHistoricalPi && messages.length === 0 && !activeSessionLoaded;
-  const liveSessionError = activeSessionId ? String(errorBySessionId[activeSessionId] || "").trim() : "";
   const showLoadingState = Boolean(
     activeSessionId
     && !liveSessionError
@@ -3016,11 +3035,11 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
   useEffect(() => {
     if (!activeSessionId) return;
-    if ((pendingBySessionId[activeSessionId] ?? []).length === 0) return;
+    if (pendingMessages.length === 0) return;
     const clearAcknowledgedPending = (composerStoreApi as { clearAcknowledgedPending?: (sessionId: string, events: MessageEvent[]) => void }).clearAcknowledgedPending;
     if (typeof clearAcknowledgedPending !== "function") return;
     clearAcknowledgedPending(activeSessionId, activeSessionIsPi ? persistedMessages.filter((event) => event.role !== "user" || isPiConfirmedUserEvent(event) || event.request_state === "failed") : persistedMessages);
-  }, [activeSessionId, activeSessionIsPi, persistedMessages, pendingBySessionId, composerStoreApi]);
+  }, [activeSessionId, activeSessionIsPi, persistedMessages, pendingMessages.length, composerStoreApi]);
 
   const recomputeFloatingNavigation = () => {
     const pane = sectionRef.current?.querySelector(".conversationPane") as HTMLElement | null;

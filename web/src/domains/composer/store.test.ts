@@ -12,6 +12,7 @@ vi.mock("../../lib/api", () => ({
 describe("createComposerStore", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
     window.localStorage.clear();
   });
 
@@ -24,22 +25,62 @@ describe("createComposerStore", () => {
   });
 
   it("stores separate drafts for different sessions", () => {
+    vi.useFakeTimers();
     const store = createComposerStore();
 
     store.setDraft("s1", "first");
     store.setDraft("s2", "second");
 
     expect(store.getState().draftBySessionId).toEqual({ s1: "first", s2: "second" });
+    expect(window.localStorage.getItem("actrail.composerDrafts.v1")).toBeNull();
+
+    vi.advanceTimersByTime(250);
+
     expect(JSON.parse(window.localStorage.getItem("actrail.composerDrafts.v1") || "{}")).toEqual({ s1: "first", s2: "second" });
   });
 
+  it("coalesces draft persistence while typing", () => {
+    vi.useFakeTimers();
+    const setItem = vi.spyOn(window.localStorage, "setItem");
+    const store = createComposerStore();
+
+    store.setDraft("s1", "a");
+    store.setDraft("s1", "ab");
+    store.setDraft("s1", "abc");
+
+    expect(store.getState().draftBySessionId).toEqual({ s1: "abc" });
+    expect(setItem).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(249);
+    expect(setItem).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+
+    expect(setItem).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(window.localStorage.getItem("actrail.composerDrafts.v1") || "{}")).toEqual({ s1: "abc" });
+  });
+
+  it("does not notify subscribers when draft text is unchanged", () => {
+    const store = createComposerStore();
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.setDraft("s1", "same");
+    store.setDraft("s1", "same");
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it("copies a draft to a new session id", () => {
+    vi.useFakeTimers();
     const store = createComposerStore();
     store.setDraft("s1", "persist me");
+    vi.advanceTimersByTime(250);
 
     store.copyDraft("s1", "s2");
 
     expect(store.getState().draftBySessionId).toEqual({ s1: "persist me", s2: "persist me" });
+    expect(JSON.parse(window.localStorage.getItem("actrail.composerDrafts.v1") || "{}")).toEqual({ s1: "persist me", s2: "persist me" });
   });
 
   it("clears sending state after a successful submit", async () => {

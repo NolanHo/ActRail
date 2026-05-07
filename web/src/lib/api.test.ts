@@ -28,6 +28,22 @@ describe("getJson", () => {
     await expect(getJson("/api/sessions")).rejects.toThrow("bad request");
   });
 
+  it("throws an HttpError for non-json error responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        text: async () => "404 page not found",
+      }),
+    );
+
+    await expect(getJson("/api/missing")).rejects.toMatchObject({
+      message: "Request failed: 404",
+      status: 404,
+    } satisfies Partial<HttpError>);
+  });
+
   it("parses successful json responses", async () => {
     const payload: SessionsResponse = {
       sessions: [{ session_id: "s1", agent_backend: "pi", busy: true }],

@@ -30,11 +30,17 @@ type NotificationMessageLookupState = {
   terminal: boolean;
 };
 
+type FinalResponseSignature = {
+  key: string;
+  notificationText: string;
+  sessionId: string;
+};
+
 interface UseAppShellNotificationsOptions {
   activeSessionId: string | null;
   activeTitle: string;
   bootstrapLoaded?: boolean;
-  bySessionId: Record<string, unknown[]>;
+  finalResponseSignatures?: FinalResponseSignature[];
   notificationsSupported?: boolean;
   playReplyBeep(): void;
   realtimeConnected?: boolean;
@@ -46,7 +52,7 @@ export function useAppShellNotifications({
   activeSessionId,
   activeTitle,
   bootstrapLoaded = false,
-  bySessionId,
+  finalResponseSignatures = [],
   notificationsSupported = true,
   playReplyBeep,
   realtimeConnected = false,
@@ -157,19 +163,6 @@ export function useAppShellNotifications({
     return textKey ? playedReplySoundTextKeysRef.current.has(textKey) : false;
   };
 
-  const finalResponseEventKey = (row: Record<string, unknown>) => {
-    const messageId = typeof row.message_id === "string" ? row.message_id.trim() : "";
-    if (messageId) return `id:${messageId}`;
-    const ts = typeof row.ts === "number" ? row.ts : 0;
-    const text = typeof row.notification_text === "string"
-      ? row.notification_text
-      : typeof row.text === "string"
-        ? row.text
-        : "";
-    const normalizedText = text.replace(/\s+/g, " ").trim();
-    return normalizedText ? `text:${ts}:${normalizedText}` : "";
-  };
-
   const showDesktopNotification = (title: string, body: string, messageId?: string) => {
     if (notificationDeviceClass() !== "desktop" || notificationPermission !== "granted" || typeof Notification === "undefined") {
       return;
@@ -198,7 +191,12 @@ export function useAppShellNotifications({
     if (!pageVisible || (!replySoundEnabled && !desktopNotificationsEnabled)) {
       return;
     }
-    const response = await api.getNotificationsFeed(notificationFeedCursorRef.current);
+    let response;
+    try {
+      response = await api.getNotificationsFeed(notificationFeedCursorRef.current);
+    } catch {
+      return;
+    }
     let maxSeen = notificationFeedCursorRef.current;
     for (const item of response.items || []) {
       const updatedTs = Number(item.updated_ts || 0);
@@ -244,31 +242,34 @@ export function useAppShellNotifications({
 
   useEffect(() => {
     const nextSeen = new Set<string>();
-    for (const sessionId of Object.keys(bySessionId)) {
-      const events = Array.isArray(bySessionId[sessionId]) ? bySessionId[sessionId] : [];
+    for (const signature of finalResponseSignatures) {
+      const key = String(signature.key || "").trim();
+      const sessionId = String(signature.sessionId || "").trim();
+      if (!key || !sessionId) {
+        continue;
+      }
+      nextSeen.add(key);
       const suppressReplySound = suppressedReplySoundSessionIdsRef.current.has(sessionId);
-      for (const event of events) {
-        if (!event || typeof event !== "object") continue;
-        const row = event as Record<string, unknown>;
-        if (row.role !== "assistant" || row.pending === true || row.message_class !== "final_response") continue;
-        const key = finalResponseEventKey(row);
-        if (!key) continue;
-        nextSeen.add(key);
-        if (
-          !suppressReplySound
-          && finalResponseBeepPrimedRef.current
-          && replySoundEnabled
-          && !seenFinalResponseKeysRef.current.has(key)
-          && !hasPlayedReplySound(sessionId, row, key)
-        ) {
-          playReplyBeepRef.current();
-          rememberPlayedReplySound(sessionId, row);
-        }
+      const [, messageId] = key.split("\u0001");
+      const replySoundKey = messageId ? `id:${messageId.trim()}` : key;
+      const replySoundRow = {
+        message_id: messageId,
+        notification_text: signature.notificationText,
+      } satisfies Record<string, unknown>;
+      if (
+        !suppressReplySound
+        && finalResponseBeepPrimedRef.current
+        && replySoundEnabled
+        && !seenFinalResponseKeysRef.current.has(key)
+        && !hasPlayedReplySound(sessionId, replySoundRow, replySoundKey)
+      ) {
+        playReplyBeepRef.current();
+        rememberPlayedReplySound(sessionId, replySoundRow);
       }
     }
     seenFinalResponseKeysRef.current = nextSeen;
     finalResponseBeepPrimedRef.current = true;
-  }, [bySessionId, replySoundEnabled, suppressedReplySoundSessionIdsRef]);
+  }, [finalResponseSignatures, replySoundEnabled, suppressedReplySoundSessionIdsRef]);
 
   useEffect(() => {
     if (
@@ -282,57 +283,50 @@ export function useAppShellNotifications({
       return;
     }
 
-    const events = Array.isArray(bySessionId[activeSessionId]) ? bySessionId[activeSessionId] : [];
-    for (const event of events) {
-      if (!event || typeof event !== "object") continue;
-      const row = event as Record<string, unknown>;
-      if (row.role !== "assistant") continue;
-      if (row.pending === true) continue;
-      if (row.message_class !== "final_response") continue;
-      const messageId = typeof row.message_id === "string" ? row.message_id : "";
-      const notificationText = typeof row.notification_text === "string"
-        ? row.notification_text
-        : typeof row.text === "string"
-          ? row.text
-          : "";
-      if (notificationText) {
-        showDesktopNotification(activeTitle, notificationText, messageId);
-        continue;
-      }
-      if (!messageId) {
-        continue;
-      }
-      const lookupState = notificationLookupStateRef.current.get(messageId);
-      if (lookupState?.terminal || (lookupState && lookupState.retryAfter > Date.now()) || resolvingNotificationIdsRef.current.has(messageId)) {
-        continue;
-      }
-      resolvingNotificationIdsRef.current.add(messageId);
-      api.getNotificationMessage(messageId)
-        .then((response) => {
-          const text = String(response.notification_text || "").trim();
-          const status = String(response.summary_status || "").trim();
-          if (text && (!status || FINAL_NOTIFICATION_SUMMARY_STATUSES.has(status))) {
-            notificationLookupStateRef.current.set(messageId, {
-              retryAfter: Number.POSITIVE_INFINITY,
-              terminal: true,
-            });
-            showDesktopNotification(activeTitle, text, messageId);
-            return;
-          }
-
-          notificationLookupStateRef.current.set(messageId, {
-            retryAfter: status && FINAL_NOTIFICATION_SUMMARY_STATUSES.has(status)
-              ? Number.POSITIVE_INFINITY
-              : Date.now() + NOTIFICATION_MESSAGE_RETRY_MS,
-            terminal: Boolean(status && FINAL_NOTIFICATION_SUMMARY_STATUSES.has(status)),
-          });
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          resolvingNotificationIdsRef.current.delete(messageId);
-        });
+    const activeSignature = finalResponseSignatures.find((signature) => signature.sessionId === activeSessionId);
+    if (!activeSignature) {
+      return;
     }
-  }, [activeSessionId, activeTitle, bootstrapLoaded, bySessionId, notificationPermission, notificationsEnabled, notificationsSupported]);
+    const [, messageId, fallbackId] = activeSignature.key.split("\u0001");
+    const notificationText = activeSignature.notificationText;
+    const desktopTag = messageId || fallbackId;
+    if (notificationText) {
+      showDesktopNotification(activeTitle, notificationText, desktopTag);
+      return;
+    }
+    if (!messageId) {
+      return;
+    }
+    const lookupState = notificationLookupStateRef.current.get(messageId);
+    if (lookupState?.terminal || (lookupState && lookupState.retryAfter > Date.now()) || resolvingNotificationIdsRef.current.has(messageId)) {
+      return;
+    }
+    resolvingNotificationIdsRef.current.add(messageId);
+    api.getNotificationMessage(messageId)
+      .then((response) => {
+        const text = String(response.notification_text || "").trim();
+        const status = String(response.summary_status || "").trim();
+        if (text && (!status || FINAL_NOTIFICATION_SUMMARY_STATUSES.has(status))) {
+          notificationLookupStateRef.current.set(messageId, {
+            retryAfter: Number.POSITIVE_INFINITY,
+            terminal: true,
+          });
+          showDesktopNotification(activeTitle, text, messageId);
+          return;
+        }
+
+        notificationLookupStateRef.current.set(messageId, {
+          retryAfter: status && FINAL_NOTIFICATION_SUMMARY_STATUSES.has(status)
+            ? Number.POSITIVE_INFINITY
+            : Date.now() + NOTIFICATION_MESSAGE_RETRY_MS,
+          terminal: Boolean(status && FINAL_NOTIFICATION_SUMMARY_STATUSES.has(status)),
+        });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        resolvingNotificationIdsRef.current.delete(messageId);
+      });
+  }, [activeSessionId, activeTitle, bootstrapLoaded, finalResponseSignatures, notificationPermission, notificationsEnabled, notificationsSupported]);
 
   const notificationLabel = !bootstrapLoaded
     ? "Notifications loading"

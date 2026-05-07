@@ -27,7 +27,7 @@ function notifyUnauthorized() {
   }
 }
 
-function parseJsonBody(text: string): unknown {
+function parseJsonBody(text: string, fallback?: unknown): unknown {
   if (!text) {
     return {};
   }
@@ -35,6 +35,9 @@ function parseJsonBody(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch (error) {
+    if (fallback !== undefined) {
+      return fallback;
+    }
     const invalidJsonError = new Error("Invalid JSON response");
     (invalidJsonError as Error & { cause?: unknown }).cause = error;
     throw invalidJsonError;
@@ -56,7 +59,7 @@ export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T>
     },
   });
   const text = await response.text();
-  const data = parseJsonBody(text);
+  const data = parseJsonBody(text, response.ok ? undefined : {});
 
   if (!response.ok) {
     const errorMessage = (data as ErrorPayload).error;
@@ -81,7 +84,7 @@ export async function postJson<T>(path: string, body: unknown, signal?: AbortSig
     body: JSON.stringify(body),
   });
   const text = await response.text();
-  const data = parseJsonBody(text);
+  const data = parseJsonBody(text, response.ok ? undefined : {});
 
   if (!response.ok) {
     const errorMessage = (data as ErrorPayload).error;

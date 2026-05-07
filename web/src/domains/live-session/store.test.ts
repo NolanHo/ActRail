@@ -46,7 +46,7 @@ describe("createLiveSessionStore", () => {
 
     await liveStore.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 3000, undefined, true);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 200, undefined, true);
     expect(api.getSessionState).toHaveBeenCalledWith("s1");
     expect(messagesStore.getState().bySessionId.s1).toEqual([
       { seq: 1, role: "assistant", text: "durable" },
@@ -289,6 +289,50 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
     expect(messagesStore.getState().bySessionId.s1).toHaveLength(1);
     expect(messagesStore.getState().bySessionId.s1[0]).toMatchObject({ seq: 1, role: "assistant", text: "final", turn_id: "turn-1" });
+  });
+
+  it("coalesces visible assistant deltas before writing transcript rows", () => {
+    vi.useFakeTimers();
+    try {
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
+
+      liveStore.applyFrame({
+        id: "frame-1",
+        ts: 1000,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", delta: "hel" },
+      });
+      liveStore.applyFrame({
+        id: "frame-2",
+        ts: 1001,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", delta: "lo" },
+      });
+
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+
+      vi.advanceTimersByTime(119);
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+
+      vi.advanceTimersByTime(1);
+      expect(messagesStore.getState().bySessionId.s1).toEqual([
+        {
+          event_id: "frame-1",
+          role: "assistant",
+          streaming: true,
+          completed: false,
+          stream_id: "turn-1",
+          turn_id: "turn-1",
+          text: "hello",
+          ts: 1000,
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ignores stale main stream frames by stream cursor", () => {

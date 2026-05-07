@@ -27,11 +27,35 @@ function Harness({
   notificationsSupported?: boolean;
   voiceSettings: any;
 }) {
+  const finalResponseSignatures = Object.entries(bySessionId).flatMap(([sessionId, events]) => {
+    const finalResponseEvent = [...events].reverse().find((item) => {
+      if (!item || typeof item !== "object") return false;
+      const row = item as Record<string, unknown>;
+      return row.role === "assistant" && row.pending !== true && row.message_class === "final_response";
+    }) as Record<string, unknown> | undefined;
+    if (!finalResponseEvent) return [];
+    const notificationText = typeof finalResponseEvent.notification_text === "string"
+      ? finalResponseEvent.notification_text
+      : typeof finalResponseEvent.text === "string"
+        ? finalResponseEvent.text
+        : "";
+    return [{
+      key: [
+        sessionId,
+        typeof finalResponseEvent.message_id === "string" ? finalResponseEvent.message_id : "",
+        typeof finalResponseEvent.event_id === "string" ? finalResponseEvent.event_id : typeof finalResponseEvent.seq === "number" ? finalResponseEvent.seq : "",
+        typeof finalResponseEvent.ts === "number" ? finalResponseEvent.ts : "",
+        notificationText,
+      ].join("\u0001"),
+      notificationText,
+      sessionId,
+    }];
+  });
   const state = useAppShellNotifications({
     activeSessionId,
     activeTitle: "Legacy shell",
     bootstrapLoaded,
-    bySessionId,
+    finalResponseSignatures,
     notificationsSupported,
     playReplyBeep: vi.fn(),
     suppressedReplySoundSessionIdsRef: { current: new Set<string>() },
@@ -175,4 +199,27 @@ it("skips notification routes when bootstrap disables notifications", async () =
   expect(api.getNotificationSubscriptionState).not.toHaveBeenCalled();
   expect(api.getNotificationsFeed).not.toHaveBeenCalled();
   expect(root.querySelector("[data-label]")?.getAttribute("data-label")).toBe("Notifications unavailable");
+});
+
+it("ignores failed notification feed polling", async () => {
+  const { api } = await import("../../lib/api");
+  vi.mocked(api.getNotificationsFeed).mockRejectedValueOnce(new Error("missing feed route"));
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        activeSessionId="sess-1"
+        bootstrapLoaded
+        bySessionId={{ "sess-1": [] }}
+        voiceSettings={{ notifications: { vapid_public_key: "" } }}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  expect(api.getNotificationsFeed).toHaveBeenCalled();
+  expect(root.querySelector("[data-label]")?.getAttribute("data-label")).toBe("Notifications off");
 });

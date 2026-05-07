@@ -18,7 +18,18 @@ import { useAppShellEvents } from "./app-shell/useAppShellEvents";
 import { useAppShellNotifications } from "./app-shell/useAppShellNotifications";
 import { useAppShellSessionEffects } from "./app-shell/useAppShellSessionEffects";
 import { setConnectTransportOptIn, setConnectWireFormat } from "../domains/sessions/store";
-import { useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useSessionUiStore, useSessionUiStoreApi, useSessionsStore, useSessionsStoreApi, useWaitsStore, useWaitsStoreApi } from "./providers";
+import {
+  shallowEqual,
+  useLiveSessionStoreApi,
+  useLiveSessionStoreSelector,
+  useMessagesStoreSelector,
+  useSessionUiStoreApi,
+  useSessionUiStoreSelector,
+  useSessionsStoreApi,
+  useSessionsStoreSelector,
+  useWaitsStoreApi,
+  useWaitsStoreSelector,
+} from "./providers";
 import {
   applyThemeMode,
   readThemeMode,
@@ -31,6 +42,11 @@ import { getSessionDisplayName } from "../lib/session-display";
 import { applyUserDisplaySettings, readUserDisplaySettings, writeUserDisplaySettings } from "../lib/user-settings";
 
 type WorkspaceTab = "metadata";
+type FinalResponseSignature = {
+  key: string;
+  notificationText: string;
+  sessionId: string;
+};
 
 function formatTokenK(value: number) {
   const normalized = Math.max(0, Math.round(value));
@@ -74,6 +90,29 @@ function contextUsageStatusLabel(usage: { used_tokens?: number; total_tokens?: n
   return `${formatTokenK(usedTokens)}/${formatTokenK(totalTokens)} ${percentUsed}%`;
 }
 
+function finalResponseSignatureForEvent(sessionId: string, event: Record<string, unknown>): FinalResponseSignature | null {
+  const messageId = typeof event.message_id === "string" ? event.message_id : "";
+  const eventId = typeof event.event_id === "string" ? event.event_id : "";
+  const seq = typeof event.seq === "number" || typeof event.seq === "string" ? event.seq : "";
+  const ts = typeof event.ts === "number" || typeof event.ts === "string" ? event.ts : "";
+  const notificationText = typeof event.notification_text === "string"
+    ? event.notification_text
+    : typeof event.text === "string"
+      ? event.text
+      : "";
+  if (!messageId && !(eventId || seq) && !notificationText.trim()) {
+    return null;
+  }
+  const key = [
+    sessionId,
+    messageId,
+    eventId || seq,
+    ts,
+    notificationText,
+  ].join("\u0001");
+  return key.trim() ? { key, notificationText, sessionId } : null;
+}
+
 const LazySessionWorkspace = lazy(() => import("../components/workspace/SessionWorkspace").then((module) => ({ default: module.SessionWorkspace })));
 
 function WorkspaceLoadingFallback() {
@@ -108,15 +147,62 @@ function EmptyDetailsWorkspace() {
 }
 
 export function AppShell() {
-  const { bySessionId } = useMessagesStore();
-  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items, realtimeTransport } = useSessionsStore();
-  const { busyBySessionId, contextUsageBySessionId, generatingBySessionId } = useLiveSessionStore() as {
-    busyBySessionId: Record<string, boolean>;
-    generatingBySessionId?: Record<string, boolean>;
-    contextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
-  };
-  const { sessionId: sessionUiSessionId } = useSessionUiStore();
-  const waitsState = useWaitsStore();
+  const { activeSessionId, bootstrapCapabilities, bootstrapLoaded, items, realtimeTransport } = useSessionsStoreSelector((state) => ({
+    activeSessionId: state.activeSessionId,
+    bootstrapCapabilities: state.bootstrapCapabilities,
+    bootstrapLoaded: state.bootstrapLoaded,
+    items: state.items,
+    realtimeTransport: state.realtimeTransport,
+  }), shallowEqual);
+  const liveActiveSessionState = useLiveSessionStoreSelector((state) => {
+    if (!activeSessionId) {
+      return {
+        busy: undefined,
+        contextUsage: null,
+        generating: undefined,
+        hasBusy: false,
+      };
+    }
+    const busyBySessionId = state.busyBySessionId ?? {};
+    const contextUsageBySessionId = state.contextUsageBySessionId ?? {};
+    const generatingBySessionId = state.generatingBySessionId ?? {};
+    return {
+      busy: busyBySessionId[activeSessionId],
+      contextUsage: contextUsageBySessionId[activeSessionId] ?? null,
+      generating: generatingBySessionId[activeSessionId],
+      hasBusy: Object.prototype.hasOwnProperty.call(busyBySessionId, activeSessionId),
+    };
+  }, shallowEqual);
+  const monitoredFinalResponseSignatures = useMessagesStoreSelector((state) => {
+    const monitoredSessionIds = new Set<string>();
+    for (const session of items) {
+      const sessionId = typeof session.session_id === "string" ? session.session_id : "";
+      if (!sessionId) {
+        continue;
+      }
+      if (sessionId === activeSessionId || session.busy === true) {
+        monitoredSessionIds.add(sessionId);
+      }
+    }
+    const signatures: FinalResponseSignature[] = [];
+    for (const sessionId of monitoredSessionIds) {
+      const events = state.bySessionId[sessionId] ?? [];
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (event?.role !== "assistant" || event.pending === true || event.message_class !== "final_response") {
+          continue;
+        }
+        const signature = finalResponseSignatureForEvent(sessionId, event);
+        if (signature) {
+          signatures.push(signature);
+        }
+        break;
+      }
+    }
+    return signatures;
+  }, (left, right) => left.length === right.length && left.every((item, index) => item.key === right[index]?.key));
+  const sessionUiSessionId = useSessionUiStoreSelector((state) => state.sessionId);
+  const activeWait = useWaitsStoreSelector((state) => activeSessionId ? state.activeBySessionId[activeSessionId] ?? null : null);
   const sessionsStoreApi = useSessionsStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const sessionUiStoreApi = useSessionUiStoreApi();
@@ -234,10 +320,10 @@ export function AppShell() {
   const activeSession = items.find((session) => session.session_id === activeSessionId) ?? null;
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
   const activeSessionPending = activeSession?.pending_startup === true;
-  const activeSessionGenerating = Boolean(activeSessionId && generatingBySessionId?.[activeSessionId] === true);
-  const activeSessionHasLiveBusy = Boolean(activeSessionId && Object.prototype.hasOwnProperty.call(busyBySessionId, activeSessionId));
-  const activeSessionLiveBusy = Boolean(activeSessionId && busyBySessionId[activeSessionId] === true);
-  const activeWait = activeSessionId ? waitsState.activeBySessionId[activeSessionId] ?? activeSession?.active_wait ?? null : null;
+  const activeSessionGenerating = Boolean(activeSessionId && liveActiveSessionState.generating === true);
+  const activeSessionHasLiveBusy = Boolean(activeSessionId && liveActiveSessionState.hasBusy);
+  const activeSessionLiveBusy = Boolean(activeSessionId && liveActiveSessionState.busy === true);
+  const visibleActiveWait = activeWait ?? activeSession?.active_wait ?? null;
   const activeSessionBusy = Boolean(
     activeSessionGenerating
     || (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true),
@@ -247,7 +333,7 @@ export function AppShell() {
     : "No session selected";
   const activeModel = typeof activeSession?.model === "string" ? activeSession.model.trim() : "";
   const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "";
-  const activeContextUsageLabel = activeSessionId ? contextUsageStatusLabel(contextUsageBySessionId?.[activeSessionId]) : "";
+  const activeContextUsageLabel = activeSessionId ? contextUsageStatusLabel(liveActiveSessionState.contextUsage) : "";
   const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
     ? Math.max(0, Math.round(activeSession.queue_len))
     : 0;
@@ -291,7 +377,7 @@ export function AppShell() {
     if (activeQueueCount > 0) {
       items.push({ label: "Queue", value: String(activeQueueCount), tone: "attention" });
     }
-    if (activeWait) {
+    if (visibleActiveWait) {
       items.push({ label: "Wait", value: "user input", tone: "attention" });
     }
     if (activeSession.reset_required === true || activeSession.transport_state === "broken") {
@@ -312,7 +398,7 @@ export function AppShell() {
       items.push({ label: "Runtime", value: "idle", tone: "success" });
     }
     return items;
-  }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeSession, activeSessionBusy, activeSessionGenerating, activeWait]);
+  }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeSession, activeSessionBusy, activeSessionGenerating, visibleActiveWait]);
 
   const playReplyBeep = () => {
     try {
@@ -355,7 +441,7 @@ export function AppShell() {
     activeSessionId,
     activeTitle,
     bootstrapLoaded,
-    bySessionId,
+    finalResponseSignatures: monitoredFinalResponseSignatures,
     notificationsSupported,
     playReplyBeep,
     realtimeConnected,
@@ -477,7 +563,7 @@ export function AppShell() {
   const shellClassName = useMemo(() => ["appShell", "editorialShell", "withGlobalNav"].join(" "), []);
 
   const renderWorkspaceDetails = () => (
-    sessionUiMatchesActiveSession || activeWait ? (
+    sessionUiMatchesActiveSession || visibleActiveWait ? (
       <Suspense fallback={<WorkspaceLoadingFallback />}>
         <LazySessionWorkspace mode="details" initialTab={workspaceInitialTab} />
       </Suspense>
