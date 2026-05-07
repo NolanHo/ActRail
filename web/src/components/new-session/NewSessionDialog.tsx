@@ -13,7 +13,6 @@ import { api } from "../../lib/api";
 import { backendCapability, backendSupportsReasoningEffort } from "../../lib/launch";
 import {
   defaultModelFor,
-  defaultPiModelForProvider,
   defaultProviderFor,
   defaultReasoningFor,
   modelChoicesForDefaults,

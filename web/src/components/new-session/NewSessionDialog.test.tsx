@@ -1062,7 +1062,7 @@ describe("NewSessionDialog", () => {
               crs: ["gpt-5.5", "gpt-5.4"],
               chatgpt: ["gpt-5.3-codex"],
             },
-            reasoning_effort: "xhigh",
+            reasoning_effort: "high",
           },
           pi: { provider_choice: "macaron" },
         },

@@ -466,7 +466,7 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGenerationPaths() error = %v", err)
 	}
-	codexChild := mustLaunchSpecForHelperContractTest(t, "/tmp/codex", []string{"app-server", "--listen", "unix://" + paths.ChildSocketPath}, "/tmp/project-codex", childEnv, ioSpec)
+	codexChild := mustLaunchSpecForHelperContractTest(t, "/tmp/codex", []string{"-c", `model_reasoning_effort="high"`, "app-server", "--listen", "unix://" + paths.ChildSocketPath}, "/tmp/project-codex", childEnv, ioSpec)
 
 	piSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendPI, CWD: "/tmp/project-pi"}, "/tmp/actrail-iod", generationID, piChild)
 	if err != nil {
@@ -563,7 +563,7 @@ func TestRuntimeLauncherCodexDangerousBypassDefaultsOnAndCanDisable(t *testing.T
 	if err != nil {
 		t.Fatalf("childLaunchSpec(default) error = %v", err)
 	}
-	wantDefault := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server"}
+	wantDefault := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_reasoning_effort="high"`, "app-server"}
 	if !reflect.DeepEqual(spec.Command().Args(), wantDefault) {
 		t.Fatalf("default codex args = %#v, want %#v", spec.Command().Args(), wantDefault)
 	}
@@ -577,7 +577,7 @@ func TestRuntimeLauncherCodexDangerousBypassDefaultsOnAndCanDisable(t *testing.T
 	if err != nil {
 		t.Fatalf("childLaunchSpec(disabled) error = %v", err)
 	}
-	wantDisabled := []string{"app-server"}
+	wantDisabled := []string{"-c", `model_reasoning_effort="high"`, "app-server"}
 	if !reflect.DeepEqual(spec.Command().Args(), wantDisabled) {
 		t.Fatalf("disabled codex args = %#v, want %#v", spec.Command().Args(), wantDisabled)
 	}
@@ -599,7 +599,7 @@ func TestCreateSessionHonorsCodexDangerousBypassConfig(t *testing.T) {
 	if len(runner.Starts) != 1 {
 		t.Fatalf("len(runner.Starts) = %d, want 1", len(runner.Starts))
 	}
-	want := []string{"app-server"}
+	want := []string{"-c", `model_reasoning_effort="high"`, "app-server"}
 	if !reflect.DeepEqual(runner.Starts[0].Command().Args(), want) {
 		t.Fatalf("codex args = %#v, want %#v", runner.Starts[0].Command().Args(), want)
 	}
@@ -619,7 +619,7 @@ func TestCreateSessionCodexDangerousBypassDefaultsOnWithZeroConfig(t *testing.T)
 	if len(runner.Starts) != 1 {
 		t.Fatalf("len(runner.Starts) = %d, want 1", len(runner.Starts))
 	}
-	want := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server"}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "-c", `model_reasoning_effort="high"`, "app-server"}
 	if !reflect.DeepEqual(runner.Starts[0].Command().Args(), want) {
 		t.Fatalf("codex args = %#v, want %#v", runner.Starts[0].Command().Args(), want)
 	}

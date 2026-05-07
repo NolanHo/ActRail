@@ -611,6 +611,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}
 	s.startRuntimeIngest(record.identity.SessionID(), backend, runtime)
 	s.startPIAgentGRPCReadyTransition(record.identity.SessionID(), runtime)
+	s.startCodexThreadBootstrap(record.identity.SessionID(), runtime)
 	stream, err := session.MainStream(record.identity)
 	if err != nil {
 		return CreateSessionResponse{}, err

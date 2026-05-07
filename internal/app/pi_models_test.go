@@ -56,8 +56,8 @@ models = ["gpt-5.4"]
 	if got := codex.ProviderModels["crs"]; len(got) != 2 || got[0] != "gpt-5.4" || got[1] != "gpt-5.5" {
 		t.Fatalf("codex provider models = %#v, want crs -> gpt-5.4,gpt-5.5", codex.ProviderModels)
 	}
-	if codex.PreferredAuthMethod != "apikey" || codex.ReasoningEffort != "xhigh" {
-		t.Fatalf("codex auth/reasoning = %q/%q, want apikey/xhigh", codex.PreferredAuthMethod, codex.ReasoningEffort)
+	if codex.PreferredAuthMethod != "apikey" || codex.ReasoningEffort != "high" {
+		t.Fatalf("codex auth/reasoning = %q/%q, want apikey/high", codex.PreferredAuthMethod, codex.ReasoningEffort)
 	}
 }
 

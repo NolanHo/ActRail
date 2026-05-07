@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"actrail/internal/adapters/agent"
 )
 
 const piModelDiscoveryTimeout = 3 * time.Second
@@ -363,7 +365,7 @@ func (s *Stub) codexLaunchBackendDefaults() LaunchBackendDefaults {
 		ModelProvider:       defaultProvider,
 		ModelProviders:      providers,
 		PreferredAuthMethod: cfg.PreferredAuthMethod,
-		ReasoningEffort:     cfg.ModelReasoningEffort,
+		ReasoningEffort:     agent.CodexDefaultReasoningEffort(),
 	}
 }
 

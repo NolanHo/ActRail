@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"actrail/internal/adapters/process"
 	"actrail/internal/domain/session"
+	"github.com/gorilla/websocket"
 )
 
 func TestIodWalAppend(t *testing.T) {
@@ -140,7 +142,7 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 	}
 	listenErr := make(chan error, 1)
 	listeners := make(chan net.Listener, 1)
-	accepted := make(chan net.Conn, 1)
+	accepted := make(chan *websocket.Conn, 1)
 	defer func() {
 		select {
 		case listener := <-listeners:
@@ -159,12 +161,18 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 		}
 		listeners <- childListener
 		go func() {
-			conn, err := childListener.Accept()
-			if err == nil {
+			upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+			server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					close(accepted)
+					return
+				}
 				accepted <- conn
-				return
+			})}
+			if err := server.Serve(childListener); err != nil && !errors.Is(err, net.ErrClosed) && !strings.Contains(err.Error(), "use of closed network connection") {
+				listenErr <- err
 			}
-			close(accepted)
 		}()
 		return handle
 	}}
@@ -195,11 +203,11 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 			},
 		})
 	}()
-	var childConn net.Conn
+	var childConn *websocket.Conn
 	select {
 	case conn, ok := <-accepted:
 		if !ok {
-			t.Fatal("child socket accept failed")
+			t.Fatal("child socket websocket upgrade failed")
 		}
 		childConn = conn
 	case err := <-listenErr:
@@ -233,17 +241,19 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 	if err := decodeWithin(t, dec, &response); err != nil {
 		t.Fatalf("decode accepted error = %v", err)
 	}
-	buf := make([]byte, 1024)
 	_ = childConn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	n, err := childConn.Read(buf)
+	messageType, msg, err := childConn.ReadMessage()
 	if err != nil {
-		t.Fatalf("read child socket command error = %v", err)
+		t.Fatalf("read child socket websocket command error = %v", err)
 	}
-	if got, want := string(buf[:n]), "{\"method\":\"initialize\"}\n"; got != want {
+	if messageType != websocket.TextMessage {
+		t.Fatalf("child socket message type = %d, want text", messageType)
+	}
+	if got, want := string(msg), "{\"method\":\"initialize\"}"; got != want {
 		t.Fatalf("child socket command = %q, want %q", got, want)
 	}
-	if _, err := childConn.Write([]byte("{\"method\":\"thread/started\"}\n")); err != nil {
-		t.Fatalf("write child socket output error = %v", err)
+	if err := childConn.WriteMessage(websocket.TextMessage, []byte("{\"method\":\"thread/started\"}")); err != nil {
+		t.Fatalf("write child socket websocket output error = %v", err)
 	}
 	var state StatePacket
 	if err := decodeWithin(t, dec, &state); err != nil {

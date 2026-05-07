@@ -34,6 +34,10 @@ export function defaultModelFor(defaults: LaunchBackendDefaults, backend: string
   if (backend === "pi") {
     return defaultPiModelForProvider(defaults, providerChoice);
   }
+  const scopedModels = uniqueStrings(defaults.provider_models?.[providerChoice] ?? []);
+  if (providerChoice && defaults.provider_choice !== providerChoice && scopedModels[0]) {
+    return scopedModels[0];
+  }
   return defaults.model?.trim() || modelChoicesForDefaults(defaults, backend, providerChoice)[0] || "";
 }
 
@@ -43,12 +47,12 @@ export function defaultReasoningFor(defaults: LaunchBackendDefaults, backend: st
 }
 
 export function modelChoicesForDefaults(defaults: LaunchBackendDefaults, backend: string, providerChoice: string) {
+  const scopedModels = defaults.provider_models?.[providerChoice] ?? [];
   if (backend === "pi") {
-    const scopedModels = defaults.provider_models?.[providerChoice] ?? [];
     const configuredModel = defaults.provider_choice === providerChoice ? defaults.model : undefined;
     return uniqueStrings([...scopedModels, configuredModel]);
   }
-  return uniqueStrings([...(defaults.models ?? []), defaults.model]);
+  return uniqueStrings([...scopedModels, ...(defaults.models ?? []), defaults.model]);
 }
 
 export function defaultPiModelForProvider(defaults: LaunchBackendDefaults, providerChoice: string) {
