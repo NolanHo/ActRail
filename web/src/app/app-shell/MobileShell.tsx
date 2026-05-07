@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { SessionsPane } from "@/components/sessions/SessionsPane";
 import { Composer } from "@/components/composer/Composer";
 import { ConversationPane } from "@/components/conversation/ConversationPane";
-import { StopIcon } from "./icons";
+import { MetadataIcon, StopIcon } from "./icons";
 
 export type MobileRoute =
   | { screen: "sessions" }
@@ -23,6 +23,7 @@ interface MobileShellProps {
   onLogout(): void;
   onNewSession(): void;
   onOpenFilePath(path: string, line?: number | null): void;
+  onOpenRuntimeSettings(): void;
   onOpenSettings(): void;
   onToggleAnnouncements(): void;
   onToggleNotifications(): void;
@@ -91,12 +92,20 @@ function MobileSettingsSection({
   notificationsEnabled,
   onLogout,
   onOpenSettings,
+  onOpenRuntimeSettings,
   onToggleAnnouncements,
   onToggleNotifications,
-}: Pick<MobileShellProps, "announcementEnabled" | "announcementLabel" | "notificationLabel" | "notificationsEnabled" | "onLogout" | "onOpenSettings" | "onToggleAnnouncements" | "onToggleNotifications">) {
+}: Pick<MobileShellProps, "announcementEnabled" | "announcementLabel" | "notificationLabel" | "notificationsEnabled" | "onLogout" | "onOpenRuntimeSettings" | "onOpenSettings" | "onToggleAnnouncements" | "onToggleNotifications">) {
   return (
     <section className="mobileToolsPage" aria-label="Settings">
       <div className="mobileToolsGrid">
+        <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenRuntimeSettings}>
+          <span className="mobileToolCardIcon" aria-hidden="true"><MetadataIcon /></span>
+          <span className="mobileToolCardText">
+            <strong>Runtime settings</strong>
+            <span>Provider, model, effort.</span>
+          </span>
+        </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenSettings}>
           <span className="mobileToolCardIcon" aria-hidden="true">S</span>
           <span className="mobileToolCardText">
@@ -137,6 +146,7 @@ export function MobileShell({
   onLogout,
   onNewSession,
   onOpenFilePath,
+  onOpenRuntimeSettings,
   onOpenSettings,
   onToggleAnnouncements,
   onToggleNotifications,
@@ -213,6 +223,7 @@ export function MobileShell({
               notificationLabel={notificationLabel}
               notificationsEnabled={notificationsEnabled}
               onLogout={onLogout}
+              onOpenRuntimeSettings={onOpenRuntimeSettings}
               onOpenSettings={onOpenSettings}
               onToggleAnnouncements={onToggleAnnouncements}
               onToggleNotifications={onToggleNotifications}

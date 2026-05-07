@@ -105,6 +105,7 @@ function normalizeSessionDetailsResponse(response: SessionDetailsResponse & { se
     agent_backend: response.agent_backend ?? response.session.agent_backend,
     cwd: response.cwd ?? response.session.cwd,
     model: response.model ?? response.session.model,
+    reasoning_effort: response.reasoning_effort ?? response.session.reasoning_effort,
     priority_offset: response.priority_offset ?? response.session.priority_offset,
   } as SessionDetailsResponse;
 }
@@ -320,7 +321,7 @@ export const api = {
       payload: withSessionIdentity(sessionId, runtimeId, { text }),
     });
   },
-  switchSessionModel(sessionId: string, payload: { model: string; provider?: string }, runtimeId?: string | null) {
+  switchSessionModel(sessionId: string, payload: { model?: string; provider?: string; reasoning_effort?: string }, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return postJson<SwitchSessionModelResponse>(`/api/sessions/${routeId}/model`, payload);
   },

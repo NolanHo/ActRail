@@ -134,7 +134,7 @@ func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SwitchSessionModel() error = %v", err)
 	}
-	if !switched.OK || switched.Model != model || switched.Provider != provider {
+	if !switched.OK || switched.Model != model || switched.Provider != provider || switched.ApplyStatus != sessionRuntimeSettingApplyStatusRestartRequired || !switched.RestartRequired {
 		t.Fatalf("SwitchSessionModel() = %+v", switched)
 	}
 
@@ -192,6 +192,67 @@ func TestStubSessionActionsMutateMetadataAndDelete(t *testing.T) {
 	}
 	if len(listed.Items) != 1 || listed.Items[0].SessionID != depID.String() {
 		t.Fatalf("ListSessions() after delete = %+v", listed.Items)
+	}
+}
+
+func TestStubSwitchSessionModelUsesRuntimeRouteID(t *testing.T) {
+	svc, _, _, runtimeID := newSessionActionFixture(t)
+	model := "gpt-next"
+	switched, err := svc.SwitchSessionModel(context.Background(), SwitchSessionModelRequest{
+		SessionID: runtimeID,
+		Model:     StringPatch{Present: true, Value: &model},
+	})
+	if err != nil {
+		t.Fatalf("SwitchSessionModel(runtime route) error = %v", err)
+	}
+	if !switched.OK || switched.Model != model {
+		t.Fatalf("SwitchSessionModel(runtime route) = %+v", switched)
+	}
+}
+
+func TestStubSwitchSessionModelSavesReasoningEffortForNextRuntime(t *testing.T) {
+	svc, _, sessionID, _ := newSessionActionFixture(t)
+	reasoning := "xhigh"
+	switched, err := svc.SwitchSessionModel(context.Background(), SwitchSessionModelRequest{
+		SessionID:       sessionID,
+		ReasoningEffort: StringPatch{Present: true, Value: &reasoning},
+	})
+	if err != nil {
+		t.Fatalf("SwitchSessionModel(reasoning) error = %v", err)
+	}
+	if !switched.OK || switched.ReasoningEffort != reasoning || switched.ApplyStatus != sessionRuntimeSettingApplyStatusRestartRequired || !switched.RestartRequired {
+		t.Fatalf("SwitchSessionModel(reasoning) = %+v", switched)
+	}
+	details, err := svc.SessionDetails(context.Background(), SessionDetailsRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionDetails() error = %v", err)
+	}
+	if details.ReasoningEffort != reasoning {
+		t.Fatalf("SessionDetails().ReasoningEffort = %q, want %q", details.ReasoningEffort, reasoning)
+	}
+}
+
+func TestStubSwitchSessionModelRejectsUnsupportedReasoningEffort(t *testing.T) {
+	svc, _, sessionID, _ := newSessionActionFixture(t)
+	reasoning := "extreme"
+	_, err := svc.SwitchSessionModel(context.Background(), SwitchSessionModelRequest{
+		SessionID:       sessionID,
+		ReasoningEffort: StringPatch{Present: true, Value: &reasoning},
+	})
+	if err == nil {
+		t.Fatal("SwitchSessionModel(invalid reasoning) error = nil")
+	}
+}
+
+func TestStubSwitchSessionModelRejectsCodexReasoningEffort(t *testing.T) {
+	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "codex")
+	reasoning := "high"
+	_, err := svc.SwitchSessionModel(context.Background(), SwitchSessionModelRequest{
+		SessionID:       sessionID,
+		ReasoningEffort: StringPatch{Present: true, Value: &reasoning},
+	})
+	if err == nil {
+		t.Fatal("SwitchSessionModel(codex reasoning) error = nil")
 	}
 }
 

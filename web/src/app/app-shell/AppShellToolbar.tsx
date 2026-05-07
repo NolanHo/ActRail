@@ -7,6 +7,8 @@ export interface ConversationStatusItem {
   label: string;
   value: string;
   tone?: "default" | "attention" | "error" | "busy" | "success";
+  actionLabel?: string;
+  onActivate?: () => void;
 }
 
 interface AppShellToolbarProps {
@@ -209,12 +211,35 @@ export function AppShellToolbar({
           <div className="conversationTitle">{activeSessionId ? activeTitle : "No session selected"}</div>
           {activeSessionId && statusItems.length ? (
             <div className="conversationStatusStrip" aria-label="Session status">
-              {statusItems.map((item) => (
-                <span key={`${item.label}:${item.value}`} className={cn("conversationStatusChip", item.tone && item.tone !== "default" && item.tone)}>
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
-                </span>
-              ))}
+              {statusItems.map((item) => {
+                const className = cn(
+                  "conversationStatusChip",
+                  item.onActivate && "actionable",
+                  item.tone && item.tone !== "default" && item.tone,
+                );
+                const content = (
+                  <>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </>
+                );
+                return item.onActivate ? (
+                  <button
+                    key={`${item.label}:${item.value}`}
+                    type="button"
+                    className={className}
+                    aria-label={item.actionLabel || item.label}
+                    title={item.actionLabel || item.label}
+                    onClick={item.onActivate}
+                  >
+                    {content}
+                  </button>
+                ) : (
+                  <span key={`${item.label}:${item.value}`} className={className}>
+                    {content}
+                  </span>
+                );
+              })}
             </div>
           ) : null}
         </div>

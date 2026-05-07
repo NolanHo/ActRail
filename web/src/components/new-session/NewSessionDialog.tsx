@@ -11,8 +11,18 @@ import { cn } from "@/lib/utils";
 import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
 import { backendCapability, backendSupportsReasoningEffort } from "../../lib/launch";
+import {
+  defaultModelFor,
+  defaultPiModelForProvider,
+  defaultProviderFor,
+  defaultReasoningFor,
+  modelChoicesForDefaults,
+  providerChoicesForDefaults,
+  reasoningChoicesForDefaults,
+  uniqueStrings,
+} from "../../lib/launch-options";
 import { getSessionDisplayName } from "../../lib/session-display";
-import type { CreateSessionResponse, LaunchBackendDefaults, SessionResumeCandidate, SessionResumeCandidatesResponse, SessionSummary } from "../../lib/types";
+import type { CreateSessionResponse, SessionResumeCandidate, SessionResumeCandidatesResponse, SessionSummary } from "../../lib/types";
 
 interface NewSessionDialogProps {
   open: boolean;
@@ -39,73 +49,11 @@ function baseName(value: string) {
   return parts[parts.length - 1] || "";
 }
 
-function uniqueStrings(values: Array<string | null | undefined>) {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    result.push(trimmed);
-  }
-  return result;
-}
-
 function initialCwdForDialog(activeSessionCwd: string | null | undefined, recentCwds: string[]) {
   const active = String(activeSessionCwd || "").trim();
   if (active) return active;
   const recent = recentCwds.find((item) => String(item || "").trim().length > 0)?.trim();
   return recent || DEFAULT_NEW_SESSION_CWD;
-}
-
-function providerChoicesForDefaults(defaults: LaunchBackendDefaults) {
-  return uniqueStrings([...(defaults.provider_choices ?? []), defaults.provider_choice, ...(defaults.model_providers ?? [])]);
-}
-
-function reasoningChoicesForDefaults(defaults: LaunchBackendDefaults, backend = "") {
-  return uniqueStrings([
-    ...(defaults.reasoning_efforts ?? []),
-    defaults.reasoning_effort,
-    ...(backend === "pi" ? ["off", "minimal", "low", "medium", "high", "xhigh"] : []),
-  ]);
-}
-
-function defaultProviderFor(defaults: LaunchBackendDefaults) {
-  const choices = providerChoicesForDefaults(defaults);
-  return defaults.provider_choice?.trim() || defaults.model_provider?.trim() || choices[0] || "";
-}
-
-function defaultModelFor(defaults: LaunchBackendDefaults, backend: string, providerChoice: string) {
-  if (backend === "pi") {
-    return defaultPiModelForProvider(defaults, providerChoice);
-  }
-  return defaults.model?.trim() || modelChoicesForDefaults(defaults, backend, providerChoice)[0] || "";
-}
-
-function defaultReasoningFor(defaults: LaunchBackendDefaults, backend: string) {
-  const choices = reasoningChoicesForDefaults(defaults, backend);
-  return defaults.reasoning_effort?.trim() || (backend === "pi" ? "high" : choices[0] || "");
-}
-
-function modelChoicesForDefaults(defaults: LaunchBackendDefaults, backend: string, providerChoice: string) {
-  if (backend === "pi") {
-    const scopedModels = defaults.provider_models?.[providerChoice] ?? [];
-    const configuredModel = defaults.provider_choice === providerChoice ? defaults.model : undefined;
-    return uniqueStrings([...scopedModels, configuredModel]);
-  }
-  return uniqueStrings([...(defaults.models ?? []), defaults.model]);
-}
-
-function defaultPiModelForProvider(defaults: LaunchBackendDefaults, providerChoice: string) {
-  const scopedModels = uniqueStrings(defaults.provider_models?.[providerChoice] ?? []);
-  if (defaults.provider_choice === providerChoice) {
-    const configuredModel = defaults.model?.trim();
-    if (configuredModel) {
-      return configuredModel;
-    }
-  }
-  return scopedModels[0] || "";
 }
 
 function buildOptimisticCreatedSession(
