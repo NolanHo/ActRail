@@ -28,6 +28,7 @@ model = "gpt-5.5"
 [model_providers.crs]
 name = "OpenAI"
 base_url = "https://pi-api.macaron.xin"
+models = ["gpt-5.4"]
 `
 	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -35,6 +36,9 @@ base_url = "https://pi-api.macaron.xin"
 
 	stub := NewStubForTest(config.Load(), func() time.Time { return time.Unix(1770000000, 0) }, RuntimeConfig{})
 	bootstrap := stub.Bootstrap(context.Background(), BootstrapRequest{})
+	if bootstrap.NewSessionDefaults.DefaultBackend != "codex" {
+		t.Fatalf("new session default backend = %q, want codex", bootstrap.NewSessionDefaults.DefaultBackend)
+	}
 	codex := bootstrap.NewSessionDefaults.Backends["codex"]
 
 	if codex.ProviderChoice != "crs" || codex.ModelProvider != "crs" {
@@ -46,11 +50,11 @@ base_url = "https://pi-api.macaron.xin"
 	if !containsString(codex.ProviderChoices, "crs") || !containsString(codex.ModelProviders, "crs") {
 		t.Fatalf("codex provider choices = %#v model providers = %#v, want crs", codex.ProviderChoices, codex.ModelProviders)
 	}
-	if !containsString(codex.Models, "gpt-5.5") {
-		t.Fatalf("codex models = %#v, want gpt-5.5", codex.Models)
+	if !containsString(codex.Models, "gpt-5.5") || !containsString(codex.Models, "gpt-5.4") {
+		t.Fatalf("codex models = %#v, want gpt-5.5 and gpt-5.4", codex.Models)
 	}
-	if got := codex.ProviderModels["crs"]; len(got) != 1 || got[0] != "gpt-5.5" {
-		t.Fatalf("codex provider models = %#v, want crs -> gpt-5.5", codex.ProviderModels)
+	if got := codex.ProviderModels["crs"]; len(got) != 2 || got[0] != "gpt-5.4" || got[1] != "gpt-5.5" {
+		t.Fatalf("codex provider models = %#v, want crs -> gpt-5.4,gpt-5.5", codex.ProviderModels)
 	}
 	if codex.PreferredAuthMethod != "apikey" || codex.ReasoningEffort != "xhigh" {
 		t.Fatalf("codex auth/reasoning = %q/%q, want apikey/xhigh", codex.PreferredAuthMethod, codex.ReasoningEffort)

@@ -29,6 +29,14 @@ func transportSnapshotPIAgentGRPCFailed(reason string) SessionTransportSnapshot 
 	return SessionTransportSnapshot{State: SessionTransportStateFailed, GenerationID: "pi_agent_grpc", Reason: strings.TrimSpace(reason)}
 }
 
+func transportSnapshotCodexStarting() SessionTransportSnapshot {
+	return SessionTransportSnapshot{State: SessionTransportStateStarting, GenerationID: "codex_app_server", Reason: "codex_thread_starting"}
+}
+
+func transportSnapshotCodexAttached() SessionTransportSnapshot {
+	return SessionTransportSnapshot{State: SessionTransportStateAttached, GenerationID: "codex_app_server", Reason: "codex_thread"}
+}
+
 func transportSnapshotEnded(generationID iod.GenerationID, reason string) SessionTransportSnapshot {
 	return SessionTransportSnapshot{
 		GenerationID: strings.TrimSpace(generationID.String()),

@@ -1054,6 +1054,51 @@ func TestCreateSessionConsumesCodexRuntimeOutputIntoStateTranscriptAndEvents(t *
 	}
 }
 
+func TestCodexSessionWaitsForThreadBeforeInput(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	defer stdoutW.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if created.Session.TransportState != SessionTransportStateStarting.String() || !created.Session.PendingStartup {
+		t.Fatalf("CreateSession().Session transport = (%q, pending=%v), want starting pending", created.Session.TransportState, created.Session.PendingStartup)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+
+	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "hello"}); err == nil || !strings.Contains(err.Error(), "session runtime is starting") {
+		t.Fatalf("Send() before thread error = %v, want session runtime is starting", err)
+	}
+
+	_, _ = stdoutW.Write([]byte("{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-ready\"}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		return ok && sessionTransportSnapshot(record).State == SessionTransportStateAttached
+	})
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState().Transport.State = %q, want attached", state.Transport.State)
+	}
+	if len(sink.snapshot().states) == 0 {
+		t.Fatal("session state events = 0, want attached transition event")
+	}
+}
+
 func TestCreateSessionAppliesCodexThreadStatusChangedToBusyState(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()

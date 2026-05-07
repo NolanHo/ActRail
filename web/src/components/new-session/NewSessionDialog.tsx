@@ -138,7 +138,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const { activeSessionId, bootstrapLoaded, items, newSessionDefaults, recentCwds, tmuxAvailable } = useSessionsStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const [cwd, setCwd] = useState("");
-  const [backend, setBackend] = useState("pi");
+  const [backend, setBackend] = useState("codex");
   const [sessionName, setSessionName] = useState("");
   const [surfaceTab, setSurfaceTab] = useState<NewSessionSurfaceTab>("start");
   const [model, setModel] = useState("");
@@ -236,7 +236,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       return;
     }
     wasOpenRef.current = true;
-    const initialBackend = newSessionDefaults?.default_backend || "pi";
+    const initialBackend = newSessionDefaults?.default_backend || "codex";
     const initialDefaults = newSessionDefaults?.backends?.[initialBackend] || {};
     const initialProvider = defaultProviderFor(initialDefaults);
     hydratedDefaultsRef.current = Object.keys(newSessionDefaults?.backends || {}).length > 0;
@@ -275,7 +275,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     }
 
     hydratedDefaultsRef.current = true;
-    const defaultBackend = newSessionDefaults?.default_backend || backendNames[0] || "pi";
+    const defaultBackend = newSessionDefaults?.default_backend || backendNames[0] || "codex";
     const selectedBackend = touchedLaunchSettingsRef.current.backend && backend ? backend : defaultBackend;
     const defaultValues = newSessionDefaults?.backends?.[selectedBackend] || {};
     const defaultProvider = defaultProviderFor(defaultValues);
@@ -442,6 +442,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       || nextDefaults.provider_choice
       || nextDefaults.reasoning_effort
       || nextDefaults.service_tier
+      || Object.keys(nextDefaults.provider_models || {}).length
       || providerChoicesForDefaults(nextDefaults).length
       || reasoningChoicesForDefaults(nextDefaults, nextBackend).length,
     );
@@ -469,10 +470,10 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const applyProviderChoice = (nextProviderChoice: string) => {
     markLaunchSettingTouched("providerChoice");
     setProviderChoice(nextProviderChoice);
-    if (backend !== "pi" || touchedLaunchSettingsRef.current.model) {
+    if (touchedLaunchSettingsRef.current.model) {
       return;
     }
-    setModel(defaultPiModelForProvider(backendDefaults, nextProviderChoice));
+    setModel(defaultModelFor(backendDefaults, backend, nextProviderChoice));
   };
 
   const refreshPiModels = async () => {

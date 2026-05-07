@@ -28,6 +28,9 @@ func TestLoadDefaults(t *testing.T) {
 	if got, want := cfg.HeartbeatIntervalMillis(), 15000; got != want {
 		t.Fatalf("expected heartbeat interval %dms, got %dms", want, got)
 	}
+	if cfg.Launch.DefaultBackend != "codex" {
+		t.Fatalf("expected default backend codex, got %q", cfg.Launch.DefaultBackend)
+	}
 	if !reflect.DeepEqual(cfg.Launch.AvailableBackends, []string{"pi", "codex"}) {
 		t.Fatalf("unexpected default backends: %#v", cfg.Launch.AvailableBackends)
 	}
@@ -64,6 +67,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("ACTRAIL_HOST", "0.0.0.0")
 	t.Setenv("ACTRAIL_PORT", "9090")
 	t.Setenv("ACTRAIL_WS_HEARTBEAT_INTERVAL", "20s")
+	t.Setenv("ACTRAIL_DEFAULT_BACKEND", "pi")
 	t.Setenv("ACTRAIL_AVAILABLE_BACKENDS", "pi")
 	t.Setenv("ACTRAIL_AVAILABLE_PROVIDERS", "openrouter,anthropic")
 	t.Setenv("ACTRAIL_AVAILABLE_MODELS", "claude-sonnet,gemini-2.5-pro")
@@ -81,6 +85,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Protocol.HeartbeatInterval != 20*time.Second {
 		t.Fatalf("expected heartbeat override, got %s", cfg.Protocol.HeartbeatInterval)
+	}
+	if cfg.Launch.DefaultBackend != "pi" {
+		t.Fatalf("expected default backend override pi, got %q", cfg.Launch.DefaultBackend)
 	}
 	if !reflect.DeepEqual(cfg.Launch.AvailableBackends, []string{"pi"}) {
 		t.Fatalf("unexpected backend override: %#v", cfg.Launch.AvailableBackends)

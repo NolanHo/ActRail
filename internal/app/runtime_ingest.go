@@ -1750,6 +1750,18 @@ func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string) {
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
 		state.setThreadID(threadID)
 	})
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return
+	}
+	transport := sessionTransportSnapshot(record)
+	if transport.State != SessionTransportStateStarting {
+		return
+	}
+	if _, err := s.setSessionTransport(sessionID, transportSnapshotCodexAttached()); err != nil {
+		return
+	}
+	s.emitSessionState(sessionID)
 }
 
 func (s *Stub) noteCodexTurnID(sessionID session.SessionID, turnID string) {

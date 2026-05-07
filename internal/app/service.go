@@ -587,6 +587,8 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		transport = transportSnapshotPIAgentGRPCStarting()
 	} else if runtime.UsesPIAgentGRPC() {
 		transport = piAgentGRPCTransportSnapshot()
+	} else if runtime.PendingCodexThread() {
+		transport = transportSnapshotCodexStarting()
 	}
 	record, err := s.registry.Create(sessionCreateSpec{
 		Identity:         &identity,

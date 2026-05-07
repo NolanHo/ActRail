@@ -827,6 +827,14 @@ func (r sessionRuntime) PendingPIAgentGRPCReady() bool {
 	return r.piAgentGRPC != nil && r.piAgentGRPCReady != nil
 }
 
+func (r sessionRuntime) PendingCodexThread() bool {
+	if r.protocol != runtimeProtocolCodexRPC || r.codex == nil {
+		return false
+	}
+	_, threadID, _ := r.codex.snapshot()
+	return strings.TrimSpace(threadID) == ""
+}
+
 func (r sessionRuntime) PIAgentGRPCState(ctx context.Context) (piagentgrpc.State, error) {
 	if r.piAgentGRPC == nil {
 		return piagentgrpc.State{}, nil
