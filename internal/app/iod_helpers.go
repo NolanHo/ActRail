@@ -384,8 +384,33 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 		_ = client.Close()
 		return attachedHelper{}, binding, helperFenceHelloProofMismatch, err
 	}
+
 	updatedBinding := binding
-	updatedBinding.LastReplayOffset = 0
+	if s != nil {
+		replayState := newHelperReplayState(binding.LastReplayOffset, func(packet iod.ReplayItemPacket) error {
+			record, ok := s.registry.Lookup(binding.SessionID)
+			if !ok {
+				return fmt.Errorf("session %q not found while replaying helper WAL", binding.SessionID)
+			}
+			return s.applyRuntimeHelperPacket(binding.SessionID, record.identity.Backend(), packet)
+		})
+		request, err := iod.NewReplayRequestPacket(binding.SessionID, binding.GenerationID, binding.LastReplayOffset)
+		if err != nil {
+			_ = client.Close()
+			return attachedHelper{}, binding, helperFenceReplayFailed, err
+		}
+		done, err := client.Replay(ctx, request, replayState.accept)
+		if err != nil {
+			_ = client.Close()
+			return attachedHelper{}, binding, replayFenceReason(err), err
+		}
+		if err := replayState.finish(done); err != nil {
+			_ = client.Close()
+			return attachedHelper{}, binding, replayFenceReason(err), err
+		}
+		updatedBinding.LastReplayOffset = done.LastOffset
+	}
+
 	return attachedHelper{
 		Binding:      updatedBinding,
 		ManifestPath: discovered.Path,
