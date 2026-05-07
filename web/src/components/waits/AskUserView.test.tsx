@@ -46,9 +46,23 @@ afterEach(() => {
     root.remove();
     root = null;
   }
+  vi.clearAllMocks();
 });
 
 describe("AskUserView", () => {
+  it("loads the wait inbox when opened", async () => {
+    const waitsStore = createWaitsStore();
+    waitsStore.loadInbox = vi.fn().mockResolvedValue(undefined);
+
+    renderView(waitsStore);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(waitsStore.loadInbox).toHaveBeenCalledTimes(1);
+  });
+
   it("lists active waits and opens selected wait", async () => {
     const waitsStore = createWaitsStore();
     waitsStore.loadInbox = vi.fn().mockResolvedValue(undefined);

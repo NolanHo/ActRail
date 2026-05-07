@@ -151,23 +151,24 @@ export function createWaitsStore(): WaitsStore {
         return;
       }
       if (type === "waits.updated") {
-        const waits = Array.isArray(payload.waits)
-          ? payload.waits.map((item) => normalizeActiveWait(item)).filter((item): item is ActiveWaitSummary => Boolean(item && item.session_id))
-          : [];
-        if (waits.length) {
-          const nextActive = { ...state.activeBySessionId };
-          for (const wait of waits) {
-            if (wait.session_id && isActiveWaitState(wait.state)) {
-              nextActive[wait.session_id] = wait;
-            }
-          }
-          state = {
-            ...state,
-            activeBySessionId: nextActive,
-            inbox: waits.filter((wait) => isActiveWaitState(wait.state)),
-          };
-          emit();
+        if (!Array.isArray(payload.waits)) {
+          return;
         }
+        const waits = payload.waits
+          .map((item) => normalizeActiveWait(item))
+          .filter((item): item is ActiveWaitSummary => Boolean(item && item.session_id && isActiveWaitState(item.state)));
+        const nextActive: Record<string, ActiveWaitSummary | null> = {};
+        for (const wait of waits) {
+          if (wait.session_id) {
+            nextActive[wait.session_id] = wait;
+          }
+        }
+        state = {
+          ...state,
+          activeBySessionId: nextActive,
+          inbox: waits,
+        };
+        emit();
       }
     },
     async loadInbox() {
@@ -178,7 +179,7 @@ export function createWaitsStore(): WaitsStore {
         const waits = Array.isArray(response.waits)
           ? response.waits.map((item) => normalizeActiveWait(item)).filter((item): item is ActiveWaitSummary => Boolean(item && item.session_id && isActiveWaitState(item.state)))
           : [];
-        const activeBySessionId = { ...state.activeBySessionId };
+        const activeBySessionId: Record<string, ActiveWaitSummary | null> = {};
         for (const wait of waits) {
           if (wait.session_id) {
             activeBySessionId[wait.session_id] = wait;
