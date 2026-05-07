@@ -767,6 +767,27 @@ select {
   line-height: 1.1;
 }
 
+button.conversationStatusChip {
+  font: inherit;
+  cursor: pointer;
+}
+
+.conversationStatusChip.actionable {
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.conversationStatusChip.actionable:hover {
+  border-color: color-mix(in srgb, var(--primary) 48%, var(--legacy-border));
+  background: color-mix(in srgb, var(--primary) 8%, var(--panel));
+  color: var(--text);
+}
+
+.conversationStatusChip.actionable:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--primary) 64%, var(--legacy-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
 .conversationStatusChip strong {
   min-width: 0;
   overflow: hidden;
@@ -3818,6 +3839,29 @@ select {
   margin-top: 14px;
 }
 
+.sessionRuntimeSettingsForm {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sessionRuntimeSettingsBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  max-height: min(58dvh, 28rem);
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+}
+
+.sessionRuntimeSettingsStatus {
+  color: var(--text);
+}
+
+.sessionRuntimeSettingsActions {
+  padding: 1rem 1.25rem;
+}
+
 :root[data-theme="dark"] .composerTodoPanel {
   background: color-mix(in srgb, var(--panel) 94%, #14111b);
   border-color: var(--chrome-border);
@@ -3875,6 +3919,11 @@ select {
 
 :root[data-theme="dark"] .conversationStatusChip strong {
   color: var(--text);
+}
+
+:root[data-theme="dark"] .conversationStatusChip.actionable:hover {
+  border-color: color-mix(in srgb, var(--primary) 58%, var(--chrome-border));
+  background: color-mix(in srgb, var(--primary) 16%, var(--chrome-elevated));
 }
 
 :root[data-theme="dark"] .conversationStatusChip.attention {

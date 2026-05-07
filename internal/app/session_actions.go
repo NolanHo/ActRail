@@ -110,16 +110,21 @@ type EditSessionResponse struct {
 }
 
 type SwitchSessionModelRequest struct {
-	SessionID session.SessionID
-	Model     StringPatch
-	Provider  StringPatch
+	SessionID       session.SessionID
+	Model           StringPatch
+	Provider        StringPatch
+	ReasoningEffort StringPatch
 }
 
 type SwitchSessionModelResponse struct {
-	OK       bool           `json:"ok"`
-	Model    string         `json:"model,omitempty"`
-	Provider string         `json:"provider,omitempty"`
-	Data     map[string]any `json:"data,omitempty"`
+	OK              bool           `json:"ok"`
+	Model           string         `json:"model,omitempty"`
+	Provider        string         `json:"provider,omitempty"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	ApplyStatus     string         `json:"apply_status,omitempty"`
+	RestartRequired bool           `json:"restart_required,omitempty"`
+	Message         string         `json:"message,omitempty"`
+	Data            map[string]any `json:"data,omitempty"`
 }
 
 type DeleteSessionRequest struct {
@@ -365,9 +370,14 @@ func (s *Stub) EditSession(ctx context.Context, req EditSessionRequest) (EditSes
 	return editSessionResponseFromRecord(record), nil
 }
 
+const (
+	sessionRuntimeSettingApplyStatusUnchanged       = "unchanged"
+	sessionRuntimeSettingApplyStatusRestartRequired = "restart_required"
+)
+
 func (s *Stub) SwitchSessionModel(_ context.Context, req SwitchSessionModelRequest) (SwitchSessionModelResponse, error) {
-	if !req.Model.Present && !req.Provider.Present {
-		return SwitchSessionModelResponse{}, Invalid("model", "model or provider required")
+	if !req.Model.Present && !req.Provider.Present && !req.ReasoningEffort.Present {
+		return SwitchSessionModelResponse{}, Invalid("model", "model, provider, or reasoning_effort required")
 	}
 	var nextModel *string
 	if req.Model.Present {
@@ -384,16 +394,52 @@ func (s *Stub) SwitchSessionModel(_ context.Context, req SwitchSessionModelReque
 			nextProvider = &value
 		}
 	}
+	var nextReasoning *string
+	if req.ReasoningEffort.Present {
+		if req.ReasoningEffort.Value != nil {
+			value := strings.TrimSpace(*req.ReasoningEffort.Value)
+			if value != "" && !validSessionReasoningEffort(value) {
+				return SwitchSessionModelResponse{}, Invalid("reasoning_effort", "reasoning_effort must be one of off, minimal, low, medium, high, xhigh")
+			}
+			nextReasoning = &value
+		}
+	}
+	existing, err := s.lookupSession(req.SessionID)
+	if err != nil {
+		return SwitchSessionModelResponse{}, err
+	}
+	if req.ReasoningEffort.Present && nextReasoning != nil && *nextReasoning != "" && existing.identity.Backend() == session.BackendCodex {
+		return SwitchSessionModelResponse{}, UnsupportedBackend("codex sessions do not support reasoning_effort changes")
+	}
+	changed := false
 	record, ok, err := s.registry.Update(req.SessionID, false, func(record *sessionRecord) error {
 		if nextModel != nil {
+			if record.model != *nextModel {
+				changed = true
+			}
 			record.model = *nextModel
 		}
 		if req.Provider.Present {
+			next := ""
 			if nextProvider == nil {
-				record.provider = ""
+				next = ""
 			} else {
-				record.provider = *nextProvider
+				next = *nextProvider
 			}
+			if record.provider != next {
+				changed = true
+			}
+			record.provider = next
+		}
+		if req.ReasoningEffort.Present {
+			next := ""
+			if nextReasoning != nil {
+				next = *nextReasoning
+			}
+			if record.reasoningEffort != next {
+				changed = true
+			}
+			record.reasoningEffort = next
 		}
 		return nil
 	})
@@ -403,7 +449,34 @@ func (s *Stub) SwitchSessionModel(_ context.Context, req SwitchSessionModelReque
 	if !ok {
 		return SwitchSessionModelResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 	}
-	return SwitchSessionModelResponse{OK: true, Model: record.model, Provider: record.provider}, nil
+	if !changed {
+		return SwitchSessionModelResponse{
+			OK:              true,
+			Model:           record.model,
+			Provider:        record.provider,
+			ReasoningEffort: record.reasoningEffort,
+			ApplyStatus:     sessionRuntimeSettingApplyStatusUnchanged,
+			Message:         "settings unchanged",
+		}, nil
+	}
+	return SwitchSessionModelResponse{
+		OK:              true,
+		Model:           record.model,
+		Provider:        record.provider,
+		ReasoningEffort: record.reasoningEffort,
+		ApplyStatus:     sessionRuntimeSettingApplyStatusRestartRequired,
+		RestartRequired: true,
+		Message:         "settings saved; restart or handoff the session to apply them to the runtime",
+	}, nil
+}
+
+func validSessionReasoningEffort(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "off", "minimal", "low", "medium", "high", "xhigh":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (DeleteSessionResponse, error) {

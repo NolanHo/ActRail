@@ -158,7 +158,11 @@ func (s *Stub) ExecuteSessionCommand(ctx context.Context, req ExecuteSessionComm
 		if err != nil {
 			return ExecuteSessionCommandResponse{}, err
 		}
-		return ExecuteSessionCommandResponse{OK: payload.OK, Command: name, Message: "model updated", SessionID: req.SessionID.String()}, nil
+		message := "model updated"
+		if payload.RestartRequired {
+			message = "model saved; restart required"
+		}
+		return ExecuteSessionCommandResponse{OK: payload.OK, Command: name, Message: message, SessionID: req.SessionID.String()}, nil
 	default:
 		if record.identity.Backend() == session.BackendPI {
 			if record.runtime.piAgentGRPC != nil {

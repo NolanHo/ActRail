@@ -73,6 +73,7 @@ vi.mock("../lib/api", () => ({
     getSessionInbox: vi.fn().mockResolvedValue({ ok: true, items: [] }),
     listSessions: vi.fn().mockResolvedValue({ items: [{ session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi" }] }),
     listTeams: vi.fn().mockResolvedValue({ ok: true, roots: [], total_count: 0, non_leaf_count: 0 }),
+    switchSessionModel: vi.fn().mockResolvedValue({ ok: true, model: "gpt-next", provider: "openrouter", reasoning_effort: "xhigh", apply_status: "restart_required", restart_required: true, message: "settings saved; restart or handoff the session to apply them to the runtime" }),
     interruptSession: vi.fn().mockResolvedValue({ ok: true }),
     probeSessionState: vi.fn().mockResolvedValue({ probe_id: "probe_1", state: { busy: false, queue: { items: [] }, tail_seq: 0, resume_cursors: {} } }),
     logout: vi.fn().mockResolvedValue({ ok: true }),
@@ -210,6 +211,10 @@ function renderAppShell({
     agent_backend: string;
     busy: boolean;
     focused?: boolean;
+    model?: string | null;
+    provider_choice?: string | null;
+    reasoning_effort?: string | null;
+    runtime_id?: string | null;
     iod?: { build_date?: string; git_sha?: string; start_ts?: number; mode?: string } | null;
     transport_state?: string | null;
     reset_required?: boolean;
@@ -234,7 +239,7 @@ function renderAppShell({
       bootstrapLoaded: true,
       newSessionDefaults,
     },
-    { refresh: vi.fn().mockResolvedValue(undefined), refreshBootstrap: vi.fn().mockResolvedValue(undefined), select: vi.fn() },
+    { refresh: vi.fn().mockResolvedValue(undefined), refreshBootstrap: vi.fn().mockResolvedValue(undefined), select: vi.fn(), upsertSession: vi.fn() },
   );
   const messagesStore = createStaticStore(
     { bySessionId: messageState, offsetsBySessionId: offsetState, loading: false },
@@ -959,6 +964,120 @@ describe("AppShell", () => {
     const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
     expect(runtimeChip?.textContent).toContain("ended");
     expect(runtimeChip?.textContent).not.toContain("idle");
+  });
+
+  it("opens runtime settings from the model chip and saves provider model and reasoning effort", async () => {
+    const { api } = await import("../lib/api");
+    const { sessionsStore } = renderAppShell({
+      items: [{
+        session_id: "sess-1",
+        runtime_id: "rt-1",
+        alias: "Model task",
+        agent_backend: "pi",
+        busy: false,
+        model: "gpt-5.4",
+        provider_choice: "openrouter",
+        reasoning_effort: "high",
+      }],
+      newSessionDefaults: {
+        backends: {
+          pi: {
+            provider_choice: "openrouter",
+            provider_choices: ["openrouter"],
+            provider_models: { openrouter: ["gpt-5.4", "gpt-next"] },
+            reasoning_efforts: ["high", "xhigh"],
+          },
+        },
+        backend_capabilities: {
+          pi: { runtime_probe: true, launch_reasoning_effort: true },
+        },
+      },
+    });
+    await flush();
+
+    const modelButton = findButtonByAriaLabel("Change runtime model");
+    expect(modelButton).not.toBeNull();
+    act(() => {
+      modelButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    const dialog = getRoot().querySelector("[data-testid='session-runtime-settings-dialog']");
+    expect(dialog).not.toBeNull();
+    act(() => {
+      findButtonByText("Refresh Pi models")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(sessionsStore.refreshBootstrap).toHaveBeenCalledWith({ refreshPiModels: true });
+
+    const modelInput = getRoot().querySelector<HTMLInputElement>("[data-testid='session-runtime-model-input']");
+    const reasoningSelect = getRoot().querySelector<HTMLSelectElement>("[data-testid='session-runtime-reasoning-select']");
+    expect(modelInput?.value).toBe("gpt-5.4");
+    expect(reasoningSelect?.value).toBe("high");
+
+    act(() => {
+      modelInput!.value = "gpt-next";
+      modelInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      reasoningSelect!.value = "xhigh";
+      reasoningSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+
+    const saveButton = findButtonByText("Save");
+    expect(saveButton).not.toBeNull();
+    act(() => {
+      saveButton!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(api.switchSessionModel).toHaveBeenCalledWith("sess-1", {
+      model: "gpt-next",
+      reasoning_effort: "xhigh",
+    }, "rt-1");
+    await flush();
+    expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: "sess-1",
+      model: "gpt-next",
+      provider_choice: "openrouter",
+      reasoning_effort: "xhigh",
+    }));
+    expect(sessionsStore.refresh).toHaveBeenCalled();
+    expect(getRoot().textContent).toContain("settings saved; restart or handoff the session to apply them to the runtime");
+  });
+
+  it("does not expose reasoning effort for codex runtime settings", async () => {
+    renderAppShell({
+      items: [{
+        session_id: "sess-1",
+        alias: "Codex task",
+        agent_backend: "codex",
+        busy: false,
+        model: "gpt-5.4",
+        provider_choice: "openai-api",
+        reasoning_effort: "high",
+      }],
+      newSessionDefaults: {
+        backends: {
+          codex: {
+            provider_choice: "openai-api",
+            provider_choices: ["openai-api"],
+            models: ["gpt-5.4", "gpt-next"],
+          },
+        },
+        backend_capabilities: {
+          codex: { runtime_probe: true, launch_reasoning_effort: false },
+        },
+      },
+    });
+    await flush();
+
+    act(() => {
+      findButtonByAriaLabel("Change runtime model")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(getRoot().querySelector("[data-testid='session-runtime-settings-dialog']")).not.toBeNull();
+    expect(getRoot().querySelector("[data-testid='session-runtime-reasoning-select']")).toBeNull();
   });
 
   it("hides the interrupt toolbar action when the active session is idle", async () => {
@@ -2104,7 +2223,7 @@ describe("AppShell", () => {
         loading: false,
         newSessionDefaults: null,
       },
-      { refresh: vi.fn(), refreshBootstrap: vi.fn(), select: vi.fn() },
+      { refresh: vi.fn(), refreshBootstrap: vi.fn(), select: vi.fn(), upsertSession: vi.fn() },
     );
     const messagesStore = createStaticStore(
       { bySessionId: { "4a145abccb9a48889dc7f3e5bed735f2": [] }, offsetsBySessionId: { "4a145abccb9a48889dc7f3e5bed735f2": 0 }, loading: false },
@@ -2152,7 +2271,7 @@ describe("AppShell", () => {
         loading: false,
         newSessionDefaults: null,
       },
-      { refresh, refreshBootstrap: vi.fn().mockResolvedValue(undefined), select: vi.fn() },
+      { refresh, refreshBootstrap: vi.fn().mockResolvedValue(undefined), select: vi.fn(), upsertSession: vi.fn() },
     );
     const messagesStore = createStaticStore(
       { bySessionId: { "sess-1": [] }, offsetsBySessionId: { "sess-1": 0 }, loading: false },

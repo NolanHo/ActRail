@@ -277,6 +277,41 @@ describe("api", () => {
     }));
   });
 
+  it("posts runtime model settings to the session runtime route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        ok: true,
+        model: "gpt-next",
+        provider: "openrouter",
+        reasoning_effort: "xhigh",
+        apply_status: "restart_required",
+        restart_required: true,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.switchSessionModel("sess-1", {
+      model: "gpt-next",
+      provider: "openrouter",
+      reasoning_effort: "xhigh",
+    }, "rt-1")).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      apply_status: "restart_required",
+      restart_required: true,
+    }));
+
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/rt-1/model", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        model: "gpt-next",
+        provider: "openrouter",
+        reasoning_effort: "xhigh",
+      }),
+    }));
+  });
+
   it("posts handoff and flattens the session envelope", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

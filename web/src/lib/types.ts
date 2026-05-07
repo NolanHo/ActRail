@@ -373,6 +373,7 @@ export interface SessionDetailsResponse {
   agent_backend?: string;
   provider?: string;
   model?: string;
+  reasoning_effort?: string | null;
   busy?: boolean;
   focused?: boolean;
   queue_length?: number;
@@ -443,6 +444,10 @@ export interface SwitchSessionModelResponse {
   ok?: boolean;
   model?: string | null;
   provider?: string | null;
+  reasoning_effort?: string | null;
+  apply_status?: "unchanged" | "restart_required" | string | null;
+  restart_required?: boolean;
+  message?: string | null;
   data?: Record<string, unknown>;
 }
 

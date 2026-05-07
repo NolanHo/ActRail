@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "preact/compat";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api";
 import { ConversationPane } from "../components/conversation/ConversationPane";
 import { ConversationStateTray } from "../components/conversation/ConversationStateTray";
@@ -8,6 +8,7 @@ import type { FileViewMode } from "../components/workspace/FileViewerDialog";
 import { AppShellSidebar, GlobalNavRail, type DesktopGlobalView } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
+import { SessionRuntimeSettingsDialog } from "./app-shell/SessionRuntimeSettingsDialog";
 import { SchedulerView } from "../components/scheduler/SchedulerView";
 import { TeamsThreadView, useTeamsData } from "../components/teams/TeamsView";
 import { AskUserView } from "../components/waits/AskUserView";
@@ -41,6 +42,7 @@ import { getSessionRuntimeId } from "../lib/session-identity";
 import { getSessionDisplayName } from "../lib/session-display";
 import { applyUserDisplaySettings, readUserDisplaySettings, writeUserDisplaySettings } from "../lib/user-settings";
 import { backendCapability } from "../lib/launch";
+import type { SwitchSessionModelResponse } from "../lib/types";
 
 type WorkspaceTab = "metadata";
 type FinalResponseSignature = {
@@ -213,6 +215,7 @@ export function AppShell() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [runtimeSettingsOpen, setRuntimeSettingsOpen] = useState(false);
   const [workspaceInitialTab, setWorkspaceInitialTab] = useState<WorkspaceTab>("metadata");
   const [fileViewerPath, setFileViewerPath] = useState("");
   const [fileViewerLine, setFileViewerLine] = useState<number | null>(null);
@@ -351,10 +354,10 @@ export function AppShell() {
       items.push({ label: "Backend", value: backend });
     }
     if (activeModel) {
-      items.push({ label: "Model", value: activeModel });
+      items.push({ label: "Model", value: activeModel, actionLabel: "Change runtime model", onActivate: () => setRuntimeSettingsOpen(true) });
     }
     if (activeReasoningEffort) {
-      items.push({ label: "Effort", value: activeReasoningEffort });
+      items.push({ label: "Effort", value: activeReasoningEffort, actionLabel: "Change reasoning effort", onActivate: () => setRuntimeSettingsOpen(true) });
     }
     if (activeContextUsageLabel) {
       items.push({ label: "Context", value: activeContextUsageLabel });
@@ -560,6 +563,7 @@ export function AppShell() {
   useEffect(() => {
     setFileViewerOpen(false);
     setInboxOpen(false);
+    setRuntimeSettingsOpen(false);
     setWorkspaceInitialTab("metadata");
   }, [activeSessionId]);
 
@@ -593,7 +597,7 @@ export function AppShell() {
     }
   };
 
-  const interruptActiveSession = async () => {
+  const interruptActiveSession = useCallback(async () => {
     if (!activeSessionId || !activeSessionBusy) return;
     if (activeSessionRuntimeId) {
       await api.interruptSession(activeSessionId, activeSessionRuntimeId);
@@ -609,7 +613,19 @@ export function AppShell() {
         ? sessionUiStoreApi.refresh(activeSessionId, { agentBackend: activeSession?.agent_backend, runtimeId: activeSessionRuntimeId })
         : sessionUiStoreApi.refresh(activeSessionId, { agentBackend: activeSession?.agent_backend }),
     ]);
-  };
+  }, [activeSession?.agent_backend, activeSessionBusy, activeSessionId, activeSessionRuntimeId, liveSessionStoreApi, sessionUiStoreApi, sessionsStoreApi]);
+
+  const handleRuntimeSettingsSaved = useCallback(async (response: SwitchSessionModelResponse) => {
+    if (activeSession) {
+      sessionsStoreApi.upsertSession({
+        ...activeSession,
+        model: response.model ?? activeSession.model,
+        provider_choice: response.provider ?? activeSession.provider_choice,
+        reasoning_effort: response.reasoning_effort ?? activeSession.reasoning_effort,
+      });
+    }
+    await sessionsStoreApi.refresh();
+  }, [activeSession, sessionsStoreApi]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -696,6 +712,7 @@ export function AppShell() {
             }}
             onNewSession={() => setNewSessionOpen(true)}
             onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
+            onOpenRuntimeSettings={() => setRuntimeSettingsOpen(true)}
             onOpenSettings={() => openVoiceSettings()}
             onToggleAnnouncements={() => {
               void toggleAnnouncements();
@@ -764,6 +781,14 @@ export function AppShell() {
           </>
         )}
       </div>
+      <SessionRuntimeSettingsDialog
+        defaults={newSessionDefaults}
+        open={runtimeSettingsOpen}
+        session={activeSession}
+        onClose={() => setRuntimeSettingsOpen(false)}
+        onRefreshDefaults={() => sessionsStoreApi.refreshBootstrap({ refreshPiModels: true })}
+        onSaved={handleRuntimeSettingsSaved}
+      />
       <AppShellWorkspaceOverlays
         activeSessionId={activeSessionId}
         activeSessionRuntimeId={activeSessionRuntimeId}

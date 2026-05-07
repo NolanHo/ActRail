@@ -28,6 +28,7 @@ type SessionDetailsResponse struct {
 	AgentBackend        string                    `json:"agent_backend"`
 	Provider            string                    `json:"provider,omitempty"`
 	Model               string                    `json:"model,omitempty"`
+	ReasoningEffort     string                    `json:"reasoning_effort,omitempty"`
 	Busy                bool                      `json:"busy"`
 	Focused             bool                      `json:"focused,omitempty"`
 	QueueLength         int                       `json:"queue_length"`
@@ -279,6 +280,7 @@ func (s *Stub) SessionDetails(_ context.Context, req SessionDetailsRequest) (Ses
 		AgentBackend:        record.identity.Backend().String(),
 		Provider:            record.provider,
 		Model:               record.model,
+		ReasoningEffort:     record.reasoningEffort,
 		Busy:                record.state.Busy(),
 		Focused:             record.focused,
 		QueueLength:         record.state.Queue().Len(),

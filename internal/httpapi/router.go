@@ -1035,7 +1035,12 @@ func (r Router) switchSessionModel(w http.ResponseWriter, req *http.Request) {
 		writeAppError(w, err)
 		return
 	}
-	payload, err := r.app.SwitchSessionModel(req.Context(), app.SwitchSessionModelRequest{SessionID: sessionID, Model: model, Provider: provider})
+	reasoningEffort, err := stringPatch(body, "reasoning_effort")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.SwitchSessionModel(req.Context(), app.SwitchSessionModelRequest{SessionID: sessionID, Model: model, Provider: provider, ReasoningEffort: reasoningEffort})
 	if err != nil {
 		writeAppError(w, err)
 		return

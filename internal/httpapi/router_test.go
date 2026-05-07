@@ -697,7 +697,11 @@ func (s *fixtureService) SwitchSessionModel(_ context.Context, req app.SwitchSes
 	if req.Provider.Value != nil {
 		provider = *req.Provider.Value
 	}
-	return app.SwitchSessionModelResponse{OK: true, Model: model, Provider: provider}, nil
+	reasoning := ""
+	if req.ReasoningEffort.Value != nil {
+		reasoning = *req.ReasoningEffort.Value
+	}
+	return app.SwitchSessionModelResponse{OK: true, Model: model, Provider: provider, ReasoningEffort: reasoning, ApplyStatus: "restart_required", RestartRequired: true}, nil
 }
 
 func (s *fixtureService) SessionCommands(_ context.Context, req app.SessionCommandsRequest) (app.SessionCommandsResponse, error) {
@@ -1560,7 +1564,7 @@ func TestSessionActionRoutesUseAppSeams(t *testing.T) {
 	})
 
 	t.Run("model", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/model", bytes.NewBufferString(`{"model":"gpt-next","provider":"openrouter"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/model", bytes.NewBufferString(`{"model":"gpt-next","provider":"openrouter","reasoning_effort":"high"}`))
 		res := httptest.NewRecorder()
 
 		h.ServeHTTP(res, req)
@@ -1573,6 +1577,9 @@ func TestSessionActionRoutesUseAppSeams(t *testing.T) {
 		}
 		if svc.modelReq.Provider.Value == nil || *svc.modelReq.Provider.Value != "openrouter" {
 			t.Fatalf("provider request = %+v", svc.modelReq)
+		}
+		if svc.modelReq.ReasoningEffort.Value == nil || *svc.modelReq.ReasoningEffort.Value != "high" {
+			t.Fatalf("reasoning request = %+v", svc.modelReq)
 		}
 	})
 
