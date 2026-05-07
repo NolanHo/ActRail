@@ -9,6 +9,7 @@ import type {
   SessionUiRequest,
   TurnTimingPayload,
 } from "../../lib/types";
+import { INITIAL_HISTORY_PAGE_SIZE } from "../messages/history";
 import type { MessagesStore } from "../messages/store";
 
 export interface LiveSessionState {
@@ -255,6 +256,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
   const inFlightBySessionId: Record<string, Promise<void> | undefined> = {};
   const queuedPollRuntimeBySessionId: Record<string, string | null | undefined> = {};
   const streamingTextBySessionId = new Map<string, Map<string, string>>();
+  const streamingFlushTimersByStream = new Map<string, number>();
   let bufferAssistantOutput = false;
 
   const hasActiveAssistantOutput = (sessionId: string) => Boolean(
@@ -421,8 +423,8 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
 
         const [messagePayload, statePayload] = await Promise.all([
           runtimeId
-            ? api.listMessages(sessionId, replace, undefined, undefined, undefined, 3000, runtimeId, true)
-            : api.listMessages(sessionId, replace, undefined, undefined, undefined, 3000, undefined, true),
+            ? api.listMessages(sessionId, replace, undefined, undefined, undefined, INITIAL_HISTORY_PAGE_SIZE, runtimeId, true)
+            : api.listMessages(sessionId, replace, undefined, undefined, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true),
           loadState(),
         ]);
         applySnapshot(sessionId, messagePayload, statePayload, replace);
@@ -456,6 +458,47 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       offset: state.offsetsBySessionId[sessionId],
       hasOlder: state.offsetsBySessionId[sessionId] !== undefined ? state.offsetsBySessionId[sessionId] > 0 : undefined,
     });
+  };
+  const appendStreamingAssistantEvent = (sessionId: string, turnId: string, frame: RealtimeEnvelope, payload: Record<string, unknown>, text: string) => {
+    appendRealtimeEvent(sessionId, {
+      event_id: typeof frame.id === "string" ? frame.id : undefined,
+      role: typeof payload.role === "string" ? payload.role : "assistant",
+      streaming: true,
+      completed: false,
+      stream_id: turnId,
+      turn_id: turnId,
+      text,
+      ts: typeof frame.ts === "number" ? frame.ts : undefined,
+    });
+  };
+  const streamingFlushTimerKey = (sessionId: string, turnId: string) => `${sessionId}\u0001${turnId}`;
+  const clearStreamingFlushTimer = (sessionId: string, turnId = "") => {
+    const keys = turnId
+      ? [streamingFlushTimerKey(sessionId, turnId)]
+      : [...streamingFlushTimersByStream.keys()].filter((key) => key.startsWith(`${sessionId}\u0001`));
+    for (const key of keys) {
+      const timer = streamingFlushTimersByStream.get(key);
+      if (timer !== undefined && typeof window !== "undefined") {
+        window.clearTimeout(timer);
+      }
+      streamingFlushTimersByStream.delete(key);
+    }
+  };
+  const scheduleStreamingFlush = (sessionId: string, turnId: string, frame: RealtimeEnvelope, payload: Record<string, unknown>, text: string) => {
+    if (typeof window === "undefined") {
+      appendStreamingAssistantEvent(sessionId, turnId, frame, payload, text);
+      return;
+    }
+    const key = streamingFlushTimerKey(sessionId, turnId);
+    if (streamingFlushTimersByStream.has(key)) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      streamingFlushTimersByStream.delete(key);
+      const latestText = streamingTextBySessionId.get(sessionId)?.get(turnId) ?? text;
+      appendStreamingAssistantEvent(sessionId, turnId, frame, payload, latestText);
+    }, 120);
+    streamingFlushTimersByStream.set(key, timer);
   };
 
   return {
@@ -533,16 +576,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         perSession.set(turnId, nextText);
         streamingTextBySessionId.set(sessionId, perSession);
         if (!bufferAssistantOutput) {
-          appendRealtimeEvent(sessionId, {
-            event_id: typeof frame.id === "string" ? frame.id : undefined,
-            role: typeof payload?.role === "string" ? payload.role : "assistant",
-            streaming: true,
-            completed: false,
-            stream_id: turnId,
-            turn_id: turnId,
-            text: nextText,
-            ts: typeof frame.ts === "number" ? frame.ts : undefined,
-          });
+          scheduleStreamingFlush(sessionId, turnId, frame, payload ?? {}, nextText);
         }
         state = {
           ...state,
@@ -590,11 +624,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         const turnId = typeof payload?.turn_id === "string" && payload.turn_id.trim()
           ? payload.turn_id.trim()
           : "";
-        if (turnId) {
-          streamingTextBySessionId.get(sessionId)?.delete(turnId);
-        }
         const message = toObjectRecord(payload?.message);
         const role = typeof message?.role === "string" ? message.role : typeof payload?.role === "string" ? payload.role : undefined;
+        if (role === "assistant") {
+          clearStreamingFlushTimer(sessionId, turnId);
+          if (turnId) {
+            streamingTextBySessionId.get(sessionId)?.delete(turnId);
+          }
+        }
         appendRealtimeEvent(sessionId, {
           ...message,
           event_id: typeof message?.event_id === "string" ? message.event_id : undefined,
@@ -722,6 +759,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
     },
     resetSession(sessionId: string) {
+      clearStreamingFlushTimer(sessionId);
       streamingTextBySessionId.delete(sessionId);
       state = {
         ...state,

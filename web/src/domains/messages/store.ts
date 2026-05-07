@@ -1,7 +1,6 @@
 import { api } from "../../lib/api";
 import type { MessageEvent } from "../../lib/types";
-
-const HISTORY_PAGE_SIZE = 3000;
+import { INITIAL_HISTORY_PAGE_SIZE, OLDER_HISTORY_PAGE_SIZE } from "./history";
 
 const MACHINE_TRACE_TYPES = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 
@@ -294,7 +293,7 @@ export function createMessagesStore(): MessagesStore {
       try {
         const after = init ? undefined : state.offsetsBySessionId[sessionId];
         const activeSeq = init ? 0 : activeTurnStartSeq(state.bySessionId[sessionId] ?? []);
-        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, after, undefined, HISTORY_PAGE_SIZE, undefined, true, undefined, activeSeq));
+        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, after, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true, undefined, activeSeq));
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }
@@ -361,7 +360,7 @@ export function createMessagesStore(): MessagesStore {
     return request;
   };
 
-  const loadOlder = async (sessionId: string, limit = HISTORY_PAGE_SIZE) => {
+  const loadOlder = async (sessionId: string, limit = OLDER_HISTORY_PAGE_SIZE) => {
     const before = state.olderBeforeBySessionId[sessionId] ?? 0;
     if (before <= 0 && !state.hasOlderBySessionId[sessionId]) {
       return;
