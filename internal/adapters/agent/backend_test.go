@@ -111,24 +111,39 @@ func TestPICommandArgsUseGRPCModeWithSocket(t *testing.T) {
 }
 
 func TestCodexCommandArgsUseConfigOverrideForProvider(t *testing.T) {
-	opts, err := NewOptions("openrouter", "gpt-5", "")
+	opts, err := NewOptionsWithRuntimeFlags("openrouter", "gpt-5", "", "", "", "", true)
 	if err != nil {
-		t.Fatalf("NewOptions() error = %v", err)
+		t.Fatalf("NewOptionsWithRuntimeFlags() error = %v", err)
 	}
 	args, err := (codexAdapter{}).CommandArgs(opts)
 	if err != nil {
 		t.Fatalf("CommandArgs() error = %v", err)
 	}
-	want := []string{"app-server", "-c", `model_provider="openrouter"`, "--model", "gpt-5"}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server", "-c", `model_provider="openrouter"`, "--model", "gpt-5"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
 	}
 }
 
 func TestCodexCommandArgsIncludeListenURL(t *testing.T) {
-	opts, err := NewOptionsWithRuntimeListen("openai", "gpt-5", "", "", "", "unix:///tmp/actrail/child.sock")
+	opts, err := NewOptionsWithRuntimeFlags("openai", "gpt-5", "", "", "", "unix:///tmp/actrail/child.sock", true)
 	if err != nil {
-		t.Fatalf("NewOptionsWithRuntimeListen() error = %v", err)
+		t.Fatalf("NewOptionsWithRuntimeFlags() error = %v", err)
+	}
+	args, err := (codexAdapter{}).CommandArgs(opts)
+	if err != nil {
+		t.Fatalf("CommandArgs() error = %v", err)
+	}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server", "--listen", "unix:///tmp/actrail/child.sock", "-c", `model_provider="openai"`, "--model", "gpt-5"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("CommandArgs() = %#v, want %#v", args, want)
+	}
+}
+
+func TestCodexCommandArgsCanDisableDangerousBypass(t *testing.T) {
+	opts, err := NewOptionsWithRuntimeFlags("openai", "gpt-5", "", "", "", "unix:///tmp/actrail/child.sock", false)
+	if err != nil {
+		t.Fatalf("NewOptionsWithRuntimeFlags() error = %v", err)
 	}
 	args, err := (codexAdapter{}).CommandArgs(opts)
 	if err != nil {

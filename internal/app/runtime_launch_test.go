@@ -511,6 +511,77 @@ func TestNewRuntimeLauncherResolvesIODRuntimeRootToAbsolutePath(t *testing.T) {
 	}
 }
 
+func TestRuntimeLauncherCodexDangerousBypassDefaultsOnAndCanDisable(t *testing.T) {
+	sessionID := mustSessionID(t, "s_codex_bypass")
+	defaultLauncher := newRuntimeLauncher(RuntimeConfig{
+		ResolveBinPath: func(session.Backend) (string, error) { return "/tmp/codex", nil },
+	})
+	spec, err := defaultLauncher.(processRuntimeLauncher).childLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: "/tmp/project"})
+	if err != nil {
+		t.Fatalf("childLaunchSpec(default) error = %v", err)
+	}
+	wantDefault := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server"}
+	if !reflect.DeepEqual(spec.Command().Args(), wantDefault) {
+		t.Fatalf("default codex args = %#v, want %#v", spec.Command().Args(), wantDefault)
+	}
+
+	disabled := false
+	disabledLauncher := newRuntimeLauncher(RuntimeConfig{
+		ResolveBinPath:       func(session.Backend) (string, error) { return "/tmp/codex", nil },
+		CodexDangerousBypass: &disabled,
+	})
+	spec, err = disabledLauncher.(processRuntimeLauncher).childLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: "/tmp/project"})
+	if err != nil {
+		t.Fatalf("childLaunchSpec(disabled) error = %v", err)
+	}
+	wantDisabled := []string{"app-server"}
+	if !reflect.DeepEqual(spec.Command().Args(), wantDisabled) {
+		t.Fatalf("disabled codex args = %#v, want %#v", spec.Command().Args(), wantDisabled)
+	}
+}
+
+func TestCreateSessionHonorsCodexDangerousBypassConfig(t *testing.T) {
+	cfg := config.Load()
+	cfg.Launch.CodexDangerousBypass = false
+	runner := &process.FakeRunner{}
+	svc := newStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner: runner,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/codex", nil
+		},
+	})
+	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if len(runner.Starts) != 1 {
+		t.Fatalf("len(runner.Starts) = %d, want 1", len(runner.Starts))
+	}
+	want := []string{"app-server"}
+	if !reflect.DeepEqual(runner.Starts[0].Command().Args(), want) {
+		t.Fatalf("codex args = %#v, want %#v", runner.Starts[0].Command().Args(), want)
+	}
+}
+
+func TestCreateSessionCodexDangerousBypassDefaultsOnWithZeroConfig(t *testing.T) {
+	runner := &process.FakeRunner{}
+	svc := newStubWithRuntime(config.Config{}, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner: runner,
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/tmp/codex", nil
+		},
+	})
+	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()}); err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if len(runner.Starts) != 1 {
+		t.Fatalf("len(runner.Starts) = %d, want 1", len(runner.Starts))
+	}
+	want := []string{"--dangerously-bypass-approvals-and-sandbox", "app-server"}
+	if !reflect.DeepEqual(runner.Starts[0].Command().Args(), want) {
+		t.Fatalf("codex args = %#v, want %#v", runner.Starts[0].Command().Args(), want)
+	}
+}
+
 func TestResolveCodexLaunchEnvCopiesAuthKeyIntoCRSAlias(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {

@@ -39,6 +39,7 @@ type Options struct {
 	sessionPath     string
 	grpcSocketPath  string
 	listenURL       string
+	dangerousBypass bool
 }
 
 func NewOptions(provider, model, reasoningEffort string) (Options, error) {
@@ -54,6 +55,10 @@ func NewOptionsWithTransport(provider, model, reasoningEffort, sessionPath, grpc
 }
 
 func NewOptionsWithRuntimeListen(provider, model, reasoningEffort, sessionPath, grpcSocketPath, listenURL string) (Options, error) {
+	return NewOptionsWithRuntimeFlags(provider, model, reasoningEffort, sessionPath, grpcSocketPath, listenURL, false)
+}
+
+func NewOptionsWithRuntimeFlags(provider, model, reasoningEffort, sessionPath, grpcSocketPath, listenURL string, dangerousBypass bool) (Options, error) {
 	normalizedProvider, err := normalizeOptionValue("provider", provider)
 	if err != nil {
 		return Options{}, err
@@ -85,11 +90,12 @@ func NewOptionsWithRuntimeListen(provider, model, reasoningEffort, sessionPath, 
 		sessionPath:     normalizedSessionPath,
 		grpcSocketPath:  normalizedGRPCSocketPath,
 		listenURL:       normalizedListenURL,
+		dangerousBypass: dangerousBypass,
 	}, nil
 }
 
 func (o Options) Validate() error {
-	_, err := NewOptionsWithRuntimeListen(o.provider, o.model, o.reasoningEffort, o.sessionPath, o.grpcSocketPath, o.listenURL)
+	_, err := NewOptionsWithRuntimeFlags(o.provider, o.model, o.reasoningEffort, o.sessionPath, o.grpcSocketPath, o.listenURL, o.dangerousBypass)
 	return err
 }
 
@@ -115,6 +121,10 @@ func (o Options) GRPCSocketPath() string {
 
 func (o Options) ListenURL() string {
 	return o.listenURL
+}
+
+func (o Options) DangerousBypass() bool {
+	return o.dangerousBypass
 }
 
 func normalizeOptionValue(label, raw string) (string, error) {

@@ -31,6 +31,9 @@ func TestLoadDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Launch.AvailableBackends, []string{"pi", "codex"}) {
 		t.Fatalf("unexpected default backends: %#v", cfg.Launch.AvailableBackends)
 	}
+	if !cfg.Launch.CodexDangerousBypass {
+		t.Fatal("expected codex dangerous bypass to default to true")
+	}
 	if cfg.Storage.DataDir != "./data" {
 		t.Fatalf("expected default data dir ./data, got %q", cfg.Storage.DataDir)
 	}
@@ -64,6 +67,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("ACTRAIL_AVAILABLE_BACKENDS", "pi")
 	t.Setenv("ACTRAIL_AVAILABLE_PROVIDERS", "openrouter,anthropic")
 	t.Setenv("ACTRAIL_AVAILABLE_MODELS", "claude-sonnet,gemini-2.5-pro")
+	t.Setenv("ACTRAIL_CODEX_DANGEROUS_BYPASS", "false")
 	t.Setenv("ACTRAIL_AUTH_PASSWORD", "secret")
 	t.Setenv("ACTRAIL_DATA_DIR", "/tmp/actrail-data")
 
@@ -86,6 +90,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Launch.Models, []string{"claude-sonnet", "gemini-2.5-pro"}) {
 		t.Fatalf("unexpected model override: %#v", cfg.Launch.Models)
+	}
+	if cfg.Launch.CodexDangerousBypass {
+		t.Fatal("expected codex dangerous bypass override to disable bypass")
 	}
 	if cfg.Storage.DataDir != "/tmp/actrail-data" {
 		t.Fatalf("expected data dir override, got %q", cfg.Storage.DataDir)
