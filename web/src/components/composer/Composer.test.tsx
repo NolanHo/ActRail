@@ -846,6 +846,17 @@ describe("Composer", () => {
     expect(sessionUiStore.refresh).toHaveBeenCalledWith("sess-1", { agentBackend: "pi" });
   });
 
+  it("treats live busy false as authoritative over stale session list busy", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
+      liveBusyBySessionId: { "sess-1": false },
+    });
+    const composerRoot = getRoot();
+
+    expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+  });
+
   it("shows a todo summary bar above the composer for a current pi session with todo items", () => {
     renderComposer({
       diagnostics: {
