@@ -323,6 +323,36 @@ function upsertSessionList(items: SessionSummary[], session: SessionSummary, pre
   return dedupeSessions(ordered).sessions;
 }
 
+function sessionFingerprint(session: SessionSummary) {
+  try {
+    return JSON.stringify(session);
+  } catch {
+    return "";
+  }
+}
+
+function reuseStableSessionReferences(nextItems: SessionSummary[], previousItems: SessionSummary[]) {
+  if (!previousItems.length) {
+    return nextItems;
+  }
+
+  const previousBySessionId = new Map(previousItems.map((session) => [session.session_id, session]));
+  let changed = nextItems.length !== previousItems.length;
+  const nextWithStableReferences = nextItems.map((session, index) => {
+    const previous = previousBySessionId.get(session.session_id);
+    if (previous && sessionFingerprint(previous) === sessionFingerprint(session)) {
+      if (previousItems[index] !== previous) {
+        changed = true;
+      }
+      return previous;
+    }
+    changed = true;
+    return session;
+  });
+
+  return changed ? nextWithStableReferences : previousItems;
+}
+
 export function createSessionsStore(): SessionsStore {
   let state: SessionsState = {
     items: [],
@@ -385,9 +415,10 @@ export function createSessionsStore(): SessionsStore {
         if (nextActiveSessionId) {
           hasResolvedInitialSelection = true;
         }
+        const nextItems = withAssistantUnreadState(sessions, nextActiveSessionId);
         state = {
           ...state,
-          items: withAssistantUnreadState(sessions, nextActiveSessionId),
+          items: reuseStableSessionReferences(nextItems, state.items),
           activeSessionId: nextActiveSessionId,
           loading: false,
           remainingCount: Math.max(0, Number(data.remaining_count || 0)),

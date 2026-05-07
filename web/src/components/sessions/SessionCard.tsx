@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { memo } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { getSessionDisplayName } from "../../lib/session-display";
@@ -136,7 +137,20 @@ export function useDesktopSessionActions() {
   return Boolean(window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 881px)").matches);
 }
 
-export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onRestart, restartLabel, onHandoff, onDelete }: SessionCardProps) {
+function sessionCardPropsEqual(left: SessionCardProps, right: SessionCardProps) {
+  return left.session === right.session
+    && left.active === right.active
+    && left.restartLabel === right.restartLabel
+    && Boolean(left.onSelect) === Boolean(right.onSelect)
+    && Boolean(left.onToggleFocus) === Boolean(right.onToggleFocus)
+    && Boolean(left.onEdit) === Boolean(right.onEdit)
+    && Boolean(left.onDuplicate) === Boolean(right.onDuplicate)
+    && Boolean(left.onRestart) === Boolean(right.onRestart)
+    && Boolean(left.onHandoff) === Boolean(right.onHandoff)
+    && Boolean(left.onDelete) === Boolean(right.onDelete);
+}
+
+function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onRestart, restartLabel, onHandoff, onDelete }: SessionCardProps) {
   const title = getSessionDisplayName(session);
   const isHistorical = session.historical === true;
   const desktopActions = useDesktopSessionActions();
@@ -351,3 +365,5 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
     </div>
   );
 }
+
+export const SessionCard = memo(SessionCardComponent, sessionCardPropsEqual);

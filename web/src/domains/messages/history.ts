@@ -1,2 +1,2 @@
 export const INITIAL_HISTORY_PAGE_SIZE = 200;
-export const OLDER_HISTORY_PAGE_SIZE = 500;
+export const OLDER_HISTORY_PAGE_SIZE = 150;

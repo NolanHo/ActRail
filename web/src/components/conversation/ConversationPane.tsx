@@ -27,10 +27,44 @@ import {
 } from "../../app/providers";
 import { api } from "../../lib/api";
 import { getSessionRuntimeId } from "../../lib/session-identity";
-import type { MessageEvent, TodoSnapshotItem } from "../../lib/types";
+import type { MessageEvent, SessionSummary, TodoSnapshotItem } from "../../lib/types";
 
 const EMPTY_PENDING_MESSAGES: never[] = [];
 const EMPTY_MESSAGES: MessageEvent[] = [];
+
+type ConversationActiveSession = Pick<SessionSummary, "session_id" | "runtime_id" | "agent_backend" | "historical" | "transport" | "busy" | "cwd">;
+
+function selectConversationActiveSession(state: { activeSessionId: string | null; items: SessionSummary[] }): ConversationActiveSession | null {
+  const session = state.items.find((item) => item.session_id === state.activeSessionId) ?? null;
+  if (!session) {
+    return null;
+  }
+  return {
+    session_id: session.session_id,
+    runtime_id: session.runtime_id,
+    agent_backend: session.agent_backend,
+    historical: session.historical,
+    transport: session.transport,
+    busy: session.busy,
+    cwd: session.cwd,
+  };
+}
+
+function conversationActiveSessionEqual(left: ConversationActiveSession | null, right: ConversationActiveSession | null) {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return left.session_id === right.session_id
+    && left.runtime_id === right.runtime_id
+    && left.agent_backend === right.agent_backend
+    && left.historical === right.historical
+    && left.transport === right.transport
+    && left.busy === right.busy
+    && left.cwd === right.cwd;
+}
 
 const MAIN_TIMELINE_KINDS = new Set([
   "user",
@@ -2830,12 +2864,16 @@ function findPreviousUserRow(pane: HTMLElement): HTMLElement | null {
 }
 
 function paneDistanceFromBottom(pane: HTMLElement): number {
+  const visibleHeight = pane.clientHeight > 0 ? pane.clientHeight : 0;
+  if (visibleHeight > 0 && pane.scrollHeight > 0) {
+    return Math.max(0, pane.scrollHeight - (pane.scrollTop + visibleHeight));
+  }
+
   const rows = Array.from(pane.querySelectorAll<HTMLElement>(".messageRow"));
   const lastRow = rows[rows.length - 1] ?? null;
   const fallbackContentBottom = lastRow ? lastRow.offsetTop + lastRow.offsetHeight : 0;
   const contentBottom = Math.max(pane.scrollHeight, fallbackContentBottom);
-  const visibleHeight = pane.clientHeight > 0 ? pane.clientHeight : 0;
-  return contentBottom - (pane.scrollTop + visibleHeight);
+  return Math.max(0, contentBottom - (pane.scrollTop + visibleHeight));
 }
 
 function shouldShowScrollToBottom(pane: HTMLElement): boolean {
@@ -2866,7 +2904,8 @@ interface ConversationPaneProps {
 export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const activeSessionId = useSessionsStoreSelector((state) => state.activeSessionId);
   const activeSession = useSessionsStoreSelector(
-    (state) => state.items.find((session) => session.session_id === state.activeSessionId) ?? null,
+    selectConversationActiveSession,
+    conversationActiveSessionEqual,
   );
   const { isGenerating, hasLiveBusy, liveBusy, liveSessionError } = useLiveSessionStoreSelector((state) => activeSessionId ? ({
     isGenerating: state.generatingBySessionId?.[activeSessionId] === true,
@@ -3102,7 +3141,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       setShowScrollToBottom(shouldShowScrollToBottom(pane));
     };
 
-    pane.addEventListener("scroll", onScroll);
+    pane.addEventListener("scroll", onScroll, { passive: true });
     return () => pane.removeEventListener("scroll", onScroll);
   }, [activeSessionId, hasOlder, olderCursor, olderLoading]);
 
