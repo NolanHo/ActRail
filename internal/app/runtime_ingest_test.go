@@ -1095,6 +1095,69 @@ func TestCodexUserMessageEchoDoesNotDuplicateActRailPrompt(t *testing.T) {
 	}
 }
 
+func TestCodexSubagentUserMessageDoesNotRenderAsMainPrompt(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+
+	if _, err := svc.AppendSessionMessage(sessionID, "user", "message", "review pr with subagent"); err != nil {
+		t.Fatalf("AppendSessionMessage() error = %v", err)
+	}
+	_, _ = stdoutW.Write([]byte(
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"main-thread\",\"status\":{\"type\":\"idle\"}}}}" + "\n" +
+			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"main-thread\",\"turn\":{\"id\":\"main-turn\",\"status\":\"inProgress\",\"error\":null}}}" + "\n" +
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"main-thread\",\"turnId\":\"main-turn\",\"item\":{\"type\":\"collabAgentToolCall\",\"id\":\"spawn-1\",\"tool\":\"spawnAgent\",\"status\":\"completed\",\"prompt\":\"subagent prompt\"}}}" + "\n" +
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"sub-thread\",\"turnId\":\"sub-turn\",\"item\":{\"type\":\"userMessage\",\"id\":\"sub-user-1\",\"text\":\"subagent prompt\"}}}" + "\n" +
+			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"sub-thread\",\"turnId\":\"sub-turn\",\"itemId\":\"sub-assistant-1\",\"delta\":\"subagent \"}}" + "\n" +
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"sub-thread\",\"turnId\":\"sub-turn\",\"item\":{\"type\":\"agentMessage\",\"id\":\"sub-assistant-1\",\"text\":\"subagent result\"}}}" + "\n" +
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"main-thread\",\"turnId\":\"main-turn\",\"item\":{\"type\":\"agentMessage\",\"id\":\"main-assistant-1\",\"text\":\"review done\"}}}" + "\n"))
+	_ = stdoutW.Close()
+
+	waitForAppCondition(t, func() bool {
+		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		return err == nil && len(messages.Items) == 5
+	})
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 5 {
+		t.Fatalf("SessionMessages().Items = %+v, want prompt, spawn tool, subagent messages, assistant", messages.Items)
+	}
+	if messages.Items[0].Role != "user" || messages.Items[0].Text != "review pr with subagent" {
+		t.Fatalf("SessionMessages().Items[0] = %+v, want original user prompt", messages.Items[0])
+	}
+	if messages.Items[1].Kind != "tool" && messages.Items[1].Kind != "tool_result" || !strings.Contains(messages.Items[1].Text, "subagent prompt") {
+		t.Fatalf("SessionMessages().Items[1] = %+v, want retained subagent tool event", messages.Items[1])
+	}
+	if messages.Items[2].Type != "custom_message" || messages.Items[2].Details["custom_type"] != "codex-subagent-message" || messages.Items[2].Details["role"] != "user" || messages.Items[2].Text != "subagent prompt" {
+		t.Fatalf("SessionMessages().Items[2] = %+v, want rendered subagent prompt", messages.Items[2])
+	}
+	if messages.Items[3].Type != "custom_message" || messages.Items[3].Details["custom_type"] != "codex-subagent-message" || messages.Items[3].Details["role"] != "assistant" || messages.Items[3].Text != "subagent result" {
+		t.Fatalf("SessionMessages().Items[3] = %+v, want rendered subagent result", messages.Items[3])
+	}
+	if messages.Items[4].Role != "assistant" || messages.Items[4].Text != "review done" {
+		t.Fatalf("SessionMessages().Items[4] = %+v, want final assistant", messages.Items[4])
+	}
+	for _, item := range messages.Items {
+		if item.Role == "user" && item.Text == "subagent prompt" {
+			t.Fatalf("SessionMessages().Items = %+v, subagent prompt rendered as main user message", messages.Items)
+		}
+	}
+}
+
 func TestCodexSessionWaitsForThreadBeforeInput(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()

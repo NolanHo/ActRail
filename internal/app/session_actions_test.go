@@ -563,14 +563,19 @@ func TestStubHandoffSessionWaitsForPIAgentGRPCReady(t *testing.T) {
 	runner := &process.FakeRunner{}
 	grpcServer := grpc.NewServer()
 	var calls int
+	var stateMu sync.Mutex
+	newRuntimeStarting := false
 	var startingSeenOnce sync.Once
 	startingSeen := make(chan struct{})
 	allowReady := make(chan struct{})
 	piagentv1.RegisterPiAgentServer(grpcServer, fakePiAgentServer{states: func(ctx context.Context) (*piagentv1.SessionState, error) {
-		calls++
-		if calls == 1 {
+		stateMu.Lock()
+		startingPhase := newRuntimeStarting
+		stateMu.Unlock()
+		if !startingPhase {
 			return &piagentv1.SessionState{SessionId: "pi-grpc-old", RuntimeState: piagentv1.RuntimeState_RUNTIME_STATE_READY, RuntimeStatusMessage: "ready"}, nil
 		}
+		calls++
 		startingSeenOnce.Do(func() { close(startingSeen) })
 		select {
 		case <-allowReady:
@@ -611,6 +616,23 @@ func TestStubHandoffSessionWaitsForPIAgentGRPCReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookupSession() error = %v", err)
 	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		record, err = svc.lookupSession(sessionID)
+		if err != nil {
+			t.Fatalf("lookupSession() error = %v", err)
+		}
+		if !record.runtime.PendingPIAgentGRPCReady() && sessionTransportSnapshot(record).State == SessionTransportStateAttached {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("old session did not attach before handoff: pending=%v transport=%+v", record.runtime.PendingPIAgentGRPCReady(), sessionTransportSnapshot(record))
+		}
+		time.Sleep(helperReadyPollInterval)
+	}
+	stateMu.Lock()
+	newRuntimeStarting = true
+	stateMu.Unlock()
 	oldSourcePath := strings.TrimSpace(record.importedSourcePath)
 	if err := os.MkdirAll(filepath.Dir(oldSourcePath), 0o755); err != nil {
 		t.Fatalf("MkdirAll(old source dir) error = %v", err)
