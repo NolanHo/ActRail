@@ -67,6 +67,7 @@ vi.mock("../lib/api", () => ({
     getScheduler: vi.fn().mockResolvedValue({ ok: true, settings: { idle_before_delivery_seconds: 30 }, items: [], inbox: [] }),
     saveSchedulerSettings: vi.fn().mockResolvedValue({ idle_before_delivery_seconds: 30 }),
     getSessionInbox: vi.fn().mockResolvedValue({ ok: true, items: [] }),
+    listTeams: vi.fn().mockResolvedValue({ ok: true, roots: [], total_count: 0, non_leaf_count: 0 }),
     interruptSession: vi.fn().mockResolvedValue({ ok: true }),
     probeSessionState: vi.fn().mockResolvedValue({ probe_id: "probe_1", state: { busy: false, queue: { items: [] }, tail_seq: 0, resume_cursors: {} } }),
     logout: vi.fn().mockResolvedValue({ ok: true }),
@@ -589,6 +590,86 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Scheduler");
     expect(getRoot().textContent).toContain("Idle before delivery");
     expect(getRoot().textContent).toContain("Scheduled items");
+  });
+
+  it("keeps Teams data sources idle until the global Teams view is opened", async () => {
+    const { api } = await import("../lib/api");
+    type EventSourceStub = {
+      close: ReturnType<typeof vi.fn>;
+      onerror: ((event: Event) => void) | null;
+      onmessage: ((event: MessageEvent) => void) | null;
+      url: string;
+    };
+    const eventSources: EventSourceStub[] = [];
+    const EventSourceMock = vi.fn(function (this: EventSourceStub, url: string) {
+      this.url = url;
+      this.onmessage = null;
+      this.onerror = null;
+      this.close = vi.fn();
+      eventSources.push(this);
+    });
+    vi.stubGlobal("EventSource", EventSourceMock);
+
+    renderAppShell({ diagnostics: { status: "ok" } });
+    await flush();
+
+    expect(api.listTeams).not.toHaveBeenCalled();
+    expect(EventSourceMock).not.toHaveBeenCalled();
+
+    act(() => {
+      findButtonByAriaLabel("Teams view")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(api.listTeams).toHaveBeenCalledWith({ includeClosed: true }, expect.any(AbortSignal));
+    expect(EventSourceMock).toHaveBeenCalledWith("/api/teams/events");
+    expect(eventSources).toHaveLength(1);
+  });
+
+  it("coalesces Teams event stream refreshes while the Teams view is active", async () => {
+    vi.useFakeTimers();
+    const { api } = await import("../lib/api");
+    type EventSourceStub = {
+      close: ReturnType<typeof vi.fn>;
+      onerror: ((event: Event) => void) | null;
+      onmessage: ((event: MessageEvent) => void) | null;
+      url: string;
+    };
+    const eventSources: EventSourceStub[] = [];
+    const EventSourceMock = vi.fn(function (this: EventSourceStub, url: string) {
+      this.url = url;
+      this.onmessage = null;
+      this.onerror = null;
+      this.close = vi.fn();
+      eventSources.push(this);
+    });
+    vi.stubGlobal("EventSource", EventSourceMock);
+
+    renderAppShell({ diagnostics: { status: "ok" } });
+    await flush();
+
+    act(() => {
+      findButtonByAriaLabel("Teams view")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(api.listTeams).toHaveBeenCalledTimes(1);
+    vi.mocked(api.listTeams).mockClear();
+
+    await act(async () => {
+      eventSources[0]?.onmessage?.(new MessageEvent("message"));
+      eventSources[0]?.onmessage?.(new MessageEvent("message"));
+      eventSources[0]?.onmessage?.(new MessageEvent("message"));
+      vi.advanceTimersByTime(249);
+      await flush();
+    });
+    expect(api.listTeams).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await flush();
+    });
+    expect(api.listTeams).toHaveBeenCalledTimes(1);
   });
 
   it("opens active session inbox from the toolbar", async () => {
