@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +20,7 @@ import (
 
 	"actrail/internal/adapters/process"
 	"actrail/internal/domain/session"
+	"github.com/gorilla/websocket"
 )
 
 const DefaultProtocolVersion = 1
@@ -76,6 +79,7 @@ type Helper struct {
 	listener  net.Listener
 	handle    process.Handle
 	childConn net.Conn
+	childWS   *websocket.Conn
 	proof     HelloProof
 	manifest  GenerationManifest
 	history   *sessionHistoryCache
@@ -301,11 +305,12 @@ func (h *Helper) Run(ctx context.Context) error {
 		return fmt.Errorf("helper child must expose stdio transport")
 	}
 	if h.childIOMode == ChildIOModeUnix {
-		conn, err := h.dialChildSocket(ctx)
+		conn, wsConn, err := h.dialChildSocket(ctx)
 		if err != nil {
 			return err
 		}
 		h.childConn = conn
+		h.childWS = wsConn
 	}
 	h.handle = handle
 	start := h.now().UTC()
@@ -424,6 +429,9 @@ func (h *Helper) shutdown() error {
 		if h.childConn != nil {
 			_ = h.childConn.Close()
 		}
+		if h.childWS != nil {
+			_ = h.childWS.Close()
+		}
 		if !h.isChildExited() {
 			_ = h.handle.Kill()
 		}
@@ -431,10 +439,10 @@ func (h *Helper) shutdown() error {
 	return nil
 }
 
-func (h *Helper) dialChildSocket(ctx context.Context) (net.Conn, error) {
+func (h *Helper) dialChildSocket(ctx context.Context) (net.Conn, *websocket.Conn, error) {
 	path := strings.TrimSpace(h.paths.ChildSocketPath)
 	if path == "" {
-		return nil, fmt.Errorf("child socket path is required")
+		return nil, nil, fmt.Errorf("child socket path is required")
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	var lastErr error
@@ -442,17 +450,42 @@ func (h *Helper) dialChildSocket(ctx context.Context) (net.Conn, error) {
 		var dialer net.Dialer
 		conn, err := dialer.DialContext(ctx, "unix", path)
 		if err == nil {
-			return conn, nil
+			wsConn, err := upgradeUnixSocketWebSocket(conn)
+			if err == nil {
+				return conn, wsConn, nil
+			}
+			_ = conn.Close()
+			lastErr = err
+		} else {
+			lastErr = err
 		}
-		lastErr = err
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("dial child socket %q: %w", path, err)
+			return nil, nil, fmt.Errorf("dial child socket %q: %w", path, err)
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("dial child socket %q: %w", path, lastErr)
+			return nil, nil, fmt.Errorf("dial child socket %q: %w", path, lastErr)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func upgradeUnixSocketWebSocket(conn net.Conn) (*websocket.Conn, error) {
+	if conn == nil {
+		return nil, fmt.Errorf("child socket connection is required")
+	}
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	defer func() {
+		_ = conn.SetDeadline(time.Time{})
+	}()
+	wsURL := &url.URL{Scheme: "ws", Host: "localhost", Path: "/"}
+	wsConn, response, err := websocket.NewClient(conn, wsURL, http.Header{}, 4096, 4096)
+	if err != nil {
+		if response != nil {
+			return nil, fmt.Errorf("upgrade child socket websocket: status %s: %w", response.Status, err)
+		}
+		return nil, fmt.Errorf("upgrade child socket websocket: %w", err)
+	}
+	return wsConn, nil
 }
 
 func (h *Helper) acceptLoop(ctx context.Context) {
@@ -687,7 +720,14 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 	if h.childIOMode == ChildIOModeStdio {
 		writer = h.handle.Stdin()
 	} else if h.childIOMode == ChildIOModeUnix {
-		writer = h.childConn
+		if h.childWS == nil {
+			return fmt.Errorf("helper child websocket is unavailable")
+		}
+		data, err := normalizeCommandInputPayload(cmd.payload)
+		if err != nil {
+			return err
+		}
+		return h.childWS.WriteMessage(websocket.TextMessage, data)
 	} else {
 		writer = h.handle.PTY()
 	}
@@ -791,11 +831,41 @@ func (h *Helper) readPipe(ctx context.Context, stream string, reader io.Reader) 
 
 func (h *Helper) readChildSocket(ctx context.Context) {
 	defer h.wg.Done()
-	if h.childConn == nil {
+	if h.childWS == nil {
 		_ = h.emitGenerationBreak(GenerationBreakAttachLost)
 		return
 	}
-	h.readOutput(ctx, "unix", h.childConn, false)
+	for {
+		messageType, reader, err := h.childWS.NextReader()
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) || errors.Is(err, io.EOF) || ctx.Err() != nil {
+				return
+			}
+			if !h.isChildExited() && !h.isBroken() {
+				_ = h.emitGenerationBreak(GenerationBreakAttachLost)
+			}
+			return
+		}
+		if messageType != websocket.TextMessage {
+			continue
+		}
+		data, err := io.ReadAll(reader)
+		if len(data) > 0 {
+			if data[len(data)-1] != '\n' {
+				data = append(data, '\n')
+			}
+			_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: "unix", Data: string(data)})
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) || ctx.Err() != nil {
+				return
+			}
+			if !h.isChildExited() && !h.isBroken() {
+				_ = h.emitGenerationBreak(GenerationBreakAttachLost)
+			}
+			return
+		}
+	}
 }
 
 func (h *Helper) readOutput(ctx context.Context, stream string, reader io.Reader, pty bool) {

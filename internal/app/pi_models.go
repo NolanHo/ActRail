@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"actrail/internal/adapters/agent"
 )
 
 const piModelDiscoveryTimeout = 3 * time.Second
@@ -319,11 +321,6 @@ func (s *Stub) newSessionDefaults(ctx context.Context, req BootstrapRequest) New
 
 func (s *Stub) codexLaunchBackendDefaults() LaunchBackendDefaults {
 	cfg := readCodexConfig()
-	providers := uniqueSortedStrings(append(append([]string{}, s.cfg.Launch.Providers...), cfg.Providers...))
-	models := uniqueSortedStrings(s.cfg.Launch.Models)
-	if cfg.Model != "" {
-		models = uniqueSortedStrings(append(models, cfg.Model))
-	}
 	providerModels := cloneProviderModels(cfg.ProviderModels)
 	if cfg.ModelProvider != "" && cfg.Model != "" {
 		if providerModels == nil {
@@ -331,6 +328,17 @@ func (s *Stub) codexLaunchBackendDefaults() LaunchBackendDefaults {
 		}
 		providerModels[cfg.ModelProvider] = uniqueSortedStrings(append(providerModels[cfg.ModelProvider], cfg.Model))
 	}
+	providers := append(append([]string{}, s.cfg.Launch.Providers...), cfg.Providers...)
+	models := append([]string{}, s.cfg.Launch.Models...)
+	if cfg.Model != "" {
+		models = append(models, cfg.Model)
+	}
+	for provider, providerModelChoices := range providerModels {
+		providers = append(providers, provider)
+		models = append(models, providerModelChoices...)
+	}
+	providers = uniqueSortedStrings(providers)
+	models = uniqueSortedStrings(models)
 	defaultProvider := chooseFirst(s.cfg.Launch.Providers)
 	if defaultProvider == "" {
 		defaultProvider = cfg.ModelProvider
@@ -342,6 +350,12 @@ func (s *Stub) codexLaunchBackendDefaults() LaunchBackendDefaults {
 	if defaultModel == "" {
 		defaultModel = cfg.Model
 	}
+	if defaultModel == "" {
+		defaultModel = firstProviderModel(providerModels, defaultProvider)
+	}
+	if defaultModel == "" {
+		defaultModel = chooseFirst(models)
+	}
 	return LaunchBackendDefaults{
 		ProviderChoice:      defaultProvider,
 		ProviderChoices:     providers,
@@ -351,7 +365,7 @@ func (s *Stub) codexLaunchBackendDefaults() LaunchBackendDefaults {
 		ModelProvider:       defaultProvider,
 		ModelProviders:      providers,
 		PreferredAuthMethod: cfg.PreferredAuthMethod,
-		ReasoningEffort:     cfg.ModelReasoningEffort,
+		ReasoningEffort:     agent.CodexDefaultReasoningEffort(),
 	}
 }
 

@@ -212,7 +212,7 @@ func (s *codexRuntimeState) bootstrapRequests() []any {
 			},
 		})
 	}
-	if s.threadID == "" && !s.threadStartSent {
+	if s.initialized && s.threadID == "" && !s.threadStartSent {
 		s.requestSeq++
 		s.threadStartSent = true
 		requests = append(requests, map[string]any{
@@ -225,6 +225,27 @@ func (s *codexRuntimeState) bootstrapRequests() []any {
 		})
 	}
 	return requests
+}
+
+func (s *codexRuntimeState) threadStartRequest() any {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized || s.threadID != "" || s.threadStartSent {
+		return nil
+	}
+	s.requestSeq++
+	s.threadStartSent = true
+	return map[string]any{
+		"method": "thread/start",
+		"id":     fmt.Sprintf("thread-start-%d", s.requestSeq),
+		"params": map[string]any{
+			"experimentalRawEvents":  false,
+			"persistExtendedHistory": false,
+		},
+	}
 }
 
 func (s *codexRuntimeState) markInitialized() {
@@ -827,6 +848,14 @@ func (r sessionRuntime) PendingPIAgentGRPCReady() bool {
 	return r.piAgentGRPC != nil && r.piAgentGRPCReady != nil
 }
 
+func (r sessionRuntime) PendingCodexThread() bool {
+	if r.protocol != runtimeProtocolCodexRPC || r.codex == nil {
+		return false
+	}
+	_, threadID, _ := r.codex.snapshot()
+	return strings.TrimSpace(threadID) == ""
+}
+
 func (r sessionRuntime) PIAgentGRPCState(ctx context.Context) (piagentgrpc.State, error) {
 	if r.piAgentGRPC == nil {
 		return piagentgrpc.State{}, nil
@@ -947,6 +976,7 @@ func (r sessionRuntime) sendPrompt(ctx context.Context, text string, stale func(
 			"id":     r.codex.nextRequestID("turn-start"),
 			"params": map[string]any{
 				"threadId": threadID,
+				"effort":   agent.CodexDefaultReasoningEffort(),
 				"input": []any{map[string]any{
 					"type":          "text",
 					"text":          payload,
@@ -1061,6 +1091,17 @@ func (r sessionRuntime) EnsureCodexThread(ctx context.Context) error {
 	return nil
 }
 
+func (r sessionRuntime) EnsureCodexThreadStarted(ctx context.Context) error {
+	if r.protocol != runtimeProtocolCodexRPC {
+		return nil
+	}
+	request := r.codex.threadStartRequest()
+	if request == nil {
+		return nil
+	}
+	return r.writeCodexCommand(ctx, request)
+}
+
 func (r sessionRuntime) inputWriter() (io.Writer, error) {
 	if r.helper != nil {
 		return nil, errRuntimeInputUnavailable
@@ -1069,6 +1110,13 @@ func (r sessionRuntime) inputWriter() (io.Writer, error) {
 		return nil, errRuntimeInputUnavailable
 	}
 	return r.handle.PTY(), nil
+}
+
+func (r sessionRuntime) canWriteInput() bool {
+	if r.helper != nil {
+		return true
+	}
+	return r.handle != nil && r.handle.PTY() != nil
 }
 
 func (r sessionRuntime) Interrupt(ctx context.Context) error {

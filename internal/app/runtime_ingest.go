@@ -1741,15 +1741,38 @@ func (s *Stub) withCodexRuntimeState(sessionID session.SessionID, apply func(*co
 }
 
 func (s *Stub) noteCodexInitialized(sessionID session.SessionID) {
+	var runtime sessionRuntime
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
 		state.markInitialized()
 	})
+	if record, ok := s.registry.Lookup(sessionID); ok {
+		runtime = record.runtime
+	}
+	if runtime.protocol == runtimeProtocolCodexRPC && runtime.canWriteInput() {
+		go func() {
+			if err := runtime.EnsureCodexThreadStarted(context.Background()); err != nil {
+				_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_thread_start", err)
+			}
+		}()
+	}
 }
 
 func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string) {
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
 		state.setThreadID(threadID)
 	})
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return
+	}
+	transport := sessionTransportSnapshot(record)
+	if transport.State != SessionTransportStateStarting {
+		return
+	}
+	if _, err := s.setSessionTransport(sessionID, transportSnapshotCodexAttached()); err != nil {
+		return
+	}
+	s.emitSessionState(sessionID)
 }
 
 func (s *Stub) noteCodexTurnID(sessionID session.SessionID, turnID string) {

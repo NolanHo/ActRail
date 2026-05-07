@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"actrail/internal/adapters/iodclient"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -117,9 +119,29 @@ func TestP3AFakeCodexUnixAppServer(t *testing.T) {
 	}
 	defer listener.Close()
 	defer os.Remove(socketPath)
-	conn, err := listener.Accept()
-	if err != nil {
-		t.Fatalf("Accept() error = %v", err)
+	connCh := make(chan *websocket.Conn, 1)
+	errCh := make(chan error, 1)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		connCh <- conn
+	})}
+	go func() {
+		if err := server.Serve(listener); err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
+			errCh <- err
+		}
+	}()
+	var conn *websocket.Conn
+	select {
+	case conn = <-connCh:
+	case err := <-errCh:
+		t.Fatalf("fake Codex websocket accept error = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fake Codex websocket connection")
 	}
 	defer conn.Close()
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -129,35 +151,52 @@ func TestP3AFakeCodexUnixAppServer(t *testing.T) {
 	defer file.Close()
 	threadID := "codex-thread-1"
 	turn := 0
-	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		messageType, msg, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				return
+			}
+			t.Fatalf("fake Codex websocket read error = %v", err)
+		}
+		if messageType != websocket.TextMessage {
+			continue
+		}
+		line := string(msg)
 		if _, err := file.WriteString(line + "\n"); err != nil {
 			t.Fatalf("WriteString(%q) error = %v", logPath, err)
 		}
 		if strings.Contains(line, `"method":"initialize"`) {
-			fmt.Fprintln(conn, `{"id":"initialize-1","result":{"userAgent":"actrail-test"}}`)
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"id":"initialize-1","result":{"userAgent":"actrail-test"}}`)); err != nil {
+				t.Fatalf("fake Codex write initialize response error = %v", err)
+			}
 		}
 		if strings.Contains(line, `"method":"thread/start"`) {
-			fmt.Fprintln(conn, `{"id":"thread-start-2","result":{"thread":{"id":"codex-thread-1"}}}`)
-			fmt.Fprintln(conn, `{"method":"thread/started","params":{"thread":{"id":"codex-thread-1"}}}`)
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"id":"thread-start-2","result":{"thread":{"id":"codex-thread-1"}}}`)); err != nil {
+				t.Fatalf("fake Codex write thread response error = %v", err)
+			}
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"method":"thread/started","params":{"thread":{"id":"codex-thread-1"}}}`)); err != nil {
+				t.Fatalf("fake Codex write thread notification error = %v", err)
+			}
 		}
 		if strings.Contains(line, `"method":"turn/start"`) {
 			turn++
 			turnID := fmt.Sprintf("codex-turn-%d", turn)
-			fmt.Fprintf(conn, `{"id":"turn-start-3","result":{"turn":{"id":"%s","status":"inProgress","error":null}}}`+"\n", turnID)
-			fmt.Fprintf(conn, `{"method":"turn/started","params":{"threadId":"%s","turn":{"id":"%s","status":"inProgress","error":null}}}`+"\n", threadID, turnID)
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"id":"turn-start-3","result":{"turn":{"id":"%s","status":"inProgress","error":null}}}`, turnID))); err != nil {
+				t.Fatalf("fake Codex write turn response error = %v", err)
+			}
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"method":"turn/started","params":{"threadId":"%s","turn":{"id":"%s","status":"inProgress","error":null}}}`, threadID, turnID))); err != nil {
+				t.Fatalf("fake Codex write turn notification error = %v", err)
+			}
 		}
 		if strings.Contains(line, `"method":"turn/interrupt"`) {
-			fmt.Fprintln(conn, `{"id":"turn-interrupt-4","result":{}}`)
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"id":"turn-interrupt-4","result":{}}`)); err != nil {
+				t.Fatalf("fake Codex write interrupt response error = %v", err)
+			}
 		}
 		if err := file.Sync(); err != nil {
 			t.Fatalf("Sync(%q) error = %v", logPath, err)
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("fake Codex socket scanner error = %v", err)
 	}
 }
 
@@ -281,7 +320,10 @@ func TestCodexIODControl(t *testing.T) {
 	if err := record.runtime.EnsureCodexThread(context.Background()); err != nil {
 		t.Fatalf("EnsureCodexThread() error = %v", err)
 	}
-	svc.noteCodexThreadID(sessionID, "codex-thread-1")
+	waitForAppCondition(t, func() bool {
+		_, threadID, _ := record.runtime.codex.snapshot()
+		return threadID == "codex-thread-1"
+	})
 	sent, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "Implement P6 Codex transport"})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
@@ -317,6 +359,7 @@ func TestCodexIODControl(t *testing.T) {
 		`"method":"turn/start"`,
 		`"id":"turn-start-3"`,
 		`"threadId":"codex-thread-1"`,
+		`"effort":"high"`,
 		`"text":"Implement P6 Codex transport"`,
 		`"method":"turn/interrupt"`,
 		`"id":"turn-interrupt-4"`,

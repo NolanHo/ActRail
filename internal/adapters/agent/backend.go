@@ -141,6 +141,12 @@ func (piAdapter) CommandArgs(opts Options) ([]string, error) {
 
 type codexAdapter struct{}
 
+const codexDefaultReasoningEffort = "high"
+
+func CodexDefaultReasoningEffort() string {
+	return codexDefaultReasoningEffort
+}
+
 func (codexAdapter) Backend() session.Backend {
 	return session.BackendCodex
 }
@@ -171,6 +177,7 @@ func (codexAdapter) CommandArgs(opts Options) ([]string, error) {
 	if provider := opts.Provider(); provider != "" {
 		args = append(args, "-c", tomlStringConfig("model_provider", provider))
 	}
+	args = append(args, "-c", tomlStringConfig("model_reasoning_effort", codexDefaultReasoningEffort))
 	if model := opts.Model(); model != "" {
 		args = append(args, "--model", model)
 	}

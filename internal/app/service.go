@@ -587,6 +587,8 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		transport = transportSnapshotPIAgentGRPCStarting()
 	} else if runtime.UsesPIAgentGRPC() {
 		transport = piAgentGRPCTransportSnapshot()
+	} else if runtime.PendingCodexThread() {
+		transport = transportSnapshotCodexStarting()
 	}
 	record, err := s.registry.Create(sessionCreateSpec{
 		Identity:         &identity,
@@ -609,6 +611,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}
 	s.startRuntimeIngest(record.identity.SessionID(), backend, runtime)
 	s.startPIAgentGRPCReadyTransition(record.identity.SessionID(), runtime)
+	s.startCodexThreadBootstrap(record.identity.SessionID(), runtime)
 	stream, err := session.MainStream(record.identity)
 	if err != nil {
 		return CreateSessionResponse{}, err

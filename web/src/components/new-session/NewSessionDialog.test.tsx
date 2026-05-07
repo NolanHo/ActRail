@@ -1043,6 +1043,60 @@ describe("NewSessionDialog", () => {
     expect(modelInput.value).toBe("custom-model");
   });
 
+  it("uses Codex provider-scoped models when provider changes", async () => {
+    const sessionsStore = createSessionsStore({
+      items: [],
+      activeSessionId: null,
+      loading: false,
+      recentCwds: [],
+      tmuxAvailable: false,
+      newSessionDefaults: {
+        default_backend: "codex",
+        backends: {
+          codex: {
+            provider_choice: "crs",
+            provider_choices: ["crs", "chatgpt"],
+            model: "gpt-5.5",
+            models: ["gpt-5.5"],
+            provider_models: {
+              crs: ["gpt-5.5", "gpt-5.4"],
+              chatgpt: ["gpt-5.3-codex"],
+            },
+            reasoning_effort: "high",
+          },
+          pi: { provider_choice: "macaron" },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await flush();
+
+    const modelInput = root.querySelector('input[name="model"]') as HTMLInputElement;
+    const providerSelect = root.querySelector('select[name="providerChoice"]') as HTMLSelectElement;
+
+    expect(modelInput.value).toBe("gpt-5.5");
+    expect(root.querySelector('option[value="gpt-5.4"]')).not.toBeNull();
+
+    await setSelectValue(providerSelect, "chatgpt");
+    await flush();
+    expect(modelInput.value).toBe("gpt-5.3-codex");
+
+    await setInputValue(modelInput, "custom-codex");
+    await setSelectValue(providerSelect, "crs");
+    await flush();
+    expect(modelInput.value).toBe("custom-codex");
+  });
+
   it("keeps the working directory when session defaults refresh while the dialog is open", async () => {
     const sessionsStore = createSessionsStore({
       items: [],

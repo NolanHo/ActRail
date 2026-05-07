@@ -221,13 +221,13 @@ function normalizeNewSessionDefaults(data: SessionBootstrapResponse): NewSession
   if (!defaultBackend && availableBackends.length === 0) {
     return null;
   }
-  const backends = Object.fromEntries((availableBackends.length ? availableBackends : [defaultBackend || "pi"])
+  const backends = Object.fromEntries((availableBackends.length ? availableBackends : [defaultBackend || "codex"])
     .map((backend) => [backend, {
       provider_choices: Array.isArray(data.launch_defaults?.providers) ? data.launch_defaults.providers : [],
       models: Array.isArray(data.launch_defaults?.models) ? data.launch_defaults.models : [],
     }]));
   return mergeNewSessionDefaults({
-    default_backend: defaultBackend || availableBackends[0] || "pi",
+    default_backend: defaultBackend || availableBackends[0] || "codex",
     backends,
   }, cached);
 }

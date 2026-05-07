@@ -120,7 +120,7 @@ func Load() Config {
 			WorkspaceWrite:    false,
 		},
 		Launch: Launch{
-			DefaultBackend:       envString("ACTRAIL_DEFAULT_BACKEND", "pi"),
+			DefaultBackend:       envString("ACTRAIL_DEFAULT_BACKEND", "codex"),
 			AvailableBackends:    csvEnv("ACTRAIL_AVAILABLE_BACKENDS", []string{"pi", "codex"}),
 			Providers:            csvEnv("ACTRAIL_AVAILABLE_PROVIDERS", nil),
 			Models:               csvEnv("ACTRAIL_AVAILABLE_MODELS", nil),

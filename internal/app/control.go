@@ -358,6 +358,17 @@ func (s *Stub) prepareRuntimeSend(ctx context.Context, sessionID session.Session
 	}
 }
 
+func (s *Stub) startCodexThreadBootstrap(sessionID session.SessionID, runtime sessionRuntime) {
+	if runtime.protocol != runtimeProtocolCodexRPC || !runtime.canWriteInput() {
+		return
+	}
+	go func() {
+		if err := runtime.EnsureCodexThread(context.Background()); err != nil {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_thread_bootstrap", err)
+		}
+	}()
+}
+
 func (s *Stub) awaitRuntimeTurnStart(ctx context.Context, runtime sessionRuntime) {
 	if runtime.protocol != runtimeProtocolCodexRPC {
 		return
