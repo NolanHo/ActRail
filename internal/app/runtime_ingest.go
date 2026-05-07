@@ -2,12 +2,9 @@ package app
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"strings"
-	"sync"
 
 	"actrail/internal/adapters/piagentgrpc"
 	"actrail/internal/domain/session"
@@ -16,17 +13,6 @@ import (
 const (
 	maxRuntimeLineBytes = 1 << 20
 )
-
-var runtimeHelperProjectors sync.Map
-
-type runtimeLineBuffer struct {
-	pending bytes.Buffer
-}
-
-type runtimeHelperProjector struct {
-	mu      sync.Mutex
-	decoder runtimeEventDecoder
-}
 
 func runtimeProjectionSupported(backend session.Backend) bool {
 	switch backend {
@@ -114,41 +100,6 @@ func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.
 	_ = s.orphanActiveWaits(context.Background(), &sessionID)
 }
 
-func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Backend, helper *runtimeIODHelper) {
-	if s == nil || helper == nil || helper.streamClient == nil {
-		return
-	}
-	for {
-		packet, err := helper.streamClient.ReadPacket(context.Background())
-		if err != nil {
-			return
-		}
-		if err := s.applyRuntimeHelperPacket(sessionID, backend, packet); err != nil {
-			return
-		}
-	}
-}
-
-func (s *Stub) applyRuntimeHelperPacket(sessionID session.SessionID, backend session.Backend, packet any) error {
-	if s == nil {
-		return nil
-	}
-	key := struct {
-		stub      *Stub
-		sessionID session.SessionID
-		backend   session.Backend
-	}{stub: s, sessionID: sessionID, backend: backend}
-	projectorAny, _ := runtimeHelperProjectors.LoadOrStore(key, &runtimeHelperProjector{decoder: runtimeEventDecoder{backend: backend}})
-	projector := projectorAny.(*runtimeHelperProjector)
-	projector.mu.Lock()
-	defer projector.mu.Unlock()
-	projection, err := projector.decoder.decodeHelperPacket(packet)
-	if err != nil {
-		return err
-	}
-	return s.applyRuntimeProjection(sessionID, projection)
-}
-
 func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection runtimeProjection) error {
 	if projection.codexInitialized {
 		s.noteCodexInitialized(sessionID)
@@ -191,31 +142,4 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 		s.startRuntimeAskUserWait(sessionID, event)
 	}
 	return nil
-}
-
-func (b *runtimeLineBuffer) append(chunk string) {
-	if b == nil || chunk == "" {
-		return
-	}
-	_, _ = b.pending.WriteString(chunk)
-}
-
-func (b *runtimeLineBuffer) nextLine() ([]byte, bool) {
-	if b == nil {
-		return nil, false
-	}
-	data := b.pending.Bytes()
-	idx := bytes.IndexByte(data, '\n')
-	if idx >= 0 {
-		line := append([]byte(nil), data[:idx]...)
-		b.pending.Next(idx + 1)
-		return line, true
-	}
-	trimmed := bytes.TrimSpace(data)
-	if len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed) {
-		line := append([]byte(nil), trimmed...)
-		b.pending.Reset()
-		return line, true
-	}
-	return nil, false
 }

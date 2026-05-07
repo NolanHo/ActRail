@@ -22,6 +22,10 @@ type runtimeEventDecoder struct {
 	helperLines runtimeLineBuffer
 }
 
+type runtimeLineBuffer struct {
+	pending bytes.Buffer
+}
+
 type runtimeProjection struct {
 	events            []pi.Event
 	waitRequests      []pi.Event
@@ -82,6 +86,33 @@ func mergeRuntimeProjection(dst, src runtimeProjection) runtimeProjection {
 		dst.piRPCStateFailure = &failure
 	}
 	return dst
+}
+
+func (b *runtimeLineBuffer) append(chunk string) {
+	if b == nil || chunk == "" {
+		return
+	}
+	_, _ = b.pending.WriteString(chunk)
+}
+
+func (b *runtimeLineBuffer) nextLine() ([]byte, bool) {
+	if b == nil {
+		return nil, false
+	}
+	data := b.pending.Bytes()
+	idx := bytes.IndexByte(data, '\n')
+	if idx >= 0 {
+		line := append([]byte(nil), data[:idx]...)
+		b.pending.Next(idx + 1)
+		return line, true
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed) {
+		line := append([]byte(nil), trimmed...)
+		b.pending.Reset()
+		return line, true
+	}
+	return nil, false
 }
 
 func (d *runtimeEventDecoder) decodeHelperPacket(packet any) (runtimeProjection, error) {
