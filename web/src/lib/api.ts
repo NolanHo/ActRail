@@ -27,6 +27,7 @@ import type {
   SessionFileListResponse,
   SessionFileReadResponse,
   SessionResumeCandidatesResponse,
+  SetAlarmResponse,
   SessionBootstrapResponse,
   SessionCommandsResponse,
   SchedulerSnapshotResponse,
@@ -450,6 +451,9 @@ export const api = {
   },
   saveSchedulerSettings(payload: { idle_before_delivery_seconds?: number }) {
     return postJson<SchedulerSnapshotResponse["settings"]>(`/api/scheduler/settings`, payload);
+  },
+  createSessionAlarm(sessionId: string, payload: { duration_seconds: number; title?: string; message: string }) {
+    return postJson<SetAlarmResponse>(`/api/sessions/${sessionId}/alarms`, payload);
   },
   getSessionInbox(sessionId: string, limit?: number) {
     const query = new URLSearchParams();

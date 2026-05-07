@@ -49,11 +49,45 @@ func TestSchedulerAndInboxPersist(t *testing.T) {
 	if len(items) != 1 || items[0].ItemID != "alarm_1" {
 		t.Fatalf("scheduler items = %+v", items)
 	}
+	dueItems, err := reloaded.ListDueSchedulerItems(context.Background(), now.Add(2*time.Minute), 10)
+	if err != nil {
+		t.Fatalf("ListDueSchedulerItems() error = %v", err)
+	}
+	if len(dueItems) != 1 || dueItems[0].ItemID != "alarm_1" {
+		t.Fatalf("due scheduler items = %+v", dueItems)
+	}
+	alarm.State = "delivered"
+	alarm.UpdatedAt = now.Add(2 * time.Minute)
+	if err := reloaded.UpdateSchedulerItem(context.Background(), alarm); err != nil {
+		t.Fatalf("UpdateSchedulerItem() error = %v", err)
+	}
 	inboxItems, err := reloaded.ListInboxItems(context.Background(), "sess-1", 10)
 	if err != nil {
 		t.Fatalf("ListInboxItems() error = %v", err)
 	}
 	if len(inboxItems) != 1 || inboxItems[0].SourceID != "alarm_1" {
 		t.Fatalf("inbox items = %+v", inboxItems)
+	}
+	readyItems, err := reloaded.ListReadyInboxItems(context.Background(), now.Add(2*time.Minute), 10)
+	if err != nil {
+		t.Fatalf("ListReadyInboxItems() error = %v", err)
+	}
+	if len(readyItems) != 1 || readyItems[0].ItemID != "inbox_1" {
+		t.Fatalf("ready inbox items = %+v", readyItems)
+	}
+	deliveredAt := now.Add(3 * time.Minute)
+	inbox.State = "delivered"
+	inbox.DeliveredMessageID = "seq:1"
+	inbox.DeliveredAt = &deliveredAt
+	inbox.UpdatedAt = deliveredAt
+	if err := reloaded.UpdateInboxItem(context.Background(), inbox); err != nil {
+		t.Fatalf("UpdateInboxItem() error = %v", err)
+	}
+	updatedInboxItems, err := reloaded.ListInboxItems(context.Background(), "sess-1", 10)
+	if err != nil {
+		t.Fatalf("ListInboxItems(updated) error = %v", err)
+	}
+	if len(updatedInboxItems) != 1 || updatedInboxItems[0].State != "delivered" || updatedInboxItems[0].DeliveredMessageID != "seq:1" {
+		t.Fatalf("updated inbox items = %+v", updatedInboxItems)
 	}
 }

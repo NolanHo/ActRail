@@ -17,7 +17,11 @@ type schedulerStore interface {
 	UpsertSchedulerSettings(context.Context, sqlitestore.SchedulerSettingsRow) error
 	InsertSchedulerItem(context.Context, sqlitestore.SchedulerItemRow) error
 	ListSchedulerItems(context.Context, int) ([]sqlitestore.SchedulerItemRow, error)
+	ListDueSchedulerItems(context.Context, time.Time, int) ([]sqlitestore.SchedulerItemRow, error)
+	UpdateSchedulerItem(context.Context, sqlitestore.SchedulerItemRow) error
 	InsertInboxItem(context.Context, sqlitestore.InboxItemRow) error
+	ListReadyInboxItems(context.Context, time.Time, int) ([]sqlitestore.InboxItemRow, error)
+	UpdateInboxItem(context.Context, sqlitestore.InboxItemRow) error
 	ListInboxItems(context.Context, string, int) ([]sqlitestore.InboxItemRow, error)
 }
 
@@ -177,6 +181,169 @@ func (s *Stub) SetAlarm(ctx context.Context, req SetAlarmRequest) (SetAlarmRespo
 		return SetAlarmResponse{}, err
 	}
 	return SetAlarmResponse{OK: true, Alarm: schedulerItemResponse(row)}, nil
+}
+
+func (s *Stub) RunSchedulerDeliverySweep(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = s.runSchedulerDeliverySweep(ctx)
+		}
+	}
+}
+
+func (s *Stub) runSchedulerDeliverySweep(ctx context.Context) error {
+	now := s.registry.now().UTC()
+	if err := s.stageDueSchedulerItems(ctx, now); err != nil {
+		return err
+	}
+	return s.deliverReadyInboxItems(ctx, now)
+}
+
+func (s *Stub) stageDueSchedulerItems(ctx context.Context, now time.Time) error {
+	items, err := s.schedulerStore.ListDueSchedulerItems(ctx, now, 100)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.Kind != "alarm" {
+			item.State = "unsupported"
+			item.UpdatedAt = now
+			if err := s.schedulerStore.UpdateSchedulerItem(ctx, item); err != nil {
+				return err
+			}
+			continue
+		}
+		parsedSessionID, err := session.ParseSessionID(item.SessionID)
+		if err != nil {
+			item.State = "error"
+			item.UpdatedAt = now
+			if updateErr := s.schedulerStore.UpdateSchedulerItem(ctx, item); updateErr != nil {
+				return updateErr
+			}
+			continue
+		}
+		if _, err := s.lookupSession(parsedSessionID); err != nil {
+			item.State = "orphaned"
+			item.UpdatedAt = now
+			if updateErr := s.schedulerStore.UpdateSchedulerItem(ctx, item); updateErr != nil {
+				return updateErr
+			}
+			continue
+		}
+		inbox := sqlitestore.InboxItemRow{
+			ItemID:    newID("inbox"),
+			SessionID: item.SessionID,
+			Source:    "alarm",
+			SourceID:  item.ItemID,
+			Title:     item.Title,
+			Message:   item.Message,
+			DueAt:     item.DueAt,
+			State:     "pending",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := s.schedulerStore.InsertInboxItem(ctx, inbox); err != nil {
+			return err
+		}
+		item.State = "delivered"
+		item.UpdatedAt = now
+		if err := s.schedulerStore.UpdateSchedulerItem(ctx, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Stub) deliverReadyInboxItems(ctx context.Context, now time.Time) error {
+	settings, err := s.schedulerSettings(ctx)
+	if err != nil {
+		return err
+	}
+	items, err := s.schedulerStore.ListReadyInboxItems(ctx, now, 100)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		ready, err := s.inboxItemReadyForDelivery(item, settings, now)
+		if err != nil {
+			item.State = "error"
+			item.Error = err.Error()
+			item.UpdatedAt = now
+			if updateErr := s.schedulerStore.UpdateInboxItem(ctx, item); updateErr != nil {
+				return updateErr
+			}
+			continue
+		}
+		if !ready {
+			continue
+		}
+		claimedAt := now
+		item.State = "claimed"
+		item.ClaimedAt = &claimedAt
+		item.UpdatedAt = now
+		if err := s.schedulerStore.UpdateInboxItem(ctx, item); err != nil {
+			return err
+		}
+		sessionID, _ := session.ParseSessionID(item.SessionID)
+		message, err := s.Send(ctx, SendRequest{SessionID: sessionID, Text: formatInboxEnvelope(item.Title, item.Source, item.Message)})
+		now = s.registry.now().UTC()
+		if err != nil {
+			item.State = "error"
+			item.Error = err.Error()
+			item.UpdatedAt = now
+			if updateErr := s.schedulerStore.UpdateInboxItem(ctx, item); updateErr != nil {
+				return updateErr
+			}
+			continue
+		}
+		deliveredAt := now
+		item.State = "delivered"
+		item.DeliveredMessageID = deliveredMessageID(message.Message)
+		item.DeliveredAt = &deliveredAt
+		item.Error = ""
+		item.UpdatedAt = now
+		if err := s.schedulerStore.UpdateInboxItem(ctx, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Stub) inboxItemReadyForDelivery(item sqlitestore.InboxItemRow, settings sqlitestore.SchedulerSettingsRow, now time.Time) (bool, error) {
+	sessionID, err := session.ParseSessionID(item.SessionID)
+	if err != nil {
+		return false, err
+	}
+	record, err := s.lookupSession(sessionID)
+	if err != nil {
+		return false, err
+	}
+	if record.state.Busy() || record.state.Queue().Len() > 0 || record.uiRequest != nil || s.activeWaitForSession(sessionID) != nil {
+		return false, nil
+	}
+	idleSince := sessionDisplayUpdatedAt(record)
+	if lastAssistantTS := lastAssistantMessageTimestamp(record); lastAssistantTS > 0 {
+		lastAssistantAt := time.Unix(int64(lastAssistantTS), 0).UTC()
+		if lastAssistantAt.After(idleSince) {
+			idleSince = lastAssistantAt
+		}
+	}
+	return !now.Before(idleSince.Add(time.Duration(settings.IdleBeforeDeliverySeconds) * time.Second)), nil
+}
+
+func deliveredMessageID(message SessionMessage) string {
+	if strings.TrimSpace(message.EventID) != "" {
+		return strings.TrimSpace(message.EventID)
+	}
+	if message.Seq > 0 {
+		return fmt.Sprintf("seq:%d", message.Seq)
+	}
+	return ""
 }
 
 func (s *Stub) schedulerSettings(ctx context.Context) (sqlitestore.SchedulerSettingsRow, error) {

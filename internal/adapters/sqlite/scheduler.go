@@ -123,6 +123,58 @@ func (c *SessionCatalog) ListSchedulerItems(ctx context.Context, limit int) ([]S
 	return items, nil
 }
 
+func (c *SessionCatalog) ListDueSchedulerItems(ctx context.Context, now time.Time, limit int) ([]SchedulerItemRow, error) {
+	if c == nil || c.db == nil {
+		return nil, fmt.Errorf("sqlite catalog is not initialized")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := c.db.QueryContext(ctx, `SELECT item_id, session_id, kind, source_ref, title, message, due_at, state, created_by, created_at, updated_at
+		FROM scheduler_items WHERE state = 'scheduled' AND due_at <= ? ORDER BY due_at ASC, created_at ASC LIMIT ?`, formatTime(now), limit)
+	if err != nil {
+		return nil, fmt.Errorf("query due scheduler items: %w", err)
+	}
+	defer rows.Close()
+	items := []SchedulerItemRow{}
+	for rows.Next() {
+		row, err := scanSchedulerItemRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate due scheduler items: %w", err)
+	}
+	return items, nil
+}
+
+func (c *SessionCatalog) UpdateSchedulerItem(ctx context.Context, row SchedulerItemRow) error {
+	if c == nil || c.db == nil {
+		return fmt.Errorf("sqlite catalog is not initialized")
+	}
+	res, err := c.db.ExecContext(ctx, `UPDATE scheduler_items SET
+		session_id = ?,
+		kind = ?,
+		source_ref = ?,
+		title = ?,
+		message = ?,
+		due_at = ?,
+		state = ?,
+		created_by = ?,
+		created_at = ?,
+		updated_at = ?
+		WHERE item_id = ?`, row.SessionID, row.Kind, row.SourceRef, row.Title, row.Message, formatTime(row.DueAt), row.State, row.CreatedBy, formatTime(row.CreatedAt), formatTime(row.UpdatedAt), row.ItemID)
+	if err != nil {
+		return fmt.Errorf("update scheduler item %q: %w", row.ItemID, err)
+	}
+	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+		return fmt.Errorf("update scheduler item %q: not found", row.ItemID)
+	}
+	return nil
+}
+
 func (c *SessionCatalog) InsertInboxItem(ctx context.Context, row InboxItemRow) error {
 	if c == nil || c.db == nil {
 		return fmt.Errorf("sqlite catalog is not initialized")
@@ -132,6 +184,63 @@ func (c *SessionCatalog) InsertInboxItem(ctx context.Context, row InboxItemRow) 
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.ItemID, row.SessionID, row.Source, row.SourceID, row.Title, row.Message, row.Priority, formatTime(row.DueAt), row.State, row.BlockedReason, row.DeliveredMessageID, row.Error, formatNullableTime(row.ClaimedAt), formatNullableTime(row.DeliveredAt), formatTime(row.CreatedAt), formatTime(row.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("insert inbox item %q: %w", row.ItemID, err)
+	}
+	return nil
+}
+
+func (c *SessionCatalog) ListReadyInboxItems(ctx context.Context, now time.Time, limit int) ([]InboxItemRow, error) {
+	if c == nil || c.db == nil {
+		return nil, fmt.Errorf("sqlite catalog is not initialized")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := c.db.QueryContext(ctx, `SELECT item_id, session_id, source, source_id, title, message, priority, due_at, state, blocked_reason, delivered_message_id, error, claimed_at, delivered_at, created_at, updated_at
+		FROM inbox_items WHERE state = 'pending' AND due_at <= ? ORDER BY due_at ASC, priority DESC, created_at ASC LIMIT ?`, formatTime(now), limit)
+	if err != nil {
+		return nil, fmt.Errorf("query ready inbox items: %w", err)
+	}
+	defer rows.Close()
+	items := []InboxItemRow{}
+	for rows.Next() {
+		row, err := scanInboxItemRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ready inbox items: %w", err)
+	}
+	return items, nil
+}
+
+func (c *SessionCatalog) UpdateInboxItem(ctx context.Context, row InboxItemRow) error {
+	if c == nil || c.db == nil {
+		return fmt.Errorf("sqlite catalog is not initialized")
+	}
+	res, err := c.db.ExecContext(ctx, `UPDATE inbox_items SET
+		session_id = ?,
+		source = ?,
+		source_id = ?,
+		title = ?,
+		message = ?,
+		priority = ?,
+		due_at = ?,
+		state = ?,
+		blocked_reason = ?,
+		delivered_message_id = ?,
+		error = ?,
+		claimed_at = ?,
+		delivered_at = ?,
+		created_at = ?,
+		updated_at = ?
+		WHERE item_id = ?`, row.SessionID, row.Source, row.SourceID, row.Title, row.Message, row.Priority, formatTime(row.DueAt), row.State, row.BlockedReason, row.DeliveredMessageID, row.Error, formatNullableTime(row.ClaimedAt), formatNullableTime(row.DeliveredAt), formatTime(row.CreatedAt), formatTime(row.UpdatedAt), row.ItemID)
+	if err != nil {
+		return fmt.Errorf("update inbox item %q: %w", row.ItemID, err)
+	}
+	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+		return fmt.Errorf("update inbox item %q: not found", row.ItemID)
 	}
 	return nil
 }

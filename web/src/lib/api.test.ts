@@ -389,6 +389,27 @@ describe("api", () => {
     });
   });
 
+  it("posts session alarms", async () => {
+    const payload = { ok: true, alarm: { item_id: "alarm_1", session_id: "sess-1", kind: "alarm", state: "scheduled" } };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.createSessionAlarm("sess-1", { duration_seconds: 60, title: "Review", message: "check build" })).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/sess-1/alarms", {
+      method: "POST",
+      signal: undefined,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ duration_seconds: 60, title: "Review", message: "check build" }),
+    });
+  });
+
   it("loads messages through Connect proto by default", async () => {
     const body = toBinary(SessionMessagesResponseSchema, create(SessionMessagesResponseSchema, {
       eventsJson: [new TextEncoder().encode(JSON.stringify({ seq: 1, role: "user", text: "hi" }))],
