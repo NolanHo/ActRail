@@ -326,7 +326,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		activeTurnStartSeq = activeTurnStartSeqForCommitted(record.transcript.History(nil, 0).Items())
 	}
 	if req.AfterSeq != nil {
-		page := record.transcript.History(nil, 0)
+		page := record.transcript.HistoryAfter(message.Seq(*req.AfterSeq))
 		items := page.Items()
 		response := SessionMessagesResponse{
 			Items:   make([]SessionMessage, 0, len(items)),

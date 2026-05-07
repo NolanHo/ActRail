@@ -254,6 +254,19 @@ func (t Transcript) History(before *Seq, limit int) HistoryPage {
 	return page
 }
 
+func (t Transcript) HistoryAfter(after Seq) HistoryPage {
+	start := len(t.items)
+	for idx, item := range t.items {
+		if item.Seq() > after {
+			start = idx
+			break
+		}
+	}
+	items := make([]CommittedMessage, len(t.items)-start)
+	copy(items, t.items[start:])
+	return HistoryPage{items: items}
+}
+
 func (t *Transcript) AppendMessage(roleRaw, kindRaw, text string, ts time.Time) (CommittedMessage, error) {
 	if t.partial != nil {
 		return CommittedMessage{}, fmt.Errorf("live assistant turn %q must commit before appending durable transcript", t.partial.turnID)

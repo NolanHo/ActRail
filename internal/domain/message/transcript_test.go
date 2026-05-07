@@ -78,6 +78,32 @@ func TestTranscriptHistoryAssignsSeqAndPagesOldestToNewest(t *testing.T) {
 	}
 }
 
+func TestTranscriptHistoryAfterReturnsOnlyNewerItems(t *testing.T) {
+	base := time.Unix(1760000000, 0).UTC()
+	transcript := NewTranscript()
+	for _, text := range []string{"first", "second", "third"} {
+		if _, err := transcript.AppendMessage(RoleUser.String(), KindMessage.String(), text, base); err != nil {
+			t.Fatalf("AppendMessage(%q) error = %v", text, err)
+		}
+	}
+
+	page := transcript.HistoryAfter(1)
+	items := page.Items()
+	if len(items) != 2 || items[0].Seq() != 2 || items[1].Seq() != 3 {
+		t.Fatalf("HistoryAfter(1).Items() = %+v, want seq 2 and 3", items)
+	}
+	if page.HasMore() {
+		t.Fatal("HistoryAfter(1).HasMore() = true, want false")
+	}
+	if _, ok := page.NextBefore(); ok {
+		t.Fatal("HistoryAfter(1).NextBefore() ok = true, want false")
+	}
+
+	if items := transcript.HistoryAfter(3).Items(); len(items) != 0 {
+		t.Fatalf("HistoryAfter(3).Items() = %+v, want empty", items)
+	}
+}
+
 func TestTranscriptAssistantDeltaOwnsTailUntilCommit(t *testing.T) {
 	base := time.Unix(1760000000, 0).UTC()
 	transcript := NewTranscript()
