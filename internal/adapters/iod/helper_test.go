@@ -128,6 +128,151 @@ func TestNewHelperUsesPipeIOForStdioChildMode(t *testing.T) {
 	}
 }
 
+func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
+	sessionID := mustSessionID(t, "s_unix")
+	generationID := mustGenerationID(t, "g_unix")
+	paths, err := NewGenerationPaths(t.TempDir(), sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	if err := paths.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	listenErr := make(chan error, 1)
+	listeners := make(chan net.Listener, 1)
+	accepted := make(chan net.Conn, 1)
+	defer func() {
+		select {
+		case listener := <-listeners:
+			_ = listener.Close()
+		default:
+		}
+	}()
+
+	handle := newTestHandle(4321, nil)
+	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
+		handle.spec = spec
+		childListener, err := net.Listen("unix", paths.ChildSocketPath)
+		if err != nil {
+			listenErr <- err
+			return handle
+		}
+		listeners <- childListener
+		go func() {
+			conn, err := childListener.Accept()
+			if err == nil {
+				accepted <- conn
+				return
+			}
+			close(accepted)
+		}()
+		return handle
+	}}
+	command, err := process.NewCommand("/bin/test-child", "--listen", "unix://"+paths.ChildSocketPath)
+	if err != nil {
+		t.Fatalf("process.NewCommand() error = %v", err)
+	}
+	env, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("process.InheritEnv() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunHelper(ctx, HelperOptions{
+			SessionID:       sessionID,
+			GenerationID:    generationID,
+			Paths:           paths,
+			Command:         command,
+			CWD:             mustAbsDir(t, paths.RuntimeDir),
+			Environment:     env,
+			ChildIOMode:     ChildIOModeUnix,
+			ProtocolVersion: 1,
+			Runner:          runner,
+			Now: func() time.Time {
+				return time.Unix(1760000000, 0).UTC()
+			},
+		})
+	}()
+	var childConn net.Conn
+	select {
+	case conn, ok := <-accepted:
+		if !ok {
+			t.Fatal("child socket accept failed")
+		}
+		childConn = conn
+	case err := <-listenErr:
+		t.Fatalf("Listen(%q) error = %v", paths.ChildSocketPath, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for helper to connect to child socket")
+	}
+	defer childConn.Close()
+
+	waitForSocket(t, paths.ControlSocketPath)
+	control, err := net.Dial("unix", paths.ControlSocketPath)
+	if err != nil {
+		t.Fatalf("Dial(control) error = %v", err)
+	}
+	defer control.Close()
+	dec := json.NewDecoder(control)
+	enc := json.NewEncoder(control)
+	var hello HelloPacket
+	if err := decodeWithin(t, dec, &hello); err != nil {
+		t.Fatalf("decode hello error = %v", err)
+	}
+	commandID := mustCommandID(t, "cmd_unix")
+	packet, err := NewCommandPacket(sessionID, generationID, CommandSend, commandID, json.RawMessage(`{"method":"initialize"}`))
+	if err != nil {
+		t.Fatalf("NewCommandPacket() error = %v", err)
+	}
+	if err := enc.Encode(packet); err != nil {
+		t.Fatalf("encode command error = %v", err)
+	}
+	var response CommandAcceptedPacket
+	if err := decodeWithin(t, dec, &response); err != nil {
+		t.Fatalf("decode accepted error = %v", err)
+	}
+	buf := make([]byte, 1024)
+	_ = childConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := childConn.Read(buf)
+	if err != nil {
+		t.Fatalf("read child socket command error = %v", err)
+	}
+	if got, want := string(buf[:n]), "{\"method\":\"initialize\"}\n"; got != want {
+		t.Fatalf("child socket command = %q, want %q", got, want)
+	}
+	if _, err := childConn.Write([]byte("{\"method\":\"thread/started\"}\n")); err != nil {
+		t.Fatalf("write child socket output error = %v", err)
+	}
+	var state StatePacket
+	if err := decodeWithin(t, dec, &state); err != nil {
+		t.Fatalf("decode child socket state error = %v", err)
+	}
+	if state.Fact.FactKind != FactOutputDelta {
+		t.Fatalf("state fact kind = %q, want %q", state.Fact.FactKind, FactOutputDelta)
+	}
+	var payload terminalOutputPayload
+	if err := json.Unmarshal(state.Fact.Payload, &payload); err != nil {
+		t.Fatalf("decode output payload error = %v", err)
+	}
+	if payload.Stream != "unix" || payload.Data != "{\"method\":\"thread/started\"}\n" {
+		t.Fatalf("output payload = %+v, want unix thread/started", payload)
+	}
+
+	cancel()
+	_ = control.Close()
+	_ = childConn.Close()
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("helper returned error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("helper stop timed out")
+	}
+}
+
 func TestIodReplay(t *testing.T) {
 	tc := newHelperTestCase(t)
 	defer tc.stop()
@@ -149,9 +294,7 @@ func TestIodReplay(t *testing.T) {
 		t.Fatal("duplicate accepted.Deduped = false, want true")
 	}
 
-	if got := tc.pty.Written(); got != `{"text":"alpha"}`+"\n" {
-		t.Fatalf("child stdin writes = %q, want %q", got, `{"text":"alpha"}`+"\n")
-	}
+	tc.waitForPTYWritten(t, `{"text":"alpha"}`+"\n")
 
 	tc.pty.FeedOutput("delta-one")
 	output := tc.mustStatePacket(t)
@@ -427,9 +570,7 @@ func TestUIResponseSubmitDoesNotEmitSemanticFact(t *testing.T) {
 	if accepted.AckCursor != 3 {
 		t.Fatalf("accepted ack cursor = %d, want 3", accepted.AckCursor)
 	}
-	if tc.pty.Written() != `{"type":"extension_ui_response","id":"ui-req-1","value":"Details"}`+"\n" {
-		t.Fatalf("child stdin writes = %q", tc.pty.Written())
-	}
+	tc.waitForPTYWritten(t, `{"type":"extension_ui_response","id":"ui-req-1","value":"Details"}`+"\n")
 
 	tc.sendReplayRequest(t, 2)
 	items := tc.mustReplayItems(t)
@@ -641,6 +782,21 @@ func (tc *helperTestCase) mustGenerationBreak(t *testing.T) GenerationBreakPacke
 		t.Fatalf("decode generation break packet error = %v", err)
 	}
 	return packet
+}
+
+func (tc *helperTestCase) waitForPTYWritten(t *testing.T, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := tc.pty.Written()
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("child stdin writes = %q, want %q", got, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (tc *helperTestCase) mustConnClosed(t *testing.T) {

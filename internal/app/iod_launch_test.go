@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -51,8 +52,12 @@ func (a iodLaunchAdapter) ValidateOptions(agent.Options) error {
 	return nil
 }
 
-func (a iodLaunchAdapter) CommandArgs(agent.Options) ([]string, error) {
-	return append([]string(nil), a.args...), nil
+func (a iodLaunchAdapter) CommandArgs(opts agent.Options) ([]string, error) {
+	args := append([]string(nil), a.args...)
+	if a.backend == session.BackendCodex && opts.ListenURL() != "" && len(args) > 0 {
+		args = append([]string{args[0], "--listen", opts.ListenURL()}, args[1:]...)
+	}
+	return args, nil
 }
 
 func TestP3AFakePIChildProcess(t *testing.T) {
@@ -87,6 +92,72 @@ func TestP3AFakePIChildProcess(t *testing.T) {
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scanner error = %v", err)
+	}
+}
+
+func TestP3AFakeCodexUnixAppServer(t *testing.T) {
+	if os.Getenv(fakePIChildEnv) != "codex-unix" {
+		return
+	}
+	if len(os.Args) == 0 {
+		t.Fatal("missing fake Codex socket path")
+	}
+	socketPath := strings.TrimSpace(os.Args[len(os.Args)-1])
+	if socketPath == "" {
+		t.Fatal("empty fake Codex socket path")
+	}
+	logPath := strings.TrimSpace(os.Getenv(fakePIChildLogEnv))
+	if logPath == "" {
+		t.Fatal("missing fake Codex log path")
+	}
+	_ = os.Remove(socketPath)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Listen(%q) error = %v", socketPath, err)
+	}
+	defer listener.Close()
+	defer os.Remove(socketPath)
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("Accept() error = %v", err)
+	}
+	defer conn.Close()
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile(%q) error = %v", logPath, err)
+	}
+	defer file.Close()
+	threadID := "codex-thread-1"
+	turn := 0
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if _, err := file.WriteString(line + "\n"); err != nil {
+			t.Fatalf("WriteString(%q) error = %v", logPath, err)
+		}
+		if strings.Contains(line, `"method":"initialize"`) {
+			fmt.Fprintln(conn, `{"id":"initialize-1","result":{"userAgent":"actrail-test"}}`)
+		}
+		if strings.Contains(line, `"method":"thread/start"`) {
+			fmt.Fprintln(conn, `{"id":"thread-start-2","result":{"thread":{"id":"codex-thread-1"}}}`)
+			fmt.Fprintln(conn, `{"method":"thread/started","params":{"thread":{"id":"codex-thread-1"}}}`)
+		}
+		if strings.Contains(line, `"method":"turn/start"`) {
+			turn++
+			turnID := fmt.Sprintf("codex-turn-%d", turn)
+			fmt.Fprintf(conn, `{"id":"turn-start-3","result":{"turn":{"id":"%s","status":"inProgress","error":null}}}`+"\n", turnID)
+			fmt.Fprintf(conn, `{"method":"turn/started","params":{"threadId":"%s","turn":{"id":"%s","status":"inProgress","error":null}}}`+"\n", threadID, turnID)
+		}
+		if strings.Contains(line, `"method":"turn/interrupt"`) {
+			fmt.Fprintln(conn, `{"id":"turn-interrupt-4","result":{}}`)
+		}
+		if err := file.Sync(); err != nil {
+			t.Fatalf("Sync(%q) error = %v", logPath, err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("fake Codex socket scanner error = %v", err)
 	}
 }
 
@@ -144,8 +215,10 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 	childLog := filepath.Join(t.TempDir(), "child.log")
 	t.Setenv(fakePIChildLogEnv, childLog)
 	t.Setenv(fakePIChildMarkEnv, "codex-forwarded-via-helper")
+	t.Setenv(fakePIChildEnv, "codex-unix")
+	t.Setenv("ACTRAIL_TEST_BINARY", os.Args[0])
 	cwd := filepath.Join(t.TempDir(), "cwd-codex-helper")
-	childPath := writeFakePIChildScript(t)
+	childPath := writeFakeCodexAppServerScript(t)
 	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--model", "gpt-4.1"}, func(backend session.Backend) (string, error) {
 		return childPath, nil
 	})
@@ -165,15 +238,20 @@ func TestCreateCodexSessionViaIod(t *testing.T) {
 	if record.runtime.protocol != runtimeProtocolCodexRPC {
 		t.Fatalf("record.runtime.protocol = %q, want %q", record.runtime.protocol, runtimeProtocolCodexRPC)
 	}
+	paths, err := iod.NewGenerationPaths(cfg.Storage.IODRuntimeRoot(), sessionID, binding.GenerationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
 	waitForChildLogLines(t, childLog, []string{
 		"cwd=" + cwd,
 		"argv[0]=app-server",
-		"argv[1]=--model",
-		"argv[2]=gpt-4.1",
+		"argv[1]=--listen",
+		"argv[2]=unix://" + paths.ChildSocketPath,
+		"argv[3]=--model",
+		"argv[4]=gpt-4.1",
 		"env[" + fakePIChildMarkEnv + "]=codex-forwarded-via-helper",
 	})
 
-	_ = binding
 	_ = manifest
 }
 
@@ -182,8 +260,10 @@ func TestCodexIODControl(t *testing.T) {
 	childLog := filepath.Join(t.TempDir(), "child.log")
 	t.Setenv(fakePIChildLogEnv, childLog)
 	t.Setenv(fakePIChildMarkEnv, "codex-jsonrpc-via-helper")
+	t.Setenv(fakePIChildEnv, "codex-unix")
+	t.Setenv("ACTRAIL_TEST_BINARY", os.Args[0])
 	cwd := filepath.Join(t.TempDir(), "cwd-codex-control")
-	childPath := writeFakePIChildScript(t)
+	childPath := writeFakeCodexAppServerScript(t)
 	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--model", "gpt-4.1"}, func(session.Backend) (string, error) {
 		return childPath, nil
 	})
@@ -193,6 +273,10 @@ func TestCodexIODControl(t *testing.T) {
 	}
 	_, sessionID, record, binding, manifest := createIODBackedSessionForBackend(t, svc, cfg, "codex", cwd)
 	defer deleteSessionIfPresent(t, svc, sessionID)
+	paths, err := iod.NewGenerationPaths(cfg.Storage.IODRuntimeRoot(), sessionID, binding.GenerationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
 
 	if err := record.runtime.EnsureCodexThread(context.Background()); err != nil {
 		t.Fatalf("EnsureCodexThread() error = %v", err)
@@ -216,8 +300,10 @@ func TestCodexIODControl(t *testing.T) {
 	waitForChildLogLines(t, childLog, []string{
 		"cwd=" + cwd,
 		"argv[0]=app-server",
-		"argv[1]=--model",
-		"argv[2]=gpt-4.1",
+		"argv[1]=--listen",
+		"argv[2]=unix://" + paths.ChildSocketPath,
+		"argv[3]=--model",
+		"argv[4]=gpt-4.1",
 		"env[" + fakePIChildMarkEnv + "]=codex-jsonrpc-via-helper",
 	})
 	waitForChildLogContains(t, childLog, []string{
@@ -587,29 +673,14 @@ func writeFakeCodexAppServerScript(t *testing.T) string {
 		"  i=$((i+1))\n" +
 		"done\n" +
 		"printf 'env[" + fakePIChildMarkEnv + "]=%s\\n' \"${" + fakePIChildMarkEnv + "-}\" >> \"$log\"\n" +
-		"thread_id=codex-thread-1\n" +
-		"turn=0\n" +
-		"while IFS= read -r line; do\n" +
-		"  printf '%s\\n' \"$line\" >> \"$log\"\n" +
-		"  case \"$line\" in\n" +
-		"    *\"method\":\"initialize\"*)\n" +
-		"      printf '%s\\n' '{\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}'\n" +
-		"      ;;\n" +
-		"    *\"method\":\"thread/start\"*)\n" +
-		"      printf '%s\\n' '{\"id\":\"thread-start-2\",\"result\":{\"thread\":{\"id\":\"codex-thread-1\"}}}'\n" +
-		"      printf '%s\\n' '{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"codex-thread-1\"}}}'\n" +
-		"      ;;\n" +
-		"    *\"method\":\"turn/start\"*)\n" +
-		"      turn=$((turn+1))\n" +
-		"      turn_id=codex-turn-$turn\n" +
-		"      printf '{\"id\":\"turn-start-3\",\"result\":{\"turn\":{\"id\":\"%s\",\"status\":\"inProgress\",\"error\":null}}}\\n' \"$turn_id\"\n" +
-		"      printf '{\"method\":\"turn/started\",\"params\":{\"threadId\":\"%s\",\"turn\":{\"id\":\"%s\",\"status\":\"inProgress\",\"error\":null}}}\\n' \"$thread_id\" \"$turn_id\"\n" +
-		"      ;;\n" +
-		"    *\"method\":\"turn/interrupt\"*)\n" +
-		"      printf '%s\\n' '{\"id\":\"turn-interrupt-4\",\"result\":{}}'\n" +
-		"      ;;\n" +
-		"  esac\n" +
-		"done\n"
+		"sock=\"\"\n" +
+		"prev=\"\"\n" +
+		"for arg in \"$@\"; do\n" +
+		"  if [ \"$prev\" = \"--listen\" ]; then sock=\"${arg#unix://}\"; fi\n" +
+		"  prev=\"$arg\"\n" +
+		"done\n" +
+		"if [ -z \"$sock\" ]; then echo 'missing --listen unix:// socket' >> \"$log\"; exit 2; fi\n" +
+		"exec \"$ACTRAIL_TEST_BINARY\" -test.run '^TestP3AFakeCodexUnixAppServer$' -- \"$sock\"\n"
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", path, err)
 	}

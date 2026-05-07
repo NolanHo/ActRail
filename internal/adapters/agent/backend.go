@@ -165,6 +165,9 @@ func (codexAdapter) CommandArgs(opts Options) ([]string, error) {
 		return nil, err
 	}
 	args := []string{"app-server"}
+	if listenURL := opts.ListenURL(); listenURL != "" {
+		args = append(args, "--listen", listenURL)
+	}
 	if provider := opts.Provider(); provider != "" {
 		args = append(args, "-c", tomlStringConfig("model_provider", provider))
 	}
