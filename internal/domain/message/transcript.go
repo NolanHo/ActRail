@@ -220,6 +220,15 @@ func (t Transcript) PartialAssistantTurn() (PartialAssistantTurn, bool) {
 	return *t.partial, true
 }
 
+func (t Transcript) LastUserSeq() Seq {
+	for i := len(t.items) - 1; i >= 0; i-- {
+		if t.items[i].Role() == RoleUser {
+			return t.items[i].Seq()
+		}
+	}
+	return 0
+}
+
 func (t *Transcript) DiscardPartialAssistantTurn() bool {
 	if t.partial == nil {
 		return false

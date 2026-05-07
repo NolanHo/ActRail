@@ -322,8 +322,8 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
 	}
 	activeTurnStartSeq := req.ActiveTurnStartSeq
-	if activeTurnStartSeq == 0 {
-		activeTurnStartSeq = activeTurnStartSeqForCommitted(record.transcript.History(nil, 0).Items())
+	if req.Deferred && activeTurnStartSeq == 0 {
+		activeTurnStartSeq = record.transcript.LastUserSeq().Uint64()
 	}
 	if req.AfterSeq != nil {
 		page := record.transcript.HistoryAfter(message.Seq(*req.AfterSeq))

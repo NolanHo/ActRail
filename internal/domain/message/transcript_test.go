@@ -104,6 +104,26 @@ func TestTranscriptHistoryAfterReturnsOnlyNewerItems(t *testing.T) {
 	}
 }
 
+func TestTranscriptLastUserSeqReturnsLatestUserMessage(t *testing.T) {
+	base := time.Unix(1760000000, 0).UTC()
+	transcript := NewTranscript()
+	if seq := transcript.LastUserSeq(); seq != 0 {
+		t.Fatalf("empty LastUserSeq() = %d, want 0", seq)
+	}
+	if _, err := transcript.AppendMessage(RoleUser.String(), KindMessage.String(), "first", base); err != nil {
+		t.Fatalf("AppendMessage(first) error = %v", err)
+	}
+	if _, err := transcript.AppendMessage(RoleAssistant.String(), KindMessage.String(), "answer", base); err != nil {
+		t.Fatalf("AppendMessage(answer) error = %v", err)
+	}
+	if _, err := transcript.AppendMessage(RoleUser.String(), KindMessage.String(), "second", base); err != nil {
+		t.Fatalf("AppendMessage(second) error = %v", err)
+	}
+	if seq := transcript.LastUserSeq(); seq != 3 {
+		t.Fatalf("LastUserSeq() = %d, want 3", seq)
+	}
+}
+
 func TestTranscriptAssistantDeltaOwnsTailUntilCommit(t *testing.T) {
 	base := time.Unix(1760000000, 0).UTC()
 	transcript := NewTranscript()
