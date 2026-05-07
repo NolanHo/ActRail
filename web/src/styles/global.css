@@ -1776,6 +1776,32 @@ select {
   min-width: 0;
 }
 
+@supports (content-visibility: auto) {
+  .messageRow {
+    content-visibility: auto;
+    contain-intrinsic-size: 160px;
+  }
+
+  .messageRow.user {
+    contain-intrinsic-size: 88px;
+  }
+
+  .messageRow.assistant,
+  .messageRow.ask_user {
+    contain-intrinsic-size: 220px;
+  }
+
+  .messageRow.machine_trace,
+  .messageRow.reasoning,
+  .messageRow.tool,
+  .messageRow.tool_result,
+  .messageRow.todo_snapshot,
+  .messageRow.pi_event,
+  .messageRow.event {
+    contain-intrinsic-size: 128px;
+  }
+}
+
 .messageSurface {
   min-width: 0;
   max-width: 100%;

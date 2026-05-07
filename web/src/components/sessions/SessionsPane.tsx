@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-import { useComposerStoreApi, useSessionsStore, useSessionsStoreApi } from "../../app/providers";
+import { shallowEqual, useComposerStoreApi, useSessionsStoreApi, useSessionsStoreSelector } from "../../app/providers";
 import { api } from "../../lib/api";
 import { backendSupportsReasoningEffort, normalizeLaunchBackend } from "../../lib/launch";
 import { getSessionRuntimeId } from "../../lib/session-identity";
@@ -67,7 +67,11 @@ function restartSessionProgressLabel(session: SessionSummary) {
 }
 
 export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: SessionsPaneProps) {
-  const { items, activeSessionId, remainingCount = 0 } = useSessionsStore();
+  const { items, activeSessionId, remainingCount = 0 } = useSessionsStoreSelector((state) => ({
+    items: state.items,
+    activeSessionId: state.activeSessionId,
+    remainingCount: state.remainingCount,
+  }), shallowEqual);
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
   const [editingSession, setEditingSession] = useState<SessionSummary | null>(null);

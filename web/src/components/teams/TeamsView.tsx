@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -63,6 +63,8 @@ const statusLabel: Record<string, string> = {
   aborted: "aborted",
   closed: "closed",
 };
+
+const TEAMS_EVENT_REFRESH_DEBOUNCE_MS = 250;
 
 function normalizeStatus(status: string | undefined): TeamNodeStatus {
   const cleaned = status?.trim();
@@ -173,15 +175,22 @@ function selectableNodes(nodes: TeamNode[]) {
   return nonLeaf.length ? nonLeaf : allTeamNodes(nodes).sort((a, b) => sortRank(a.status) - sortRank(b.status) || a.name.localeCompare(b.name));
 }
 
-export function useTeamsData(_refreshMs = 5000): TeamsData {
+export function useTeamsData(refreshMs = 5000): TeamsData {
+  const enabled = refreshMs > 0;
   const [roots, setRoots] = useState<TeamNode[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [nonLeafCount, setNonLeafCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState("");
   const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      setError("");
+      return;
+    }
+
     const controller = new AbortController();
     let cancelled = false;
     const load = async () => {
@@ -211,17 +220,41 @@ export function useTeamsData(_refreshMs = 5000): TeamsData {
       cancelled = true;
       controller.abort();
     };
-  }, [refreshToken]);
+  }, [enabled, refreshToken]);
 
   useEffect(() => {
-    if (typeof window.EventSource !== "function") {
+    if (!enabled || typeof window.EventSource !== "function") {
       return;
     }
+
+    let refreshTimer: number | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer != null) {
+        return;
+      }
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        setRefreshToken((value) => value + 1);
+      }, TEAMS_EVENT_REFRESH_DEBOUNCE_MS);
+    };
+
     const source = new window.EventSource("/api/teams/events");
-    source.onmessage = () => setRefreshToken((value) => value + 1);
+    source.onmessage = scheduleRefresh;
     source.onerror = () => setError("teams event stream disconnected");
-    return () => source.close();
-  }, []);
+    return () => {
+      if (refreshTimer != null) {
+        window.clearTimeout(refreshTimer);
+      }
+      source.close();
+    };
+  }, [enabled]);
+
+  const refresh = useCallback(() => {
+    if (!enabled) {
+      return;
+    }
+    setRefreshToken((value) => value + 1);
+  }, [enabled]);
 
   return {
     roots,
@@ -229,7 +262,7 @@ export function useTeamsData(_refreshMs = 5000): TeamsData {
     nonLeafCount,
     loading,
     error,
-    refresh: () => setRefreshToken((value) => value + 1),
+    refresh,
   };
 }
 
