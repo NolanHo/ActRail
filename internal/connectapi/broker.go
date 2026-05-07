@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"actrail/internal/ws"
+	"actrail/internal/realtime"
 )
 
 const defaultBrokerLimit = 5000
@@ -34,25 +34,19 @@ func NewBroker(limit int) *Broker {
 	return &Broker{limit: limit, subscribers: map[chan EventEnvelope]struct{}{}}
 }
 
-func (b *Broker) ObserveFrame(frame ws.Frame) {
+func (b *Broker) ObserveEvent(event realtime.Event) {
 	if b == nil {
 		return
 	}
-	payload, err := json.Marshal(frame.Payload)
-	if err != nil {
-		payload = json.RawMessage(`null`)
-	}
-	unixMillis := int64(frame.TS * 1000)
-	if unixMillis <= 0 {
-		unixMillis = time.Now().UnixMilli()
-	}
+	payload := event.PayloadJSON()
+	unixMillis := event.EventUnixMillis(time.Now)
 
 	b.mu.Lock()
 	b.nextID++
 	envelope := EventEnvelope{
 		ID:          b.nextID,
-		Type:        string(frame.Type),
-		Stream:      frame.Stream,
+		Type:        event.Type,
+		Stream:      event.Stream,
 		UnixMillis:  unixMillis,
 		PayloadJSON: base64.StdEncoding.EncodeToString(payload),
 	}
@@ -110,7 +104,7 @@ func (b *Broker) resyncLocked(after uint64, reason string) EventEnvelope {
 	event := EventEnvelope{
 		ID:          b.nextID,
 		Type:        "stream.resync",
-		Stream:      string(ws.SystemStream),
+		Stream:      realtime.SystemStream,
 		UnixMillis:  time.Now().UnixMilli(),
 		PayloadJSON: base64.StdEncoding.EncodeToString(payload),
 	}

@@ -54,7 +54,7 @@ func main() {
 	}
 	registry := ws.NewRegistry()
 	connectBroker := connectapi.NewBroker(5000)
-	publisher := ws.NewPublisher(registry, replay, ws.WithFrameObserver(connectBroker))
+	publisher := ws.NewPublisher(registry, replay, ws.WithEventObserver(connectBroker))
 	bridge := ws.NewAppBridge(service, service, publisher)
 	service.SetRuntimeEventSink(bridge)
 	handler := httpapi.New(cfg, service, ws.NewHandler(cfg,

@@ -5,19 +5,19 @@ import (
 	"encoding/json"
 	"testing"
 
-	"actrail/internal/ws"
+	"actrail/internal/realtime"
 )
 
 func TestBrokerAssignsMonotonicIDsAndReplays(t *testing.T) {
 	broker := NewBroker(3)
-	for _, typ := range []ws.FrameType{ws.FrameTypeSessionState, ws.FrameTypeMessageCommit} {
-		broker.ObserveFrame(ws.Frame{Type: typ, TS: 10, Stream: "session:s_1", Payload: map[string]any{"ok": true}})
+	for _, typ := range []string{"session.state", "message.commit"} {
+		broker.ObserveEvent(realtime.Event{Type: typ, UnixMillis: 10_000, Stream: "session:s_1", Payload: map[string]any{"ok": true}})
 	}
 	events, gap := broker.Replay(1)
 	if gap {
 		t.Fatal("Replay() gap = true, want false")
 	}
-	if len(events) != 1 || events[0].ID != 2 || events[0].Type != string(ws.FrameTypeMessageCommit) {
+	if len(events) != 1 || events[0].ID != 2 || events[0].Type != "message.commit" {
 		t.Fatalf("Replay() = %+v, want event id 2", events)
 	}
 }
@@ -25,7 +25,7 @@ func TestBrokerAssignsMonotonicIDsAndReplays(t *testing.T) {
 func TestBrokerReplayGapEmitsResync(t *testing.T) {
 	broker := NewBroker(2)
 	for i := 0; i < 4; i++ {
-		broker.ObserveFrame(ws.Frame{Type: ws.FrameTypeSessionState, TS: 10, Stream: "session:s_1", Payload: map[string]any{"i": i}})
+		broker.ObserveEvent(realtime.Event{Type: "session.state", UnixMillis: 10_000, Stream: "session:s_1", Payload: map[string]any{"i": i}})
 	}
 	events, gap := broker.Replay(1)
 	if !gap {

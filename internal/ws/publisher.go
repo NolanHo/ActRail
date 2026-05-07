@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"actrail/internal/realtime"
 )
 
 type PublishResult struct {
@@ -12,17 +14,13 @@ type PublishResult struct {
 	Delivered int
 }
 
-type FrameObserver interface {
-	ObserveFrame(Frame)
-}
-
 type PublisherOption func(*Publisher)
 
 type Publisher struct {
 	registry *Registry
 	replay   *ReplayBuffer
 	now      func() time.Time
-	observer FrameObserver
+	observer realtime.Observer
 }
 
 func NewPublisher(registry *Registry, replay *ReplayBuffer, opts ...PublisherOption) *Publisher {
@@ -50,7 +48,7 @@ func WithPublisherNow(now func() time.Time) PublisherOption {
 	}
 }
 
-func WithFrameObserver(observer FrameObserver) PublisherOption {
+func WithEventObserver(observer realtime.Observer) PublisherOption {
 	return func(p *Publisher) {
 		p.observer = observer
 	}
@@ -105,7 +103,12 @@ func (p *Publisher) BroadcastSessions(frame Frame) (PublishResult, error) {
 
 func (p *Publisher) observe(frame Frame) {
 	if p != nil && p.observer != nil {
-		p.observer.ObserveFrame(frame)
+		p.observer.ObserveEvent(realtime.Event{
+			Type:       string(frame.Type),
+			Stream:     frame.Stream,
+			UnixMillis: int64(frame.TS * 1000),
+			Payload:    frame.Payload,
+		})
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 
 	"actrail/internal/app"
 	"actrail/internal/domain/session"
-	"actrail/internal/ws"
+	"actrail/internal/realtime"
 	actrailv1 "actrail/proto/actrail/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -137,7 +137,7 @@ func TestSessionCommandServiceSendAcceptsProto(t *testing.T) {
 
 func TestEventServiceSubscribeWritesProtoEnvelope(t *testing.T) {
 	broker := NewBroker(10)
-	broker.ObserveFrame(ws.Frame{Type: ws.FrameTypeSessionState, TS: float64(time.UnixMilli(1234).UnixMilli()) / 1000, Stream: "session:s_123", Payload: map[string]any{"session_id": "s_123", "busy": true}})
+	broker.ObserveEvent(realtime.Event{Type: "session.state", UnixMillis: time.UnixMilli(1234).UnixMilli(), Stream: "session:s_123", Payload: map[string]any{"session_id": "s_123", "busy": true}})
 	h := NewHandler(&controllerStub{}, broker)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -160,7 +160,7 @@ func TestEventServiceSubscribeWritesProtoEnvelope(t *testing.T) {
 	if err := proto.Unmarshal(data[5:], &event); err != nil {
 		t.Fatalf("read event proto: %v", err)
 	}
-	if event.GetId() != 1 || event.GetType() != string(ws.FrameTypeSessionState) || event.GetStream() != "session:s_123" {
+	if event.GetId() != 1 || event.GetType() != "session.state" || event.GetStream() != "session:s_123" {
 		t.Fatalf("event = %#v", &event)
 	}
 	if !strings.Contains(string(event.GetPayloadJson()), `"busy":true`) {
