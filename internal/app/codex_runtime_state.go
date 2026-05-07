@@ -9,15 +9,17 @@ import (
 )
 
 type codexRuntimeState struct {
-	mu              sync.Mutex
-	requestSeq      uint64
-	initialized     bool
-	initializeSent  bool
-	threadStartSent bool
-	threadID        string
-	activeTurnID    string
-	phase           codexRuntimePhase
-	phaseReason     string
+	mu                  sync.Mutex
+	requestSeq          uint64
+	initialized         bool
+	initializeSent      bool
+	threadStartSent     bool
+	threadID            string
+	activeTurnID        string
+	interruptPending    bool
+	interruptSentTurnID string
+	phase               codexRuntimePhase
+	phaseReason         string
 }
 
 type codexRuntimePhase string
@@ -29,6 +31,7 @@ const (
 	codexRuntimePhaseSending        codexRuntimePhase = "sending"
 	codexRuntimePhaseTurnStarting   codexRuntimePhase = "turn_starting"
 	codexRuntimePhaseRunning        codexRuntimePhase = "running"
+	codexRuntimePhaseInterrupting   codexRuntimePhase = "interrupting"
 	codexRuntimePhaseWaitingUser    codexRuntimePhase = "waiting_user"
 	codexRuntimePhaseFailed         codexRuntimePhase = "failed"
 	codexRuntimePhaseEnded          codexRuntimePhase = "ended"
@@ -161,6 +164,10 @@ func (s *codexRuntimeState) setActiveTurnID(turnID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.activeTurnID = resolved
+	if s.interruptPending {
+		s.setPhaseLocked(codexRuntimePhaseInterrupting, "codex_interrupting")
+		return
+	}
 	s.setPhaseLocked(codexRuntimePhaseRunning, "codex_running")
 }
 
@@ -171,12 +178,68 @@ func (s *codexRuntimeState) clearActiveTurnID(turnID string) {
 	resolved := strings.TrimSpace(turnID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if resolved == "" || s.activeTurnID == resolved {
+	if s.interruptPending {
+		if resolved == "" || s.activeTurnID == "" || s.activeTurnID != resolved {
+			s.setPhaseLocked(codexRuntimePhaseInterrupting, "codex_interrupting")
+			return
+		}
+	}
+	if resolved == "" || s.activeTurnID == "" || s.activeTurnID == resolved {
 		s.activeTurnID = ""
+		s.interruptPending = false
+		s.interruptSentTurnID = ""
 		if phaseIsTurnActive(s.phase) {
 			s.setPhaseLocked(codexRuntimePhaseIdle, "")
 		}
 	}
+}
+
+func (s *codexRuntimeState) requestInterrupt() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.interruptPending = true
+	s.setPhaseLocked(codexRuntimePhaseInterrupting, "codex_interrupting")
+}
+
+func (s *codexRuntimeState) pendingInterruptCommand() (threadID, turnID string, ok bool) {
+	if s == nil {
+		return "", "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	threadID = strings.TrimSpace(s.threadID)
+	turnID = strings.TrimSpace(s.activeTurnID)
+	if !s.interruptPending || threadID == "" || turnID == "" || s.interruptSentTurnID == turnID {
+		return "", "", false
+	}
+	return threadID, turnID, true
+}
+
+func (s *codexRuntimeState) markInterruptSent(turnID string) {
+	if s == nil {
+		return
+	}
+	resolved := strings.TrimSpace(turnID)
+	if resolved == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.interruptPending && s.activeTurnID == resolved {
+		s.interruptSentTurnID = resolved
+	}
+}
+
+func (s *codexRuntimeState) pendingInterrupt() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.interruptPending
 }
 
 func (s *codexRuntimeState) transition(phase codexRuntimePhase, reason string) (codexRuntimeActivity, bool) {
@@ -192,10 +255,28 @@ func (s *codexRuntimeState) transition(phase codexRuntimePhase, reason string) (
 }
 
 func (s *codexRuntimeState) applyProtocolBusy(busy bool) (codexRuntimeActivity, bool) {
-	if busy {
-		return s.transition(codexRuntimePhaseRunning, "codex_running")
+	if s == nil {
+		return codexRuntimeActivity{Phase: codexRuntimePhaseIdle}, false
 	}
-	return s.transition(codexRuntimePhaseIdle, "")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	before := s.activityLocked()
+	if busy {
+		if s.interruptPending {
+			s.setPhaseLocked(codexRuntimePhaseInterrupting, "codex_interrupting")
+		} else {
+			s.setPhaseLocked(codexRuntimePhaseRunning, "codex_running")
+		}
+	} else if s.interruptPending {
+		s.setPhaseLocked(codexRuntimePhaseInterrupting, "codex_interrupting")
+	} else {
+		s.activeTurnID = ""
+		s.interruptPending = false
+		s.interruptSentTurnID = ""
+		s.setPhaseLocked(codexRuntimePhaseIdle, "")
+	}
+	after := s.activityLocked()
+	return after, before != after
 }
 
 func (s *codexRuntimeState) activity() codexRuntimeActivity {
@@ -218,6 +299,18 @@ func (s *codexRuntimeState) snapshot() (initialized bool, threadID, activeTurnID
 
 func (s *codexRuntimeState) setPhaseLocked(phase codexRuntimePhase, reason string) {
 	normalized := normalizeCodexRuntimePhase(phase)
+	if s.interruptPending {
+		switch normalized {
+		case codexRuntimePhaseIdle, codexRuntimePhaseFailed, codexRuntimePhaseEnded:
+			s.interruptPending = false
+			s.interruptSentTurnID = ""
+		case codexRuntimePhaseSending, codexRuntimePhaseTurnStarting, codexRuntimePhaseRunning:
+			normalized = codexRuntimePhaseInterrupting
+			if strings.TrimSpace(reason) == "" || strings.Contains(strings.TrimSpace(reason), "turn_start") || strings.Contains(strings.TrimSpace(reason), "sending") || strings.Contains(strings.TrimSpace(reason), "running") {
+				reason = "codex_interrupting"
+			}
+		}
+	}
 	s.phase = normalized
 	if normalized == codexRuntimePhaseIdle {
 		s.phaseReason = ""
@@ -245,6 +338,7 @@ func normalizeCodexRuntimePhase(phase codexRuntimePhase) codexRuntimePhase {
 		codexRuntimePhaseSending,
 		codexRuntimePhaseTurnStarting,
 		codexRuntimePhaseRunning,
+		codexRuntimePhaseInterrupting,
 		codexRuntimePhaseWaitingUser,
 		codexRuntimePhaseFailed,
 		codexRuntimePhaseEnded:
@@ -261,6 +355,7 @@ func codexRuntimePhaseBusy(phase codexRuntimePhase) bool {
 		codexRuntimePhaseSending,
 		codexRuntimePhaseTurnStarting,
 		codexRuntimePhaseRunning,
+		codexRuntimePhaseInterrupting,
 		codexRuntimePhaseWaitingUser:
 		return true
 	default:
@@ -279,7 +374,7 @@ func phaseIsStarting(phase codexRuntimePhase) bool {
 
 func phaseIsTurnActive(phase codexRuntimePhase) bool {
 	switch normalizeCodexRuntimePhase(phase) {
-	case codexRuntimePhaseSending, codexRuntimePhaseTurnStarting, codexRuntimePhaseRunning:
+	case codexRuntimePhaseSending, codexRuntimePhaseTurnStarting, codexRuntimePhaseRunning, codexRuntimePhaseInterrupting:
 		return true
 	default:
 		return false

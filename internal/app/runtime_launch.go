@@ -981,19 +981,18 @@ func (r sessionRuntime) Interrupt(ctx context.Context) error {
 			return nil
 		}
 		_, threadID, turnID := r.codex.snapshot()
-		if threadID == "" || turnID == "" {
+		activity := r.codex.activity()
+		if turnID == "" {
+			if phaseIsTurnActive(activity.Phase) {
+				r.codex.requestInterrupt()
+			}
 			return nil
 		}
-		request := map[string]any{
-			"method": "turn/interrupt",
-			"id":     r.codex.nextRequestID("turn-interrupt"),
-			"params": map[string]any{"threadId": threadID, "turnId": turnID},
+		r.codex.requestInterrupt()
+		if threadID == "" {
+			return nil
 		}
-		if err := r.writeCodexCommand(ctx, request); err != nil {
-			return err
-		}
-		r.codex.clearActiveTurnID(turnID)
-		return nil
+		return r.sendCodexInterrupt(ctx, threadID, turnID)
 	}
 	if r.helper != nil {
 		return r.helper.command(ctx, iod.CommandInterrupt, json.RawMessage(`{}`))
@@ -1010,6 +1009,38 @@ func (r sessionRuntime) Interrupt(ctx context.Context) error {
 	if err := r.handle.Interrupt(); err != nil {
 		return fmt.Errorf("interrupt runtime: %w", err)
 	}
+	return nil
+}
+
+func (r sessionRuntime) FlushCodexPendingInterrupt(ctx context.Context) error {
+	if r.protocol != runtimeProtocolCodexRPC || r.codex == nil {
+		return nil
+	}
+	threadID, turnID, ok := r.codex.pendingInterruptCommand()
+	if !ok {
+		return nil
+	}
+	return r.sendCodexInterrupt(ctx, threadID, turnID)
+}
+
+func (r sessionRuntime) sendCodexInterrupt(ctx context.Context, threadID, turnID string) error {
+	if r.protocol != runtimeProtocolCodexRPC || r.codex == nil {
+		return nil
+	}
+	threadID = strings.TrimSpace(threadID)
+	turnID = strings.TrimSpace(turnID)
+	if threadID == "" || turnID == "" {
+		return nil
+	}
+	request := map[string]any{
+		"method": "turn/interrupt",
+		"id":     r.codex.nextRequestID("turn-interrupt"),
+		"params": map[string]any{"threadId": threadID, "turnId": turnID},
+	}
+	if err := r.writeCodexCommand(ctx, request); err != nil {
+		return err
+	}
+	r.codex.markInterruptSent(turnID)
 	return nil
 }
 

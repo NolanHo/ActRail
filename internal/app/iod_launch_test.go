@@ -336,8 +336,8 @@ func TestCodexIODControl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Interrupt() error = %v", err)
 	}
-	if interrupted.Busy {
-		t.Fatalf("Interrupt() = %+v, want busy false", interrupted)
+	if !interrupted.Busy {
+		t.Fatalf("Interrupt() = %+v, want busy true while Codex interrupt is pending", interrupted)
 	}
 	waitForChildLogLines(t, childLog, []string{
 		"cwd=" + cwd,

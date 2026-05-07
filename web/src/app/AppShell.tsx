@@ -329,13 +329,20 @@ export function AppShell() {
   const activeBackendCapabilities = backendCapability(newSessionDefaults, activeSession?.agent_backend);
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
   const activeSessionPending = activeSession?.pending_startup === true;
-  const activeSessionGenerating = Boolean(activeSessionId && liveActiveSessionState.generating === true);
+  const listedRuntimeState = typeof activeSession?.runtime_state === "string" ? activeSession.runtime_state.trim() : "";
+  const liveRuntimeState = typeof liveActiveSessionState.runtimeState === "string" ? liveActiveSessionState.runtimeState.trim() : "";
+  const activeRuntimeState = listedRuntimeState === "failed" || listedRuntimeState === "ended"
+    ? listedRuntimeState
+    : liveRuntimeState || listedRuntimeState;
+  const activeSessionTerminalRuntime = activeRuntimeState === "failed" || activeRuntimeState === "ended";
+  const activeSessionGenerating = Boolean(activeSessionId && !activeSessionTerminalRuntime && liveActiveSessionState.generating === true);
   const activeSessionHasLiveBusy = Boolean(activeSessionId && liveActiveSessionState.hasBusy);
-  const activeSessionLiveBusy = Boolean(activeSessionId && liveActiveSessionState.busy === true);
+  const activeSessionLiveBusy = Boolean(activeSessionId && !activeSessionTerminalRuntime && liveActiveSessionState.busy === true);
   const visibleActiveWait = activeWait ?? activeSession?.active_wait ?? null;
   const activeSessionBusy = Boolean(
-    activeSessionGenerating
-    || (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true),
+    !activeSessionTerminalRuntime
+    && (activeSessionGenerating
+      || (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true)),
   );
   const activeTitle = activeSession
     ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
@@ -399,20 +406,17 @@ export function AppShell() {
       items.push({ label: "Runtime", value: activeSession.transport_state, tone: "error" });
     } else if (activeSession.pending_startup === true) {
       items.push({ label: "Runtime", value: "starting", tone: "attention" });
+    } else if (activeRuntimeState === "failed" || activeRuntimeState === "ended") {
+      items.push({ label: "Runtime", value: activeRuntimeState, tone: "error" });
     } else if (activeSessionGenerating) {
       items.push({ label: "Runtime", value: "generating", tone: "busy" });
     } else if (activeSessionBusy) {
-      const runtimeState = typeof liveActiveSessionState.runtimeState === "string" && liveActiveSessionState.runtimeState.trim()
-        ? liveActiveSessionState.runtimeState.trim()
-        : typeof activeSession.runtime_state === "string" && activeSession.runtime_state.trim()
-          ? activeSession.runtime_state.trim()
-          : "busy";
-      items.push({ label: "Runtime", value: runtimeState, tone: "busy" });
+      items.push({ label: "Runtime", value: activeRuntimeState || "busy", tone: "busy" });
     } else {
       items.push({ label: "Runtime", value: "idle", tone: "success" });
     }
     return items;
-  }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeSession, activeSessionBusy, activeSessionGenerating, visibleActiveWait]);
+  }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeRuntimeState, activeSession, activeSessionBusy, activeSessionGenerating, visibleActiveWait]);
 
   const playReplyBeep = () => {
     try {

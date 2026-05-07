@@ -42,6 +42,7 @@ interface RenderComposerOptions {
     historical?: boolean;
     pending_startup?: boolean;
     runtime_id?: string | null;
+    runtime_state?: string | null;
     transport_state?: string | null;
     reset_required?: boolean;
     model?: string | null;
@@ -57,6 +58,7 @@ interface RenderComposerOptions {
     } | null;
   }>;
   liveBusyBySessionId?: Record<string, boolean>;
+  liveRuntimeStateBySessionId?: Record<string, string | null | undefined>;
   liveContextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
   liveTurnTimingBySessionId?: Record<string, { started_ts?: number; last_event_ts?: number | null } | null>;
   messageEventsBySessionId?: Record<string, Array<Record<string, unknown>>>;
@@ -131,6 +133,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     activeSessionId = "sess-1",
     items = [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
     liveBusyBySessionId = {},
+    liveRuntimeStateBySessionId = {},
     liveContextUsageBySessionId = {},
     liveTurnTimingBySessionId = {},
     messageEventsBySessionId = {},
@@ -151,6 +154,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
       requestsBySessionId: {},
       requestVersionsBySessionId: {},
       busyBySessionId: liveBusyBySessionId,
+      runtimeStateBySessionId: liveRuntimeStateBySessionId,
       loadingBySessionId: {},
       contextUsageBySessionId: liveContextUsageBySessionId,
       turnTimingBySessionId: liveTurnTimingBySessionId,
@@ -862,6 +866,52 @@ describe("Composer", () => {
     renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
       liveBusyBySessionId: { "sess-1": false },
+    });
+    const composerRoot = getRoot();
+
+    expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+  });
+
+  it("does not show cancel-loop for a terminal runtime with stale live busy", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "codex", busy: false, runtime_state: "failed" }],
+      liveBusyBySessionId: { "sess-1": true },
+    });
+    const composerRoot = getRoot();
+
+    expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+  });
+
+  it("does not show cancel-loop for an ended runtime with stale live busy", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "codex", busy: false, runtime_state: "ended" }],
+      liveBusyBySessionId: { "sess-1": true },
+    });
+    const composerRoot = getRoot();
+
+    expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+  });
+
+  it("does not show cancel-loop when live runtime is terminal before the session list refreshes", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "codex", busy: true, runtime_state: "turn_starting" }],
+      liveBusyBySessionId: { "sess-1": true },
+      liveRuntimeStateBySessionId: { "sess-1": "failed" },
+    });
+    const composerRoot = getRoot();
+
+    expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+  });
+
+  it("does not show cancel-loop when live runtime ended before the session list refreshes", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "codex", busy: true, runtime_state: "turn_starting" }],
+      liveBusyBySessionId: { "sess-1": true },
+      liveRuntimeStateBySessionId: { "sess-1": "ended" },
     });
     const composerRoot = getRoot();
 

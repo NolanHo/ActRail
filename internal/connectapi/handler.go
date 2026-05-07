@@ -207,8 +207,10 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	span.AddEvent("connect.request.decoded", trace.WithAttributes(
-		attribute.String("sessions.group_key", firstString(body.GroupKey, body.GroupKeyRaw)),
-		attribute.String("sessions.agent_backend", firstString(body.AgentBackend, body.AgentBackendRaw)),
+		attribute.Bool("sessions.group_key_filter", firstString(body.GroupKey, body.GroupKeyRaw) != ""),
+		attribute.Bool("sessions.agent_backend_filter", firstString(body.AgentBackend, body.AgentBackendRaw) != ""),
+		attribute.Bool("sessions.cwd_filter", strings.TrimSpace(body.CWD) != ""),
+		attribute.Bool("sessions.title_filter", strings.TrimSpace(body.Title) != ""),
 		attribute.Int("sessions.limit", body.Limit),
 	))
 	payload, err := h.controller.ListSessions(req.Context(), app.ListSessionsRequest{

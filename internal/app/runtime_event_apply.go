@@ -23,6 +23,10 @@ func (s *Stub) applyPIEvents(sessionID session.SessionID, events []pi.Event) err
 
 func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 	s.messageCache.Invalidate(sessionID)
+	if !s.codexRuntimeEventInMainThread(sessionID, event) && !codexSubagentMessageEvent(event) {
+		s.emitSessionState(sessionID)
+		return nil
+	}
 	if event.Kind == pi.EventKindMessageDelta || event.Kind == pi.EventKindTool || event.Kind == pi.EventKindUIRequest || (event.Kind == pi.EventKindMessage && event.Message != nil && event.Message.Role == pi.MessageRoleAssistant && event.Message.ToolCallCount > 0) {
 		if err := s.markRuntimeActiveFromPIEvent(sessionID); err != nil {
 			return err
@@ -45,6 +49,16 @@ func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 		return s.applyPIBoundary(sessionID, event)
 	}
 	return nil
+}
+
+func codexSubagentMessageEvent(event pi.Event) bool {
+	if strings.TrimSpace(event.RawType) != "item/completed" || event.Message == nil {
+		return false
+	}
+	if strings.TrimSpace(event.Message.StopReason) != "" {
+		return false
+	}
+	return event.Message.Role == pi.MessageRoleUser || event.Message.Role == pi.MessageRoleAssistant
 }
 
 func (s *Stub) markRuntimeActiveFromPIEvent(sessionID session.SessionID) error {
@@ -446,6 +460,15 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 	record, ok := s.registry.Lookup(sessionID)
 	if !ok {
 		return nil
+	}
+	if record.identity.Backend() == session.BackendCodex {
+		switch event.Boundary.Kind {
+		case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
+			_, _, err := s.registry.DiscardPartialAssistantTurn(sessionID)
+			return err
+		default:
+			return nil
+		}
 	}
 	piRPCSession := record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC
 	if record.identity.Backend() == session.BackendPI && !piRPCSession {

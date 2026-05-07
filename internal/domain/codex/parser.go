@@ -57,10 +57,12 @@ type threadStatusChangedParams struct {
 }
 
 type turnEnvelope struct {
-	Turn struct {
-		ID     string `json:"id"`
-		Status any    `json:"status"`
-		Error  any    `json:"error"`
+	ThreadID string `json:"threadId"`
+	Turn     struct {
+		ID       string `json:"id"`
+		ThreadID string `json:"threadId"`
+		Status   any    `json:"status"`
+		Error    any    `json:"error"`
 	} `json:"turn"`
 }
 
@@ -118,11 +120,14 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 				return Projection{}, true
 			}
 			turnID := strings.TrimSpace(params.Turn.ID)
+			threadID := turnEnvelopeThreadID(params)
 			projection := Projection{
-				TurnID: turnID,
+				ThreadID: threadID,
+				TurnID:   turnID,
 				Events: []runtimeevent.Event{{
 					Kind:     runtimeevent.EventKindBoundary,
 					RawType:  line.Method,
+					ThreadID: threadID,
 					TurnID:   turnID,
 					Boundary: &runtimeevent.Boundary{Kind: runtimeevent.BoundaryKindTurnStarted},
 				}},
@@ -139,20 +144,22 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 				return Projection{}, true
 			}
 			turnID := strings.TrimSpace(params.Turn.ID)
+			threadID := turnEnvelopeThreadID(params)
 			events := []runtimeevent.Event{{
-				Kind:    runtimeevent.EventKindBoundary,
-				RawType: line.Method,
-				TurnID:  turnID,
+				Kind:     runtimeevent.EventKindBoundary,
+				RawType:  line.Method,
+				ThreadID: threadID,
+				TurnID:   turnID,
 				Boundary: &runtimeevent.Boundary{
 					Kind:       runtimeevent.BoundaryKindTurnCompleted,
 					CommitLike: true,
 					Reason:     "turn_end",
 				},
 			}}
-			if errEvent := turnErrorEvent(line.Method, line.Params, turnID); errEvent != nil {
+			if errEvent := turnErrorEvent(line.Method, line.Params, threadID, turnID); errEvent != nil {
 				events = append([]runtimeevent.Event{*errEvent}, events...)
 			}
-			projection := Projection{ClearTurn: true, TurnID: turnID, Events: events}
+			projection := Projection{ClearTurn: true, ThreadID: threadID, TurnID: turnID, Events: events}
 			busy := false
 			projection.Busy = &busy
 			if timing := turnTiming(line.Params); timing != nil {
@@ -204,17 +211,18 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 			if usage == nil {
 				return Projection{}, true
 			}
-			return Projection{Usage: usage}, true
+			return Projection{ThreadID: threadIDFromRawParams(line.Params), Usage: usage}, true
 		case "model/rerouted":
 			var params map[string]any
 			if err := json.Unmarshal(line.Params, &params); err != nil {
 				return Projection{}, true
 			}
 			toModel := strings.TrimSpace(stringValue(params["toModel"]))
+			threadID := strings.TrimSpace(stringValue(params["threadId"]))
 			message := strings.TrimSpace(fmt.Sprintf("Codex rerouted model from %s to %s", stringValue(params["fromModel"]), toModel))
-			projection := Projection{Model: toModel}
+			projection := Projection{ThreadID: threadID, Model: toModel}
 			if toModel != "" {
-				projection.Events = []runtimeevent.Event{{Kind: runtimeevent.EventKindMessage, RawType: line.Method, TurnID: strings.TrimSpace(stringValue(params["turnId"])), Message: &runtimeevent.Message{Role: runtimeevent.MessageRoleAssistant, Text: message, StopReason: "status"}}}
+				projection.Events = []runtimeevent.Event{{Kind: runtimeevent.EventKindMessage, RawType: line.Method, ThreadID: threadID, TurnID: strings.TrimSpace(stringValue(params["turnId"])), Message: &runtimeevent.Message{Role: runtimeevent.MessageRoleAssistant, Text: message, StopReason: "status"}}}
 			}
 			return projection, true
 		case "error", "warning", "guardianWarning", "guardian/warning", "configWarning", "deprecationNotice", "thread/realtime/error":
@@ -243,11 +251,26 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 		}
 		var turn turnEnvelope
 		if err := json.Unmarshal(line.Result, &turn); err == nil && strings.TrimSpace(turn.Turn.ID) != "" {
-			return Projection{TurnID: strings.TrimSpace(turn.Turn.ID)}, true
+			return Projection{ThreadID: turnEnvelopeThreadID(turn), TurnID: strings.TrimSpace(turn.Turn.ID)}, true
 		}
 		return Projection{Initialized: true}, true
 	}
 	return Projection{}, false
+}
+
+func turnEnvelopeThreadID(params turnEnvelope) string {
+	if threadID := strings.TrimSpace(params.ThreadID); threadID != "" {
+		return threadID
+	}
+	return strings.TrimSpace(params.Turn.ThreadID)
+}
+
+func threadIDFromRawParams(raw json.RawMessage) string {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(stringValue(params["threadId"]))
 }
 
 func itemEvents(method string, raw json.RawMessage, completed bool) []runtimeevent.Event {
@@ -494,10 +517,11 @@ func outputDeltaEvent(method string, raw json.RawMessage) *runtimeevent.Event {
 		name = "mcpToolCall"
 	}
 	return &runtimeevent.Event{
-		Kind:    runtimeevent.EventKindTool,
-		RawType: method,
-		TurnID:  strings.TrimSpace(stringValue(params["turnId"])),
-		Tool:    &runtimeevent.ToolEvent{CallID: itemID, Name: name, Text: text, Result: true},
+		Kind:     runtimeevent.EventKindTool,
+		RawType:  method,
+		ThreadID: strings.TrimSpace(stringValue(params["threadId"])),
+		TurnID:   strings.TrimSpace(stringValue(params["turnId"])),
+		Tool:     &runtimeevent.ToolEvent{CallID: itemID, Name: name, Text: text, Result: true},
 	}
 }
 
@@ -551,11 +575,12 @@ func diagnosticEvent(method string, raw json.RawMessage) *runtimeevent.Event {
 		itemID = strings.TrimSpace(stringValue(params["requestId"]))
 	}
 	return &runtimeevent.Event{
-		Kind:    runtimeevent.EventKindError,
-		RawType: method,
-		RawID:   itemID,
-		TurnID:  turnID,
-		Error:   &runtimeevent.ErrorMessage{Message: message, Source: "codex_app_server", StopReason: method},
+		Kind:     runtimeevent.EventKindError,
+		RawType:  method,
+		RawID:    itemID,
+		ThreadID: strings.TrimSpace(stringValue(params["threadId"])),
+		TurnID:   turnID,
+		Error:    &runtimeevent.ErrorMessage{Message: message, Source: "codex_app_server", StopReason: method},
 	}
 }
 
@@ -578,7 +603,7 @@ func diagnosticMessage(params map[string]any) string {
 	return jsonSummary(params)
 }
 
-func turnErrorEvent(method string, raw json.RawMessage, turnID string) *runtimeevent.Event {
+func turnErrorEvent(method string, raw json.RawMessage, threadID, turnID string) *runtimeevent.Event {
 	var params map[string]any
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil
@@ -599,7 +624,7 @@ func turnErrorEvent(method string, raw json.RawMessage, turnID string) *runtimee
 	} else if text := strings.TrimSpace(stringValue(turn["error"])); text != "" {
 		message = text
 	}
-	return &runtimeevent.Event{Kind: runtimeevent.EventKindError, RawType: method, TurnID: turnID, Error: &runtimeevent.ErrorMessage{Message: message, Source: "codex_app_server", StopReason: status}}
+	return &runtimeevent.Event{Kind: runtimeevent.EventKindError, RawType: method, ThreadID: strings.TrimSpace(threadID), TurnID: turnID, Error: &runtimeevent.ErrorMessage{Message: message, Source: "codex_app_server", StopReason: status}}
 }
 
 func turnTiming(raw json.RawMessage) *TurnTiming {

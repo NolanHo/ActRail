@@ -98,9 +98,9 @@ function sessionBackendUnavailable(session: SessionSummary | null) {
 }
 
 function sessionBackendUnavailableLabel(session: SessionSummary | null) {
-  const state = String(session?.transport_state || "").trim();
-  if (session?.reset_required === true) {
-    return "Session backend requires restart before sending.";
+	const state = String(session?.transport_state || "").trim();
+	if (session?.reset_required === true) {
+		return "Session backend requires restart before sending.";
   }
   if (state === "ended") {
     return "Session backend has ended. Restart or create a new session before sending.";
@@ -111,7 +111,13 @@ function sessionBackendUnavailableLabel(session: SessionSummary | null) {
   if (state === "failed") {
     return "Session backend failed to start. Restart or create a new session before sending.";
   }
-  return "Session backend is unavailable.";
+	return "Session backend is unavailable.";
+}
+
+function sessionRuntimeTerminal(session: SessionSummary | null) {
+	const state = String(session?.runtime_state || "").trim();
+
+	return state === "failed" || state === "ended";
 }
 
 const MOBILE_COMPOSER_QUERY = "(max-width: 880px)";
@@ -348,14 +354,15 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const activeSession = useSessionsStoreSelector(
     (state) => state.items.find((session) => session.session_id === state.activeSessionId) ?? null,
   );
-  const { hasActiveSessionLiveBusy, activeSessionLiveBusy } = useLiveSessionStoreSelector((state) => {
+  const { hasActiveSessionLiveBusy, activeSessionLiveBusy, activeSessionLiveRuntimeState } = useLiveSessionStoreSelector((state) => {
     if (!activeSessionId) {
-      return { hasActiveSessionLiveBusy: false, activeSessionLiveBusy: false };
+      return { hasActiveSessionLiveBusy: false, activeSessionLiveBusy: false, activeSessionLiveRuntimeState: undefined };
     }
 
     return {
       hasActiveSessionLiveBusy: Object.prototype.hasOwnProperty.call(state.busyBySessionId ?? {}, activeSessionId),
       activeSessionLiveBusy: state.busyBySessionId?.[activeSessionId] === true,
+      activeSessionLiveRuntimeState: state.runtimeStateBySessionId?.[activeSessionId],
     };
   }, shallowEqual);
   const sending = useComposerStoreSelector((state) => state.sending);
@@ -388,14 +395,24 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const activeSessionPending = activeSession?.pending_startup === true;
   const visibleActiveWait = activeWait ?? activeSession?.active_wait ?? null;
   const activeSessionBackendUnavailable = sessionBackendUnavailable(activeSession);
-  const supervisorEnabled = activeSession?.supervisor?.enabled === true;
-  const supervisorBlockReason = "Supervisor is controlling this session. Disable Supervisor to send manually.";
-  const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(visibleActiveWait) || supervisorEnabled;
-  const activeSessionSendBlockReason = supervisorEnabled ? supervisorBlockReason : visibleActiveWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : activeSessionPending ? "Session runtime is starting." : "";
-  const activeSessionBusy = Boolean(activeSession && (hasActiveSessionLiveBusy ? activeSessionLiveBusy : activeSession.busy === true));
-  const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
-    ? Math.max(0, Math.round(activeSession.queue_len))
-    : 0;
+	const supervisorEnabled = activeSession?.supervisor?.enabled === true;
+	const supervisorBlockReason = "Supervisor is controlling this session. Disable Supervisor to send manually.";
+	const activeSessionSendBlocked = activeSessionPending || activeSessionBackendUnavailable || Boolean(visibleActiveWait) || supervisorEnabled;
+	const activeSessionSendBlockReason = supervisorEnabled ? supervisorBlockReason : visibleActiveWait ? "Answer the active wait in Details before sending a normal message." : activeSessionBackendUnavailable ? sessionBackendUnavailableLabel(activeSession) : activeSessionPending ? "Session runtime is starting." : "";
+	const listedRuntimeState = typeof activeSession?.runtime_state === "string" ? activeSession.runtime_state.trim() : "";
+	const liveRuntimeState = typeof activeSessionLiveRuntimeState === "string" ? activeSessionLiveRuntimeState.trim() : "";
+	const activeSessionRuntimeState = listedRuntimeState === "failed" || listedRuntimeState === "ended"
+		? listedRuntimeState
+		: liveRuntimeState || listedRuntimeState;
+	const activeSessionTerminalRuntime = sessionRuntimeTerminal(activeSession) || activeSessionRuntimeState === "failed" || activeSessionRuntimeState === "ended";
+	const activeSessionBusy = Boolean(
+		activeSession
+		&& !activeSessionTerminalRuntime
+		&& (hasActiveSessionLiveBusy ? activeSessionLiveBusy : activeSession.busy === true),
+	);
+	const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
+		? Math.max(0, Math.round(activeSession.queue_len))
+		: 0;
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsCodex = activeSession?.agent_backend === "codex";
   const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;

@@ -247,6 +247,17 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 	if record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 		s.holdPIRPCIdle(req.SessionID, record.runtime.helper.generationID)
 	}
+	if record.identity.Backend() == session.BackendCodex && record.runtime.protocol == runtimeProtocolCodexRPC {
+		if err := s.syncCodexRuntimeActivity(req.SessionID, "interrupt", true); err != nil {
+			return InterruptResponse{}, err
+		}
+		updated, ok := s.registry.Lookup(req.SessionID)
+		if !ok {
+			return InterruptResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+		}
+		busy, _ := effectiveBusy(updated)
+		return InterruptResponse{Busy: busy, Queue: queueSnapshotFromState(updated.state)}, nil
+	}
 	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
 		return InterruptResponse{}, err
 	}

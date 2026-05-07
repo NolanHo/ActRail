@@ -107,6 +107,19 @@ func (s *Stub) noteCodexTurnID(sessionID session.SessionID, turnID string) {
 	_ = s.syncCodexRuntimeActivity(sessionID, "turn_started", changed)
 }
 
+func (s *Stub) flushCodexPendingInterrupt(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex || record.runtime.protocol != runtimeProtocolCodexRPC {
+		return
+	}
+	if err := record.runtime.FlushCodexPendingInterrupt(context.Background()); err != nil {
+		_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_pending_interrupt", err)
+	}
+}
+
 func (s *Stub) clearCodexTurnID(sessionID session.SessionID, turnID string) {
 	changed := false
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
@@ -144,6 +157,7 @@ func (s *Stub) syncCodexRuntimeActivity(sessionID session.SessionID, cause strin
 	visible := codexVisibleActivity(record)
 	registryBusy := codexRegistryBusy(record, visible.Busy)
 	rawBusy := record.state.Busy()
+	queueLen := record.state.Queue().Len()
 
 	tracer := otel.Tracer("actrail/app")
 	ctx, span := tracer.Start(context.Background(), "app.codexRuntime.sync")
@@ -155,6 +169,7 @@ func (s *Stub) syncCodexRuntimeActivity(sessionID session.SessionID, cause strin
 		attribute.Bool("codex.runtime.busy", visible.Busy),
 		attribute.Bool("session.state.busy", rawBusy),
 		attribute.Bool("session.state.target_busy", registryBusy),
+		attribute.Int("session.queue.len", queueLen),
 		attribute.String("codex.runtime.cause", strings.TrimSpace(cause)),
 	)
 	defer span.End()
@@ -174,7 +189,7 @@ func (s *Stub) syncCodexRuntimeActivity(sessionID session.SessionID, cause strin
 	if forceEmit {
 		s.emitSessionState(sessionID)
 	}
-	if !updatedStateBusy {
+	if !updatedStateBusy && (rawBusy || queueLen > 0) {
 		s.scheduleQueuedDispatch(sessionID)
 	}
 	return nil
@@ -260,17 +275,27 @@ func (s *Stub) applyCodexSubagentMessage(sessionID session.SessionID, event pi.E
 }
 
 func (s *Stub) codexRuntimeEventInMainThread(sessionID session.SessionID, event pi.Event) bool {
-	if strings.TrimSpace(event.RawType) != "item/completed" {
-		rawType := strings.TrimSpace(event.RawType)
-		if rawType != "item/agentMessage/delta" && rawType != "item/reasoning/summaryTextDelta" && rawType != "item/reasoning/textDelta" {
-			return true
-		}
+	if strings.TrimSpace(event.ThreadID) != "" {
+		return s.codexThreadIDInMainThread(sessionID, event.ThreadID)
 	}
+	rawType := strings.TrimSpace(event.RawType)
+	if rawType != "item/completed" &&
+		rawType != "item/agentMessage/delta" &&
+		rawType != "item/reasoning/summaryTextDelta" &&
+		rawType != "item/reasoning/textDelta" &&
+		rawType != "turn/started" &&
+		rawType != "turn/completed" {
+		return true
+	}
+	return s.codexThreadIDInMainThread(sessionID, event.ThreadID)
+}
+
+func (s *Stub) codexThreadIDInMainThread(sessionID session.SessionID, threadID string) bool {
 	record, ok := s.registry.Lookup(sessionID)
 	if !ok || record.identity.Backend() != session.BackendCodex {
 		return true
 	}
-	eventThreadID := strings.TrimSpace(event.ThreadID)
+	eventThreadID := strings.TrimSpace(threadID)
 	if eventThreadID == "" {
 		return true
 	}
@@ -299,21 +324,5 @@ func (s *Stub) codexRuntimeUserMessageInMainThread(sessionID session.SessionID, 
 	if event.Message == nil || event.Message.Role != pi.MessageRoleUser {
 		return true
 	}
-	record, ok := s.registry.Lookup(sessionID)
-	if !ok || record.identity.Backend() != session.BackendCodex {
-		return true
-	}
-	eventThreadID := strings.TrimSpace(event.ThreadID)
-	if eventThreadID == "" {
-		return true
-	}
-	if record.runtime.codex == nil {
-		return true
-	}
-	_, mainThreadID, _ := record.runtime.codex.snapshot()
-	mainThreadID = strings.TrimSpace(mainThreadID)
-	if mainThreadID == "" {
-		return true
-	}
-	return eventThreadID == mainThreadID
+	return s.codexThreadIDInMainThread(sessionID, event.ThreadID)
 }

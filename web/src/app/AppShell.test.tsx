@@ -187,6 +187,8 @@ function renderAppShell({
   agentBackend = "pi",
   items,
   liveBusyBySessionId,
+  liveGeneratingBySessionId,
+  liveRuntimeStateBySessionId,
   messages,
   sessionUiSessionId,
   diagnostics = null,
@@ -222,6 +224,8 @@ function renderAppShell({
     reset_required?: boolean;
   }>;
   liveBusyBySessionId?: Record<string, boolean>;
+  liveGeneratingBySessionId?: Record<string, boolean>;
+  liveRuntimeStateBySessionId?: Record<string, string | null | undefined>;
   messages?: Record<string, unknown[]>;
   sessionUiSessionId?: string | null;
   diagnostics?: Record<string, unknown> | null;
@@ -257,12 +261,13 @@ function renderAppShell({
       requestsBySessionId: activeSessionId ? { [activeSessionId]: requests as any[] } : {},
       requestVersionsBySessionId: {},
       busyBySessionId: liveBusyBySessionId ?? Object.fromEntries(sessionItems.map((session) => [session.session_id, session.busy])),
+      generatingBySessionId: liveGeneratingBySessionId ?? {},
       loadingBySessionId: {},
       errorBySessionId: {},
       tokenBySessionId: {},
       contextUsageBySessionId: {},
       turnTimingBySessionId: {},
-      runtimeStateBySessionId: Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state])),
+      runtimeStateBySessionId: liveRuntimeStateBySessionId ?? Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state])),
       runtimeStateReasonBySessionId: Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state_reason])),
     },
     {
@@ -976,6 +981,107 @@ describe("AppShell", () => {
 
     const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
     expect(runtimeChip?.textContent).toContain("turn_starting");
+  });
+
+  it("updates the runtime chip when the live codex phase changes while busy", async () => {
+    const { liveSessionStore } = renderAppShell({
+      items: [{ session_id: "sess-1", alias: "Codex send", agent_backend: "codex", busy: true, runtime_state: "sending" }],
+      liveBusyBySessionId: { "sess-1": true },
+    });
+    await flush();
+
+    const runtimeChip = () => Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip()?.textContent).toContain("sending");
+
+    act(() => {
+      liveSessionStore.setState({
+        runtimeStateBySessionId: { ...liveSessionStore.getState().runtimeStateBySessionId, "sess-1": "turn_starting" },
+      });
+    });
+    await flush();
+
+    expect(runtimeChip()?.textContent).toContain("turn_starting");
+  });
+
+  it("shows a non-busy failed codex runtime phase instead of idle", async () => {
+    renderAppShell({ items: [{ session_id: "sess-1", alias: "Codex failed", agent_backend: "codex", busy: false, runtime_state: "failed" }] });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip?.textContent).toContain("failed");
+    expect(runtimeChip?.textContent).not.toContain("idle");
+  });
+
+  it("prefers terminal session runtime state over stale live runtime state", async () => {
+    renderAppShell({
+      items: [{ session_id: "sess-1", alias: "Codex failed", agent_backend: "codex", busy: false, runtime_state: "failed" }],
+      liveRuntimeStateBySessionId: { "sess-1": "idle" },
+    });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip?.textContent).toContain("failed");
+    expect(runtimeChip?.textContent).not.toContain("idle");
+  });
+
+  it("does not allow stale live busy state to interrupt a terminal codex runtime", async () => {
+    renderAppShell({
+      items: [{ session_id: "sess-1", alias: "Codex failed", agent_backend: "codex", busy: false, runtime_state: "failed" }],
+      liveBusyBySessionId: { "sess-1": true },
+      liveGeneratingBySessionId: { "sess-1": true },
+      liveRuntimeStateBySessionId: { "sess-1": "turn_starting" },
+    });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip?.textContent).toContain("failed");
+    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Cancel current loop")).toBeNull();
+  });
+
+  it("does not allow stale live busy state to interrupt an ended codex runtime", async () => {
+    renderAppShell({
+      items: [{ session_id: "sess-1", alias: "Codex ended", agent_backend: "codex", busy: false, runtime_state: "ended" }],
+      liveBusyBySessionId: { "sess-1": true },
+      liveGeneratingBySessionId: { "sess-1": true },
+      liveRuntimeStateBySessionId: { "sess-1": "turn_starting" },
+    });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip?.textContent).toContain("ended");
+    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Cancel current loop")).toBeNull();
+  });
+
+  it("does not allow stale busy state to interrupt when live runtime is terminal before list refresh", async () => {
+    renderAppShell({
+      items: [{ session_id: "sess-1", alias: "Codex stale", agent_backend: "codex", busy: true, runtime_state: "turn_starting" }],
+      liveBusyBySessionId: { "sess-1": true },
+      liveGeneratingBySessionId: { "sess-1": true },
+      liveRuntimeStateBySessionId: { "sess-1": "failed" },
+    });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip?.textContent).toContain("failed");
+    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Cancel current loop")).toBeNull();
+  });
+
+  it("does not allow stale busy state to interrupt when live runtime ended before list refresh", async () => {
+    renderAppShell({
+      items: [{ session_id: "sess-1", alias: "Codex stale", agent_backend: "codex", busy: true, runtime_state: "turn_starting" }],
+      liveBusyBySessionId: { "sess-1": true },
+      liveGeneratingBySessionId: { "sess-1": true },
+      liveRuntimeStateBySessionId: { "sess-1": "ended" },
+    });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    expect(runtimeChip?.textContent).toContain("ended");
+    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Cancel current loop")).toBeNull();
   });
 
   it("opens runtime settings from the model chip and saves provider model and reasoning effort", async () => {

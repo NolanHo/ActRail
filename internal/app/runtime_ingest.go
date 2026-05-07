@@ -107,13 +107,15 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 	if strings.TrimSpace(projection.codexThreadID) != "" {
 		s.noteCodexThreadID(sessionID, projection.codexThreadID)
 	}
-	if strings.TrimSpace(projection.codexTurnID) != "" {
+	codexMainProjection := s.codexThreadIDInMainThread(sessionID, projection.codexThreadID)
+	if codexMainProjection && !projection.clearCodexTurn && strings.TrimSpace(projection.codexTurnID) != "" {
 		s.noteCodexTurnID(sessionID, projection.codexTurnID)
+		s.flushCodexPendingInterrupt(sessionID)
 	}
-	if projection.clearCodexTurn {
+	if codexMainProjection && projection.clearCodexTurn {
 		s.clearCodexTurnID(sessionID, projection.codexTurnID)
 	}
-	if strings.TrimSpace(projection.model) != "" || strings.TrimSpace(projection.provider) != "" || projection.contextUsage != nil || projection.turnTiming != nil {
+	if codexMainProjection && (strings.TrimSpace(projection.model) != "" || strings.TrimSpace(projection.provider) != "" || projection.contextUsage != nil || projection.turnTiming != nil) {
 		if record, ok, err := s.registry.UpdateRuntimeMetadata(sessionID, projection.model, projection.provider, projection.contextUsage, projection.turnTiming); err == nil && ok {
 			if strings.TrimSpace(projection.model) != "" || strings.TrimSpace(projection.provider) != "" {
 				s.emitSessionState(record.identity.SessionID())
@@ -133,21 +135,9 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 	if err := s.applyPIEvents(sessionID, projection.events); err != nil {
 		return err
 	}
-	if projection.codexBusy != nil {
-		applyBusy := true
-		if strings.TrimSpace(projection.codexThreadID) != "" {
-			record, ok := s.registry.Lookup(sessionID)
-			if ok && record.identity.Backend() == session.BackendCodex && record.runtime.codex != nil {
-				_, mainThreadID, _ := record.runtime.codex.snapshot()
-				if strings.TrimSpace(mainThreadID) != "" && strings.TrimSpace(projection.codexThreadID) != strings.TrimSpace(mainThreadID) {
-					applyBusy = false
-				}
-			}
-		}
-		if applyBusy {
-			if err := s.applyCodexBusy(sessionID, *projection.codexBusy); err != nil {
-				return err
-			}
+	if projection.codexBusy != nil && codexMainProjection {
+		if err := s.applyCodexBusy(sessionID, *projection.codexBusy); err != nil {
+			return err
 		}
 	}
 	for _, event := range projection.waitRequests {

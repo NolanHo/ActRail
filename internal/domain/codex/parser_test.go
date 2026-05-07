@@ -35,6 +35,9 @@ func TestDecodeAppServerLineToolReasoningUsageAndError(t *testing.T) {
 	if len(toolProjection.Events) != 1 || toolProjection.Events[0].Kind != runtimeevent.EventKindTool {
 		t.Fatalf("tool events = %+v, want one tool event", toolProjection.Events)
 	}
+	if toolProjection.Events[0].ThreadID != "thread-codex-2" || toolProjection.Events[0].TurnID != "turn-codex-2" {
+		t.Fatalf("tool event ids = (%q, %q), want thread and turn ids", toolProjection.Events[0].ThreadID, toolProjection.Events[0].TurnID)
+	}
 	tool := toolProjection.Events[0].Tool
 	if tool == nil || tool.Name != "commandExecution" || tool.Text != "ok" || !tool.Result || tool.IsError {
 		t.Fatalf("tool event = %+v, want completed command output without error", tool)
@@ -50,10 +53,16 @@ func TestDecodeAppServerLineToolReasoningUsageAndError(t *testing.T) {
 	if len(reasoningProjection.Events) != 1 || reasoningProjection.Events[0].Message == nil || reasoningProjection.Events[0].Message.StopReason != "reasoning" {
 		t.Fatalf("reasoning event = %+v, want reasoning narration", reasoningProjection.Events)
 	}
+	if reasoningProjection.Events[0].ThreadID != "thread-codex-2" {
+		t.Fatalf("reasoning thread id = %q, want thread-codex-2", reasoningProjection.Events[0].ThreadID)
+	}
 
 	usageProjection, ok := DecodeAppServerLine([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-codex-2","turnId":"turn-codex-2","tokenUsage":{"total":{"totalTokens":2048,"inputTokens":1024,"cachedInputTokens":0,"outputTokens":512,"reasoningOutputTokens":512},"modelContextWindow":8192}}}`))
 	if !ok {
 		t.Fatal("DecodeAppServerLine(usage) ok = false")
+	}
+	if usageProjection.ThreadID != "thread-codex-2" {
+		t.Fatalf("usage thread id = %q, want thread-codex-2", usageProjection.ThreadID)
 	}
 	if usageProjection.Usage == nil || usageProjection.Usage.UsedTokens == nil || *usageProjection.Usage.UsedTokens != 2048 || usageProjection.Usage.TotalTokens == nil || *usageProjection.Usage.TotalTokens != 8192 || usageProjection.Usage.PercentUsed == nil || *usageProjection.Usage.PercentUsed != 25 {
 		t.Fatalf("usage = %+v, want 2048/8192/25", usageProjection.Usage)
@@ -66,6 +75,9 @@ func TestDecodeAppServerLineToolReasoningUsageAndError(t *testing.T) {
 	if len(errorProjection.Events) != 1 || errorProjection.Events[0].Error == nil || errorProjection.Events[0].Error.Message != "Codex warning surfaced" {
 		t.Fatalf("error event = %+v, want diagnostic error", errorProjection.Events)
 	}
+	if errorProjection.Events[0].ThreadID != "thread-codex-2" {
+		t.Fatalf("error thread id = %q, want thread-codex-2", errorProjection.Events[0].ThreadID)
+	}
 }
 
 func TestDecodeAppServerLineTurnTimingAndCompletion(t *testing.T) {
@@ -75,6 +87,9 @@ func TestDecodeAppServerLineTurnTimingAndCompletion(t *testing.T) {
 	}
 	if started.Timing == nil || started.Timing.StartedTS != 1760000001 {
 		t.Fatalf("started timing = %+v, want normalized started timestamp", started.Timing)
+	}
+	if started.ThreadID != "thread-codex-2" || started.Events[0].ThreadID != "thread-codex-2" {
+		t.Fatalf("started thread ids = (%q, %q), want thread-codex-2", started.ThreadID, started.Events[0].ThreadID)
 	}
 	if started.Busy == nil || !*started.Busy || len(started.Events) != 1 || started.Events[0].Boundary == nil || started.Events[0].Boundary.Kind != runtimeevent.BoundaryKindTurnStarted {
 		t.Fatalf("started projection = %+v, want busy turn boundary", started)
@@ -86,6 +101,9 @@ func TestDecodeAppServerLineTurnTimingAndCompletion(t *testing.T) {
 	}
 	if !completed.ClearTurn || completed.Busy == nil || *completed.Busy {
 		t.Fatalf("completed busy/clear = (%v, %v), want false/true", completed.Busy, completed.ClearTurn)
+	}
+	if completed.ThreadID != "thread-codex-2" || completed.Events[0].ThreadID != "thread-codex-2" {
+		t.Fatalf("completed thread ids = (%q, %q), want thread-codex-2", completed.ThreadID, completed.Events[0].ThreadID)
 	}
 	if completed.Timing == nil || completed.Timing.LastEventTS == nil || *completed.Timing.LastEventTS != 1760000002 {
 		t.Fatalf("completed timing = %+v, want last event timestamp", completed.Timing)

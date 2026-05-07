@@ -73,6 +73,60 @@ func TestCodexRuntimeStateTracksActiveTurn(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeStateDefersInterruptUntilTurnID(t *testing.T) {
+	state := newCodexRuntimeState(session.BackendCodex)
+	accepted, _ := state.setThreadID("thread-1")
+	if !accepted {
+		t.Fatal("setThreadID(thread-1) = false, want true")
+	}
+	state.transition(codexRuntimePhaseTurnStarting, "codex_turn_starting")
+	state.requestInterrupt()
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseInterrupting || !activity.Busy {
+		t.Fatalf("activity after pending interrupt = %+v, want interrupting busy", activity)
+	}
+	state.clearActiveTurnID("")
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseInterrupting || !activity.Busy {
+		t.Fatalf("activity after empty clear during pending interrupt = %+v, want interrupting busy", activity)
+	}
+	state.applyProtocolBusy(false)
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseInterrupting || !activity.Busy {
+		t.Fatalf("activity after idle protocol busy during pending interrupt = %+v, want interrupting busy", activity)
+	}
+	if _, _, ok := state.pendingInterruptCommand(); ok {
+		t.Fatal("pendingInterruptCommand() ok = true before turn id, want false")
+	}
+	state.setActiveTurnID("turn-1")
+	threadID, turnID, ok := state.pendingInterruptCommand()
+	if !ok || threadID != "thread-1" || turnID != "turn-1" {
+		t.Fatalf("pendingInterruptCommand() = (%q, %q, %v), want thread-1 turn-1 true", threadID, turnID, ok)
+	}
+	state.markInterruptSent("turn-1")
+	if _, _, ok := state.pendingInterruptCommand(); ok {
+		t.Fatal("pendingInterruptCommand() ok = true after mark sent, want false")
+	}
+	state.clearActiveTurnID("")
+	if !state.pendingInterrupt() {
+		t.Fatal("pendingInterrupt() = false after empty clear with active interrupted turn, want true")
+	}
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseInterrupting || !activity.Busy {
+		t.Fatalf("activity after empty clear with active interrupted turn = %+v, want interrupting busy", activity)
+	}
+	state.applyProtocolBusy(false)
+	if !state.pendingInterrupt() {
+		t.Fatal("pendingInterrupt() = false after protocol idle with active interrupted turn, want true")
+	}
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseInterrupting || !activity.Busy {
+		t.Fatalf("activity after protocol idle with active interrupted turn = %+v, want interrupting busy", activity)
+	}
+	state.clearActiveTurnID("turn-1")
+	if state.pendingInterrupt() {
+		t.Fatal("pendingInterrupt() = true after clearing turn, want false")
+	}
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseIdle || activity.Busy {
+		t.Fatalf("activity after clearing interrupted turn = %+v, want idle", activity)
+	}
+}
+
 func TestCodexRuntimeStateTransitionsControlAndProtocolPhases(t *testing.T) {
 	state := newCodexRuntimeState(session.BackendCodex)
 	activity, changed := state.transition(codexRuntimePhaseSending, "codex_sending")

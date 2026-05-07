@@ -1337,6 +1337,96 @@ func TestCodexBusyIgnoresStatusFromNonMainThread(t *testing.T) {
 	_ = stdoutW.Close()
 }
 
+func TestCodexBusyIgnoresTurnLifecycleFromNonMainThread(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-main\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.RuntimeState == string(codexRuntimePhaseIdle)
+	})
+
+	_, _ = stdoutW.Write([]byte(
+		"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-subagent\",\"turn\":{\"id\":\"turn-codex-subagent\",\"status\":\"inProgress\",\"error\":null}}}" + "\n" +
+			"{\"method\":\"item/started\",\"params\":{\"threadId\":\"thread-codex-subagent\",\"turnId\":\"turn-codex-subagent\",\"item\":{\"type\":\"commandExecution\",\"id\":\"sub-cmd-1\",\"command\":\"go test ./subagent\",\"status\":\"inProgress\"}}}" + "\n" +
+			"{\"method\":\"item/reasoning/summaryTextDelta\",\"params\":{\"threadId\":\"thread-codex-subagent\",\"turnId\":\"turn-codex-subagent\",\"itemId\":\"sub-reason-1\",\"delta\":\"subagent reasoning\",\"summaryIndex\":0}}" + "\n" +
+			"{\"method\":\"warning\",\"params\":{\"message\":\"subagent warning\",\"threadId\":\"thread-codex-subagent\",\"turnId\":\"turn-codex-subagent\"}}" + "\n" +
+			"{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-codex-subagent\",\"turnId\":\"turn-codex-subagent\",\"tokenUsage\":{\"total\":{\"totalTokens\":4096,\"inputTokens\":2048,\"outputTokens\":2048},\"modelContextWindow\":8192}}}" + "\n" +
+			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-subagent\",\"turn\":{\"id\":\"turn-codex-subagent\",\"status\":\"completed\",\"error\":null}}}" + "\n"))
+	time.Sleep(50 * time.Millisecond)
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) {
+		t.Fatalf("SessionState() after subagent turn lifecycle = %+v, want idle not busy", state)
+	}
+	if state.ContextUsage != nil {
+		t.Fatalf("SessionState().ContextUsage = %+v, want nil after subagent usage", state.ContextUsage)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 0 {
+		t.Fatalf("SessionMessages() = %+v, want no top-level tool/reasoning/diagnostic from subagent", messages.Items)
+	}
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok || record.runtime.codex == nil {
+		t.Fatalf("Lookup(%q) missing codex runtime", sessionID)
+	}
+	_, threadID, turnID := record.runtime.codex.snapshot()
+	if threadID != "thread-codex-main" || turnID != "" {
+		t.Fatalf("codex runtime ids = (thread=%q turn=%q), want main thread with no active turn", threadID, turnID)
+	}
+	_ = stdoutW.Close()
+}
+
+func TestCodexErrorIgnoresFailedTurnFromNonMainThread(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-main\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.RuntimeState == string(codexRuntimePhaseIdle)
+	})
+
+	_, _ = stdoutW.Write([]byte("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-subagent\",\"turn\":{\"id\":\"turn-codex-subagent\",\"status\":\"failed\",\"error\":{\"message\":\"subagent failed\"}}}}" + "\n"))
+	time.Sleep(50 * time.Millisecond)
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 0 {
+		t.Fatalf("SessionMessages() = %+v, want no top-level error from subagent failed turn", messages.Items)
+	}
+	_ = stdoutW.Close()
+}
+
 func TestCodexSendDoesNotWaitForTurnStarted(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()
@@ -1387,6 +1477,119 @@ func TestCodexSendDoesNotWaitForTurnStarted(t *testing.T) {
 	writes := strings.Join(pty.Writes(), "\n")
 	if !strings.Contains(writes, `"method":"turn/start"`) || !strings.Contains(writes, "Do not block on turn started") {
 		t.Fatalf("runtime writes = %q, want turn/start with prompt", writes)
+	}
+	_ = stdoutW.Close()
+}
+
+func TestCodexInterruptDefersUntilTurnStarts(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	pty := &recordingPTY{reader: stdoutR}
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetPTY(pty)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+
+	waitForAppCondition(t, func() bool {
+		return strings.Contains(strings.Join(pty.Writes(), "\n"), `"method":"initialize"`)
+	})
+	_, _ = stdoutW.Write([]byte("{\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}\n"))
+	waitForAppCondition(t, func() bool {
+		return strings.Contains(strings.Join(pty.Writes(), "\n"), `"method":"thread/start"`)
+	})
+	_, _ = stdoutW.Write([]byte("{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-interrupt\",\"status\":{\"type\":\"idle\"}}}}\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.RuntimeState == string(codexRuntimePhaseIdle)
+	})
+
+	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "start then interrupt"}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy && state.RuntimeState == string(codexRuntimePhaseTurnStarting)
+	})
+
+	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "queued after interrupt"}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	interrupted, err := svc.Interrupt(context.Background(), InterruptRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("Interrupt() error = %v", err)
+	}
+	if !interrupted.Busy {
+		t.Fatalf("Interrupt() = %+v, want busy true while turn interrupt is pending", interrupted)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseInterrupting) {
+		t.Fatalf("SessionState() after Interrupt = %+v, want interrupting busy", state)
+	}
+	time.Sleep(codexRuntimeBootstrapTimeout + 50*time.Millisecond)
+	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() after watchdog error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseInterrupting) {
+		t.Fatalf("SessionState() after watchdog = %+v, want still interrupting busy", state)
+	}
+	if writes := strings.Join(pty.Writes(), "\n"); strings.Contains(writes, "queued after interrupt") {
+		t.Fatalf("runtime writes = %q, queued prompt dispatched before interrupted turn settled", writes)
+	}
+
+	_, _ = stdoutW.Write([]byte(
+		"{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-codex-interrupt\",\"status\":{\"type\":\"idle\"}}}" + "\n" +
+			"{\"id\":\"thread-read-idle\",\"result\":{\"thread\":{\"id\":\"thread-codex-interrupt\",\"status\":{\"type\":\"idle\"},\"turns\":[]}}}" + "\n"))
+	time.Sleep(50 * time.Millisecond)
+	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() after idle projection error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseInterrupting) {
+		t.Fatalf("SessionState() after idle projection = %+v, want still interrupting busy", state)
+	}
+	if writes := strings.Join(pty.Writes(), "\n"); strings.Contains(writes, "queued after interrupt") {
+		t.Fatalf("runtime writes = %q, queued prompt dispatched after idle projection before turn started", writes)
+	}
+
+	_, _ = stdoutW.Write([]byte("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-interrupt\",\"turn\":{\"id\":\"turn-codex-interrupt\",\"status\":\"inProgress\",\"error\":null}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		writes := strings.Join(pty.Writes(), "\n")
+		return strings.Contains(writes, `"method":"turn/interrupt"`) && strings.Contains(writes, `"turnId":"turn-codex-interrupt"`)
+	})
+	_, _ = stdoutW.Write([]byte(
+		"{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-codex-interrupt\",\"status\":{\"type\":\"idle\"}}}" + "\n" +
+			"{\"id\":\"thread-read-interrupting\",\"result\":{\"thread\":{\"id\":\"thread-codex-interrupt\",\"status\":{\"type\":\"idle\"},\"turns\":[]}}}" + "\n"))
+	time.Sleep(50 * time.Millisecond)
+	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() after sent interrupt idle projection error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseInterrupting) {
+		t.Fatalf("SessionState() after sent interrupt idle projection = %+v, want still interrupting busy", state)
+	}
+	if writes := strings.Join(pty.Writes(), "\n"); strings.Contains(writes, "queued after interrupt") {
+		t.Fatalf("runtime writes = %q, queued prompt dispatched after sent interrupt before turn completed", writes)
+	}
+	_, _ = stdoutW.Write([]byte("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-interrupt\",\"turn\":{\"id\":\"turn-codex-interrupt\",\"status\":\"aborted\",\"error\":null}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		return strings.Contains(strings.Join(pty.Writes(), "\n"), "queued after interrupt")
+	})
+	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() after queued dispatch error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseTurnStarting) {
+		t.Fatalf("SessionState() after queued dispatch = %+v, want queued turn_starting busy", state)
 	}
 	_ = stdoutW.Close()
 }
