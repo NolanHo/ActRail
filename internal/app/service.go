@@ -89,6 +89,8 @@ type Stub struct {
 	teams               *teamRegistry
 	runtimeAgentMu      sync.RWMutex
 	runtimeAgentRunning map[session.SessionID]bool
+	codexOutboundMu     sync.Mutex
+	codexOutboundPrompt map[session.SessionID]string
 	piRPCStateMu        sync.Mutex
 	piRPCStates         map[session.SessionID]piRPCStateCache
 	piResumePaths       piResumePathCache
@@ -133,6 +135,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		schedulerStore:      newMemorySchedulerStore(),
 		teams:               newTeamRegistry(now),
 		runtimeAgentRunning: map[session.SessionID]bool{},
+		codexOutboundPrompt: map[session.SessionID]string{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
 		piResumePaths:       piResumePathCache{},
 		piModels:            piModelCache{},

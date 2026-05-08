@@ -123,6 +123,10 @@ func (s *Stub) send(ctx context.Context, req SendRequest, followUp bool) (SendRe
 			}
 		}
 		if record.runtime.protocol == runtimeProtocolCodexRPC {
+			s.trackCodexOutboundPrompt(req.SessionID, text)
+			defer s.clearCodexOutboundPrompt(req.SessionID, text)
+		}
+		if record.runtime.protocol == runtimeProtocolCodexRPC {
 			_ = s.transitionCodexRuntime(req.SessionID, codexRuntimePhaseSending, "codex_sending", "send")
 		}
 		if err := sendRuntimePrompt(ctx, text, func() bool {

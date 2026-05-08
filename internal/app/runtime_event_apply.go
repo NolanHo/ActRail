@@ -157,6 +157,10 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 			s.emitSessionState(sessionID)
 			return nil
 		}
+		if s.codexOutboundPromptMatches(sessionID, event.Message.Text) {
+			s.emitSessionState(sessionID)
+			return nil
+		}
 		if s.duplicateRuntimeUserMessage(sessionID, event.Message.Text) {
 			s.emitSessionState(sessionID)
 			return nil
