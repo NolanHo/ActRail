@@ -35,6 +35,12 @@ describe("app-shell utils", () => {
     expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 
+  it("defaults to dark theme when no preference is persisted", () => {
+    localStorage.removeItem("actrail.theme");
+
+    expect(readThemeMode()).toBe("dark");
+  });
+
   it("merges voice settings into the default nested shape", () => {
     expect(mergeVoiceSettings(null).audio?.stream_url).toBe("/api/audio/live.m3u8");
   });

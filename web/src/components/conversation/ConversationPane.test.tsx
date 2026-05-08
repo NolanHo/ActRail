@@ -38,6 +38,25 @@ function createMutableStore<TState extends object, TActions extends Record<strin
   };
 }
 
+function expandMachineTrace(root: HTMLElement, index = 0): HTMLButtonElement | null {
+  const buttons = root.querySelectorAll<HTMLButtonElement>("[data-testid='machine-trace-summary']");
+  const button = buttons[index] ?? null;
+  act(() => {
+    button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  return button;
+}
+
+function expandAllMachineTraces(root: HTMLElement): HTMLButtonElement[] {
+  const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-testid='machine-trace-summary']"));
+  act(() => {
+    buttons.forEach((button) => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+  });
+  return buttons;
+}
+
 describe("ConversationPane", () => {
   let root: HTMLDivElement | null = null;
 
@@ -252,6 +271,8 @@ describe("ConversationPane", () => {
 
     const text = root.textContent || "";
     expect(root.querySelectorAll(".messageRow")).toHaveLength(6);
+    expect(root.querySelectorAll("[data-testid='machine-trace-summary']")).toHaveLength(2);
+    expandAllMachineTraces(root);
     const traceStrips = Array.from(root.querySelectorAll("[data-testid='machine-trace-strip']")) as HTMLElement[];
     expect(traceStrips).toHaveLength(2);
     expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(4);
@@ -305,6 +326,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const pairedCall = root.querySelector<HTMLButtonElement>(".machineTraceToken.tool[data-pair-id='call-read']");
     const pairedResult = root.querySelector<HTMLButtonElement>(".machineTraceToken.tool_result[data-pair-id='call-read']");
     const unpairedCall = root.querySelector<HTMLButtonElement>(".machineTraceToken.tool[data-pair-id='call-running']");
@@ -347,6 +369,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const toolToken = root.querySelector(".machineTraceToken.tool") as HTMLButtonElement | null;
     expect(toolToken).not.toBeNull();
     act(() => {
@@ -534,6 +557,7 @@ describe("ConversationPane", () => {
     );
 
     expect(root.querySelector("[data-testid='message-surface'][data-kind='pi_event']")).toBeNull();
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.pi_event.isAlert[data-variant='empty_output']") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -586,6 +610,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.pi_event.isTurnTerminal.isAlert[data-variant='turn_terminal']") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -639,6 +664,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.pi_event.isAlert[data-variant='retry_error']") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -714,6 +740,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const tokens = root.querySelectorAll<HTMLButtonElement>(".machineTraceToken.pi_event.isCompaction[data-variant='compaction']");
     expect(tokens).toHaveLength(2);
     expect(root.textContent).toContain("before");
@@ -773,6 +800,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -824,6 +852,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -876,6 +905,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -923,6 +953,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -977,6 +1008,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result.isProcessTool") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -1024,6 +1056,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -1068,6 +1101,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -1113,6 +1147,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -1158,6 +1193,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -1202,6 +1238,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -1253,6 +1290,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -1298,6 +1336,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
 
@@ -1351,6 +1390,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const token = root.querySelector(".machineTraceToken.custom_message") as HTMLButtonElement | null;
     expect(token).not.toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='custom_message']")).toBeNull();
@@ -1446,6 +1486,7 @@ describe("ConversationPane", () => {
     expect(meta?.textContent).toContain("max(tool call time): 1m5s");
     expect(meta?.textContent).toContain("turn time: 2m5s");
     expect(meta?.textContent).toContain("end time:");
+    expandMachineTrace(root);
     expect(root.querySelectorAll(".machineTraceToken.isExtensionUI")).toHaveLength(1);
   });
 
@@ -1825,6 +1866,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const firstToken = root.querySelector(".machineTraceToken.reasoning") as HTMLButtonElement | null;
 
     expect(root.querySelector("[data-testid='machine-trace-detail']")).toBeNull();
@@ -1884,6 +1926,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const traceTokens = Array.from(root.querySelectorAll(".machineTraceToken")) as HTMLButtonElement[];
     const reasoningToken = traceTokens.find((node) => node.dataset.kind === "reasoning") || null;
     const toolResultToken = traceTokens.find((node) => node.dataset.kind === "tool_result") || null;
@@ -1947,6 +1990,9 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expect(root.querySelector("[data-testid='machine-trace-summary']")).not.toBeNull();
+    expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(0);
+    expandMachineTrace(root);
     const traceStrip = root.querySelector("[data-testid='machine-trace-strip']") as HTMLElement | null;
     const tokens = Array.from(root.querySelectorAll(".machineTraceToken")) as HTMLButtonElement[];
     const toolToken = tokens.find((node) => node.dataset.kind === "tool") || null;
@@ -2007,6 +2053,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const kinds = Array.from(root.querySelectorAll<HTMLButtonElement>(".machineTraceToken"))
       .map((node) => String(node.dataset.kind || ""));
 
@@ -2087,6 +2134,7 @@ describe("ConversationPane", () => {
       root,
     );
 
+    expandMachineTrace(root);
     const runningTokens = Array.from(root.querySelectorAll(".machineTraceToken.isRunning")) as HTMLButtonElement[];
     expect(runningTokens).toHaveLength(1);
     expect(runningTokens[0]?.dataset.kind).toBe("tool");
@@ -2122,8 +2170,9 @@ describe("ConversationPane", () => {
       root,
     );
 
-    const stalledTokens = Array.from(root.querySelectorAll(".machineTraceToken.isStalledTool")) as HTMLButtonElement[];
-    expect(stalledTokens).toHaveLength(0);
+    const summary = root.querySelector("[data-testid='machine-trace-summary']") as HTMLButtonElement | null;
+    expect(summary?.classList.contains("isStalled")).toBe(true);
+    expandMachineTrace(root);
     const runningTokens = Array.from(root.querySelectorAll(".machineTraceToken.isRunning")) as HTMLButtonElement[];
     expect(runningTokens).toHaveLength(1);
     expect(runningTokens[0]?.title).toContain("running 10m");

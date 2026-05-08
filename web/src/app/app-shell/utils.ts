@@ -47,11 +47,11 @@ export function readLocalToggleDefaultOn(key: string) {
 }
 
 export function normalizeThemeMode(value: unknown): ThemeMode {
-  return value === "dark" ? "dark" : "light";
+  return value === "light" ? "light" : "dark";
 }
 
 export function readThemeMode(): ThemeMode {
-  if (typeof window === "undefined") return "light";
+  if (typeof window === "undefined") return "dark";
   return normalizeThemeMode(window.localStorage.getItem(THEME_MODE_STORAGE_KEY));
 }
 
