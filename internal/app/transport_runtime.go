@@ -82,6 +82,9 @@ func (s *Stub) setSessionTransportAttached(sessionID session.SessionID, generati
 }
 
 func (s *Stub) markSessionGenerationEnded(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
+	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
+		return err
+	}
 	_, err := s.setSessionTransport(sessionID, transportSnapshotEnded(generationID, reason))
 	if err != nil {
 		return err
@@ -94,6 +97,9 @@ func (s *Stub) markSessionGenerationEnded(sessionID session.SessionID, generatio
 }
 
 func (s *Stub) markSessionGenerationBroken(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
+	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
+		return err
+	}
 	updated, err := s.setSessionTransport(sessionID, transportSnapshotBroken(generationID, reason, false))
 	if err != nil {
 		return err
@@ -109,6 +115,9 @@ func (s *Stub) markSessionGenerationBroken(sessionID session.SessionID, generati
 }
 
 func (s *Stub) markSessionTransportResetRequired(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
+	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
+		return err
+	}
 	updated, err := s.setSessionTransport(sessionID, transportSnapshotBroken(generationID, reason, true))
 	if err != nil {
 		return err
@@ -121,6 +130,14 @@ func (s *Stub) markSessionTransportResetRequired(sessionID session.SessionID, ge
 	}
 	s.emitSessionState(sessionID)
 	return nil
+}
+
+func (s *Stub) clearRuntimeTerminalState(sessionID session.SessionID) error {
+	if s == nil {
+		return nil
+	}
+	_, _, err := s.registry.MarkRuntimeCompleted(sessionID)
+	return err
 }
 
 func (s *Stub) emitTransportDiagnostic(sessionID session.SessionID, generationID iod.GenerationID, eventType, reason string, resetRequired bool) error {

@@ -193,7 +193,19 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 			if len(events) == 0 {
 				return Projection{}, true
 			}
-			return Projection{Events: events}, true
+			projection := Projection{Events: events}
+			for _, event := range events {
+				if event.Message == nil || event.Message.Role != runtimeevent.MessageRoleAssistant || !event.Message.CommitLike {
+					continue
+				}
+				projection.ThreadID = strings.TrimSpace(event.ThreadID)
+				projection.TurnID = strings.TrimSpace(event.TurnID)
+				projection.ClearTurn = true
+				busy := false
+				projection.Busy = &busy
+				break
+			}
+			return projection, true
 		case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
 			event := reasoningDeltaEvent(line.Method, line.Params)
 			if event == nil {
@@ -282,7 +294,13 @@ func itemEvents(method string, raw json.RawMessage, completed bool) []runtimeeve
 	itemType := strings.TrimSpace(stringValue(item["type"]))
 	itemID := strings.TrimSpace(stringValue(item["id"]))
 	threadID := strings.TrimSpace(params.ThreadID)
+	if threadID == "" {
+		threadID = strings.TrimSpace(stringValue(item["threadId"]))
+	}
 	turnID := strings.TrimSpace(params.TurnID)
+	if turnID == "" {
+		turnID = strings.TrimSpace(stringValue(item["turnId"]))
+	}
 	switch itemType {
 	case "agentMessage":
 		if !completed {

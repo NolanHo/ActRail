@@ -389,7 +389,7 @@ func (s *Stub) prepareRuntimeSend(ctx context.Context, sessionID session.Session
 			if ok && record.state.Busy() && record.identity.Backend() == session.BackendCodex {
 				activity := codexVisibleActivity(record)
 				if activity.Phase == codexRuntimePhaseIdle && record.uiRequest == nil {
-					_, _, _ = s.registry.SetBusy(sessionID, codexRegistryBusy(record, activity.Busy))
+					_, _, _ = s.registry.SetBusy(sessionID, codexRegistryBusy(record, activity))
 				}
 			}
 			return nil

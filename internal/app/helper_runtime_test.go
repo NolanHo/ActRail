@@ -381,6 +381,69 @@ func TestCodexReattachIgnoresProjectionError(t *testing.T) {
 	}
 }
 
+func TestCodexLiveHelperIgnoresProjectionError(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	cfg.Storage.DataDir = filepath.Join("/tmp", fmt.Sprintf("arlh-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(cfg.Storage.DataDir) })
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_live_err")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-live-helper"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000007)
+	livePartial := mustStateOutputPacket(t, sessionID, generationID, 1,
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-live-projection-error\"}}}\n"+
+			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turn\":{\"id\":\"turn-codex-live-projection-error\",\"status\":\"inProgress\",\"error\":null}}}\n"+
+			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turnId\":\"turn-codex-live-projection-error\",\"itemId\":\"item-codex-live-projection-error\",\"delta\":\"Recovered \"}}\n")
+	liveToolDuringPartial := mustStateOutputPacket(t, sessionID, generationID, 2,
+		"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turnId\":\"turn-codex-live-projection-error\",\"item\":{\"type\":\"commandExecution\",\"id\":\"tool-codex-live-projection-error\",\"command\":\"echo stale\",\"aggregatedOutput\":\"stale tool result\",\"status\":\"completed\"}}}\n")
+	liveFinal := mustStateOutputPacket(t, sessionID, generationID, 3,
+		"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turnId\":\"turn-codex-live-projection-error\",\"itemId\":\"item-codex-live-projection-error\",\"delta\":\"after projection error.\"}}\n"+
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turnId\":\"turn-codex-live-projection-error\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-live-projection-error\",\"text\":\"Recovered after live projection error.\"}}}\n"+
+			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turn\":{\"id\":\"turn-codex-live-projection-error\",\"status\":\"completed\",\"error\":null}}}\n")
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{
+		AfterOffset: 0,
+		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 0),
+		LivePackets: []any{livePartial, liveToolDuringPartial, liveFinal},
+	})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	waitForTestCondition(t, func() bool {
+		messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		if err != nil || len(messages.Items) != 1 || messages.Items[0].Text != "Recovered after live projection error." {
+			return false
+		}
+		state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.PartialAssistantTurn == nil
+	})
+
+	messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "Recovered after live projection error." {
+		t.Fatalf("SessionMessages().Items = %#v, want live helper to continue through projection error", messages.Items)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.PartialAssistantTurn != nil {
+		t.Fatalf("SessionState() = %+v, want idle without partial after live helper recovery", state)
+	}
+}
+
 func TestReattachClearsReplayFailure(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
