@@ -65,15 +65,19 @@ function buildOptimisticCreatedSession(
   }
   const runtimeId = String(response.runtime_id || "").trim() || null;
   const alias = String(response.alias || fallback.name || "").trim() || undefined;
+  const session = response.session && typeof response.session === "object" ? response.session : null;
+  const backend = String(response.backend || session?.agent_backend || fallback.backend || "").trim() || fallback.backend;
+  const pendingStartup = response.pending_startup ?? session?.pending_startup ?? false;
   return {
+    ...(session ?? {}),
     session_id: sessionId,
-    runtime_id: runtimeId,
-    agent_backend: String(response.backend || fallback.backend || "").trim() || fallback.backend,
-    cwd: fallback.cwd,
-    alias,
-    focused: response.focused === true,
-    pending_startup: response.pending_startup === true,
-    busy: response.pending_startup === true,
+    runtime_id: runtimeId ?? session?.runtime_id ?? null,
+    agent_backend: backend,
+    cwd: session?.cwd || fallback.cwd,
+    alias: alias ?? session?.alias,
+    focused: response.focused ?? session?.focused,
+    pending_startup: pendingStartup,
+    busy: response.session?.busy ?? (pendingStartup === true ? true : session?.busy),
   };
 }
 

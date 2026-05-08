@@ -1176,9 +1176,20 @@ func TestCodexSessionWaitsForThreadBeforeInput(t *testing.T) {
 	if created.Session.TransportState != SessionTransportStateStarting.String() || !created.Session.PendingStartup {
 		t.Fatalf("CreateSession().Session transport = (%q, pending=%v), want starting pending", created.Session.TransportState, created.Session.PendingStartup)
 	}
+	if created.Session.RuntimeState != string(codexRuntimePhaseThreadStarting) || !created.Session.Busy {
+		t.Fatalf("CreateSession().Session runtime = (%q, busy=%v), want thread_starting busy", created.Session.RuntimeState, created.Session.Busy)
+	}
 	sessionID, err := session.ParseSessionID(created.Session.SessionID)
 	if err != nil {
 		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+
+	startingState, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() before thread error = %v", err)
+	}
+	if startingState.RuntimeState != string(codexRuntimePhaseThreadStarting) || !startingState.Busy {
+		t.Fatalf("SessionState() before thread runtime = (%q, busy=%v), want thread_starting busy", startingState.RuntimeState, startingState.Busy)
 	}
 
 	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "hello"}); err == nil || !strings.Contains(err.Error(), "session runtime is starting") {
@@ -1226,7 +1237,7 @@ func TestCreateSessionAppliesCodexThreadStatusChangedToBusyState(t *testing.T) {
 		"{\"method\":\"thread/status/changed\",\"params\":{\"threadId\":\"thread-codex-status-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[]}}}" + "\n"))
 	waitForAppCondition(t, func() bool {
 		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
-		return err == nil && state.Busy
+		return err == nil && state.Busy && state.RuntimeState == string(codexRuntimePhaseRunning)
 	})
 
 	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})

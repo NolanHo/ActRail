@@ -34,7 +34,7 @@ export function sessionTransportHealth(session: SessionSummary, historical: bool
   if (session.reset_required === true || unavailableTransportStates.has(state)) {
     return "unhealthy";
   }
-  if (session.busy === true) {
+  if (session.busy === true || session.pending_startup === true || state === "starting") {
     return "working";
   }
   if (session.has_unread_assistant === true) {

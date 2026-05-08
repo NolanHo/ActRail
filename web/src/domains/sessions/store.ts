@@ -1,7 +1,7 @@
 import { configureRealtimeClient } from "../realtime/client";
 import type { ConnectWireFormat } from "../realtime/connect";
 import { api } from "../../lib/api";
-import type { BootstrapCapabilities, CwdGroupMeta, NewSessionDefaults, SessionBootstrapResponse, SessionSummary, SessionsResponse } from "../../lib/types";
+import type { BootstrapCapabilities, CwdGroupMeta, NewSessionDefaults, RealtimeEnvelope, SessionBootstrapResponse, SessionSummary, SessionsResponse } from "../../lib/types";
 
 export interface UpsertSessionOptions {
   prepend?: boolean;
@@ -48,6 +48,7 @@ export interface SessionsStore {
   loadMore(limit?: number): Promise<void>;
   select(sessionId: string | null): void;
   upsertSession(session: SessionSummary, options?: UpsertSessionOptions): void;
+  applySessionStateFrame(frame: RealtimeEnvelope): void;
 }
 
 const PAGE_SIZE = 50;
@@ -359,6 +360,46 @@ function reuseStableSessionReferences(nextItems: SessionSummary[], previousItems
   return changed ? nextWithStableReferences : previousItems;
 }
 
+function optionalString(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return value;
+}
+
+function optionalNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function optionalBoolean(value: unknown) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function sessionPatchFromStatePayload(payload: Record<string, unknown>): SessionSummary | null {
+  const sessionId = optionalString(payload.session_id)?.trim();
+  if (!sessionId) {
+    return null;
+  }
+  const transport = payload.transport && typeof payload.transport === "object"
+    ? payload.transport as Record<string, unknown>
+    : null;
+  const generationId = optionalString(transport?.generation_id);
+
+  return {
+    session_id: sessionId,
+    ...(optionalBoolean(payload.busy) !== undefined ? { busy: optionalBoolean(payload.busy) } : {}),
+    ...(optionalString(payload.busy_reason) !== undefined ? { busy_reason: optionalString(payload.busy_reason) } : {}),
+    ...(optionalString(payload.runtime_state) !== undefined ? { runtime_state: optionalString(payload.runtime_state) } : {}),
+    ...(optionalString(payload.runtime_state_reason) !== undefined ? { runtime_state_reason: optionalString(payload.runtime_state_reason) } : {}),
+    ...(optionalNumber(payload.queue_len) !== undefined ? { queue_len: optionalNumber(payload.queue_len) } : {}),
+    ...(optionalString(payload.transport_state) !== undefined ? { transport_state: optionalString(payload.transport_state) } : {}),
+    ...(optionalBoolean(payload.reset_required) !== undefined ? { reset_required: optionalBoolean(payload.reset_required) } : {}),
+    ...(optionalString(payload.transport_reason) !== undefined ? { transport_reason: optionalString(payload.transport_reason) } : {}),
+    ...(optionalBoolean(payload.pending_startup) !== undefined ? { pending_startup: optionalBoolean(payload.pending_startup) } : {}),
+    ...(generationId !== undefined ? { generation_id: generationId } : {}),
+  };
+}
+
 export function createSessionsStore(): SessionsStore {
   let state: SessionsState = {
     items: [],
@@ -515,6 +556,33 @@ export function createSessionsStore(): SessionsStore {
         ...state,
         items: withAssistantUnreadState(upsertSessionList(state.items, session, options?.prepend !== false), nextActiveSessionId),
         activeSessionId: nextActiveSessionId,
+      };
+      emit();
+    },
+    applySessionStateFrame(frame: RealtimeEnvelope) {
+      if (frame.type !== "session.state") {
+        return;
+      }
+      const payload = frame.payload && typeof frame.payload === "object" ? frame.payload : null;
+      if (!payload) {
+        return;
+      }
+      const patch = sessionPatchFromStatePayload(payload);
+      if (!patch) {
+        return;
+      }
+      const existing = state.items.find((session) => session.session_id === patch.session_id);
+      if (!existing) {
+        return;
+      }
+      const merged = { ...existing, ...patch };
+      if (sessionFingerprint(existing) === sessionFingerprint(merged)) {
+        return;
+      }
+      const nextItems = state.items.map((session) => session.session_id === patch.session_id ? merged : session);
+      state = {
+        ...state,
+        items: withAssistantUnreadState(reuseStableSessionReferences(nextItems, state.items), state.activeSessionId),
       };
       emit();
     },

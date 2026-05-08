@@ -202,6 +202,9 @@ export function useAppShellEvents({
         || type === "ui.request"
         || type === "ui.resolved"
       ) {
+        if (type === "session.state") {
+          sessionsStoreApi.applySessionStateFrame(frame);
+        }
         liveSessionStoreApi.applyFrame(frame);
         waitsStoreApi.applyFrame(frame);
         return;

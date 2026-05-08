@@ -221,6 +221,14 @@ func codexVisibleActivity(record sessionRecord) codexRuntimeActivity {
 		}
 		return codexRuntimeActivity{Phase: codexRuntimePhaseIdle}
 	}
+	transport := sessionTransportSnapshot(record)
+	if transport.State == SessionTransportStateStarting {
+		phase := codexRuntimePhaseThreadStarting
+		if strings.TrimSpace(transport.Reason) == "codex_initializing" {
+			phase = codexRuntimePhaseInitializing
+		}
+		return codexRuntimeActivity{Phase: phase, Reason: transport.Reason, Busy: true}
+	}
 	activity := record.runtime.codex.activity()
 	if activity.Busy {
 		return activity

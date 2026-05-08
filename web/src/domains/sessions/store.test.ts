@@ -363,6 +363,45 @@ describe("createSessionsStore", () => {
     ]);
     expect(store.getState().activeSessionId).toBe("s3");
   });
+
+  it("merges session state frames into existing session summaries", async () => {
+    vi.mocked(api.listSessions).mockResolvedValue({
+      sessions: [{
+        session_id: "s1",
+        agent_backend: "codex",
+        pending_startup: true,
+        busy: true,
+        runtime_state: "thread_starting",
+        transport_state: "starting",
+      }],
+    } as never);
+    const store = createSessionsStore();
+
+    await store.refresh();
+    store.applySessionStateFrame({
+      type: "session.state",
+      payload: {
+        session_id: "s1",
+        busy: false,
+        runtime_state: "idle",
+        queue_len: 0,
+        transport_state: "attached",
+        pending_startup: false,
+        transport: { generation_id: "codex_app_server" },
+      },
+    });
+
+    expect(store.getState().items).toEqual([{
+      session_id: "s1",
+      agent_backend: "codex",
+      pending_startup: false,
+      busy: false,
+      runtime_state: "idle",
+      transport_state: "attached",
+      queue_len: 0,
+      generation_id: "codex_app_server",
+    }]);
+  });
   it("marks inactive sessions with unread assistant messages and clears on select", async () => {
     vi.mocked(api.listSessions)
       .mockResolvedValueOnce({ sessions: [

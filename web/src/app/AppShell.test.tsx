@@ -245,7 +245,13 @@ function renderAppShell({
       bootstrapLoaded: true,
       newSessionDefaults,
     },
-    { refresh: vi.fn().mockResolvedValue(undefined), refreshBootstrap: vi.fn().mockResolvedValue(undefined), select: vi.fn(), upsertSession: vi.fn() },
+    {
+      refresh: vi.fn().mockResolvedValue(undefined),
+      refreshBootstrap: vi.fn().mockResolvedValue(undefined),
+      select: vi.fn(),
+      upsertSession: vi.fn(),
+      applySessionStateFrame: vi.fn(),
+    },
   );
   const messagesStore = createStaticStore(
     { bySessionId: messageState, offsetsBySessionId: offsetState, loading: false },
