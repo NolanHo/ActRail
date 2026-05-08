@@ -1126,10 +1126,10 @@ func TestCodexSubagentUserMessageDoesNotRenderAsMainPrompt(t *testing.T) {
 	_ = stdoutW.Close()
 
 	waitForAppCondition(t, func() bool {
-		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, IncludeToolEvents: true})
 		return err == nil && len(messages.Items) == 5
 	})
-	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, IncludeToolEvents: true})
 	if err != nil {
 		t.Fatalf("SessionMessages() error = %v", err)
 	}
@@ -1818,14 +1818,14 @@ func TestCreateSessionMapsCodexToolReasoningUsageAndErrors(t *testing.T) {
 	_ = stdoutW.Close()
 
 	waitForAppCondition(t, func() bool {
-		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, IncludeToolEvents: true})
 		if err != nil {
 			return false
 		}
 		return len(messages.Items) >= 5
 	})
 
-	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, IncludeToolEvents: true})
 	if err != nil {
 		t.Fatalf("SessionMessages() error = %v", err)
 	}

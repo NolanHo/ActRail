@@ -543,6 +543,11 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 		writeAppError(w, err)
 		return
 	}
+	includeToolEvents, err := queryBool(req, "include_tool_events")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
 	eventID := strings.TrimSpace(req.URL.Query().Get("event_id"))
 	toolCallID := strings.TrimSpace(req.URL.Query().Get("tool_call_id"))
 	span.SetAttributes(
@@ -550,6 +555,7 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 		attribute.Int("messages.limit", limit),
 		attribute.Bool("messages.init", init),
 		attribute.Bool("messages.deferred", deferred),
+		attribute.Bool("messages.include_tool_events", includeToolEvents),
 	)
 	payload, err := r.app.SessionMessages(req.Context(), app.SessionMessagesRequest{
 		SessionID:          sessionID,
@@ -560,6 +566,7 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 		Deferred:           deferred,
 		ActiveTurnStartSeq: activeTurnStartSeq,
 		IncludeToolDetails: includeToolDetails,
+		IncludeToolEvents:  includeToolEvents,
 		EventID:            eventID,
 		ToolCallID:         toolCallID,
 	})

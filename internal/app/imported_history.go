@@ -4,15 +4,19 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"actrail/internal/adapters/iod"
 	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/domain/pi"
+	"actrail/internal/domain/session"
 )
 
 const (
@@ -273,18 +277,44 @@ func piParentEventID(event pi.Event) string {
 }
 
 func paginateSessionMessagesForRequest(items []SessionMessage, req SessionMessagesRequest) SessionMessagesResponse {
-	response := paginateSessionMessages(items, req.AfterSeq, req.BeforeSeq, req.Limit)
+	rawTailSeq := uint64(0)
+	if len(items) > 0 {
+		rawTailSeq = items[len(items)-1].Seq
+	}
+	visibleItems := filterSessionMessagesForRequest(items, req)
+	response := paginateSessionMessages(visibleItems, req.AfterSeq, req.BeforeSeq, req.Limit)
+	if rawTailSeq > response.TailSeq {
+		response.TailSeq = rawTailSeq
+	}
 	if !req.Deferred {
 		return response
 	}
 	activeTurnStartSeq := req.ActiveTurnStartSeq
 	if activeTurnStartSeq == 0 {
-		activeTurnStartSeq = activeTurnStartSeqForMessages(items)
+		activeTurnStartSeq = activeTurnStartSeqForMessages(visibleItems)
 	}
 	for i := range response.Items {
 		response.Items[i] = deferSessionMessageForRequest(response.Items[i], req, response.TailSeq, activeTurnStartSeq)
 	}
 	return response
+}
+
+func filterSessionMessagesForRequest(items []SessionMessage, req SessionMessagesRequest) []SessionMessage {
+	if req.IncludeToolEvents {
+		return items
+	}
+	visible := make([]SessionMessage, 0, len(items))
+	for _, item := range items {
+		if sessionMessageIsToolEvent(item) {
+			continue
+		}
+		visible = append(visible, item)
+	}
+	return visible
+}
+
+func sessionMessageIsToolEvent(item SessionMessage) bool {
+	return item.Kind == "tool" || item.Kind == "tool_result" || item.Type == "tool" || item.Type == "tool_result"
 }
 
 func paginateSessionMessages(items []SessionMessage, after *uint64, before *uint64, limit int) SessionMessagesResponse {
@@ -538,6 +568,192 @@ func appendDedupedMessages(items *[]SessionMessage, incoming []SessionMessage) {
 		}
 		*items = append(*items, item)
 	}
+}
+
+func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
+	if record.identity.Backend() != session.BackendCodex || record.transcript.Len() > 0 {
+		return SessionMessagesResponse{}, false, nil
+	}
+	if _, ok := record.transcript.PartialAssistantTurn(); ok {
+		return SessionMessagesResponse{}, false, nil
+	}
+	sessionID := record.identity.SessionID()
+	cacheKey, err := codexIODHistoryCacheKey(s.cfg.Storage.IODRuntimeRoot(), sessionID)
+	if err != nil {
+		return SessionMessagesResponse{}, false, err
+	}
+	if cacheKey == "" {
+		return SessionMessagesResponse{}, false, nil
+	}
+	if items, ok := s.messageCache.Get(sessionID, cacheKey); ok {
+		return paginateSessionMessagesForRequest(items, req), true, nil
+	}
+	items, err := s.codexIODHistoryMessages(ctx, sessionID)
+	if err != nil {
+		return SessionMessagesResponse{}, true, err
+	}
+	if len(items) == 0 {
+		return SessionMessagesResponse{}, false, nil
+	}
+	s.messageCache.Put(sessionID, cacheKey, items)
+	return paginateSessionMessagesForRequest(items, req), true, nil
+}
+
+func (s *Stub) codexIODHistoryMessages(ctx context.Context, sessionID session.SessionID) ([]SessionMessage, error) {
+	generations, err := codexIODHistoryGenerations(s.cfg.Storage.IODRuntimeRoot(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]SessionMessage, 0)
+	for _, generation := range generations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		replay, err := iod.ReplayWAL(generation.WALPath, sessionID, generation.GenerationID, 0)
+		if err != nil {
+			return nil, fmt.Errorf("replay codex iod wal %q: %w", generation.WALPath, err)
+		}
+		decoder := runtimeEventDecoder{backend: session.BackendCodex}
+		threadID := ""
+		for _, record := range replay.Records {
+			projection, err := decoder.decodeHelperFact(helperFactFromWALRecord(record))
+			if err != nil {
+				continue
+			}
+			if strings.TrimSpace(projection.codexThreadID) != "" && threadID == "" {
+				threadID = strings.TrimSpace(projection.codexThreadID)
+			}
+			for _, event := range projection.events {
+				if !codexHistoryEventInMainThread(threadID, event) && !codexSubagentMessageEvent(event) {
+					continue
+				}
+				if msg, ok := codexHistorySessionMessage(threadID, event); ok {
+					appendDedupedMessages(&items, []SessionMessage{msg})
+				}
+			}
+		}
+	}
+	for i := range items {
+		items[i].Seq = uint64(i + 1)
+	}
+	return items, nil
+}
+
+func helperFactFromWALRecord(record iod.WALRecord) iod.HelperFact {
+	return iod.HelperFact{
+		FactKind: record.Header.Class.FactKind(),
+		Seq:      record.Header.Seq,
+		Payload:  append(json.RawMessage(nil), record.Payload...),
+	}
+}
+
+func codexHistoryEventInMainThread(mainThreadID string, event pi.Event) bool {
+	eventThreadID := strings.TrimSpace(event.ThreadID)
+	if eventThreadID == "" || strings.TrimSpace(mainThreadID) == "" {
+		return true
+	}
+	return eventThreadID == strings.TrimSpace(mainThreadID)
+}
+
+func codexHistorySessionMessage(mainThreadID string, event pi.Event) (SessionMessage, bool) {
+	if event.Message != nil && !codexHistoryEventInMainThread(mainThreadID, event) {
+		if !codexSubagentMessageEvent(event) {
+			return SessionMessage{}, false
+		}
+		payload := codexSubagentMessagePayload{
+			Role:     strings.TrimSpace(string(event.Message.Role)),
+			Text:     strings.TrimSpace(event.Message.Text),
+			ThreadID: strings.TrimSpace(event.ThreadID),
+			TurnID:   strings.TrimSpace(event.TurnID),
+			ItemID:   strings.TrimSpace(event.RawID),
+		}
+		encoded, err := encodeCodexSubagentMessage(payload)
+		if err != nil {
+			return SessionMessage{}, false
+		}
+		msg := SessionMessage{
+			Kind:          "custom_message",
+			Type:          "custom_message",
+			Text:          encoded,
+			TS:            event.Timestamp,
+			EventID:       piMessageEventID(event),
+			ParentEventID: piParentEventID(event),
+		}
+		applyCodexSubagentMessageFields(&msg, payload)
+		return msg, true
+	}
+	if msg, ok := sessionMessageFromPIEvent(event); ok {
+		return msg, true
+	}
+	return SessionMessage{}, false
+}
+
+type codexIODHistoryGeneration struct {
+	GenerationID iod.GenerationID
+	WALPath      string
+	Signature    string
+	StartTS      float64
+}
+
+func codexIODHistoryGenerations(root string, sessionID session.SessionID) ([]codexIODHistoryGeneration, error) {
+	sessionDir := filepath.Join(strings.TrimSpace(root), sessionID.String())
+	entries, err := os.ReadDir(sessionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read codex iod session dir %q: %w", sessionDir, err)
+	}
+	generations := make([]codexIODHistoryGeneration, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		generationID, err := iod.NewGenerationID(entry.Name())
+		if err != nil {
+			continue
+		}
+		paths, err := iod.NewGenerationPaths(root, sessionID, generationID)
+		if err != nil {
+			continue
+		}
+		manifest, err := iod.ReadGenerationManifest(paths.ManifestPath)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(paths.WALPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		generations = append(generations, codexIODHistoryGeneration{
+			GenerationID: generationID,
+			WALPath:      paths.WALPath,
+			Signature:    fmt.Sprintf("%s:%d:%d", filepath.Clean(paths.WALPath), info.Size(), info.ModTime().UnixNano()),
+			StartTS:      manifest.StartTS,
+		})
+	}
+	sort.Slice(generations, func(i, j int) bool {
+		if generations[i].StartTS != generations[j].StartTS {
+			return generations[i].StartTS < generations[j].StartTS
+		}
+		return generations[i].GenerationID.String() < generations[j].GenerationID.String()
+	})
+	return generations, nil
+}
+
+func codexIODHistoryCacheKey(root string, sessionID session.SessionID) (string, error) {
+	generations, err := codexIODHistoryGenerations(root, sessionID)
+	if err != nil {
+		return "", err
+	}
+	if len(generations) == 0 {
+		return "", nil
+	}
+	parts := make([]string, 0, len(generations))
+	for _, generation := range generations {
+		parts = append(parts, generation.Signature)
+	}
+	return "codex-iod-history:" + strings.Join(parts, "|"), nil
 }
 
 func piSessionIDFromSourcePath(path string) (string, bool, error) {

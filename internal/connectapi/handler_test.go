@@ -198,7 +198,7 @@ func TestSessionMessagesProto(t *testing.T) {
 	stub := &controllerStub{}
 	h := NewHandler(stub, NewBroker(100), nil)
 	after := uint64(4)
-	body, err := proto.Marshal(&actrailv1.SessionMessagesRequest{SessionId: "sess-1", AfterSeq: &after, Limit: 20, Init: true, Deferred: true, ActiveTurnStartSeq: 10})
+	body, err := proto.Marshal(&actrailv1.SessionMessagesRequest{SessionId: "sess-1", AfterSeq: &after, Limit: 20, Init: true, Deferred: true, ActiveTurnStartSeq: 10, IncludeToolEvents: true})
 	if err != nil {
 		t.Fatalf("marshal session messages proto: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestSessionMessagesProto(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
 	}
-	if stub.messagesReq.SessionID.String() != "sess-1" || stub.messagesReq.AfterSeq == nil || *stub.messagesReq.AfterSeq != 4 || !stub.messagesReq.Deferred || stub.messagesReq.ActiveTurnStartSeq != 10 {
+	if stub.messagesReq.SessionID.String() != "sess-1" || stub.messagesReq.AfterSeq == nil || *stub.messagesReq.AfterSeq != 4 || !stub.messagesReq.Deferred || stub.messagesReq.ActiveTurnStartSeq != 10 || !stub.messagesReq.IncludeToolEvents {
 		t.Fatalf("messages req = %+v", stub.messagesReq)
 	}
 	if got := res.Header().Get("Content-Type"); !strings.Contains(got, "application/proto") {

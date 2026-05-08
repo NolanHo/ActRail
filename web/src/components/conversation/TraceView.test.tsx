@@ -92,6 +92,7 @@ describe("TraceView", () => {
       true,
       "",
       "tc_1",
+      true,
     );
     expect(root.textContent || "").toContain("hydrated output");
   });

@@ -653,6 +653,7 @@ type SessionMessagesRequest struct {
 	IncludeToolDetails bool                   `protobuf:"varint,8,opt,name=include_tool_details,json=includeToolDetails,proto3" json:"include_tool_details,omitempty"`
 	EventId            string                 `protobuf:"bytes,9,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
 	ToolCallId         string                 `protobuf:"bytes,10,opt,name=tool_call_id,json=toolCallId,proto3" json:"tool_call_id,omitempty"`
+	IncludeToolEvents  bool                   `protobuf:"varint,11,opt,name=include_tool_events,json=includeToolEvents,proto3" json:"include_tool_events,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -755,6 +756,13 @@ func (x *SessionMessagesRequest) GetToolCallId() string {
 		return x.ToolCallId
 	}
 	return ""
+}
+
+func (x *SessionMessagesRequest) GetIncludeToolEvents() bool {
+	if x != nil {
+		return x.IncludeToolEvents
+	}
+	return false
 }
 
 type SessionMessagesResponse struct {
@@ -882,7 +890,7 @@ const file_actrail_v1_transport_proto_rawDesc = "" +
 	"\x06stream\x18\x03 \x01(\tR\x06stream\x12\x1f\n" +
 	"\vunix_millis\x18\x04 \x01(\x03R\n" +
 	"unixMillis\x12!\n" +
-	"\fpayload_json\x18\x05 \x01(\fR\vpayloadJson\"\x82\x03\n" +
+	"\fpayload_json\x18\x05 \x01(\fR\vpayloadJson\"\xb2\x03\n" +
 	"\x16SessionMessagesRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12 \n" +
@@ -897,7 +905,8 @@ const file_actrail_v1_transport_proto_rawDesc = "" +
 	"\bevent_id\x18\t \x01(\tR\aeventId\x12 \n" +
 	"\ftool_call_id\x18\n" +
 	" \x01(\tR\n" +
-	"toolCallIdB\f\n" +
+	"toolCallId\x12.\n" +
+	"\x13include_tool_events\x18\v \x01(\bR\x11includeToolEventsB\f\n" +
 	"\n" +
 	"_after_seqB\r\n" +
 	"\v_before_seq\"\xcc\x01\n" +

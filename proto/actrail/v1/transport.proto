@@ -91,6 +91,7 @@ message SessionMessagesRequest {
   bool include_tool_details = 8;
   string event_id = 9;
   string tool_call_id = 10;
+  bool include_tool_events = 11;
 }
 
 message SessionMessagesResponse {
