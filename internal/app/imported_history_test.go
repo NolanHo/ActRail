@@ -75,7 +75,7 @@ func TestSessionMessagesDefersOnlyToolEventsBeforeLatestTurn(t *testing.T) {
 		{Seq: 6, Kind: "tool", Type: "tool", Text: "latest tool", EventID: "new-tool", ToolCallID: "call-new", Details: map[string]any{"arg": "new"}},
 		{Seq: 7, Kind: "tool_result", Type: "tool_result", Text: "latest result", EventID: "new-result", ToolCallID: "call-new", Details: map[string]any{"result": "new"}},
 	}
-	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Deferred: true})
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Deferred: true, IncludeToolEvents: true})
 	if len(response.Items) != len(items) {
 		t.Fatalf("len(response.Items) = %d, want %d", len(response.Items), len(items))
 	}
@@ -84,6 +84,35 @@ func TestSessionMessagesDefersOnlyToolEventsBeforeLatestTurn(t *testing.T) {
 	}
 	if response.Items[5].Text != "latest tool" || response.Items[6].Text != "latest result" {
 		t.Fatalf("latest tool details = %+v %+v, want hydrated", response.Items[5], response.Items[6])
+	}
+}
+
+func TestSessionMessagesFiltersToolEventsByDefaultBeforePagination(t *testing.T) {
+	items := []SessionMessage{
+		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},
+		{Seq: 2, Kind: "tool", Type: "tool", Text: "hidden tool"},
+		{Seq: 3, Kind: "tool_result", Type: "tool_result", Text: "hidden result"},
+		{Seq: 4, Role: "assistant", Kind: "message", Text: "old answer"},
+		{Seq: 5, Role: "user", Kind: "message", Text: "new prompt"},
+		{Seq: 6, Role: "assistant", Kind: "message", Text: "new answer"},
+	}
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Limit: 4})
+	if len(response.Items) != 4 {
+		t.Fatalf("len(response.Items) = %d, want 4 visible conversation messages", len(response.Items))
+	}
+	for _, item := range response.Items {
+		if item.Kind == "tool" || item.Kind == "tool_result" {
+			t.Fatalf("response item = %+v, want tool events hidden by default", item)
+		}
+	}
+	if response.TailSeq != 6 {
+		t.Fatalf("TailSeq = %d, want visible tail seq 6", response.TailSeq)
+	}
+
+	withTools := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Limit: 6, IncludeToolEvents: true})
+	if len(withTools.Items) != 6 {
+		t.Fatalf("len(withTools.Items) = %d, want all items when tool events requested", len(withTools.Items))
 	}
 }
 

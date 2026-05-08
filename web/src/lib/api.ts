@@ -216,7 +216,7 @@ export const api = {
     const response = await getJson<SessionDetailsResponse & { session?: Record<string, unknown> | null }>(`/api/sessions/${routeId}/details`, signal);
     return normalizeSessionDetailsResponse(response);
   },
-  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null, deferred = false, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }, activeTurnStartSeq = 0, includeToolDetails = false, eventId = "", toolCallId = "") {
+  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null, deferred = false, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }, activeTurnStartSeq = 0, includeToolDetails = false, eventId = "", toolCallId = "", includeToolEvents = false) {
     const query = new URLSearchParams();
     if (init) {
       query.set("init", "1");
@@ -236,7 +236,7 @@ export const api = {
     }
     const routeId = getSessionRouteId(sessionId, runtimeId);
     if (connectConfig !== false && connectConfig !== null) {
-      return fetchConnectSessionMessages(connectConfig, { sessionId: routeId, after, before, limit, init, deferred, activeTurnStartSeq, includeToolDetails, eventId, toolCallId, signal });
+      return fetchConnectSessionMessages(connectConfig, { sessionId: routeId, after, before, limit, init, deferred, activeTurnStartSeq, includeToolDetails, eventId, toolCallId, includeToolEvents, signal });
     }
     if (activeTurnStartSeq > 0) {
       query.set("active_turn_start_seq", String(activeTurnStartSeq));
@@ -249,6 +249,9 @@ export const api = {
     }
     if (toolCallId) {
       query.set("tool_call_id", toolCallId);
+    }
+    if (includeToolEvents) {
+      query.set("include_tool_events", "1");
     }
     const suffix = query.size ? `?${query.toString()}` : "";
     return getJson<MessagesResponse>(`/api/sessions/${routeId}/messages${suffix}`, signal);

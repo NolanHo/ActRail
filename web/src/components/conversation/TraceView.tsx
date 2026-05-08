@@ -98,6 +98,7 @@ function TraceNodeRow({ node, depth, sessionId, runtimeId }: { node: TraceNode; 
         true,
         eventId,
         toolCallId,
+        true,
       );
       const items = Array.isArray(response.items) ? response.items : Array.isArray(response.events) ? response.events : [];
       return items[0];

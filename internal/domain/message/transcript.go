@@ -163,6 +163,11 @@ func (p HistoryPage) HasMore() bool {
 	return p.hasMore
 }
 
+func HistoryFromCommitted(items []CommittedMessage, before *Seq, limit int) HistoryPage {
+	transcript := Transcript{items: append([]CommittedMessage(nil), items...)}
+	return transcript.History(before, limit)
+}
+
 // Transcript is the canonical in-memory model behind HTTP history and live assistant state.
 type Transcript struct {
 	items   []CommittedMessage

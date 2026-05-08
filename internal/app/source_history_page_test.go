@@ -55,7 +55,7 @@ func TestLoadSourceHistoryPageDefersOlderToolDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := SessionMessagesRequest{Limit: 20, Deferred: true}
+	req := SessionMessagesRequest{Limit: 20, Deferred: true, IncludeToolEvents: true}
 	page, ok, err := loadSourceHistoryPage(path, req)
 	if err != nil {
 		t.Fatalf("loadSourceHistoryPage() error = %v", err)
@@ -73,6 +73,47 @@ func TestLoadSourceHistoryPageDefersOlderToolDetails(t *testing.T) {
 	}
 	if newTool.Details["deferred"] == true || newTool.Details["arguments"] == nil || newResult.Text != "new result" {
 		t.Fatalf("new tool details = %+v %+v, want hydrated latest turn", newTool, newResult)
+	}
+}
+
+func TestLoadSourceHistoryPageFiltersToolEventsBeforeLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := "" +
+		`{"type":"message","id":"u-old","message":{"role":"user","content":[{"type":"text","text":"old prompt"}]}}` + "\n" +
+		`{"type":"message","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","id":"call-old","name":"read","arguments":{"path":"old.txt"}}]}}` + "\n" +
+		`{"type":"turn_end","id":"turn-old","toolResults":[{"role":"toolResult","toolCallId":"call-old","toolName":"read","content":[{"type":"text","text":"old result"}],"isError":false}]}` + "\n" +
+		`{"type":"message","id":"a-old","message":{"role":"assistant","content":[{"type":"text","text":"old answer"}],"stopReason":"stop"}}` + "\n" +
+		`{"type":"message","id":"u-new","message":{"role":"user","content":[{"type":"text","text":"new prompt"}]}}` + "\n" +
+		`{"type":"message","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","id":"call-new","name":"read","arguments":{"path":"new.txt"}}]}}` + "\n" +
+		`{"type":"turn_end","id":"turn-new","toolResults":[{"role":"toolResult","toolCallId":"call-new","toolName":"read","content":[{"type":"text","text":"new result"}],"isError":false}]}` + "\n" +
+		`{"type":"message","id":"a-new","message":{"role":"assistant","content":[{"type":"text","text":"new answer"}],"stopReason":"stop"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	page, ok, err := loadSourceHistoryPage(path, SessionMessagesRequest{Limit: 4})
+	if err != nil {
+		t.Fatalf("loadSourceHistoryPage() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("loadSourceHistoryPage() ok = false, want true")
+	}
+	response := sourceHistorySessionMessagesResponse(page, SessionMessagesRequest{Limit: 4})
+	got := make([]string, 0, len(response.Items))
+	for _, item := range response.Items {
+		if item.Type == "tool" || item.Type == "tool_result" {
+			t.Fatalf("response item = %+v, want tool events hidden by default", item)
+		}
+		got = append(got, item.Text)
+	}
+	want := []string{"old prompt", "old answer", "new prompt", "new answer"}
+	if len(got) != len(want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("messages = %#v, want %#v", got, want)
+		}
 	}
 }
 

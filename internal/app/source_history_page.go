@@ -49,7 +49,7 @@ func loadSourceHistoryPage(path string, req SessionMessagesRequest) (sourceHisto
 			beforeOffset = info.Size()
 		}
 	}
-	lines, hasMore, err := readSourceHistoryLinesBefore(trimmed, beforeOffset, req.Limit)
+	lines, hasMore, err := readSourceHistoryLinesBefore(trimmed, beforeOffset, req)
 	if err != nil {
 		return sourceHistoryPage{}, true, err
 	}
@@ -57,7 +57,8 @@ func loadSourceHistoryPage(path string, req SessionMessagesRequest) (sourceHisto
 	if err != nil {
 		return sourceHistoryPage{}, true, err
 	}
-	if len(items) > req.Limit {
+	items = filterSessionMessagesForRequest(items, req)
+	if req.Limit > 0 && len(items) > req.Limit {
 		items = append([]SessionMessage(nil), items[len(items)-req.Limit:]...)
 		hasMore = true
 	}
@@ -93,7 +94,7 @@ func sourceHistorySessionMessagesResponse(page sourceHistoryPage, req SessionMes
 	}
 }
 
-func readSourceHistoryLinesBefore(path string, beforeOffset int64, minItems int) ([]sourceHistoryLine, bool, error) {
+func readSourceHistoryLinesBefore(path string, beforeOffset int64, req SessionMessagesRequest) ([]sourceHistoryLine, bool, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, false, fmt.Errorf("open pi session source %q: %w", path, err)
@@ -123,7 +124,7 @@ func readSourceHistoryLinesBefore(path string, beforeOffset int64, minItems int)
 		}
 		windowLines := sourceHistoryLinesFromWindow(buf, lower, lower == 0, upper == info.Size())
 		lines = append(windowLines, lines...)
-		if len(lines) > 0 && countSourceHistoryMessages(path, lines) >= minItems {
+		if len(lines) > 0 && countSourceHistoryMessages(path, lines, req) >= req.Limit {
 			break
 		}
 		if lower == 0 {
@@ -183,11 +184,12 @@ func sourceHistoryLinesFromWindow(buf []byte, base int64, includePrefix bool, in
 	return out
 }
 
-func countSourceHistoryMessages(sourcePath string, lines []sourceHistoryLine) int {
+func countSourceHistoryMessages(sourcePath string, lines []sourceHistoryLine, req SessionMessagesRequest) int {
 	items, err := sessionMessagesFromPILines(sourcePath, lines)
 	if err != nil {
 		return 0
 	}
+	items = filterSessionMessagesForRequest(items, req)
 	return len(items)
 }
 

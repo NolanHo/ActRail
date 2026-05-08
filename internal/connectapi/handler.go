@@ -91,6 +91,8 @@ type sessionMessagesRequest struct {
 	ActiveTurnStartSeqRaw uint64          `json:"active_turn_start_seq"`
 	IncludeToolDetails    bool            `json:"includeToolDetails"`
 	IncludeToolDetailsRaw bool            `json:"include_tool_details"`
+	IncludeToolEvents     bool            `json:"includeToolEvents"`
+	IncludeToolEventsRaw  bool            `json:"include_tool_events"`
 	EventID               string          `json:"eventId"`
 	EventIDRaw            string          `json:"event_id"`
 	ToolCallID            string          `json:"toolCallId"`
@@ -596,6 +598,7 @@ func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request
 		attribute.Bool("messages.init", body.Init),
 		attribute.Bool("messages.deferred", body.Deferred),
 		attribute.Bool("messages.include_tool_details", body.IncludeToolDetails || body.IncludeToolDetailsRaw),
+		attribute.Bool("messages.include_tool_events", body.IncludeToolEvents || body.IncludeToolEventsRaw),
 		attribute.String("messages.event_id", firstString(body.EventID, body.EventIDRaw)),
 		attribute.String("messages.tool_call_id", firstString(body.ToolCallID, body.ToolCallIDRaw)),
 	)
@@ -609,6 +612,7 @@ func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request
 		Deferred:           body.Deferred,
 		ActiveTurnStartSeq: firstNonZeroUint64(body.ActiveTurnStartSeq, body.ActiveTurnStartSeqRaw),
 		IncludeToolDetails: body.IncludeToolDetails || body.IncludeToolDetailsRaw,
+		IncludeToolEvents:  body.IncludeToolEvents || body.IncludeToolEventsRaw,
 		EventID:            firstString(body.EventID, body.EventIDRaw),
 		ToolCallID:         firstString(body.ToolCallID, body.ToolCallIDRaw),
 	})
@@ -651,6 +655,7 @@ func decodeSessionMessagesRequest(req *http.Request, protoMode bool) (sessionMes
 		Deferred:           msg.Deferred,
 		ActiveTurnStartSeq: msg.ActiveTurnStartSeq,
 		IncludeToolDetails: msg.IncludeToolDetails,
+		IncludeToolEvents:  msg.IncludeToolEvents,
 		EventID:            msg.EventId,
 		ToolCallID:         msg.ToolCallId,
 	}

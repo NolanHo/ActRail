@@ -64,6 +64,7 @@ type SessionMessagesRequest struct {
 	Deferred           bool
 	ActiveTurnStartSeq uint64
 	IncludeToolDetails bool
+	IncludeToolEvents  bool
 	EventID            string
 	ToolCallID         string
 }
@@ -312,6 +313,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		attribute.Int("messages.limit", req.Limit),
 		attribute.Bool("messages.init", req.Init),
 		attribute.Bool("messages.deferred", req.Deferred),
+		attribute.Bool("messages.include_tool_events", req.IncludeToolEvents),
 	)
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
@@ -329,13 +331,15 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 	if response, ok, err := s.loadDetachedImportedPIHistory(ctx, record, req); ok {
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
 	}
+	if response, ok, err := s.loadCodexIODHistory(ctx, record, req); ok {
+		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
+	}
 	activeTurnStartSeq := req.ActiveTurnStartSeq
 	if req.Deferred && activeTurnStartSeq == 0 {
 		activeTurnStartSeq = record.transcript.LastUserSeq().Uint64()
 	}
 	if req.AfterSeq != nil {
-		page := record.transcript.HistoryAfter(message.Seq(*req.AfterSeq))
-		items := page.Items()
+		items := visibleCommittedMessages(record.transcript.HistoryAfter(message.Seq(*req.AfterSeq)).Items(), req)
 		response := SessionMessagesResponse{
 			Items:   make([]SessionMessage, 0, len(items)),
 			TailSeq: record.transcript.TailSeq().Uint64(),
@@ -349,7 +353,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		}
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
 	}
-	page := record.transcript.History(messageBeforeSeq(req.BeforeSeq), req.Limit)
+	page := visibleTranscriptHistory(record.transcript, req)
 	items := page.Items()
 	response := SessionMessagesResponse{
 		Items:   make([]SessionMessage, 0, len(items)),
@@ -366,6 +370,32 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		response.NextBeforeSeq = &value
 	}
 	return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
+}
+
+func visibleTranscriptHistory(transcript message.Transcript, req SessionMessagesRequest) message.HistoryPage {
+	if req.IncludeToolEvents {
+		return transcript.History(messageBeforeSeq(req.BeforeSeq), req.Limit)
+	}
+	return message.HistoryFromCommitted(visibleCommittedMessages(transcript.Items(), req), messageBeforeSeq(req.BeforeSeq), req.Limit)
+}
+
+func visibleCommittedMessages(items []message.CommittedMessage, req SessionMessagesRequest) []message.CommittedMessage {
+	if req.IncludeToolEvents {
+		return items
+	}
+	visible := make([]message.CommittedMessage, 0, len(items))
+	for _, item := range items {
+		if committedMessageIsToolEvent(item) {
+			continue
+		}
+		visible = append(visible, item)
+	}
+	return visible
+}
+
+func committedMessageIsToolEvent(item message.CommittedMessage) bool {
+	kind := item.Kind().String()
+	return kind == "tool" || kind == "tool_result"
 }
 
 func sessionMessageForRequest(item message.CommittedMessage, req SessionMessagesRequest, tailSeq uint64, activeTurnStartSeq uint64) SessionMessage {

@@ -311,6 +311,7 @@ export interface ConnectMessagesOptions {
   deferred?: boolean;
   activeTurnStartSeq?: number;
   includeToolDetails?: boolean;
+  includeToolEvents?: boolean;
   eventId?: string;
   toolCallId?: string;
   signal?: AbortSignal;
@@ -379,6 +380,7 @@ export async function fetchConnectSessionMessages(config: ConnectTransportConfig
       deferred: options.deferred === true,
       activeTurnStartSeq: BigInt(options.activeTurnStartSeq || 0),
       includeToolDetails: options.includeToolDetails === true,
+      includeToolEvents: options.includeToolEvents === true,
       eventId: options.eventId || "",
       toolCallId: options.toolCallId || "",
     }));
@@ -405,6 +407,7 @@ export async function fetchConnectSessionMessages(config: ConnectTransportConfig
       deferred: options.deferred,
       active_turn_start_seq: options.activeTurnStartSeq,
       include_tool_details: options.includeToolDetails,
+      include_tool_events: options.includeToolEvents,
       event_id: options.eventId,
       tool_call_id: options.toolCallId,
     }),
