@@ -104,6 +104,10 @@ func NewStub(cfg config.Config) (*Stub, error) {
 	return newPersistentStubWithRuntime(cfg, time.Now, RuntimeConfig{UseIODHelper: true})
 }
 
+func NewStubWithDeferredRuntimeRestore(cfg config.Config) (*Stub, error) {
+	return newPersistentStubWithRuntimeOptions(cfg, time.Now, RuntimeConfig{UseIODHelper: true}, persistentStubOptions{DeferRuntimeRestore: true})
+}
+
 func NewStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
 	return newStubWithRuntime(cfg, now, runtimeCfg)
 }

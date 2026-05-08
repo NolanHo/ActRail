@@ -11,7 +11,15 @@ import (
 	"actrail/internal/domain/session"
 )
 
+type persistentStubOptions struct {
+	DeferRuntimeRestore bool
+}
+
 func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) (*Stub, error) {
+	return newPersistentStubWithRuntimeOptions(cfg, now, runtimeCfg, persistentStubOptions{})
+}
+
+func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig, options persistentStubOptions) (*Stub, error) {
 	if err := cfg.Storage.EnsureDir(); err != nil {
 		return nil, fmt.Errorf("ensure actrail data dir: %w", err)
 	}
@@ -81,13 +89,26 @@ func newPersistentStubWithRuntime(cfg config.Config, now func() time.Time, runti
 			stub.runtimeAgentRunning[record.identity.SessionID()] = true
 		}
 	}
-	if err := stub.reattachSurvivingRuntimes(context.Background()); err != nil {
+	if options.DeferRuntimeRestore {
+		return stub, nil
+	}
+	if err := stub.RestoreSurvivingRuntimes(context.Background()); err != nil {
 		_ = catalog.Close()
 		return nil, err
 	}
-	stub.reconcilePersistedBusySessions(context.Background())
-	for _, record := range stub.registry.List() {
-		stub.startRuntimeIngest(record.identity.SessionID(), record.identity.Backend(), stub.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime))
-	}
 	return stub, nil
+}
+
+func (s *Stub) RestoreSurvivingRuntimes(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if err := s.reattachSurvivingRuntimes(ctx); err != nil {
+		return err
+	}
+	s.reconcilePersistedBusySessions(ctx)
+	for _, record := range s.registry.List() {
+		s.startRuntimeIngest(record.identity.SessionID(), record.identity.Backend(), s.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime))
+	}
+	return nil
 }

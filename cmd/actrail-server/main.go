@@ -37,7 +37,7 @@ func main() {
 		}
 	}()
 
-	service, err := app.NewStub(cfg)
+	service, err := app.NewStubWithDeferredRuntimeRestore(cfg)
 	if err != nil {
 		logger.Error("actrail service init failed", zap.String("sqlite_path", cfg.SQLitePath()), zap.Error(err))
 		os.Exit(1)
@@ -73,6 +73,11 @@ func main() {
 	go service.RunSupervisorScheduler(ctx)
 	go service.RunSchedulerDeliverySweep(ctx)
 	go service.RunWaitTimeoutSweep(ctx)
+	go func() {
+		if err := service.RestoreSurvivingRuntimes(ctx); err != nil {
+			logger.Error("actrail runtime restore failed", zap.Error(err))
+		}
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
