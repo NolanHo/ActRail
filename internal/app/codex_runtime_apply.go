@@ -155,7 +155,7 @@ func (s *Stub) syncCodexRuntimeActivity(sessionID session.SessionID, cause strin
 		return nil
 	}
 	visible := codexVisibleActivity(record)
-	registryBusy := codexRegistryBusy(record, visible.Busy)
+	registryBusy := codexRegistryBusy(record, visible)
 	rawBusy := record.state.Busy()
 	queueLen := record.state.Queue().Len()
 
@@ -195,19 +195,37 @@ func (s *Stub) syncCodexRuntimeActivity(sessionID session.SessionID, cause strin
 	return nil
 }
 
-func codexRegistryBusy(record sessionRecord, visibleBusy bool) bool {
+func codexRegistryBusy(record sessionRecord, visible codexRuntimeActivity) bool {
 	if record.identity.Historical() {
+		return false
+	}
+	if visible.Phase == codexRuntimePhaseFailed || visible.Phase == codexRuntimePhaseEnded {
 		return false
 	}
 	if _, ok := record.transcript.PartialAssistantTurn(); ok {
 		return true
 	}
-	return visibleBusy
+	return visible.Busy
 }
 
 func codexVisibleActivity(record sessionRecord) codexRuntimeActivity {
 	if record.identity.Historical() || record.identity.Backend() != session.BackendCodex {
 		return codexRuntimeActivity{Phase: codexRuntimePhaseIdle}
+	}
+	transport := sessionTransportSnapshot(record)
+	if record.transport.ResetRequired || transport.ResetRequired || transport.State == SessionTransportStateBroken || transport.State == SessionTransportStateFailed {
+		reason := strings.TrimSpace(firstNonEmptyString(record.transport.Reason, transport.Reason))
+		if reason == "" {
+			reason = "transport_" + strings.TrimSpace(transport.State.String())
+		}
+		return codexRuntimeActivity{Phase: codexRuntimePhaseFailed, Reason: reason}
+	}
+	if transport.State == SessionTransportStateEnded {
+		reason := strings.TrimSpace(transport.Reason)
+		if reason == "" {
+			reason = "transport_ended"
+		}
+		return codexRuntimeActivity{Phase: codexRuntimePhaseEnded, Reason: reason}
 	}
 	if record.uiRequest != nil {
 		return codexRuntimeActivity{Phase: codexRuntimePhaseWaitingUser, Reason: "ui_request", Busy: true}
@@ -221,7 +239,6 @@ func codexVisibleActivity(record sessionRecord) codexRuntimeActivity {
 		}
 		return codexRuntimeActivity{Phase: codexRuntimePhaseIdle}
 	}
-	transport := sessionTransportSnapshot(record)
 	if transport.State == SessionTransportStateStarting {
 		phase := codexRuntimePhaseThreadStarting
 		if strings.TrimSpace(transport.Reason) == "codex_initializing" {

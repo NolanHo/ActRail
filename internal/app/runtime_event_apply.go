@@ -214,8 +214,15 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 			if _, _, err := s.registry.SetBusy(sessionID, false); err != nil {
 				return err
 			}
-		} else if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
-			return err
+		} else {
+			if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+				return err
+			}
+			if record, ok := s.registry.Lookup(sessionID); ok && record.identity.Backend() == session.BackendCodex {
+				if err := s.syncCodexRuntimeActivity(sessionID, "assistant_commit", true); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if !committedNew {

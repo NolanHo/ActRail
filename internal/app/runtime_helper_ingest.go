@@ -24,7 +24,7 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 			return
 		}
 		if err := s.applyRuntimeHelperPacket(sessionID, backend, packet); err != nil {
-			return
+			continue
 		}
 	}
 }

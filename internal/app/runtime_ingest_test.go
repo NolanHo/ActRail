@@ -1315,6 +1315,80 @@ func TestCodexVisibleBusyIsConsistentAcrossSummaryDetailsAndState(t *testing.T) 
 	assertCodexVisibleState(t, svc, sessionID, false, "", string(codexRuntimePhaseIdle))
 }
 
+func TestCodexAssistantItemCompletedClearsPartialBusyWithoutTurnCompleted(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+
+	_, _ = stdoutW.Write([]byte(
+		"{\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}\n" +
+			"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-final-only\",\"status\":{\"type\":\"idle\"}}}}\n" +
+			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-final-only\",\"turn\":{\"id\":\"turn-codex-final-only\",\"status\":\"inProgress\",\"error\":null}}}\n" +
+			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-final-only\",\"turnId\":\"turn-codex-final-only\",\"itemId\":\"item-codex-final-only\",\"delta\":\"stale partial\"}}\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy && state.BusyReason == "partial_assistant_turn" && state.PartialAssistantTurn != nil
+	})
+
+	_, _ = stdoutW.Write([]byte("{\"method\":\"item/completed\",\"params\":{\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-final-only\",\"threadId\":\"thread-codex-final-only\",\"turnId\":\"turn-codex-final-only\",\"text\":\"final answer without turn completed\"}}}\n"))
+	_ = stdoutW.Close()
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		if err != nil || state.Busy || state.PartialAssistantTurn != nil || state.RuntimeState != string(codexRuntimePhaseIdle) {
+			return false
+		}
+		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		return err == nil && len(messages.Items) == 1 && messages.Items[0].Role == "assistant" && messages.Items[0].Text == "final answer without turn completed"
+	})
+
+	assertCodexVisibleState(t, svc, sessionID, false, "", string(codexRuntimePhaseIdle))
+}
+
+func TestCodexTerminalTransportOverridesStalePartialBusy(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	_, _ = stdoutW.Write([]byte(
+		"{\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}\n" +
+			"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-broken\",\"status\":{\"type\":\"idle\"}}}}\n" +
+			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-broken\",\"turn\":{\"id\":\"turn-codex-broken\",\"status\":\"inProgress\",\"error\":null}}}\n" +
+			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-broken\",\"turnId\":\"turn-codex-broken\",\"itemId\":\"item-codex-broken\",\"delta\":\"stale partial\"}}\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy && state.BusyReason == "partial_assistant_turn"
+	})
+
+	generationID := mustHelperGenerationID(t, "g_codex_broken_busy")
+	if err := svc.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String()); err != nil {
+		t.Fatalf("markSessionTransportResetRequired() error = %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.BusyReason == "" && state.RuntimeState == string(codexRuntimePhaseFailed) && state.RuntimeStateReason == iod.GenerationBreakAttachLost.String()
+	})
+
+	assertCodexVisibleState(t, svc, sessionID, false, "", string(codexRuntimePhaseFailed))
+	_ = stdoutW.Close()
+}
+
 func TestCodexBusyIgnoresStatusFromNonMainThread(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()
