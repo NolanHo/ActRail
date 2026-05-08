@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
 import { TraceView } from "./TraceView";
+import { buildToolActivitySummary, type MachineTraceKind, type ToolActivityEvent } from "./toolActivity";
 import { WaitCard } from "../waits/WaitCard";
 import {
   shallowEqual,
@@ -112,6 +113,7 @@ interface ToolTracePairInfo {
 }
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
+const MACHINE_TRACE_VISIBLE_LIMIT = 12;
 
 const EVENT_LABELS: Record<string, string> = {
   ask_user: "Question",
@@ -887,6 +889,10 @@ function sortEventsByTimestamp<T extends MessageEvent>(events: T[]): T[] {
 
 function sortMachineTraceEvents(events: MessageEvent[]): MessageEvent[] {
   return sortEventsByTimestamp(events);
+}
+
+function machineTraceKindForActivity(event: MessageEvent): MachineTraceKind | null {
+  return compactTraceKind(event) as MachineTraceKind | null;
 }
 
 function formatMessageTimestamp(ts: number): string {
@@ -2188,6 +2194,24 @@ function formatRuntime(seconds: number) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+function formatRuntimePrecise(seconds: number | null) {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
+    return "";
+  }
+  const total = Math.max(0, Math.floor(seconds));
+  if (total < 60) {
+    return `${total}s`;
+  }
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  if (minutes < 60) {
+    return secs ? `${minutes}m${secs}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return remMinutes ? `${hours}h${remMinutes}m` : `${hours}h`;
+}
+
 function hasTrailingUnresolvedTool(events: MessageEvent[]) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const kind = eventKind(events[index]);
@@ -2427,19 +2451,152 @@ async function hydrateDeferredToolEvent(event: MessageEvent) {
   return items.find((item) => (eventId && item.event_id === eventId) || (toolCallId && item.tool_call_id === toolCallId) || item.seq === seq) ?? event;
 }
 
+function MachineTraceSummaryRow({
+  summary,
+  expanded,
+  onToggle,
+}: {
+  summary: ReturnType<typeof buildToolActivitySummary>;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const runningLabel = summary.runningToolNames.length ? summary.runningToolNames.join(", ") : "";
+  return (
+    <button
+      type="button"
+      className={cn(
+        "machineTraceSummaryRow",
+        summary.running > 0 && "isRunning",
+        summary.failed > 0 && "isError",
+        summary.stalled && "isStalled",
+      )}
+      data-testid="machine-trace-summary"
+      aria-expanded={expanded ? "true" : "false"}
+      title={summary.summaryText}
+      onClick={onToggle}
+    >
+      <span className="machineTraceSummaryStatus" aria-hidden="true" />
+      <span className="machineTraceSummaryMain">
+        <span className="machineTraceSummaryText">{summary.summaryText}</span>
+        <span className="machineTraceSummarySubtext">
+          {summary.stalled && summary.lastActivityAgeSeconds !== null
+            ? `No output for ${formatRuntimePrecise(summary.lastActivityAgeSeconds)}`
+            : summary.running > 0
+              ? `Running${runningLabel ? `: ${runningLabel}` : ""}`
+              : summary.statusText}
+        </span>
+      </span>
+      <span className="machineTraceSummaryMeta">
+        {summary.hiddenEventCount > 0 && expanded ? `showing ${summary.visibleEvents.length}/${summary.visibleEvents.length + summary.hiddenEventCount}` : expanded ? "Hide" : "Details"}
+      </span>
+    </button>
+  );
+}
+
+function MachineTraceToken({
+  item,
+  selected,
+  running,
+  runtimeSeconds,
+  toolPair,
+  onSelect,
+}: {
+  item: ToolActivityEvent;
+  selected: boolean;
+  running: boolean;
+  runtimeSeconds: number | null;
+  toolPair?: ToolTracePairInfo;
+  onSelect: () => void;
+}) {
+  const { event, kind, key } = item;
+  const piEventVariant = kind === "pi_event" ? piEventCompactVariant(event) : null;
+  const summary = machineTraceSummary(event, kind);
+  const tokenSummary = kind === "tool_result" && (todoItemsFromEvent(event).length > 0 || summary.includes('"todos"'))
+    ? ""
+    : summary;
+  const title = machineTraceTitle(event, kind);
+  const toolFamily = kind === "tool" || kind === "tool_result" ? machineTraceToolFamily(event) : undefined;
+  const pairLabel = toolPair
+    ? toolPair.state === "call"
+      ? `paired call ${toolPair.id}`
+      : toolPair.state === "result"
+        ? `paired result ${toolPair.id}`
+        : `unpaired tool ${toolPair.id}`
+    : "";
+  const runtimeLabel = typeof runtimeSeconds === "number" ? `running ${formatRuntime(runtimeSeconds)}` : "";
+  const hiddenCount = item.priority >= 100 ? "important" : "";
+  const accessibleLabel = [tokenSummary ? `${title}: ${tokenSummary}` : title, pairLabel, runtimeLabel, hiddenCount].filter(Boolean).join("; ");
+  const statusLabel = kind === "tool_result"
+    ? (event.is_error ? "error" : "complete")
+    : kind === "todo_snapshot"
+      ? "updated"
+      : kind === "pi_event"
+        ? (piEventVariant || "system")
+        : running ? "running" : kind;
+  return (
+    <button
+      key={`${kind}-${key}`}
+      type="button"
+      data-kind={kind}
+      data-status={statusLabel}
+      data-variant={piEventVariant || undefined}
+      data-tool={toolFamily}
+      data-pair-state={toolPair?.state}
+      data-pair-id={toolPair?.id}
+      className={cn(
+        "machineTraceToken",
+        kind,
+        selected && "isSelected",
+        running && "isRunning",
+        event.is_error && "isError",
+        toolPair?.state === "call" && "isPairedToolCall",
+        toolPair?.state === "result" && "isPairedToolResult",
+        toolPair?.state === "orphan" && "isUnpairedTool",
+        (kind === "tool" || kind === "tool_result") && event.name === "process" && "isProcessTool",
+        (piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+        piEventVariant === PI_EVENT_COMPACT_VARIANTS.extension_ui && "isExtensionUI",
+        piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
+        piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
+      )}
+      aria-expanded={selected ? "true" : "false"}
+      title={accessibleLabel}
+      aria-label={accessibleLabel}
+      onClick={onSelect}
+    >
+      <span className="machineTraceTokenIcon" aria-hidden="true">
+        {machineTraceIcon(event, kind, piEventVariant)}
+      </span>
+      {running ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
+    </button>
+  );
+}
+
 function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {
   const traceEvents = sortMachineTraceEvents(events);
   const runningIndex = machineTraceRunningIndex(traceEvents, isBusy);
   const toolTracePairs = buildToolTracePairs(traceEvents);
+  const [expanded, setExpanded] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [hydratedByKey, setHydratedByKey] = useState<Record<string, MessageEvent>>({});
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000);
+  const activity = useMemo(() => buildToolActivitySummary(traceEvents, {
+    nowSeconds,
+    isBusy,
+    visibleLimit: MACHINE_TRACE_VISIBLE_LIMIT,
+    kindForEvent: machineTraceKindForActivity,
+    eventKey: (event, kind, index) => eventStableIdentity(event, kind, index),
+    eventTimestampSeconds,
+    toolCallID,
+    toolName: normalizedToolName,
+    piEventVariant: piEventCompactVariant,
+  }), [isBusy, nowSeconds, traceEvents]);
+  const visibleEvents = expanded ? activity.visibleEvents : [];
   const selectedEvent = selectedKey == null
     ? null
-    : hydratedByKey[selectedKey] ?? traceEvents.find((event, index) => {
-      const kind = compactTraceKind(event);
-      return kind && eventStableIdentity(event, kind, index) === selectedKey;
-    }) ?? null;
+    : hydratedByKey[selectedKey] ?? visibleEvents.find((item) => item.key === selectedKey)?.event ?? traceEvents.find((event, index) => {
+        const kind = compactTraceKind(event);
+        return kind && eventStableIdentity(event, kind, index) === selectedKey;
+      }) ?? null;
   const selectedKind = selectedEvent ? compactTraceKind(selectedEvent) : null;
   const selectedVariant = selectedEvent ? piEventCompactVariant(selectedEvent) : null;
 
@@ -2474,80 +2631,35 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
     };
   }, [hydratedByKey, selectedKey, traceEvents]);
 
+  useEffect(() => {
+    if (!expanded) {
+      setSelectedKey(null);
+    }
+  }, [expanded]);
+
   return (
     <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
-      <div className="machineTraceStrip" data-testid="machine-trace-strip">
-        {traceEvents.map((event, index) => {
-          const kind = compactTraceKind(event);
-          if (!kind || !isMachineTraceKind(kind)) {
-            return null;
-          }
-          const piEventVariant = kind === "pi_event" ? piEventCompactVariant(event) : null;
-          const eventKey = eventStableIdentity(event, kind, index);
-          const isSelected = selectedKey === eventKey;
-          const isRunning = index === runningIndex;
-          const runtimeSeconds = kind === "tool" ? unresolvedToolRuntimeSeconds(traceEvents, index, nowSeconds) : null;
-          const summary = machineTraceSummary(event, kind);
-          const tokenSummary = kind === "tool_result" && (todoItemsFromEvent(event).length > 0 || summary.includes('"todos"'))
-            ? ""
-            : summary;
-          const title = machineTraceTitle(event, kind);
-          const toolFamily = kind === "tool" || kind === "tool_result" ? machineTraceToolFamily(event) : undefined;
-          const toolPair = toolTracePairs.get(index);
-          const pairLabel = toolPair
-            ? toolPair.state === "call"
-              ? `paired call ${toolPair.id}`
-              : toolPair.state === "result"
-                ? `paired result ${toolPair.id}`
-                : `unpaired tool ${toolPair.id}`
-            : "";
-          const runtimeLabel = typeof runtimeSeconds === "number" ? `running ${formatRuntime(runtimeSeconds)}` : "";
-          const accessibleLabel = [tokenSummary ? `${title}: ${tokenSummary}` : title, pairLabel, runtimeLabel].filter(Boolean).join("; ");
-          const statusLabel = kind === "tool_result"
-            ? (event.is_error ? "error" : "complete")
-            : kind === "todo_snapshot"
-              ? "updated"
-              : kind === "pi_event"
-                ? (piEventVariant || "system")
-                : isRunning ? "running" : kind;
-          return (
-            <button
-              key={`${kind}-${eventKey}`}
-              type="button"
-              data-kind={kind}
-              data-status={statusLabel}
-              data-variant={piEventVariant || undefined}
-              data-tool={toolFamily}
-              data-pair-state={toolPair?.state}
-              data-pair-id={toolPair?.id}
-              className={cn(
-                "machineTraceToken",
-                kind,
-                isSelected && "isSelected",
-                isRunning && "isRunning",
-                event.is_error && "isError",
-                toolPair?.state === "call" && "isPairedToolCall",
-                toolPair?.state === "result" && "isPairedToolResult",
-                toolPair?.state === "orphan" && "isUnpairedTool",
-                (kind === "tool" || kind === "tool_result") && event.name === "process" && "isProcessTool",
-                (piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
-                piEventVariant === PI_EVENT_COMPACT_VARIANTS.extension_ui && "isExtensionUI",
-                piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
-                piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
-              )}
-              aria-expanded={isSelected ? "true" : "false"}
-              title={accessibleLabel}
-              aria-label={accessibleLabel}
-              onClick={() => setSelectedKey((current) => (current === eventKey ? null : eventKey))}
-            >
-              <span className="machineTraceTokenIcon" aria-hidden="true">
-                {machineTraceIcon(event, kind, piEventVariant)}
-              </span>
-              {isRunning ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
-            </button>
-          );
-        })}
-      </div>
+      <MachineTraceSummaryRow summary={activity} expanded={expanded} onToggle={() => setExpanded((current) => !current)} />
+      {expanded ? (
+        <div className="machineTraceStrip" data-testid="machine-trace-strip">
+          {visibleEvents.map((item) => (
+            <MachineTraceToken
+              key={`${item.kind}-${item.key}`}
+              item={item}
+              selected={selectedKey === item.key}
+              running={item.index === runningIndex}
+              runtimeSeconds={item.kind === "tool" ? unresolvedToolRuntimeSeconds(traceEvents, item.index, nowSeconds) : null}
+              toolPair={toolTracePairs.get(item.index)}
+              onSelect={() => setSelectedKey((current) => (current === item.key ? null : item.key))}
+            />
+          ))}
+          {activity.hiddenEventCount > 0 ? (
+            <div className="machineTraceHiddenCount" data-testid="machine-trace-hidden-count">
+              +{activity.hiddenEventCount}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {selectedEvent && selectedKind && isMachineTraceKind(selectedKind) ? (
         <div
           className={cn(
