@@ -14,6 +14,8 @@ type codexRuntimeState struct {
 	initialized         bool
 	initializeSent      bool
 	threadStartSent     bool
+	threadResumeSent    bool
+	resumeThreadID      string
 	threadID            string
 	activeTurnID        string
 	interruptPending    bool
@@ -44,10 +46,14 @@ type codexRuntimeActivity struct {
 }
 
 func newCodexRuntimeState(backend session.Backend) *codexRuntimeState {
+	return newCodexRuntimeStateWithResumeThread(backend, "")
+}
+
+func newCodexRuntimeStateWithResumeThread(backend session.Backend, threadID string) *codexRuntimeState {
 	if backend != session.BackendCodex {
 		return nil
 	}
-	return &codexRuntimeState{}
+	return &codexRuntimeState{resumeThreadID: strings.TrimSpace(threadID)}
 }
 
 func (s *codexRuntimeState) nextRequestID(prefix string) string {
@@ -80,20 +86,46 @@ func (s *codexRuntimeState) bootstrapRequests() []any {
 			},
 		})
 	}
-	if s.initialized && s.threadID == "" && !s.threadStartSent {
+	if request := s.threadAttachRequestLocked(); request != nil {
+		requests = append(requests, request)
+	}
+	return requests
+}
+
+func (s *codexRuntimeState) threadAttachRequestLocked() any {
+	if !s.initialized || s.threadID != "" {
+		return nil
+	}
+	if s.resumeThreadID != "" {
+		if s.threadResumeSent {
+			return nil
+		}
+		s.requestSeq++
+		s.threadResumeSent = true
+		s.setPhaseLocked(codexRuntimePhaseThreadStarting, "codex_thread_resuming")
+		return map[string]any{
+			"method": "thread/resume",
+			"id":     fmt.Sprintf("thread-resume-%d", s.requestSeq),
+			"params": map[string]any{
+				"threadId":               s.resumeThreadID,
+				"persistExtendedHistory": false,
+			},
+		}
+	}
+	if !s.threadStartSent {
 		s.requestSeq++
 		s.threadStartSent = true
 		s.setPhaseLocked(codexRuntimePhaseThreadStarting, "codex_thread_starting")
-		requests = append(requests, map[string]any{
+		return map[string]any{
 			"method": "thread/start",
 			"id":     fmt.Sprintf("thread-start-%d", s.requestSeq),
 			"params": map[string]any{
 				"experimentalRawEvents":  false,
 				"persistExtendedHistory": false,
 			},
-		})
+		}
 	}
-	return requests
+	return nil
 }
 
 func (s *codexRuntimeState) threadStartRequest() any {
@@ -102,20 +134,7 @@ func (s *codexRuntimeState) threadStartRequest() any {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.initialized || s.threadID != "" || s.threadStartSent {
-		return nil
-	}
-	s.requestSeq++
-	s.threadStartSent = true
-	s.setPhaseLocked(codexRuntimePhaseThreadStarting, "codex_thread_starting")
-	return map[string]any{
-		"method": "thread/start",
-		"id":     fmt.Sprintf("thread-start-%d", s.requestSeq),
-		"params": map[string]any{
-			"experimentalRawEvents":  false,
-			"persistExtendedHistory": false,
-		},
-	}
+	return s.threadAttachRequestLocked()
 }
 
 func (s *codexRuntimeState) markInitialized() {
@@ -127,7 +146,11 @@ func (s *codexRuntimeState) markInitialized() {
 	s.initialized = true
 	s.initializeSent = false
 	if s.threadID == "" && s.phase == codexRuntimePhaseInitializing {
-		s.setPhaseLocked(codexRuntimePhaseThreadStarting, "codex_thread_starting")
+		reason := "codex_thread_starting"
+		if s.resumeThreadID != "" {
+			reason = "codex_thread_resuming"
+		}
+		s.setPhaseLocked(codexRuntimePhaseThreadStarting, reason)
 	}
 }
 
@@ -144,9 +167,13 @@ func (s *codexRuntimeState) setThreadID(threadID string) (bool, bool) {
 	if s.threadID != "" && s.threadID != resolved {
 		return false, false
 	}
-	changed := s.threadID != resolved || s.threadStartSent || phaseIsStarting(s.phase)
+	changed := s.threadID != resolved || s.threadStartSent || s.threadResumeSent || phaseIsStarting(s.phase)
 	s.threadID = resolved
 	s.threadStartSent = false
+	s.threadResumeSent = false
+	if s.resumeThreadID == resolved {
+		s.resumeThreadID = ""
+	}
 	if s.activeTurnID == "" && phaseIsStarting(s.phase) {
 		s.setPhaseLocked(codexRuntimePhaseIdle, "")
 	}
@@ -295,6 +322,18 @@ func (s *codexRuntimeState) snapshot() (initialized bool, threadID, activeTurnID
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.initialized, s.threadID, s.activeTurnID
+}
+
+func (s *codexRuntimeState) pendingResumeThreadID() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.threadID != "" {
+		return ""
+	}
+	return s.resumeThreadID
 }
 
 func (s *codexRuntimeState) setPhaseLocked(phase codexRuntimePhase, reason string) {

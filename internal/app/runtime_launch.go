@@ -69,6 +69,7 @@ type runtimeLaunchRequest struct {
 	Model           string
 	ReasoningEffort string
 	SessionPath     string
+	CodexThreadID   string
 	PIAgentGRPC     bool
 	AttachOnly      bool
 }
@@ -444,7 +445,7 @@ func (l processRuntimeLauncher) launchDirect(ctx context.Context, req runtimeLau
 		launchSpec:           launchSpec,
 		handle:               handle,
 		protocol:             runtimeProtocolForBackend(req.Backend),
-		codex:                newCodexRuntimeState(req.Backend),
+		codex:                newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID),
 		currentHelperBinding: l.currentHelperBinding,
 	}, nil
 }
@@ -510,7 +511,7 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 		launchSpec:    childLaunchSpec,
 		handle:        handle,
 		protocol:      runtimeProtocolForBackend(req.Backend),
-		codex:         newCodexRuntimeState(req.Backend),
+		codex:         newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID),
 		helper:        helper,
 		helperBinding: binding,
 		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
@@ -695,6 +696,13 @@ func (r sessionRuntime) PendingCodexThread() bool {
 	}
 	_, threadID, _ := r.codex.snapshot()
 	return strings.TrimSpace(threadID) == ""
+}
+
+func (r sessionRuntime) PendingCodexResumeThreadID() string {
+	if r.protocol != runtimeProtocolCodexRPC || r.codex == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.codex.pendingResumeThreadID())
 }
 
 func (r sessionRuntime) PIAgentGRPCState(ctx context.Context) (piagentgrpc.State, error) {

@@ -584,6 +584,10 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 			return sessionRecord{}, "", err
 		}
 	}
+	codexThreadID, err := s.codexThreadIDForRuntimeRestart(ctx, record)
+	if err != nil {
+		return sessionRecord{}, "", err
+	}
 	newRuntime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
 		SessionID:       identity.SessionID(),
 		Backend:         record.identity.Backend(),
@@ -592,6 +596,7 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		Model:           record.model,
 		ReasoningEffort: record.reasoningEffort,
 		SessionPath:     sourcePath,
+		CodexThreadID:   codexThreadID,
 		PIAgentGRPC:     usePIAgentGRPC,
 	})
 	if sourcePath != "" && sourcePath == strings.TrimSpace(record.importedSourcePath) {
@@ -644,6 +649,7 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	}
 	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
 	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), newRuntime)
+	s.startCodexThreadBootstrap(updated.identity.SessionID(), newRuntime)
 	_ = record.runtime.Kill(context.Background())
 	if record.runtime.helper != nil && s.helpers != nil {
 		s.helpers.Remove(record.identity.SessionID())

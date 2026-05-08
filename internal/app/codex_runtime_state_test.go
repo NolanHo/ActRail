@@ -48,6 +48,51 @@ func TestCodexRuntimeStateBootstrapsInitializeThenThreadStart(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeStateBootstrapsInitializeThenThreadResume(t *testing.T) {
+	state := newCodexRuntimeStateWithResumeThread(session.BackendCodex, "thread-existing")
+	if state == nil {
+		t.Fatal("newCodexRuntimeStateWithResumeThread(codex) = nil")
+	}
+
+	requests := state.bootstrapRequests()
+	if len(requests) != 1 {
+		t.Fatalf("initial bootstrap request count = %d, want 1", len(requests))
+	}
+	assertRuntimeRequest(t, requests[0], "initialize", "initialize-1")
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseInitializing || !activity.Busy {
+		t.Fatalf("activity after initialize = %+v, want initializing busy", activity)
+	}
+
+	state.markInitialized()
+	request := state.threadStartRequest()
+	assertRuntimeRequest(t, request, "thread/resume", "thread-resume-2")
+	params, ok := request.(map[string]any)["params"].(map[string]any)
+	if !ok || params["threadId"] != "thread-existing" {
+		t.Fatalf("thread/resume params = %#v, want threadId", request)
+	}
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseThreadStarting || activity.Reason != "codex_thread_resuming" || !activity.Busy {
+		t.Fatalf("activity after resume request = %+v, want resuming busy", activity)
+	}
+	if request := state.threadStartRequest(); request != nil {
+		t.Fatalf("threadStartRequest() while resume pending = %#v, want nil", request)
+	}
+
+	accepted, changed := state.setThreadID("thread-existing")
+	if !accepted || !changed {
+		t.Fatalf("setThreadID(existing) = accepted=%v changed=%v, want true true", accepted, changed)
+	}
+	initialized, threadID, activeTurnID := state.snapshot()
+	if !initialized || threadID != "thread-existing" || activeTurnID != "" {
+		t.Fatalf("snapshot = initialized=%v threadID=%q activeTurnID=%q", initialized, threadID, activeTurnID)
+	}
+	if pending := state.pendingResumeThreadID(); pending != "" {
+		t.Fatalf("pendingResumeThreadID() = %q, want empty", pending)
+	}
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseIdle || activity.Busy {
+		t.Fatalf("activity after resumed thread id = %+v, want idle", activity)
+	}
+}
+
 func TestCodexRuntimeStateTracksActiveTurn(t *testing.T) {
 	state := newCodexRuntimeState(session.BackendCodex)
 	state.setActiveTurnID("turn-1")

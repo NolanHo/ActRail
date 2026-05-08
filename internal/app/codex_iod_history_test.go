@@ -76,6 +76,46 @@ func TestSessionMessagesLoadsCodexHistoryAcrossIODGenerations(t *testing.T) {
 	}
 }
 
+func TestCodexThreadIDForRuntimeRestartFallsBackToLatestIODHistory(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_wal_resume")
+	firstGeneration := mustHelperGenerationID(t, "g_codex_resume_1")
+	secondGeneration := mustHelperGenerationID(t, "g_codex_resume_2")
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_1", "t_1", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	record, err := svc.registry.Create(sessionCreateSpec{
+		Identity: &identity,
+		Backend:  session.BackendCodex,
+		CWD:      "/tmp/codex-resume",
+	})
+	if err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+
+	writeCodexHistoryGeneration(t, cfg.Storage.IODRuntimeRoot(), sessionID, firstGeneration, 1760000001, []string{
+		`{"method":"thread/started","params":{"thread":{"id":"thread-old"}}}`,
+	})
+	writeCodexHistoryGeneration(t, cfg.Storage.IODRuntimeRoot(), sessionID, secondGeneration, 1760000002, []string{
+		`{"method":"thread/started","params":{"thread":{"id":"thread-latest"}}}`,
+	})
+
+	threadID, err := svc.codexThreadIDForRuntimeRestart(context.Background(), record)
+	if err != nil {
+		t.Fatalf("codexThreadIDForRuntimeRestart() error = %v", err)
+	}
+	if threadID != "thread-latest" {
+		t.Fatalf("codexThreadIDForRuntimeRestart() = %q, want latest thread", threadID)
+	}
+}
+
 func writeCodexHistoryGeneration(t *testing.T, root string, sessionID session.SessionID, generationID iod.GenerationID, startTS float64, lines []string) {
 	t.Helper()
 	paths, err := iod.NewGenerationPaths(root, sessionID, generationID)
