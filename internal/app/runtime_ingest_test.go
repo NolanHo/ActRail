@@ -1315,9 +1315,10 @@ func TestCodexVisibleBusyIsConsistentAcrossSummaryDetailsAndState(t *testing.T) 
 	assertCodexVisibleState(t, svc, sessionID, false, "", string(codexRuntimePhaseIdle))
 }
 
-func TestCodexAssistantItemCompletedClearsPartialBusyWithoutTurnCompleted(t *testing.T) {
+func TestCodexAssistantItemCompletedWaitsForTurnCompleted(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()
+	defer stdoutW.Close()
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	handle.SetStdout(stdoutR)
 	runner := &process.FakeRunner{NextHandle: handle}
@@ -1340,7 +1341,19 @@ func TestCodexAssistantItemCompletedClearsPartialBusyWithoutTurnCompleted(t *tes
 	})
 
 	_, _ = stdoutW.Write([]byte("{\"method\":\"item/completed\",\"params\":{\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-final-only\",\"threadId\":\"thread-codex-final-only\",\"turnId\":\"turn-codex-final-only\",\"text\":\"final answer without turn completed\"}}}\n"))
-	_ = stdoutW.Close()
+	waitForAppCondition(t, func() bool {
+		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		return err == nil && len(messages.Items) == 1 && messages.Items[0].Role == "assistant" && messages.Items[0].Text == "final answer without turn completed"
+	})
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() after assistant item completed error = %v", err)
+	}
+	if !state.Busy || state.BusyReason != "codex_running" || state.PartialAssistantTurn != nil || state.RuntimeState != string(codexRuntimePhaseRunning) {
+		t.Fatalf("SessionState() after assistant item completed = %+v, want running busy until turn/completed", state)
+	}
+
+	_, _ = stdoutW.Write([]byte("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-final-only\",\"turn\":{\"id\":\"turn-codex-final-only\",\"status\":\"completed\",\"error\":null}}}\n"))
 	waitForAppCondition(t, func() bool {
 		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 		if err != nil || state.Busy || state.PartialAssistantTurn != nil || state.RuntimeState != string(codexRuntimePhaseIdle) {
@@ -1351,6 +1364,50 @@ func TestCodexAssistantItemCompletedClearsPartialBusyWithoutTurnCompleted(t *tes
 	})
 
 	assertCodexVisibleState(t, svc, sessionID, false, "", string(codexRuntimePhaseIdle))
+}
+
+func TestCodexHelperChildExitMarksTransportEnded(t *testing.T) {
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_codex_child_exit")
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime.helper = &runtimeIODHelper{generationID: generationID}
+		record.transport = SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached}
+		record.runtime.codex = newCodexRuntimeState(session.BackendCodex)
+		record.runtime.codex.markInitialized()
+		record.runtime.codex.setThreadID("thread-codex-child-exit")
+		record.runtime.codex.setActiveTurnID("turn-codex-child-exit")
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+	if _, _, err := svc.registry.SetBusy(sessionID, true); err != nil {
+		t.Fatalf("registry.SetBusy(true) error = %v", err)
+	}
+
+	fact, err := iod.NewHelperFact(iod.FactChildExit, nil, json.RawMessage(`{"status":0}`))
+	if err != nil {
+		t.Fatalf("NewHelperFact(child_exit) error = %v", err)
+	}
+	packet, err := iod.NewStatePacket(sessionID, generationID, fact)
+	if err != nil {
+		t.Fatalf("NewStatePacket(child_exit) error = %v", err)
+	}
+	if err := svc.applyRuntimeHelperPacket(sessionID, session.BackendCodex, packet); err != nil {
+		t.Fatalf("applyRuntimeHelperPacket(child_exit) error = %v", err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != iod.FactChildExit.String() || state.RuntimeState != string(codexRuntimePhaseEnded) {
+		t.Fatalf("SessionState() after child_exit = %+v, want ended non-busy Codex transport", state)
+	}
 }
 
 func TestCodexTerminalTransportOverridesStalePartialBusy(t *testing.T) {

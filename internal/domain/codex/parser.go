@@ -195,15 +195,12 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 			}
 			projection := Projection{Events: events}
 			for _, event := range events {
-				if event.Message == nil || event.Message.Role != runtimeevent.MessageRoleAssistant || !event.Message.CommitLike {
-					continue
+				if projection.ThreadID == "" {
+					projection.ThreadID = strings.TrimSpace(event.ThreadID)
 				}
-				projection.ThreadID = strings.TrimSpace(event.ThreadID)
-				projection.TurnID = strings.TrimSpace(event.TurnID)
-				projection.ClearTurn = true
-				busy := false
-				projection.Busy = &busy
-				break
+				if projection.TurnID == "" {
+					projection.TurnID = strings.TrimSpace(event.TurnID)
+				}
 			}
 			return projection, true
 		case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":

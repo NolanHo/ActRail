@@ -80,7 +80,7 @@ func TestDecodeAppServerLineToolReasoningUsageAndError(t *testing.T) {
 	}
 }
 
-func TestDecodeAppServerLineAssistantCompletedIsTerminal(t *testing.T) {
+func TestDecodeAppServerLineAssistantCompletedDoesNotEndTurn(t *testing.T) {
 	projection, ok := DecodeAppServerLine([]byte(`{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"agent-final-1","threadId":"thread-codex-final","turnId":"turn-codex-final","text":"final answer"}}}`))
 	if !ok {
 		t.Fatal("DecodeAppServerLine(assistant completed) ok = false")
@@ -88,8 +88,8 @@ func TestDecodeAppServerLineAssistantCompletedIsTerminal(t *testing.T) {
 	if projection.ThreadID != "thread-codex-final" || projection.TurnID != "turn-codex-final" {
 		t.Fatalf("projection ids = (%q, %q), want ids from completed item", projection.ThreadID, projection.TurnID)
 	}
-	if !projection.ClearTurn || projection.Busy == nil || *projection.Busy {
-		t.Fatalf("projection terminal flags = clear:%v busy:%v, want clear true busy false", projection.ClearTurn, projection.Busy)
+	if projection.ClearTurn || projection.Busy != nil {
+		t.Fatalf("projection terminal flags = clear:%v busy:%v, want no terminal state before turn/completed", projection.ClearTurn, projection.Busy)
 	}
 	if len(projection.Events) != 1 {
 		t.Fatalf("len(projection.Events) = %d, want 1", len(projection.Events))
