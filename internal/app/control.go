@@ -376,7 +376,11 @@ func (s *Stub) prepareRuntimeSend(ctx context.Context, sessionID session.Session
 		return errRuntimeInputUnavailable
 	}
 	if _, threadID, _ := runtime.codex.snapshot(); strings.TrimSpace(threadID) == "" {
-		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseThreadStarting, "codex_thread_starting", "prepare_send")
+		reason := "codex_thread_starting"
+		if runtime.PendingCodexResumeThreadID() != "" {
+			reason = "codex_thread_resuming"
+		}
+		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseThreadStarting, reason, "prepare_send")
 	}
 	if err := runtime.EnsureCodexThread(ctx); err != nil {
 		return err
@@ -408,7 +412,11 @@ func (s *Stub) startCodexThreadBootstrap(sessionID session.SessionID, runtime se
 	if runtime.protocol != runtimeProtocolCodexRPC || !runtime.canWriteInput() {
 		return
 	}
-	_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseInitializing, "codex_initializing", "thread_bootstrap")
+	reason := "codex_initializing"
+	if runtime.PendingCodexResumeThreadID() != "" {
+		reason = "codex_thread_resuming"
+	}
+	_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseInitializing, reason, "thread_bootstrap")
 	go func() {
 		if err := runtime.EnsureCodexThread(context.Background()); err != nil {
 			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_thread_bootstrap_failed", "thread_bootstrap_failed")

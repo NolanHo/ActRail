@@ -55,7 +55,11 @@ func (s *Stub) noteCodexInitialized(sessionID session.SessionID) {
 		runtime = record.runtime
 	}
 	if runtime.protocol == runtimeProtocolCodexRPC && runtime.canWriteInput() {
-		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseThreadStarting, "codex_thread_starting", "thread_start")
+		reason := "codex_thread_starting"
+		if runtime.PendingCodexResumeThreadID() != "" {
+			reason = "codex_thread_resuming"
+		}
+		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseThreadStarting, reason, "thread_start")
 		go func() {
 			if err := runtime.EnsureCodexThreadStarted(context.Background()); err != nil {
 				_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_thread_start_failed", "thread_start_failed")
@@ -85,6 +89,7 @@ func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string) {
 	if !ok || record.identity.Backend() != session.BackendCodex {
 		return
 	}
+	s.rememberCodexThreadBinding(record, threadID)
 	transport := sessionTransportSnapshot(record)
 	if transport.State != SessionTransportStateStarting {
 		_ = s.syncCodexRuntimeActivity(sessionID, "thread_id", changed)

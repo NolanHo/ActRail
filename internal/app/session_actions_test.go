@@ -1240,8 +1240,8 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	if record.runtime.PID() != 322 {
 		t.Fatalf("record.runtime.PID() = %d, want 322", record.runtime.PID())
 	}
-	if record.state.Busy() {
-		t.Fatal("record.state.Busy() = true, want false after restart")
+	if !record.state.Busy() {
+		t.Fatal("record.state.Busy() = false, want true while restarted Codex runtime bootstraps")
 	}
 	if record.uiRequest != nil {
 		t.Fatalf("record.uiRequest = %+v, want nil after restart", record.uiRequest)
@@ -1264,8 +1264,8 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	if err != nil {
 		t.Fatalf("SessionState() after restart error = %v", err)
 	}
-	if state.Busy {
-		t.Fatal("SessionState().Busy = true, want false after restart")
+	if !state.Busy {
+		t.Fatal("SessionState().Busy = false, want true while restarted Codex runtime bootstraps")
 	}
 	if state.UIRequest != nil {
 		t.Fatalf("SessionState().UIRequest = %+v, want nil after restart", state.UIRequest)

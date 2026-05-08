@@ -639,6 +639,61 @@ func (s *Stub) codexIODHistoryMessages(ctx context.Context, sessionID session.Se
 	return items, nil
 }
 
+func (s *Stub) codexThreadIDForRuntimeRestart(ctx context.Context, record sessionRecord) (string, error) {
+	if record.identity.Backend() != session.BackendCodex {
+		return "", nil
+	}
+	if record.runtime.codex != nil {
+		_, threadID, _ := record.runtime.codex.snapshot()
+		if threadID = strings.TrimSpace(threadID); threadID != "" {
+			return threadID, nil
+		}
+	}
+	if threadID := strings.TrimSpace(record.importedBackendSessionID); threadID != "" {
+		return threadID, nil
+	}
+	return s.latestCodexIODThreadID(ctx, record.identity.SessionID())
+}
+
+func (s *Stub) latestCodexIODThreadID(ctx context.Context, sessionID session.SessionID) (string, error) {
+	generations, err := codexIODHistoryGenerations(s.cfg.Storage.IODRuntimeRoot(), sessionID)
+	if err != nil {
+		return "", err
+	}
+	decoder := runtimeEventDecoder{backend: session.BackendCodex}
+	for i := len(generations) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		generation := generations[i]
+		replay, err := iod.ReplayWAL(generation.WALPath, sessionID, generation.GenerationID, 0)
+		if err != nil {
+			return "", fmt.Errorf("replay codex iod wal %q: %w", generation.WALPath, err)
+		}
+		for j := len(replay.Records) - 1; j >= 0; j-- {
+			projection, err := decoder.decodeHelperFact(helperFactFromWALRecord(replay.Records[j]))
+			if err != nil {
+				continue
+			}
+			if threadID := strings.TrimSpace(projection.codexThreadID); threadID != "" {
+				return threadID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+func (s *Stub) rememberCodexThreadBinding(record sessionRecord, threadID string) {
+	if s == nil || record.identity.Backend() != session.BackendCodex {
+		return
+	}
+	resolved := strings.TrimSpace(threadID)
+	if resolved == "" || strings.TrimSpace(record.importedBackendSessionID) == resolved {
+		return
+	}
+	_, _, _ = s.registry.SetSourceBinding(record.identity.SessionID(), resolved, record.importedSourcePath, sourceConfidenceExact)
+}
+
 func helperFactFromWALRecord(record iod.WALRecord) iod.HelperFact {
 	return iod.HelperFact{
 		FactKind: record.Header.Class.FactKind(),
