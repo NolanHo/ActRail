@@ -140,7 +140,8 @@ Core runtime settings:
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `ACTRAIL_PORT` | `8080` | Backend listen port. |
-| `ACTRAIL_AUTH_PASSWORD` | unset | When set, enables password auth and requires login to access protected HTTP and WebSocket routes. When unset, ActRail runs in local no-password mode. |
+| `ACTRAIL_AUTH_USERNAME` | unset | Required username when password auth is enabled. |
+| `ACTRAIL_AUTH_PASSWORD` | unset | When set, enables username/password auth and requires login to access protected HTTP and WebSocket routes. When unset, ActRail runs in local no-password mode. |
 | `ACTRAIL_DATA_DIR` | `./data` | Data directory created on startup. Relative paths are resolved from the backend process working directory, so the default becomes `./data` under wherever you start the server. |
 
 Other useful backend settings:

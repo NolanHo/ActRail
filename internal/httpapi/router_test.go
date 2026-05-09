@@ -1389,9 +1389,10 @@ func TestProtectedRoutesRequireAuthCookieInPasswordMode(t *testing.T) {
 
 func TestLoginRejectsInvalidPasswordWithSharedErrorEnvelope(t *testing.T) {
 	cfg := config.Load()
+	cfg.Auth.Username = "nolan"
 	cfg.Auth.Password = "secret"
 	h := newTestRouter(cfg, newServiceStub(cfg))
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password":"wrong"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"nolan","password":"wrong"}`))
 	res := httptest.NewRecorder()
 
 	h.ServeHTTP(res, req)
@@ -1404,15 +1405,15 @@ func TestLoginRejectsInvalidPasswordWithSharedErrorEnvelope(t *testing.T) {
 	if body.Error.Code != "unauthorized" {
 		t.Fatalf("error code = %q, want %q", body.Error.Code, "unauthorized")
 	}
-	if body.Error.Message != "invalid password" {
-		t.Fatalf("error message = %q, want %q", body.Error.Message, "invalid password")
+	if body.Error.Message != "invalid credentials" {
+		t.Fatalf("error message = %q, want %q", body.Error.Message, "invalid credentials")
 	}
 }
 
 func TestLoginReturnsUnsupportedInLocalNoAuthMode(t *testing.T) {
 	cfg := config.Load()
 	h := newTestRouter(cfg, newServiceStub(cfg))
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password":"secret"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"nolan","password":"secret"}`))
 	res := httptest.NewRecorder()
 
 	h.ServeHTTP(res, req)
@@ -1422,9 +1423,10 @@ func TestLoginReturnsUnsupportedInLocalNoAuthMode(t *testing.T) {
 
 func TestLoginRejectsInvalidJSONWithSharedErrorEnvelope(t *testing.T) {
 	cfg := config.Load()
+	cfg.Auth.Username = "nolan"
 	cfg.Auth.Password = "secret"
 	h := newTestRouter(cfg, newServiceStub(cfg))
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password"`))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"nolan","password"`))
 	res := httptest.NewRecorder()
 
 	h.ServeHTTP(res, req)
@@ -1441,9 +1443,10 @@ func TestLoginRejectsInvalidJSONWithSharedErrorEnvelope(t *testing.T) {
 
 func TestLoginSetsAuthCookieOnSuccess(t *testing.T) {
 	cfg := config.Load()
+	cfg.Auth.Username = "nolan"
 	cfg.Auth.Password = "secret"
 	h := newTestRouter(cfg, newServiceStub(cfg))
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password":"secret"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"nolan","password":"secret"}`))
 	res := httptest.NewRecorder()
 
 	h.ServeHTTP(res, req)

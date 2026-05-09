@@ -412,7 +412,7 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.login("123456")).resolves.toEqual({ ok: true });
+    await expect(api.login("nolan", "123456")).resolves.toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledWith("api/login", {
       method: "POST",
       signal: undefined,
@@ -420,7 +420,7 @@ describe("api", () => {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ password: "123456" }),
+      body: JSON.stringify({ username: "nolan", password: "123456" }),
     });
   });
 

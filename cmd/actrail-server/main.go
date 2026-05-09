@@ -18,6 +18,10 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		_, _ = os.Stderr.WriteString("actrail config invalid: " + err.Error() + "\n")
+		os.Exit(1)
+	}
 	if err := ensureDataDir(cfg); err != nil {
 		_, _ = os.Stderr.WriteString("actrail data dir init failed: " + err.Error() + "\n")
 		os.Exit(1)

@@ -58,6 +58,7 @@ type Protocol struct {
 
 type Auth struct {
 	CookieName string
+	Username   string
 	Password   string
 }
 
@@ -108,6 +109,7 @@ func Load() Config {
 		},
 		Auth: Auth{
 			CookieName: envString("ACTRAIL_AUTH_COOKIE", defaultCookieName),
+			Username:   envString("ACTRAIL_AUTH_USERNAME", ""),
 			Password:   envString("ACTRAIL_AUTH_PASSWORD", ""),
 		},
 		Features: Features{
@@ -191,6 +193,12 @@ func (a Auth) Mode() AuthMode {
 func (a Auth) Validate() error {
 	if a.Mode() != AuthModePassword {
 		return nil
+	}
+	if strings.TrimSpace(a.Username) == "" {
+		return fmt.Errorf("auth username required when password auth is enabled")
+	}
+	if strings.TrimSpace(a.Password) == "" {
+		return fmt.Errorf("auth password required when password auth is enabled")
 	}
 	if strings.TrimSpace(a.CookieName) == "" {
 		return fmt.Errorf("auth cookie name required when password auth is enabled")

@@ -157,8 +157,8 @@ export const api = {
   me(signal?: AbortSignal) {
     return getJson<{ ok?: boolean }>("/api/me", signal);
   },
-  login(password: string, signal?: AbortSignal) {
-    return postJson<LoginResponse>("/api/login", { password }, signal);
+  login(username: string, password: string, signal?: AbortSignal) {
+    return postJson<LoginResponse>("/api/login", { username, password }, signal);
   },
   listSessions(options?: { groupKey?: string; offset?: number; limit?: number; groupOffset?: number; groupLimit?: number; agentBackend?: string; cwd?: string; title?: string }, signal?: AbortSignal, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }) {
     const query = new URLSearchParams();

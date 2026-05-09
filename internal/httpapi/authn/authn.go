@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"actrail/internal/config"
 )
@@ -16,12 +17,16 @@ func Configured(cfg config.Auth) bool {
 	return cfg.Mode() == config.AuthModePassword
 }
 
-func PasswordMatches(cfg config.Auth, password string) bool {
-	expected := cfg.Password
-	if expected == "" {
+func CredentialsMatch(cfg config.Auth, username, password string) bool {
+	expectedUsername := strings.TrimSpace(cfg.Username)
+	expectedPassword := cfg.Password
+	if expectedUsername == "" || expectedPassword == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(password), []byte(expected)) == 1
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(username)), []byte(expectedUsername)) != 1 {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(password), []byte(expectedPassword)) == 1
 }
 
 func Authenticated(req *http.Request, cfg config.Auth) bool {
@@ -56,6 +61,6 @@ func SessionToken(cfg config.Auth) (string, error) {
 	if !Configured(cfg) {
 		return "", fmt.Errorf("password auth is not configured")
 	}
-	sum := sha256.Sum256([]byte(sessionTokenNamespace + ":" + cfg.Password))
+	sum := sha256.Sum256([]byte(sessionTokenNamespace + ":" + strings.TrimSpace(cfg.Username) + ":" + cfg.Password))
 	return hex.EncodeToString(sum[:]), nil
 }

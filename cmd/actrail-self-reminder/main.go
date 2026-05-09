@@ -102,6 +102,7 @@ Usage:
 Environment:
   ACTRAIL_BASE_URL             ActRail API base URL. Default: %s
   ACTRAIL_SESSION_ID           Default target session id for create.
+  ACTRAIL_AUTH_USERNAME        Optional username used to call /api/login.
   ACTRAIL_AUTH_PASSWORD        Optional password used to call /api/login.
   ACTRAIL_AUTH_COOKIE_HEADER   Optional raw Cookie header.
   ACTRAIL_AUTH_TOKEN           Optional auth token cookie value.
@@ -134,8 +135,9 @@ func newClient(baseURL string) (*client, error) {
 		},
 	}
 	password := os.Getenv("ACTRAIL_AUTH_PASSWORD")
+	username := os.Getenv("ACTRAIL_AUTH_USERNAME")
 	if password != "" && c.cookie == "" {
-		if err := c.login(password); err != nil {
+		if err := c.login(username, password); err != nil {
 			return nil, err
 		}
 	}
@@ -160,8 +162,8 @@ func envCookie() string {
 	return cookieName + "=" + token
 }
 
-func (c *client) login(password string) error {
-	_, setCookie, err := c.request("POST", "/api/login", map[string]any{"password": password}, false)
+func (c *client) login(username, password string) error {
+	_, setCookie, err := c.request("POST", "/api/login", map[string]any{"username": username, "password": password}, false)
 	if err != nil {
 		return err
 	}

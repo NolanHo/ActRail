@@ -55,6 +55,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Auth.Password != "" {
 		t.Fatalf("expected empty auth password by default, got %q", cfg.Auth.Password)
 	}
+	if cfg.Auth.Username != "" {
+		t.Fatalf("expected empty auth username by default, got %q", cfg.Auth.Username)
+	}
 	if cfg.Auth.Mode() != AuthModeLocal {
 		t.Fatalf("expected default auth mode %q, got %q", AuthModeLocal, cfg.Auth.Mode())
 	}
@@ -72,6 +75,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("ACTRAIL_AVAILABLE_PROVIDERS", "openrouter,anthropic")
 	t.Setenv("ACTRAIL_AVAILABLE_MODELS", "claude-sonnet,gemini-2.5-pro")
 	t.Setenv("ACTRAIL_CODEX_DANGEROUS_BYPASS", "false")
+	t.Setenv("ACTRAIL_AUTH_USERNAME", "nolan")
 	t.Setenv("ACTRAIL_AUTH_PASSWORD", "secret")
 	t.Setenv("ACTRAIL_DATA_DIR", "/tmp/actrail-data")
 
@@ -122,6 +126,9 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.Auth.Password != "secret" {
 		t.Fatalf("expected auth password override, got %q", cfg.Auth.Password)
 	}
+	if cfg.Auth.Username != "nolan" {
+		t.Fatalf("expected auth username override, got %q", cfg.Auth.Username)
+	}
 	if cfg.Auth.Mode() != AuthModePassword {
 		t.Fatalf("expected auth mode %q, got %q", AuthModePassword, cfg.Auth.Mode())
 	}
@@ -148,6 +155,7 @@ func TestStorageEnsureDirCreatesNestedDataDir(t *testing.T) {
 
 func TestAuthValidateRejectsEmptyCookieNameInPasswordMode(t *testing.T) {
 	cfg := Load()
+	cfg.Auth.Username = "nolan"
 	cfg.Auth.Password = "secret"
 	cfg.Auth.CookieName = ""
 
@@ -163,5 +171,15 @@ func TestAuthModeTrimsWhitespacePassword(t *testing.T) {
 
 	if cfg.Auth.Mode() != AuthModeLocal {
 		t.Fatalf("expected whitespace password to select %q mode, got %q", AuthModeLocal, cfg.Auth.Mode())
+	}
+}
+
+func TestAuthValidateRejectsEmptyUsernameInPasswordMode(t *testing.T) {
+	cfg := Load()
+	cfg.Auth.Password = "secret"
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() returned nil for password auth without username")
 	}
 }

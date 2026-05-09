@@ -127,14 +127,18 @@ describe("App", () => {
 
     await renderApp();
 
-    const input = root.querySelector<HTMLInputElement>('input[type="password"]');
+    const username = root.querySelector<HTMLInputElement>('input[name="username"]');
+    const password = root.querySelector<HTMLInputElement>('input[type="password"]');
     const submit = Array.from(root.querySelectorAll("button")).find((button) => button.textContent?.includes("Sign in"));
-    expect(input).not.toBeNull();
+    expect(username).not.toBeNull();
+    expect(password).not.toBeNull();
     expect(submit).not.toBeNull();
 
     await act(async () => {
-      input!.value = "123456";
-      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      username!.value = "nolan";
+      username!.dispatchEvent(new Event("input", { bubbles: true }));
+      password!.value = "123456";
+      password!.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
     await act(async () => {
@@ -142,7 +146,7 @@ describe("App", () => {
       await flush();
     });
 
-    expect(apiMock.login).toHaveBeenCalledWith("123456");
+    expect(apiMock.login).toHaveBeenCalledWith("nolan", "123456");
     expect(root.querySelector('[data-testid="app-shell-stub"]')).not.toBeNull();
   });
 });

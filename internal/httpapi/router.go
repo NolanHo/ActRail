@@ -32,6 +32,7 @@ type authStatus struct {
 }
 
 type loginRequest struct {
+	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
@@ -188,6 +189,10 @@ func (r Router) login(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
 		return
 	}
+	if strings.TrimSpace(body.Username) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "username required", "username")
+		return
+	}
 	if strings.TrimSpace(body.Password) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "password required", "password")
 		return
@@ -196,8 +201,8 @@ func (r Router) login(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotImplemented, "unsupported", "password auth not configured", "")
 		return
 	}
-	if !authn.PasswordMatches(r.cfg.Auth, body.Password) {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid password", "")
+	if !authn.CredentialsMatch(r.cfg.Auth, body.Username, body.Password) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials", "")
 		return
 	}
 	cookie, err := authn.SessionCookie(r.cfg.Auth)

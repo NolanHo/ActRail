@@ -16,8 +16,9 @@ function LoginScreen({
 }: {
   error: string;
   loading: boolean;
-  onSubmit: (password: string) => Promise<void>;
+  onSubmit: (username: string, password: string) => Promise<void>;
 }) {
+  const [username, setUsername] = useState("nolan");
   const [password, setPassword] = useState("");
 
   return (
@@ -26,19 +27,30 @@ function LoginScreen({
         <div className="rounded-3xl border border-border bg-card p-8 shadow-xl">
           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">ActRail</p>
           <h1 className="text-3xl font-semibold tracking-tight">Sign in</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Enter the ActRail password to continue to your sessions.</p>
+          <p className="mt-2 text-sm text-muted-foreground">Enter your ActRail credentials to continue to your sessions.</p>
           <form
             className="mt-6 flex flex-col gap-4"
             onSubmit={(event) => {
               event.preventDefault();
-              void onSubmit(password);
+              void onSubmit(username, password);
             }}
           >
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              <span>Username</span>
+              <Input
+                autoComplete="username"
+                autoFocus
+                disabled={loading}
+                name="username"
+                placeholder="Username"
+                value={username}
+                onInput={(event) => setUsername(event.currentTarget.value)}
+              />
+            </label>
             <label className="flex flex-col gap-2 text-sm font-medium">
               <span>Password</span>
               <Input
                 autoComplete="current-password"
-                autoFocus
                 disabled={loading}
                 name="password"
                 placeholder="Password"
@@ -48,7 +60,7 @@ function LoginScreen({
               />
             </label>
             {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
-            <Button disabled={loading || !password.trim()} type="submit">
+            <Button disabled={loading || !username.trim() || !password.trim()} type="submit">
               {loading ? "Signing in..." : "Sign in"}
             </Button>
           </form>
@@ -118,9 +130,14 @@ export default function App() {
       <LoginScreen
         error={loginError}
         loading={loginPending}
-        onSubmit={async (password) => {
-          const trimmed = password.trim();
-          if (!trimmed) {
+        onSubmit={async (username, password) => {
+          const trimmedUsername = username.trim();
+          const trimmedPassword = password.trim();
+          if (!trimmedUsername) {
+            setLoginError("Username required");
+            return;
+          }
+          if (!trimmedPassword) {
             setLoginError("Password required");
             return;
           }
@@ -128,7 +145,7 @@ export default function App() {
           setLoginPending(true);
           setLoginError("");
           try {
-            const response = await api.login(trimmed);
+            const response = await api.login(trimmedUsername, trimmedPassword);
             if (response?.ok === false) {
               setLoginError(typeof response.error === "string" ? response.error : "Sign in failed");
               return;

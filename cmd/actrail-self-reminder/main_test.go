@@ -32,6 +32,7 @@ func TestParseDuration(t *testing.T) {
 
 func TestCreateUsesSessionEnvAndPasswordLogin(t *testing.T) {
 	t.Setenv("ACTRAIL_SESSION_ID", "sess-1")
+	t.Setenv("ACTRAIL_AUTH_USERNAME", "nolan")
 	t.Setenv("ACTRAIL_AUTH_PASSWORD", "secret")
 
 	var sawLogin bool
@@ -42,6 +43,13 @@ func TestCreateUsesSessionEnvAndPasswordLogin(t *testing.T) {
 			sawLogin = true
 			if r.Method != http.MethodPost {
 				t.Fatalf("login method=%s", r.Method)
+			}
+			var loginBody map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&loginBody); err != nil {
+				t.Fatalf("decode login body: %v", err)
+			}
+			if loginBody["username"] != "nolan" || loginBody["password"] != "secret" {
+				t.Fatalf("login body=%#v", loginBody)
 			}
 			http.SetCookie(w, &http.Cookie{Name: "actrail_auth", Value: "token-1"})
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
