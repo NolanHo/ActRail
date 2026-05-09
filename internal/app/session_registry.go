@@ -835,6 +835,23 @@ func (r *sessionRegistry) SetRuntimeTransport(sessionID session.SessionID, runti
 	return copySessionRecord(cp), true, nil
 }
 
+func (r *sessionRegistry) SetRuntimeTransportMemory(sessionID session.SessionID, runtime sessionRuntime, transport SessionTransportSnapshot) (sessionRecord, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return sessionRecord{}, false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return sessionRecord{}, false, nil
+	}
+	record.runtime = runtime
+	record.transport = transport
+	cp := copySessionRecord(record)
+	r.sessions[sessionID] = cp
+	return copySessionRecord(cp), true, nil
+}
+
 func (r *sessionRegistry) SetTransport(sessionID session.SessionID, transport SessionTransportSnapshot) (SessionTransportSnapshot, bool, error) {
 	if err := sessionID.Validate(); err != nil {
 		return SessionTransportSnapshot{}, false, err

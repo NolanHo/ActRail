@@ -114,6 +114,44 @@ describe("ConversationPane", () => {
     expect(text).toContain("All done.");
   });
 
+  it("renders injected system prompts before the first user message as System", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-system", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-system": [
+            { role: "system", kind: "system_prompt", text: "# AGENTS.md instructions for /root/docs\n\nUse **repo** rules." },
+            { role: "user", text: "Write the weekly report" },
+          ],
+        },
+        offsetsBySessionId: { "sess-system": 2 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root!,
+    );
+
+    const surfaces = Array.from(root.querySelectorAll<HTMLElement>("[data-testid='message-surface']"));
+    expect(surfaces[0]?.dataset.kind).toBe("system");
+    expect(surfaces[0]?.textContent).toContain("System");
+    expect(surfaces[0]?.textContent).toContain("AGENTS.md instructions");
+    expect(surfaces[0]?.querySelector(".messageExpandableContent")?.classList.contains("isCollapsed")).toBe(true);
+    expect(surfaces[0]?.querySelector(".messageBody h1")?.textContent).toBe("AGENTS.md instructions for /root/docs");
+    expect(surfaces[1]?.dataset.kind).toBe("user");
+    expect(surfaces[1]?.textContent).toContain("Write the weekly report");
+  });
+
   it("renders Codex subagent messages as subagent cards instead of user bubbles", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-1", loading: false, newSessionDefaults: null },

@@ -30,8 +30,10 @@ type runtimeProjection struct {
 	events            []pi.Event
 	waitRequests      []pi.Event
 	codexThreadID     string
+	codexSessionPath  string
 	codexTurnID       string
 	clearCodexTurn    bool
+	probeCodexTurn    bool
 	codexBusy         *bool
 	codexInitialized  bool
 	model             string
@@ -52,11 +54,17 @@ func mergeRuntimeProjection(dst, src runtimeProjection) runtimeProjection {
 	if strings.TrimSpace(src.codexThreadID) != "" {
 		dst.codexThreadID = strings.TrimSpace(src.codexThreadID)
 	}
+	if strings.TrimSpace(src.codexSessionPath) != "" {
+		dst.codexSessionPath = strings.TrimSpace(src.codexSessionPath)
+	}
 	if strings.TrimSpace(src.codexTurnID) != "" {
 		dst.codexTurnID = strings.TrimSpace(src.codexTurnID)
 	}
 	if src.clearCodexTurn {
 		dst.clearCodexTurn = true
+	}
+	if src.probeCodexTurn {
+		dst.probeCodexTurn = true
 	}
 	if src.codexBusy != nil {
 		busy := *src.codexBusy
@@ -186,8 +194,10 @@ func runtimeProjectionFromCodex(projection codex.Projection) runtimeProjection {
 	return runtimeProjection{
 		events:           projection.Events,
 		codexThreadID:    projection.ThreadID,
+		codexSessionPath: projection.SessionPath,
 		codexTurnID:      projection.TurnID,
 		clearCodexTurn:   projection.ClearTurn,
+		probeCodexTurn:   projection.ProbeTurn,
 		codexBusy:        projection.Busy,
 		codexInitialized: projection.Initialized,
 		model:            projection.Model,

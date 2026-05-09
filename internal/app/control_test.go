@@ -2,8 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +88,56 @@ func TestSessionTransportSnapshotMarksStaleAttachedHelperEnded(t *testing.T) {
 	}
 }
 
+func TestSessionTransportSnapshotMarksStaleCodexAttachedHelperEnded(t *testing.T) {
+	identity, err := session.NewLiveIdentity("s_stale_codex", "r_1", "t_1", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	record := sessionRecord{
+		identity: identity,
+		runtime:  sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeState(session.BackendCodex)},
+		transport: SessionTransportSnapshot{
+			GenerationID: "g_dead_codex",
+			State:        SessionTransportStateAttached,
+		},
+	}
+	snapshot := sessionTransportSnapshot(record)
+	if snapshot.State != SessionTransportStateEnded || snapshot.Reason != "helper_not_running" {
+		t.Fatalf("sessionTransportSnapshot() = %+v, want ended helper_not_running", snapshot)
+	}
+}
+
+func TestSameRuntimeHandleAllowsSameHelperGenerationReattachment(t *testing.T) {
+	sessionID := mustSessionID(t, "s_same_helper")
+	generationID := mustHelperGenerationID(t, "g_same_helper")
+	left := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		helper: &runtimeIODHelper{
+			sessionID:    sessionID,
+			generationID: generationID,
+			manifest:     iod.GenerationManifest{HelloProof: iod.HelloProof{ControlSocketPath: "/tmp/actrail/same-helper.sock"}},
+		},
+		codex: newCodexRuntimeState(session.BackendCodex),
+	}
+	right := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		helper: &runtimeIODHelper{
+			sessionID:    sessionID,
+			generationID: generationID,
+			manifest:     iod.GenerationManifest{HelloProof: iod.HelloProof{ControlSocketPath: "/tmp/actrail/same-helper.sock"}},
+		},
+		codex: newCodexRuntimeState(session.BackendCodex),
+	}
+	if !sameRuntimeHandle(left, right) {
+		t.Fatal("sameRuntimeHandle() = false, want true for reattached helper with same session/generation/socket")
+	}
+
+	right.helper.generationID = mustHelperGenerationID(t, "g_other_helper")
+	if sameRuntimeHandle(left, right) {
+		t.Fatal("sameRuntimeHandle() = true, want false for different helper generation")
+	}
+}
+
 func TestEnqueueAcceptsEndedSessionAndCancelClearsPersistedQueue(t *testing.T) {
 	svc, sessionID, _, _ := newControlFixture(t)
 	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{State: SessionTransportStateEnded, Reason: "helper_not_running"}); err != nil || !ok {
@@ -135,6 +190,228 @@ func TestSendPromptStaleCheckRunsInsideHelperCommandWindow(t *testing.T) {
 	}
 	if !errors.Is(err, errRuntimeChanged) {
 		t.Fatalf("SendPromptWithStaleCheck() error = %v, want errRuntimeChanged", err)
+	}
+}
+
+func TestSameRuntimeAllowsSameHandleWhenRuntimeIDVisibilityChanges(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	live, err := session.NewLiveIdentity("s_runtime_compare", "r_runtime_compare", "t_runtime_compare", "codex")
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	detached, err := session.NewDetachedIdentity("s_runtime_compare", "codex")
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	left := sessionRecord{identity: live, runtime: sessionRuntime{protocol: runtimeProtocolCodexRPC, handle: handle, codex: newCodexRuntimeState(session.BackendCodex)}}
+	right := sessionRecord{identity: detached, runtime: left.runtime}
+	if !sameRuntime(left, right) || !sameRuntime(right, left) {
+		t.Fatalf("sameRuntime() = false, want true for same runtime handle with live/detached identity")
+	}
+}
+
+func TestSendRetriesRuntimeChangedOnce(t *testing.T) {
+	svc, sessionID, _, pty := newControlFixture(t)
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	replacement := process.NewFakeHandle(process.LaunchSpec{})
+	replacementPTY := &fakePTY{}
+	replacement.SetPTY(replacementPTY)
+	swapped := false
+	record.runtime.helper = &runtimeIODHelper{
+		streamClient: &iodclient.Client{},
+		commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+			if !swapped {
+				swapped = true
+				identity, err := session.NewLiveIdentity(sessionID.String(), "r_runtime_changed_retry", "t_runtime_changed_retry", session.BackendPI.String())
+				if err != nil {
+					return err
+				}
+				_, ok, err := svc.registry.SwapRuntime(sessionID, identity, sessionRuntime{protocol: runtimeProtocolTTY, handle: replacement}, "")
+				if err != nil || !ok {
+					return fmt.Errorf("SwapRuntime() = (%v, %v)", ok, err)
+				}
+				return errRuntimeChanged
+			}
+			return nil
+		},
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_runtime_changed_original", "t_runtime_changed_original", session.BackendPI.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, identity, record.runtime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(original) = (%v, %v)", ok, err)
+	}
+
+	sent, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "retry after runtime changed"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if sent.Message.Text != "retry after runtime changed" {
+		t.Fatalf("Send() = %+v", sent)
+	}
+	if len(pty.Writes()) != 0 {
+		t.Fatalf("old runtime writes = %#v, want none after stale helper", pty.Writes())
+	}
+	if writes := replacementPTY.Writes(); len(writes) != 1 || !strings.Contains(writes[0], "retry after runtime changed") {
+		t.Fatalf("replacement runtime writes = %#v, want retried prompt", writes)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "retry after runtime changed" {
+		t.Fatalf("SessionMessages() = %+v, want one committed user message", messages.Items)
+	}
+}
+
+func TestSendRebindsRuntimeAfterMetadataRefresh(t *testing.T) {
+	svc, sessionID, _, _ := newControlFixture(t)
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	refreshed := false
+	commands := 0
+	record.runtime.helper = &runtimeIODHelper{
+		streamClient: &iodclient.Client{},
+		commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+			commands++
+			if !refreshed {
+				refreshed = true
+				identity, err := session.NewLiveIdentity(sessionID.String(), "r_runtime_metadata_refresh", "t_runtime_metadata_refresh", session.BackendPI.String())
+				if err != nil {
+					return err
+				}
+				_, ok, err := svc.registry.SwapRuntime(sessionID, identity, record.runtime, "")
+				if err != nil || !ok {
+					return fmt.Errorf("SwapRuntime(metadata refresh) = (%v, %v)", ok, err)
+				}
+			}
+			return nil
+		},
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_runtime_metadata_original", "t_runtime_metadata_original", session.BackendPI.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, identity, record.runtime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(original) = (%v, %v)", ok, err)
+	}
+
+	sent, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "send after metadata refresh"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if sent.Message.Text != "send after metadata refresh" {
+		t.Fatalf("Send() = %+v", sent)
+	}
+	if commands != 1 {
+		t.Fatalf("helper commands = %d, want one successful prompt command", commands)
+	}
+}
+
+func TestSendRehydratesCodexHelperRuntimeInsideInputLock(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	cfg.Storage.DataDir = filepath.Join("/tmp", fmt.Sprintf("arsend-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(cfg.Storage.DataDir) })
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_send_rehydrate")
+	threadID := "thread-codex-send-rehydrate"
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-send-rehydrate"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000007)
+	commandCh := make(chan iod.CommandPacket, 4)
+	cleanup := startCommandHelper(t, manifest, commandCh)
+	defer cleanup()
+	if err := svc.bindCurrentGeneration(helperGenerationBinding{SessionID: sessionID, GenerationID: generationID}); err != nil {
+		t.Fatalf("bindCurrentGeneration() error = %v", err)
+	}
+	if _, _, err := svc.registry.SetSourceBinding(sessionID, threadID, "", sourceConfidenceExact); err != nil {
+		t.Fatalf("SetSourceBinding() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	type sendResult struct {
+		response SendResponse
+		err      error
+	}
+	sendCh := make(chan sendResult, 1)
+	go func() {
+		sent, err := rehydrated.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "send after rehydrate"})
+		sendCh <- sendResult{response: sent, err: err}
+	}()
+	deadline := time.After(time.Second)
+	sawInitialize := false
+	sawResume := false
+	for {
+		select {
+		case packet := <-commandCh:
+			if packet.Kind != iod.PacketCommandSend {
+				t.Fatalf("command kind = %q, want %q", packet.Kind, iod.PacketCommandSend)
+			}
+			var request struct {
+				Method string `json:"method"`
+				Params struct {
+					ThreadID string `json:"threadId"`
+					Input    []struct {
+						Text string `json:"text"`
+					} `json:"input"`
+				} `json:"params"`
+			}
+			if err := json.Unmarshal(packet.Payload, &request); err != nil {
+				t.Fatalf("decode command payload %q: %v", string(packet.Payload), err)
+			}
+			if request.Method == "initialize" {
+				sawInitialize = true
+				rehydrated.noteCodexInitialized(sessionID)
+				continue
+			}
+			if request.Method == "thread/resume" {
+				sawResume = true
+				if request.Params.ThreadID != threadID {
+					t.Fatalf("thread/resume thread id = %q, want %q", request.Params.ThreadID, threadID)
+				}
+				rehydrated.noteCodexThreadID(sessionID, threadID)
+				continue
+			}
+			if request.Method == "thread/start" {
+				t.Fatalf("unexpected thread/start after rehydrate")
+			}
+			if request.Method != "turn/start" {
+				continue
+			}
+			if !sawInitialize || !sawResume {
+				t.Fatalf("turn/start arrived before bootstrap: sawInitialize=%v sawResume=%v", sawInitialize, sawResume)
+			}
+			if request.Params.ThreadID != threadID || len(request.Params.Input) != 1 || request.Params.Input[0].Text != "send after rehydrate" {
+				t.Fatalf("command payload = %+v, want turn/start on restored thread", request)
+			}
+			result := <-sendCh
+			if result.err != nil {
+				t.Fatalf("Send() error = %v", result.err)
+			}
+			if result.response.Message.Text != "send after rehydrate" {
+				t.Fatalf("Send() = %+v", result.response)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for helper turn/start command")
+		}
 	}
 }
 

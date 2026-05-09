@@ -75,6 +75,9 @@ func TestRestartCodexSessionResumesExistingThread(t *testing.T) {
 		writes := second.pty.Writes()
 		return writesContain(writes, `"method":"thread/resume"`) && writesContain(writes, `"threadId":"`+threadID+`"`)
 	})
+	if _, err := io.WriteString(second.stdout, `{"id":"thread-resume-2","result":{"thread":{"id":"`+threadID+`","status":{"type":"idle"}}}}`+"\n"); err != nil {
+		t.Fatalf("write second thread resume response: %v", err)
+	}
 	if writesContain(second.pty.Writes(), `"method":"thread/start"`) {
 		t.Fatalf("second runtime writes = %q, want no new thread/start", strings.Join(second.pty.Writes(), "\n"))
 	}

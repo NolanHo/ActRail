@@ -24,6 +24,7 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		watchCodexTurnStart bool
 	)
 	if err := s.withSessionInputLock(sessionID, func(record sessionRecord) error {
+		record.runtime = s.runtimeForRecord(record)
 		busy, _ := effectiveBusy(record)
 		if busy || record.uiRequest != nil {
 			return nil
@@ -33,7 +34,7 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			return nil
 		}
 		queued := items[0]
-		if err := transportControlError(sessionTransportSnapshot(record)); err != nil {
+		if err := transportControlError(s.sessionTransportSnapshot(record)); err != nil {
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil
 		}
@@ -42,32 +43,44 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_prepare_send", err)
 			return nil
 		}
-		if record.runtime.protocol == runtimeProtocolCodexRPC {
+		current, err := s.lookupSession(sessionID)
+		if err == nil {
+			current.runtime = s.runtimeForRecord(current)
+		}
+		if err != nil || !sameRuntimeHandle(record.runtime, current.runtime) {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", errRuntimeChanged)
+			return nil
+		}
+		runtime := current.runtime
+		if runtime.protocol == runtimeProtocolCodexRPC {
 			s.trackCodexOutboundPrompt(sessionID, queued.Text())
 			defer s.clearCodexOutboundPrompt(sessionID, queued.Text())
 			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseSending, "codex_queued_sending", "queued_send")
 		}
-		if err := record.runtime.SendPromptWithStaleCheck(context.Background(), queued.Text(), func() bool {
+		if err := runtime.SendPromptWithStaleCheck(context.Background(), queued.Text(), func() bool {
 			current, err := s.lookupSession(sessionID)
-			return err != nil || !sameRuntime(record, current)
+			if err == nil {
+				current.runtime = s.runtimeForRecord(current)
+			}
+			return err != nil || !sameRuntimeHandle(runtime, current.runtime)
 		}); err != nil {
 			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_queued_send_failed", "queued_send_failed")
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil
 		}
-		if record.runtime.protocol == runtimeProtocolCodexRPC {
+		if runtime.protocol == runtimeProtocolCodexRPC {
 			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseTurnStarting, "codex_queued_turn_starting", "queued_turn_starting")
-			codexRuntime = record.runtime
+			codexRuntime = runtime
 			watchCodexTurnStart = true
 		}
 		busyOnSend := record.identity.Backend() != session.BackendPI
 		if record.identity.Backend() == session.BackendPI {
-			pollRuntime = record.runtime
+			pollRuntime = runtime
 			pollPIState = true
-			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
+			if runtime.protocol == runtimeProtocolPIRPC && runtime.helper != nil {
 				busyOnSend = true
-				s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
-				s.kickPIRPCStateProbe(sessionID, record.runtime.helper.generationID)
+				s.holdPIRPCBusy(sessionID, runtime.helper.generationID)
+				s.kickPIRPCStateProbe(sessionID, runtime.helper.generationID)
 			}
 		}
 		item, state, ok, err := s.registry.ActivateQueuedWithBusy(sessionID, queued.ID(), busyOnSend)

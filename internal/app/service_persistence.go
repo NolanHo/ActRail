@@ -61,6 +61,7 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		helperBindings:      newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
+		runtimeRestoreDone:  closedRuntimeRestoreDone(),
 		waitStore:           catalog,
 		waitBlockers:        map[string]waitBlocker{},
 		supervisorStore:     catalog,
@@ -103,12 +104,32 @@ func (s *Stub) RestoreSurvivingRuntimes(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
+	started := s.beginRuntimeRestore()
+	if !started {
+		return s.waitRuntimeRestore(ctx)
+	}
+	var restoreErr error
+	defer func() {
+		s.endRuntimeRestore(restoreErr)
+	}()
 	if err := s.reattachSurvivingRuntimes(ctx); err != nil {
+		restoreErr = err
 		return err
 	}
 	s.reconcilePersistedBusySessions(ctx)
 	for _, record := range s.registry.List() {
-		s.startRuntimeIngest(record.identity.SessionID(), record.identity.Backend(), s.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime))
+		runtime := s.runtimeForRecord(record)
+		transport := s.sessionTransportSnapshot(record)
+		updated, ok, err := s.registry.SetRuntimeTransportMemory(record.identity.SessionID(), runtime, transport)
+		if err != nil {
+			restoreErr = err
+			return err
+		}
+		if !ok {
+			restoreErr = fmt.Errorf("session %q not found while restoring runtime", record.identity.SessionID())
+			return restoreErr
+		}
+		s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), updated.runtime)
 	}
 	return nil
 }

@@ -27,6 +27,16 @@ func TestDecodeAppServerLineThreadStatusAndActiveTurn(t *testing.T) {
 	}
 }
 
+func TestDecodeAppServerLineAlreadyInitializedError(t *testing.T) {
+	projection, ok := DecodeAppServerLine([]byte(`{"error":{"code":-32600,"message":"Already initialized"},"id":"initialize-1"}`))
+	if !ok {
+		t.Fatal("DecodeAppServerLine(already initialized) ok = false")
+	}
+	if !projection.Initialized {
+		t.Fatalf("projection.Initialized = false, want true")
+	}
+}
+
 func TestDecodeAppServerLineToolReasoningUsageAndError(t *testing.T) {
 	toolProjection, ok := DecodeAppServerLine([]byte(`{"method":"item/completed","params":{"threadId":"thread-codex-2","turnId":"turn-codex-2","item":{"type":"commandExecution","id":"cmd-1","command":"go test ./...","cwd":"/root/code/ActRail","status":"completed","aggregatedOutput":"ok\n","exitCode":0,"durationMs":1200}}}`))
 	if !ok {
@@ -90,6 +100,9 @@ func TestDecodeAppServerLineAssistantCompletedDoesNotEndTurn(t *testing.T) {
 	}
 	if projection.ClearTurn || projection.Busy != nil {
 		t.Fatalf("projection terminal flags = clear:%v busy:%v, want no terminal state before turn/completed", projection.ClearTurn, projection.Busy)
+	}
+	if !projection.ProbeTurn {
+		t.Fatal("projection.ProbeTurn = false, want completion probe after assistant final")
 	}
 	if len(projection.Events) != 1 {
 		t.Fatalf("len(projection.Events) = %d, want 1", len(projection.Events))

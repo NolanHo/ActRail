@@ -68,6 +68,7 @@ function conversationActiveSessionEqual(left: ConversationActiveSession | null, 
 }
 
 const MAIN_TIMELINE_KINDS = new Set([
+  "system",
   "user",
   "assistant",
   "ask_user",
@@ -116,6 +117,7 @@ const COLLAPSIBLE_CHAR_THRESHOLD = 420;
 const MACHINE_TRACE_VISIBLE_LIMIT = 12;
 
 const EVENT_LABELS: Record<string, string> = {
+  system: "System",
   ask_user: "Question",
   wait: "Wait",
   reasoning: "Reasoning",
@@ -809,6 +811,7 @@ function surfaceBadgeVariant(kind: string): "default" | "secondary" | "outline" 
   switch (kind) {
     case "user":
       return "default";
+    case "system":
     case "assistant":
     case "tool_result":
     case "todo_snapshot":
@@ -826,6 +829,8 @@ function messageSurfaceTone(kind: string, isError = false): string {
   switch (kind) {
     case "user":
       return "border-primary/30 bg-primary/10 text-foreground";
+    case "system":
+      return "border-cyan-300/40 bg-cyan-950/20 text-foreground";
     case "assistant":
       return "border-border/70 bg-card/95";
     case "ask_user":
@@ -998,12 +1003,14 @@ function ExpandableRichText({
   value,
   className = "messageBody",
   options = {},
+  forceCollapsible = false,
 }: {
   value: string;
   className?: string;
   options?: MarkdownRenderOptions;
+  forceCollapsible?: boolean;
 }) {
-  const collapsible = shouldCollapseContent(value);
+  const collapsible = forceCollapsible || shouldCollapseContent(value);
   const [expanded, setExpanded] = useState(false);
   const previousValueRef = useRef(value);
   const contentClassName = cn("messageExpandableContent", collapsible && !expanded && "isCollapsed");
@@ -1029,6 +1036,16 @@ function ExpandableRichText({
         </button>
       ) : null}
     </div>
+  );
+}
+
+function SystemPromptCard({ event, options }: { event: MessageEvent; options: MarkdownRenderOptions }) {
+  const text = contentTextFromMessage(event);
+  return (
+    <MessageSurface kind="system">
+      {renderCardHeader("system", undefined, undefined, event.ts)}
+      <ExpandableRichText key={text} value={text} options={options} forceCollapsible />
+    </MessageSurface>
   );
 }
 
@@ -1112,13 +1129,13 @@ function ChatMessageCard({
   commandOutput,
 }: {
   event: MessageEvent;
-  kind: "user" | "assistant";
+  kind: "system" | "user" | "assistant";
   options: MarkdownRenderOptions;
   turnMeta?: AssistantTurnMeta;
   commandOutput?: boolean;
 }) {
   const executedCommand = executedCommandText(event);
-  const label = kind === "user" ? executedCommand ? "Command" : "You" : "Assistant";
+  const label = kind === "user" ? executedCommand ? "Command" : "You" : kind === "system" ? "System" : "Assistant";
   const text = contentTextFromMessage(event);
   const summary = kind === "user" ? pendingUserSummary(event) : undefined;
   const [copied, setCopied] = useState(false);
@@ -1242,7 +1259,7 @@ function MessageSurface({
   className?: string;
   contentClassName?: string;
 }) {
-  const isChatSurface = kind === "user" || kind === "assistant" || kind === "ask_user";
+  const isChatSurface = kind === "system" || kind === "user" || kind === "assistant" || kind === "ask_user";
 
   return (
     <Card
@@ -1252,6 +1269,7 @@ function MessageSurface({
         "messageSurface rounded-[1.35rem] border shadow-sm backdrop-blur-sm transition-colors",
         isChatSurface ? "max-w-3xl" : compact ? "max-w-[56rem]" : "max-w-4xl",
         kind,
+        kind === "system" ? "mr-auto messageBubble system" : undefined,
         kind === "user" ? "ml-auto messageBubble user" : undefined,
         kind === "assistant" ? "mr-auto messageBubble assistant" : undefined,
         kind === "ask_user" ? "mr-auto messageBubble messageCard ask_user" : undefined,
@@ -1268,7 +1286,10 @@ function MessageSurface({
   );
 }
 
-function renderChatCard(event: MessageEvent, kind: "user" | "assistant", options: MarkdownRenderOptions, turnMeta?: AssistantTurnMeta, commandOutput?: boolean) {
+function renderChatCard(event: MessageEvent, kind: "system" | "user" | "assistant", options: MarkdownRenderOptions, turnMeta?: AssistantTurnMeta, commandOutput?: boolean) {
+  if (kind === "system") {
+    return <SystemPromptCard event={event} options={options} />;
+  }
   return <ChatMessageCard event={event} kind={kind} options={options} turnMeta={turnMeta} commandOutput={commandOutput} />;
 }
 
@@ -2842,6 +2863,7 @@ function renderConversationEvent(
   commandOutput?: boolean,
 ) {
   switch (kind) {
+    case "system":
     case "user":
     case "assistant":
       return renderChatCard(event, kind, options, kind === "assistant" ? turnMeta : undefined, kind === "assistant" ? commandOutput : undefined);

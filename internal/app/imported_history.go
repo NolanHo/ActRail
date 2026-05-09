@@ -4,16 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
-	"actrail/internal/adapters/iod"
 	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
@@ -537,6 +534,80 @@ func (s *Stub) reconcilePIAuthoritativeFinal(record sessionRecord, items []Sessi
 	}
 }
 
+func (s *Stub) reconcileCodexSessionFileFinal(record sessionRecord, items []SessionMessage) {
+	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) || len(items) == 0 {
+		return
+	}
+	last := items[len(items)-1]
+	if last.Role != "assistant" || strings.TrimSpace(last.Text) == "" {
+		return
+	}
+	if strings.TrimSpace(stringValue(last.Details["phase"])) != "final_answer" {
+		return
+	}
+	s.completeCodexRuntimeFromAuthoritativeSource(record.identity.SessionID())
+}
+
+func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, record sessionRecord) sessionRecord {
+	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) {
+		return record
+	}
+	sourcePath, threadID, err := s.codexSessionFileForRecord(record)
+	if err != nil || sourcePath == "" {
+		return record
+	}
+	if threadID != "" {
+		s.rememberCodexThreadBinding(record, threadID, sourcePath)
+	}
+	items, err := codexSessionMessagesFromFile(ctx, sourcePath)
+	if err != nil || !codexSessionFileHasFinalAnswer(items) {
+		return record
+	}
+	s.reconcileCodexSessionFileFinal(record, items)
+	updated, ok := s.registry.Lookup(record.identity.SessionID())
+	if !ok {
+		return record
+	}
+	updated.runtime = s.runtimeForRecord(updated)
+	return updated
+}
+
+func codexRecordNeedsAuthoritativeFinalReconcile(record sessionRecord) bool {
+	if record.identity.Backend() != session.BackendCodex || record.identity.Historical() {
+		return false
+	}
+	if _, ok := record.transcript.PartialAssistantTurn(); ok {
+		return true
+	}
+	return record.state.Busy() || record.runtimeAgentRunning
+}
+
+func (s *Stub) completeCodexRuntimeFromAuthoritativeSource(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+		_, _ = state.applyProtocolBusy(false)
+	})
+	if record, ok := s.registry.Lookup(sessionID); ok {
+		transport := sessionTransportSnapshot(record)
+		if transport.State == SessionTransportStateStarting {
+			_, _, _ = s.registry.SetTransport(sessionID, SessionTransportSnapshot{GenerationID: transport.GenerationID, State: SessionTransportStateEnded, Reason: "authoritative_final_answer"})
+		}
+	}
+	state, ok, err := s.registry.MarkRuntimeCompleted(sessionID)
+	if err != nil || !ok {
+		return
+	}
+	if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+		return
+	}
+	s.emitSessionState(sessionID)
+	if !state.Busy() {
+		s.scheduleQueuedDispatch(sessionID)
+	}
+}
+
 func piSourceSignature(path string) (string, bool) {
 	cleaned := strings.TrimSpace(path)
 	if cleaned == "" {
@@ -570,73 +641,72 @@ func appendDedupedMessages(items *[]SessionMessage, incoming []SessionMessage) {
 	}
 }
 
-func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
-	if record.identity.Backend() != session.BackendCodex || record.transcript.Len() > 0 {
-		return SessionMessagesResponse{}, false, nil
-	}
-	if _, ok := record.transcript.PartialAssistantTurn(); ok {
+func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
+	if record.identity.Backend() != session.BackendCodex {
 		return SessionMessagesResponse{}, false, nil
 	}
 	sessionID := record.identity.SessionID()
-	cacheKey, err := codexIODHistoryCacheKey(s.cfg.Storage.IODRuntimeRoot(), sessionID)
+	sourcePath, threadID, err := s.codexSessionFileForRecord(record)
 	if err != nil {
-		return SessionMessagesResponse{}, false, err
+		return SessionMessagesResponse{}, true, err
 	}
-	if cacheKey == "" {
+	if sourcePath == "" {
+		return SessionMessagesResponse{}, false, nil
+	}
+	if threadID != "" {
+		s.rememberCodexThreadBinding(record, threadID, sourcePath)
+	}
+	cacheKey, ok := codexSessionFileSignature(sourcePath)
+	if !ok {
 		return SessionMessagesResponse{}, false, nil
 	}
 	if items, ok := s.messageCache.Get(sessionID, cacheKey); ok {
+		if !codexSessionFileHistoryUsable(record, items) {
+			return SessionMessagesResponse{}, false, nil
+		}
+		s.reconcileCodexSessionFileFinal(record, items)
 		return paginateSessionMessagesForRequest(items, req), true, nil
 	}
-	items, err := s.codexIODHistoryMessages(ctx, sessionID)
+	items, err := codexSessionMessagesFromFile(ctx, sourcePath)
 	if err != nil {
 		return SessionMessagesResponse{}, true, err
 	}
 	if len(items) == 0 {
 		return SessionMessagesResponse{}, false, nil
 	}
+	if !codexSessionFileHistoryUsable(record, items) {
+		return SessionMessagesResponse{}, false, nil
+	}
+	s.reconcileCodexSessionFileFinal(record, items)
 	s.messageCache.Put(sessionID, cacheKey, items)
 	return paginateSessionMessagesForRequest(items, req), true, nil
 }
 
-func (s *Stub) codexIODHistoryMessages(ctx context.Context, sessionID session.SessionID) ([]SessionMessage, error) {
-	generations, err := codexIODHistoryGenerations(s.cfg.Storage.IODRuntimeRoot(), sessionID)
-	if err != nil {
-		return nil, err
+func codexSessionFileHistoryUsable(record sessionRecord, items []SessionMessage) bool {
+	if len(items) == 0 {
+		return false
 	}
-	items := make([]SessionMessage, 0)
-	for _, generation := range generations {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		replay, err := iod.ReplayWAL(generation.WALPath, sessionID, generation.GenerationID, 0)
-		if err != nil {
-			return nil, fmt.Errorf("replay codex iod wal %q: %w", generation.WALPath, err)
-		}
-		decoder := runtimeEventDecoder{backend: session.BackendCodex}
-		threadID := ""
-		for _, record := range replay.Records {
-			projection, err := decoder.decodeHelperFact(helperFactFromWALRecord(record))
-			if err != nil {
-				continue
-			}
-			if strings.TrimSpace(projection.codexThreadID) != "" && threadID == "" {
-				threadID = strings.TrimSpace(projection.codexThreadID)
-			}
-			for _, event := range projection.events {
-				if !codexHistoryEventInMainThread(threadID, event) && !codexSubagentMessageEvent(event) {
-					continue
-				}
-				if msg, ok := codexHistorySessionMessage(threadID, event); ok {
-					appendDedupedMessages(&items, []SessionMessage{msg})
-				}
-			}
-		}
+	if codexSessionFileHasFinalAnswer(items) {
+		return true
 	}
-	for i := range items {
-		items[i].Seq = uint64(i + 1)
+	if _, ok := record.transcript.PartialAssistantTurn(); ok {
+		return false
 	}
-	return items, nil
+	if record.state.Busy() || record.runtimeAgentRunning {
+		return false
+	}
+	return record.transcript.Len() == 0 || len(items) > 0
+}
+
+func codexSessionFileHasFinalAnswer(items []SessionMessage) bool {
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item.Role != "assistant" || strings.TrimSpace(item.Text) == "" {
+			continue
+		}
+		return strings.TrimSpace(stringValue(item.Details["phase"])) == "final_answer"
+	}
+	return false
 }
 
 func (s *Stub) codexThreadIDForRuntimeRestart(ctx context.Context, record sessionRecord) (string, error) {
@@ -652,163 +722,47 @@ func (s *Stub) codexThreadIDForRuntimeRestart(ctx context.Context, record sessio
 	if threadID := strings.TrimSpace(record.importedBackendSessionID); threadID != "" {
 		return threadID, nil
 	}
-	return s.latestCodexIODThreadID(ctx, record.identity.SessionID())
-}
-
-func (s *Stub) latestCodexIODThreadID(ctx context.Context, sessionID session.SessionID) (string, error) {
-	generations, err := codexIODHistoryGenerations(s.cfg.Storage.IODRuntimeRoot(), sessionID)
-	if err != nil {
-		return "", err
-	}
-	decoder := runtimeEventDecoder{backend: session.BackendCodex}
-	for i := len(generations) - 1; i >= 0; i-- {
-		if err := ctx.Err(); err != nil {
+	if sourcePath := strings.TrimSpace(record.importedSourcePath); sourcePath != "" {
+		threadID, ok, err := codexSessionIDFromFile(ctx, sourcePath)
+		if err != nil {
 			return "", err
 		}
-		generation := generations[i]
-		replay, err := iod.ReplayWAL(generation.WALPath, sessionID, generation.GenerationID, 0)
-		if err != nil {
-			return "", fmt.Errorf("replay codex iod wal %q: %w", generation.WALPath, err)
-		}
-		for j := len(replay.Records) - 1; j >= 0; j-- {
-			projection, err := decoder.decodeHelperFact(helperFactFromWALRecord(replay.Records[j]))
-			if err != nil {
-				continue
-			}
-			if threadID := strings.TrimSpace(projection.codexThreadID); threadID != "" {
-				return threadID, nil
-			}
+		if ok {
+			return threadID, nil
 		}
 	}
 	return "", nil
 }
 
-func (s *Stub) rememberCodexThreadBinding(record sessionRecord, threadID string) {
+func (s *Stub) rememberCodexThreadBinding(record sessionRecord, threadID string, sourcePaths ...string) {
 	if s == nil || record.identity.Backend() != session.BackendCodex {
 		return
 	}
 	resolved := strings.TrimSpace(threadID)
-	if resolved == "" || strings.TrimSpace(record.importedBackendSessionID) == resolved {
+	if resolved == "" {
 		return
 	}
-	_, _, _ = s.registry.SetSourceBinding(record.identity.SessionID(), resolved, record.importedSourcePath, sourceConfidenceExact)
-}
-
-func helperFactFromWALRecord(record iod.WALRecord) iod.HelperFact {
-	return iod.HelperFact{
-		FactKind: record.Header.Class.FactKind(),
-		Seq:      record.Header.Seq,
-		Payload:  append(json.RawMessage(nil), record.Payload...),
+	sourcePath := ""
+	for _, candidate := range sourcePaths {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" && codexSourcePathMatchesSessionID(trimmed, resolved) {
+			sourcePath = filepath.Clean(trimmed)
+			break
+		}
 	}
-}
-
-func codexHistoryEventInMainThread(mainThreadID string, event pi.Event) bool {
-	eventThreadID := strings.TrimSpace(event.ThreadID)
-	if eventThreadID == "" || strings.TrimSpace(mainThreadID) == "" {
-		return true
+	if sourcePath == "" {
+		sourcePath = strings.TrimSpace(record.importedSourcePath)
 	}
-	return eventThreadID == strings.TrimSpace(mainThreadID)
-}
-
-func codexHistorySessionMessage(mainThreadID string, event pi.Event) (SessionMessage, bool) {
-	if event.Message != nil && !codexHistoryEventInMainThread(mainThreadID, event) {
-		if !codexSubagentMessageEvent(event) {
-			return SessionMessage{}, false
+	if sourcePath == "" || !codexSourcePathMatchesSessionID(sourcePath, resolved) {
+		if discovered, ok := discoverCodexSessionFileByID(context.Background(), resolved); ok {
+			sourcePath = discovered
 		}
-		payload := codexSubagentMessagePayload{
-			Role:     strings.TrimSpace(string(event.Message.Role)),
-			Text:     strings.TrimSpace(event.Message.Text),
-			ThreadID: strings.TrimSpace(event.ThreadID),
-			TurnID:   strings.TrimSpace(event.TurnID),
-			ItemID:   strings.TrimSpace(event.RawID),
-		}
-		encoded, err := encodeCodexSubagentMessage(payload)
-		if err != nil {
-			return SessionMessage{}, false
-		}
-		msg := SessionMessage{
-			Kind:          "custom_message",
-			Type:          "custom_message",
-			Text:          encoded,
-			TS:            event.Timestamp,
-			EventID:       piMessageEventID(event),
-			ParentEventID: piParentEventID(event),
-		}
-		applyCodexSubagentMessageFields(&msg, payload)
-		return msg, true
 	}
-	if msg, ok := sessionMessageFromPIEvent(event); ok {
-		return msg, true
+	if strings.TrimSpace(record.importedBackendSessionID) == resolved &&
+		filepath.Clean(strings.TrimSpace(record.importedSourcePath)) == filepath.Clean(strings.TrimSpace(sourcePath)) &&
+		strings.TrimSpace(record.importedSourceConfidence) == sourceConfidenceExact {
+		return
 	}
-	return SessionMessage{}, false
-}
-
-type codexIODHistoryGeneration struct {
-	GenerationID iod.GenerationID
-	WALPath      string
-	Signature    string
-	StartTS      float64
-}
-
-func codexIODHistoryGenerations(root string, sessionID session.SessionID) ([]codexIODHistoryGeneration, error) {
-	sessionDir := filepath.Join(strings.TrimSpace(root), sessionID.String())
-	entries, err := os.ReadDir(sessionDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read codex iod session dir %q: %w", sessionDir, err)
-	}
-	generations := make([]codexIODHistoryGeneration, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		generationID, err := iod.NewGenerationID(entry.Name())
-		if err != nil {
-			continue
-		}
-		paths, err := iod.NewGenerationPaths(root, sessionID, generationID)
-		if err != nil {
-			continue
-		}
-		manifest, err := iod.ReadGenerationManifest(paths.ManifestPath)
-		if err != nil {
-			continue
-		}
-		info, err := os.Stat(paths.WALPath)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		generations = append(generations, codexIODHistoryGeneration{
-			GenerationID: generationID,
-			WALPath:      paths.WALPath,
-			Signature:    fmt.Sprintf("%s:%d:%d", filepath.Clean(paths.WALPath), info.Size(), info.ModTime().UnixNano()),
-			StartTS:      manifest.StartTS,
-		})
-	}
-	sort.Slice(generations, func(i, j int) bool {
-		if generations[i].StartTS != generations[j].StartTS {
-			return generations[i].StartTS < generations[j].StartTS
-		}
-		return generations[i].GenerationID.String() < generations[j].GenerationID.String()
-	})
-	return generations, nil
-}
-
-func codexIODHistoryCacheKey(root string, sessionID session.SessionID) (string, error) {
-	generations, err := codexIODHistoryGenerations(root, sessionID)
-	if err != nil {
-		return "", err
-	}
-	if len(generations) == 0 {
-		return "", nil
-	}
-	parts := make([]string, 0, len(generations))
-	for _, generation := range generations {
-		parts = append(parts, generation.Signature)
-	}
-	return "codex-iod-history:" + strings.Join(parts, "|"), nil
+	_, _, _ = s.registry.SetSourceBinding(record.identity.SessionID(), resolved, sourcePath, sourceConfidenceExact)
 }
 
 func piSessionIDFromSourcePath(path string) (string, bool, error) {

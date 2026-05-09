@@ -172,6 +172,7 @@ describe("SessionsPane", () => {
         { session_id: "sess-4", alias: "Failed", agent_backend: "pi", transport_state: "failed" },
         { session_id: "sess-5", alias: "Runtime idle", agent_backend: "pi", transport_state: "idle", busy: false },
         { session_id: "sess-6", alias: "Unexpected", agent_backend: "pi", transport_state: "paused", busy: false },
+        { session_id: "sess-7", alias: "Idle probe", agent_backend: "codex", transport_state: "attached", runtime_state: "idle", busy: false, probing: true },
       ],
       activeSessionId: "sess-1",
       loading: false,
@@ -194,6 +195,8 @@ describe("SessionsPane", () => {
     expect(dots[4]?.getAttribute("title")).toBe("ready");
     expect(dots[5]?.classList.contains("unknown")).toBe(true);
     expect(dots[5]?.getAttribute("title")).toBe("backend health unknown");
+    expect(dots[6]?.classList.contains("healthy")).toBe(true);
+    expect(dots[6]?.getAttribute("title")).toBe("ready");
     expect(root?.querySelector<HTMLButtonElement>('button[aria-label="More session actions"]')).not.toBeNull();
     expect(root?.querySelector<HTMLButtonElement>('button[aria-label="Start Pi..."]')).toBeNull();
   });

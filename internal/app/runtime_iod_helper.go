@@ -34,6 +34,7 @@ type runtimeIODHelper struct {
 	runtimeDir   string
 	commandMu    sync.Mutex
 	commandSeq   uint64
+	commandFunc  func(context.Context, iod.CommandName, json.RawMessage) error
 }
 
 func (h *runtimeIODHelper) command(ctx context.Context, name iod.CommandName, payload json.RawMessage) error {
@@ -42,6 +43,9 @@ func (h *runtimeIODHelper) command(ctx context.Context, name iod.CommandName, pa
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if h.commandFunc != nil {
+		return h.commandFunc(ctx, name, payload)
 	}
 	h.commandMu.Lock()
 	defer h.commandMu.Unlock()

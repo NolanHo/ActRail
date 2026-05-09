@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,7 @@ import (
 type controllerStub struct {
 	listReq     app.ListSessionsRequest
 	sendReq     app.SendRequest
+	sendErr     error
 	stateReq    app.SessionStateRequest
 	messagesReq app.SessionMessagesRequest
 }
@@ -32,6 +34,9 @@ func (s *controllerStub) ListSessions(_ context.Context, req app.ListSessionsReq
 
 func (s *controllerStub) Send(_ context.Context, req app.SendRequest) (app.SendResponse, error) {
 	s.sendReq = req
+	if s.sendErr != nil {
+		return app.SendResponse{}, s.sendErr
+	}
 	return app.SendResponse{Busy: true}, nil
 }
 func (s *controllerStub) Enqueue(context.Context, app.EnqueueRequest) (app.EnqueueResponse, error) {
@@ -132,6 +137,24 @@ func TestSessionCommandServiceSendAcceptsProto(t *testing.T) {
 	}
 	if !strings.Contains(string(response.GetPayloadJson()), `"busy":true`) {
 		t.Fatalf("payload_json = %s", string(response.GetPayloadJson()))
+	}
+}
+
+func TestSessionCommandServiceSendRuntimeChangedReturnsConflict(t *testing.T) {
+	controller := &controllerStub{sendErr: errors.New("session runtime changed before send; retry with current session state")}
+	h := NewHandler(controller, NewBroker(10))
+	req := httptest.NewRequest(http.MethodPost, "/api/connect/actrail.v1.SessionCommandService/Send", strings.NewReader(`{"session":{"sessionId":"s_123"},"text":"hello"}`))
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s, want 409", res.Code, res.Body.String())
+	}
+	var body connectError
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if body.Code != "conflict" || !strings.Contains(body.Message, "session runtime changed before send") {
+		t.Fatalf("error body = %+v", body)
 	}
 }
 

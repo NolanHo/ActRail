@@ -296,6 +296,12 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     if (typeof statePayload.requests_version === "string") {
       nextRequestVersionsBySessionId[sessionId] = statePayload.requests_version;
     }
+    const busy = transportBusyValue(statePayload, statePayload.busy === true);
+    const generating = busy && hasActiveAssistantOutput(sessionId);
+    if (!generating) {
+      clearStreamingFlushTimer(sessionId);
+      streamingTextBySessionId.delete(sessionId);
+    }
     state = {
       ...state,
       offsetsBySessionId: {
@@ -335,7 +341,11 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       requestVersionsBySessionId: nextRequestVersionsBySessionId,
       busyBySessionId: {
         ...state.busyBySessionId,
-        [sessionId]: transportBusyValue(statePayload, statePayload.busy === true || hasActiveAssistantOutput(sessionId)),
+        [sessionId]: busy,
+      },
+      generatingBySessionId: {
+        ...state.generatingBySessionId,
+        [sessionId]: generating,
       },
       loadingBySessionId: {
         ...state.loadingBySessionId,
@@ -565,7 +575,12 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
 
       if (type === "session.state") {
-        const busy = transportBusyValue(payload, payload?.busy === true || hasActiveAssistantOutput(sessionId));
+        const busy = transportBusyValue(payload, payload?.busy === true);
+        const generating = busy && hasActiveAssistantOutput(sessionId);
+        if (!generating) {
+          clearStreamingFlushTimer(sessionId);
+          streamingTextBySessionId.delete(sessionId);
+        }
         state = {
           ...state,
           streamCursorsBySessionId: {
@@ -578,7 +593,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
           generatingBySessionId: {
             ...state.generatingBySessionId,
-            [sessionId]: busy ? state.generatingBySessionId[sessionId] === true : false,
+            [sessionId]: generating,
           },
           errorBySessionId: {
             ...state.errorBySessionId,

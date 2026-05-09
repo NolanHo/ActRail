@@ -93,6 +93,30 @@ func TestCodexRuntimeStateBootstrapsInitializeThenThreadResume(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeStateAttachInitializedThreadSkipsBootstrap(t *testing.T) {
+	state := newCodexRuntimeStateWithResumeThread(session.BackendCodex, "thread-existing")
+	if requests := state.bootstrapRequests(); len(requests) != 1 {
+		t.Fatalf("bootstrap before attach returned %d requests, want initialize", len(requests))
+	}
+	accepted, changed := state.attachInitializedThread("thread-existing")
+	if !accepted || !changed {
+		t.Fatalf("attachInitializedThread() = accepted=%v changed=%v, want true true", accepted, changed)
+	}
+	initialized, threadID, activeTurnID := state.snapshot()
+	if !initialized || threadID != "thread-existing" || activeTurnID != "" {
+		t.Fatalf("snapshot = initialized=%v threadID=%q activeTurnID=%q, want initialized attached thread", initialized, threadID, activeTurnID)
+	}
+	if pending := state.pendingResumeThreadID(); pending != "" {
+		t.Fatalf("pendingResumeThreadID() = %q, want empty", pending)
+	}
+	if requests := state.bootstrapRequests(); len(requests) != 0 {
+		t.Fatalf("bootstrap after attach returned %#v, want no initialize/resume", requests)
+	}
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseIdle || activity.Busy {
+		t.Fatalf("activity after attach = %+v, want idle", activity)
+	}
+}
+
 func TestCodexRuntimeStateTracksActiveTurn(t *testing.T) {
 	state := newCodexRuntimeState(session.BackendCodex)
 	state.setActiveTurnID("turn-1")

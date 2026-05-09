@@ -11,8 +11,10 @@ import (
 type Projection struct {
 	Events      []runtimeevent.Event
 	ThreadID    string
+	SessionPath string
 	TurnID      string
 	ClearTurn   bool
+	ProbeTurn   bool
 	Busy        *bool
 	Initialized bool
 	Model       string
@@ -36,11 +38,13 @@ type appServerLine struct {
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
+	Error  json.RawMessage `json:"error"`
 }
 
 type threadEnvelope struct {
 	Thread struct {
 		ID     string      `json:"id"`
+		Path   string      `json:"path"`
 		Status any         `json:"status"`
 		Turns  []turnState `json:"turns"`
 	} `json:"thread"`
@@ -91,7 +95,7 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 			if err := json.Unmarshal(line.Params, &params); err != nil {
 				return Projection{}, true
 			}
-			projection := Projection{ThreadID: strings.TrimSpace(params.Thread.ID)}
+			projection := Projection{ThreadID: strings.TrimSpace(params.Thread.ID), SessionPath: strings.TrimSpace(params.Thread.Path)}
 			if busy, ok := threadBusy(params.Thread.Status, params.Thread.Turns); ok {
 				projection.Busy = &busy
 			}
@@ -201,6 +205,9 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 				if projection.TurnID == "" {
 					projection.TurnID = strings.TrimSpace(event.TurnID)
 				}
+				if event.Message != nil && event.Message.Role == runtimeevent.MessageRoleAssistant && event.Message.CommitLike && strings.TrimSpace(event.Message.StopReason) == "" {
+					projection.ProbeTurn = true
+				}
 			}
 			return projection, true
 		case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
@@ -247,7 +254,7 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 	if len(line.Result) > 0 && string(line.Result) != "null" {
 		var thread threadEnvelope
 		if err := json.Unmarshal(line.Result, &thread); err == nil && strings.TrimSpace(thread.Thread.ID) != "" {
-			projection := Projection{ThreadID: strings.TrimSpace(thread.Thread.ID)}
+			projection := Projection{ThreadID: strings.TrimSpace(thread.Thread.ID), SessionPath: strings.TrimSpace(thread.Thread.Path)}
 			if busy, ok := threadBusy(thread.Thread.Status, thread.Thread.Turns); ok {
 				projection.Busy = &busy
 			}
@@ -264,7 +271,23 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 		}
 		return Projection{Initialized: true}, true
 	}
+	if alreadyInitializedError(line.Error) {
+		return Projection{Initialized: true}, true
+	}
 	return Projection{}, false
+}
+
+func alreadyInitializedError(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(payload.Message)), "already initialized")
 }
 
 func turnEnvelopeThreadID(params turnEnvelope) string {

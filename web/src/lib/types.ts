@@ -777,6 +777,7 @@ export interface WorkspaceResponse {
   session_id?: string;
   runtime_id?: string | null;
   root_path?: string;
+  canonical_root_path?: string;
   selected_path?: string;
   open_paths?: string[];
   history_items?: WorkspaceHistoryItem[];
@@ -819,6 +820,7 @@ export interface SessionFileListEntry {
 export interface SessionFileListResponse {
   ok?: boolean;
   root_path?: string;
+  canonical_root_path?: string;
   cwd?: string;
   path?: string;
   entries?: SessionFileListEntry[];

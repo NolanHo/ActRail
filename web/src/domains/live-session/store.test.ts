@@ -183,6 +183,35 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(1);
   });
 
+  it("treats polled idle state as authoritative over stale local generating state", async () => {
+    vi.mocked(api.listMessages).mockResolvedValueOnce({ items: [{ seq: 1, role: "assistant", text: "done" }], tail_seq: 1 } as never);
+    vi.mocked(api.getSessionState)
+      .mockResolvedValueOnce({
+        busy: false,
+        tail_seq: 1,
+        resume_cursors: { session: "1", ui: "1" },
+      } as never)
+      .mockResolvedValueOnce({
+        busy: false,
+        tail_seq: 1,
+        resume_cursors: { session: "2", ui: "1" },
+      } as never);
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    await liveStore.loadInitial("s1");
+    liveStore.applyFrame({
+      type: "message.generating",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", active: true },
+    });
+    await liveStore.poll("s1");
+
+    expect(api.listMessages).toHaveBeenCalledTimes(1);
+    expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+  });
+
   it("queues a trailing poll when a non-replace poll arrives during an in-flight snapshot", async () => {
     let resolveMessages!: (value: unknown) => void;
     let resolveState!: (value: unknown) => void;
@@ -389,6 +418,26 @@ describe("createLiveSessionStore", () => {
     });
 
     expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+  });
+
+  it("treats realtime idle state as authoritative over stale local generating state", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "message.generating",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", active: true },
+    });
+    liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 2, busy: false, runtime_state: "idle" },
+    });
+
+    expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+    expect(liveStore.getState().runtimeStateBySessionId.s1).toBe("idle");
   });
 
   it("applies generation broken and transport reset frames", () => {

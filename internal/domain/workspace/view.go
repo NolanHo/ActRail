@@ -39,7 +39,7 @@ type FileEntry struct {
 }
 
 type FileRead struct {
-	Path              RelPath
+	Path              string
 	Kind              ContentKind
 	MIMEType          string
 	Encoding          string

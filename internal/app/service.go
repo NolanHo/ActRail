@@ -81,6 +81,11 @@ type Stub struct {
 	helperBindings      helperBindingStore
 	helpers             *helperRegistry
 	messageCache        *sessionMessageCache
+	runtimeRestoreMu    sync.RWMutex
+	runtimeRestoring    bool
+	runtimeRestoreOwner bool
+	runtimeRestoreDone  chan struct{}
+	runtimeRestoreErr   error
 	waitStore           waitStore
 	waitBlockersMu      sync.Mutex
 	waitBlockers        map[string]waitBlocker
@@ -105,7 +110,12 @@ func NewStub(cfg config.Config) (*Stub, error) {
 }
 
 func NewStubWithDeferredRuntimeRestore(cfg config.Config) (*Stub, error) {
-	return newPersistentStubWithRuntimeOptions(cfg, time.Now, RuntimeConfig{UseIODHelper: true}, persistentStubOptions{DeferRuntimeRestore: true})
+	stub, err := newPersistentStubWithRuntimeOptions(cfg, time.Now, RuntimeConfig{UseIODHelper: true}, persistentStubOptions{DeferRuntimeRestore: true})
+	if err != nil {
+		return nil, err
+	}
+	stub.markRuntimeRestorePending()
+	return stub, nil
 }
 
 func NewStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) *Stub {
@@ -133,6 +143,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		helperBindings:      newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
+		runtimeRestoreDone:  closedRuntimeRestoreDone(),
 		waitStore:           newMemoryWaitStore(),
 		waitBlockers:        map[string]waitBlocker{},
 		supervisorStore:     newMemorySupervisorStore(),
@@ -477,7 +488,10 @@ func filterSessionRecords(records []sessionRecord, req ListSessionsRequest) []se
 	return out
 }
 
-func (s *Stub) ListSessions(_ context.Context, req ListSessionsRequest) (ListSessionsResponse, error) {
+func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListSessionsResponse, error) {
+	if err := s.waitRuntimeRestore(ctx); err != nil {
+		return ListSessionsResponse{}, err
+	}
 	var groupKey *string
 	if req.GroupKey != "" {
 		v := req.GroupKey
@@ -489,7 +503,8 @@ func (s *Stub) ListSessions(_ context.Context, req ListSessionsRequest) (ListSes
 	summaries := make([]SessionSummary, 0, end-start)
 	for _, item := range items[start:end] {
 		record := item.record
-		record.runtime = s.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime)
+		record.runtime = s.runtimeForRecord(record)
+		record = s.reconcileCodexSessionFileFinalForState(ctx, record)
 		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt))
 	}
 	return ListSessionsResponse{

@@ -106,8 +106,81 @@ function mergeTreeChildren(nodes: TreeNode[], targetPath: string, entries: Sessi
   }));
 }
 
-function normalizePath(value: string) {
-  return value.trim();
+type NormalizedWorkspacePath = {
+  path: string;
+  waitingForRoot: boolean;
+};
+
+type WorkspaceRoots = {
+  rootPath: string;
+  canonicalRootPath: string;
+};
+
+function normalizeWorkspaceRoot(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function normalizeRelativePath(value: string): string | null {
+  const parts: string[] = [];
+  for (const part of value.replace(/\\/g, "/").split("/")) {
+    if (!part || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      if (!parts.length) {
+        return null;
+      }
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join("/");
+}
+
+function normalizeWorkspaceRoots(rootPathOrRoots: string | WorkspaceRoots = ""): string[] {
+  const roots = typeof rootPathOrRoots === "string"
+    ? [rootPathOrRoots]
+    : [rootPathOrRoots.rootPath, rootPathOrRoots.canonicalRootPath];
+  return Array.from(new Set(roots.map(normalizeWorkspaceRoot).filter(Boolean)));
+}
+
+function normalizeWorkspacePath(value: string, rootPathOrRoots: string | WorkspaceRoots = ""): NormalizedWorkspacePath {
+  const rawPath = value.trim().replace(/\\/g, "/");
+  if (!rawPath) {
+    return { path: "", waitingForRoot: false };
+  }
+  if (!rawPath.startsWith("/")) {
+    const relativePath = normalizeRelativePath(rawPath);
+    return relativePath == null
+      ? { path: "", waitingForRoot: false }
+      : { path: relativePath, waitingForRoot: false };
+  }
+
+  const roots = normalizeWorkspaceRoots(rootPathOrRoots);
+  if (!roots.length) {
+    return { path: "", waitingForRoot: true };
+  }
+  for (const root of roots) {
+    if (rawPath === root) {
+      return { path: "", waitingForRoot: false };
+    }
+    if (rawPath.startsWith(`${root}/`)) {
+      const relativePath = normalizeRelativePath(rawPath.slice(root.length + 1));
+      return relativePath == null
+        ? { path: "", waitingForRoot: false }
+        : { path: relativePath, waitingForRoot: false };
+    }
+  }
+  return { path: rawPath, waitingForRoot: false };
+}
+
+function normalizePath(value: string, rootPathOrRoots: string | WorkspaceRoots = "") {
+  const normalized = normalizeWorkspacePath(value, rootPathOrRoots);
+  return normalized.waitingForRoot ? "" : normalized.path;
 }
 
 function normalizeViewMode(value?: FileViewMode | null) {
@@ -371,6 +444,8 @@ export function FileViewerDialog({
   const [payload, setPayload] = useState<SessionFileReadResponse | null>(null);
   const [diffPayload, setDiffPayload] = useState<GitFileVersionsResponse | null>(null);
   const [persistedSelectedPath, setPersistedSelectedPath] = useState("");
+  const [workspaceRootPath, setWorkspaceRootPath] = useState("");
+  const [canonicalWorkspaceRootPath, setCanonicalWorkspaceRootPath] = useState("");
   const [historyItems, setHistoryItems] = useState<WorkspaceHistoryItem[]>([]);
   const [compactLayout, setCompactLayout] = useState(() => shouldUseCompactFileViewer());
   const [showBrowser, setShowBrowser] = useState(() => !shouldUseCompactFileViewer());
@@ -412,6 +487,8 @@ export function FileViewerDialog({
           setTreeLoading(false);
           return;
         }
+        setWorkspaceRootPath((current) => normalizeWorkspaceRoot(response.root_path) || current);
+        setCanonicalWorkspaceRootPath((current) => normalizeWorkspaceRoot(response.canonical_root_path) || current);
         setTree(sortTreeNodes(entries.map(entryToTreeNode)));
         setTreeError("");
         setTreeLoading(false);
@@ -440,6 +517,8 @@ export function FileViewerDialog({
   useEffect(() => {
     if (!open || !sessionId) {
       setPersistedSelectedPath("");
+      setWorkspaceRootPath("");
+      setCanonicalWorkspaceRootPath("");
       setHistoryItems([]);
       workspacePersistKeyRef.current = "";
       return;
@@ -455,12 +534,23 @@ export function FileViewerDialog({
       if (controller.signal.aborted || requestId !== workspaceRequestIdRef.current) {
         return;
       }
-      const selectedPath = typeof workspaceState?.selected_path === "string" ? workspaceState.selected_path.trim() : "";
+      const nextWorkspaceRootPath = normalizeWorkspaceRoot(workspaceState?.root_path);
+      const nextCanonicalWorkspaceRootPath = normalizeWorkspaceRoot(workspaceState?.canonical_root_path);
+      const nextWorkspaceRoots = {
+        rootPath: nextWorkspaceRootPath,
+        canonicalRootPath: nextCanonicalWorkspaceRootPath,
+      };
+      const selectedPath = normalizePath(
+        typeof workspaceState?.selected_path === "string" ? workspaceState.selected_path : "",
+        nextWorkspaceRoots,
+      );
       const nextHistoryItems = normalizeWorkspaceHistoryItems(workspaceState);
+      setWorkspaceRootPath((current) => nextWorkspaceRootPath || current);
+      setCanonicalWorkspaceRootPath((current) => nextCanonicalWorkspaceRootPath || current);
       setPersistedSelectedPath(selectedPath);
       setHistoryItems(nextHistoryItems);
       if (selectedPath && !initialPath && !rememberedPath) {
-        setPath((current) => normalizePath(current) || selectedPath);
+        setPath((current) => normalizePath(current, nextWorkspaceRoots) || selectedPath);
         setViewMode("diff");
         if (compactLayout) {
           setShowBrowser(false);
@@ -511,7 +601,18 @@ export function FileViewerDialog({
       return;
     }
 
-    const preferredPath = normalizePath(initialPath || persistedSelectedPath || rememberedPath || "");
+    const preferredRawPath = initialPath || persistedSelectedPath || rememberedPath || "";
+    const workspaceRoots = { rootPath: workspaceRootPath, canonicalRootPath: canonicalWorkspaceRootPath };
+    const preferredState = normalizeWorkspacePath(preferredRawPath, workspaceRoots);
+    if (preferredState.waitingForRoot) {
+      setPath(preferredRawPath.trim());
+      setLine(initialPath ? normalizeRememberedLine(initialLine) : normalizeRememberedLine(rememberedSelection?.line));
+      setPayload(null);
+      setDiffPayload(null);
+      setError("");
+      return;
+    }
+    const preferredPath = preferredState.path;
     if (!preferredPath) {
       setPath("");
       setLine(null);
@@ -529,22 +630,30 @@ export function FileViewerDialog({
     setViewMode(initialPath ? normalizeViewMode(initialMode || "file") : "diff");
     setShowBrowser(compactLayout ? !preferredPath : true);
     setError("");
-  }, [compactLayout, initialLine, initialMode, initialPath, open, openRequestKey, persistedSelectedPath, rememberedPath, rememberedSelection?.line]);
+  }, [canonicalWorkspaceRootPath, compactLayout, initialLine, initialMode, initialPath, open, openRequestKey, persistedSelectedPath, rememberedPath, rememberedSelection?.line, workspaceRootPath]);
 
   useEffect(() => {
     if (!open || !sessionId) {
       return;
     }
-    const normalized = normalizePath(path);
+    const normalized = normalizePath(path, { rootPath: workspaceRootPath, canonicalRootPath: canonicalWorkspaceRootPath });
     if (!normalized) {
       return;
     }
     rememberFileSelection(sessionId, normalized, line);
-  }, [line, open, path, sessionId]);
+  }, [canonicalWorkspaceRootPath, line, open, path, sessionId, workspaceRootPath]);
 
   useEffect(() => {
-    const normalized = normalizePath(path);
-    if (!open || !sessionId || !normalized) {
+    const workspaceRoots = { rootPath: workspaceRootPath, canonicalRootPath: canonicalWorkspaceRootPath };
+    const normalizedState = normalizeWorkspacePath(path, workspaceRoots);
+    if (!open || !sessionId) {
+      return;
+    }
+    if (normalizedState.waitingForRoot) {
+      return;
+    }
+    const normalized = normalizedState.path;
+    if (!normalized) {
       return;
     }
 
@@ -594,10 +703,10 @@ export function FileViewerDialog({
     return () => {
       controller.abort();
     };
-  }, [open, openRequestKey, path, runtimeId, sessionId, viewMode]);
+  }, [canonicalWorkspaceRootPath, open, openRequestKey, path, runtimeId, sessionId, viewMode, workspaceRootPath]);
 
   useEffect(() => {
-    const normalizedPath = normalizePath(path);
+    const normalizedPath = normalizePath(path, { rootPath: workspaceRootPath, canonicalRootPath: canonicalWorkspaceRootPath });
     if (!open || !sessionId || !normalizedPath || loading || error) {
       return;
     }
@@ -623,9 +732,9 @@ export function FileViewerDialog({
     void (runtimeId
       ? api.updateWorkspace(sessionId, nextPayload, runtimeId)
       : api.updateWorkspace(sessionId, nextPayload)).catch(() => undefined);
-  }, [diffPayload, error, historyItems, loading, open, path, payload, runtimeId, sessionId]);
+  }, [canonicalWorkspaceRootPath, diffPayload, error, historyItems, loading, open, path, payload, runtimeId, sessionId, workspaceRootPath]);
 
-  const normalizedPath = normalizePath(path);
+  const normalizedPath = normalizePath(path, { rootPath: workspaceRootPath, canonicalRootPath: canonicalWorkspaceRootPath });
   const canPreview = isMarkdownFile(normalizedPath);
   const activeLine = normalizeRememberedLine(line);
 

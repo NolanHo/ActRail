@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	adapterfs "actrail/internal/adapters/filesystem"
@@ -191,10 +192,11 @@ func (s *Stub) WorkspaceFileList(ctx context.Context, req WorkspaceFileListReque
 		})
 	}
 	return WorkspaceFileListResponse{
-		RootPath:  list.RootPath,
-		Path:      list.Path.String(),
-		Items:     items,
-		Truncated: list.Truncated,
+		RootPath:          list.RootPath,
+		CanonicalRootPath: canonicalWorkspaceRootPath(list.RootPath),
+		Path:              list.Path.String(),
+		Items:             items,
+		Truncated:         list.Truncated,
 	}, nil
 }
 
@@ -203,20 +205,16 @@ func (s *Stub) WorkspaceFileRead(ctx context.Context, req WorkspaceFileReadReque
 	if err != nil {
 		return WorkspaceFileReadResponse{}, err
 	}
-	rel, err := workspaceFilePath(req.Path)
-	if err != nil {
-		return WorkspaceFileReadResponse{}, err
-	}
 	files, err := adapterfs.New(adapterfs.Options{})
 	if err != nil {
 		return WorkspaceFileReadResponse{}, fmt.Errorf("init filesystem adapter: %w", err)
 	}
-	item, err := files.Read(ctx, root, rel)
+	item, err := readWorkspaceFile(ctx, files, root, req.Path)
 	if err != nil {
 		return WorkspaceFileReadResponse{}, mapWorkspaceAccessError(err)
 	}
 	return WorkspaceFileReadResponse{
-		Path:              item.Path.String(),
+		Path:              item.Path,
 		Kind:              string(item.Kind),
 		MIMEType:          item.MIMEType,
 		Encoding:          item.Encoding,
@@ -225,6 +223,17 @@ func (s *Stub) WorkspaceFileRead(ctx context.Context, req WorkspaceFileReadReque
 		DownloadName:      item.DownloadName,
 		UnsupportedReason: item.UnsupportedReason,
 	}, nil
+}
+
+func readWorkspaceFile(ctx context.Context, files *adapterfs.Service, root workspace.Root, rawPath string) (workspace.FileRead, error) {
+	if filepath.IsAbs(strings.TrimSpace(rawPath)) {
+		return files.ReadAbsolute(ctx, rawPath)
+	}
+	rel, err := workspaceFilePath(rawPath)
+	if err != nil {
+		return workspace.FileRead{}, err
+	}
+	return files.Read(ctx, root, rel)
 }
 
 func (s *Stub) sessionWorkspaceRoot(sessionID session.SessionID) (workspace.Root, error) {

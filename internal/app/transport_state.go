@@ -35,10 +35,12 @@ func (s SessionTransportState) String() string {
 }
 
 func (s *Stub) sessionTransportSnapshot(record sessionRecord) SessionTransportSnapshot {
+	record.runtime = s.runtimeForRecord(record)
 	return sessionTransportSnapshot(record)
 }
 
 func (s *Stub) sessionProbing(record sessionRecord) bool {
+	record.runtime = s.runtimeForRecord(record)
 	return sessionProbing(record)
 }
 

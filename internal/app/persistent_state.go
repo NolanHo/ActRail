@@ -32,11 +32,24 @@ func copyWorkspaceBrowserState(raw workspaceBrowserState) workspaceBrowserState 
 func workspaceResponse(rootPath string, state workspaceBrowserState) SessionWorkspaceResponse {
 	copied := copyWorkspaceBrowserState(state)
 	return SessionWorkspaceResponse{
-		RootPath:     rootPath,
-		SelectedPath: copied.SelectedPath,
-		OpenPaths:    copied.OpenPaths,
-		HistoryItems: copied.HistoryItems,
+		RootPath:          rootPath,
+		CanonicalRootPath: canonicalWorkspaceRootPath(rootPath),
+		SelectedPath:      copied.SelectedPath,
+		OpenPaths:         copied.OpenPaths,
+		HistoryItems:      copied.HistoryItems,
 	}
+}
+
+func canonicalWorkspaceRootPath(rootPath string) string {
+	cleaned := strings.TrimSpace(rootPath)
+	if cleaned == "" {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(cleaned)
+	if err != nil || strings.TrimSpace(resolved) == "" || filepath.Clean(resolved) == filepath.Clean(cleaned) {
+		return ""
+	}
+	return filepath.Clean(resolved)
 }
 
 func durableAppStateFromSnapshot(recentCwds []string, cwdGroups map[string]CwdGroupMeta) sqlitestore.AppStateRow {

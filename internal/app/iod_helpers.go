@@ -154,6 +154,8 @@ type attachedHelper struct {
 	Manifest     iod.GenerationManifest
 	Hello        iod.HelloPacket
 	Client       *iodclient.Client
+	ReplayFailed bool
+	ReplayReason helperFenceReason
 }
 
 type helperRegistry struct {
@@ -279,7 +281,11 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 				fenced = append(fenced, helperFenceFrom(item, helperFenceDuplicateHelper))
 				continue
 			}
-			attachment, updatedBinding, reason, err := s.reattachHelper(ctx, binding, item)
+			record, ok := s.registry.Lookup(sessionID)
+			if !ok {
+				return fmt.Errorf("session %q not found while reattaching helper", sessionID)
+			}
+			attachment, updatedBinding, reason, err := s.reattachHelper(ctx, record.identity.Backend(), binding, item)
 			if err != nil {
 				fenced = append(fenced, helperFenceFrom(item, reason))
 				continue
@@ -316,7 +322,7 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 			continue
 		}
 		_, hasAttachment := attachments[sessionID]
-		if !hasAttachment && startupTransportAlreadyTerminal(record.transport) {
+		if !hasAttachment && startupTransportAlreadyTerminal(record) {
 			continue
 		}
 		transport := startupTransportForSession(sessionID, bindings, attachments, fencedBySession[sessionID])
@@ -342,12 +348,19 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 	return nil
 }
 
-func startupTransportAlreadyTerminal(transport SessionTransportSnapshot) bool {
+func startupTransportAlreadyTerminal(record sessionRecord) bool {
+	transport := record.transport
+	if record.identity.Backend() == session.BackendCodex && transport.State == SessionTransportStateBroken && strings.TrimSpace(transport.Reason) == string(helperFenceReplayFailed) {
+		return false
+	}
 	return transport.ResetRequired || transport.State == SessionTransportStateBroken || transport.State == SessionTransportStateEnded
 }
 
 func startupTransportForSession(sessionID session.SessionID, bindings map[session.SessionID]helperGenerationBinding, attachments map[session.SessionID]attachedHelper, fences []helperFence) SessionTransportSnapshot {
 	if attachment, ok := attachments[sessionID]; ok {
+		if attachment.ReplayFailed {
+			return transportSnapshotAttachedWithReason(attachment.Binding.GenerationID, "codex_replay_failed:"+string(attachment.ReplayReason))
+		}
 		return transportSnapshotAttached(attachment.Binding.GenerationID)
 	}
 	if binding, ok := bindings[sessionID]; ok {
@@ -374,7 +387,7 @@ func startupTransportFromFences(generationID iod.GenerationID, fences []helperFe
 	return SessionTransportSnapshot{}, false
 }
 
-func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBinding, discovered iodclient.DiscoveredManifest) (attachedHelper, helperGenerationBinding, helperFenceReason, error) {
+func (s *Stub) reattachHelper(ctx context.Context, backend session.Backend, binding helperGenerationBinding, discovered iodclient.DiscoveredManifest) (attachedHelper, helperGenerationBinding, helperFenceReason, error) {
 	client, err := iodclient.DialContext(ctx, discovered.Manifest.ControlSocketPath, s.helperDialer)
 	if err != nil {
 		return attachedHelper{}, binding, helperFenceAttachFailed, err
@@ -390,17 +403,22 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 	}
 
 	updatedBinding := binding
+	replayFailed := false
+	replayReason := helperFenceReason("")
 	if s != nil {
 		replayAfterOffset := binding.LastReplayOffset
 		if record, ok := s.registry.Lookup(binding.SessionID); ok {
 			replayAfterOffset = helperReplayAfterOffset(record, binding)
+		}
+		if backend == session.BackendCodex {
+			replayAfterOffset = 0
 		}
 		replayState := newHelperReplayState(replayAfterOffset, func(packet iod.ReplayItemPacket) error {
 			record, ok := s.registry.Lookup(binding.SessionID)
 			if !ok {
 				return fmt.Errorf("session %q not found while replaying helper WAL", binding.SessionID)
 			}
-			return s.applyRuntimeHelperPacket(binding.SessionID, record.identity.Backend(), packet)
+			return s.applyRuntimeHelperPacket(binding.SessionID, record.identity.Backend(), binding.GenerationID, packet)
 		})
 		request, err := iod.NewReplayRequestPacket(binding.SessionID, binding.GenerationID, replayAfterOffset)
 		if err != nil {
@@ -409,14 +427,29 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 		}
 		done, err := client.Replay(ctx, request, replayState.accept)
 		if err != nil {
-			_ = client.Close()
-			return attachedHelper{}, binding, replayFenceReason(err), err
+			replayReason = replayFenceReason(err)
+			if backend != session.BackendCodex {
+				_ = client.Close()
+				return attachedHelper{}, binding, replayReason, err
+			}
+			replayFailed = true
+		} else if err := replayState.finish(done); err != nil {
+			replayReason = replayFenceReason(err)
+			if backend != session.BackendCodex {
+				_ = client.Close()
+				return attachedHelper{}, binding, replayReason, err
+			}
+			replayFailed = true
+		} else {
+			updatedBinding.LastReplayOffset = done.LastOffset
 		}
-		if err := replayState.finish(done); err != nil {
+		if replayFailed {
 			_ = client.Close()
-			return attachedHelper{}, binding, replayFenceReason(err), err
+			client, hello, err = redialHelper(ctx, discovered.Manifest, s.helperDialer)
+			if err != nil {
+				return attachedHelper{}, binding, helperFenceAttachFailed, err
+			}
 		}
-		updatedBinding.LastReplayOffset = done.LastOffset
 	}
 
 	return attachedHelper{
@@ -425,12 +458,34 @@ func (s *Stub) reattachHelper(ctx context.Context, binding helperGenerationBindi
 		Manifest:     discovered.Manifest,
 		Hello:        hello,
 		Client:       client,
+		ReplayFailed: replayFailed,
+		ReplayReason: replayReason,
 	}, updatedBinding, "", nil
+}
+
+func redialHelper(ctx context.Context, manifest iod.GenerationManifest, dialer iodclient.Dialer) (*iodclient.Client, iod.HelloPacket, error) {
+	client, err := iodclient.DialContext(ctx, manifest.ControlSocketPath, dialer)
+	if err != nil {
+		return nil, iod.HelloPacket{}, err
+	}
+	hello, err := client.Hello(ctx)
+	if err != nil {
+		_ = client.Close()
+		return nil, iod.HelloPacket{}, err
+	}
+	if err := iodclient.VerifyHelloProof(manifest, hello); err != nil {
+		_ = client.Close()
+		return nil, iod.HelloPacket{}, err
+	}
+	return client, hello, nil
 }
 
 func helperReplayAfterOffset(record sessionRecord, binding helperGenerationBinding) iod.WALOffset {
 	if record.transcript.TailSeq().Uint64() != 0 {
 		return binding.LastReplayOffset
+	}
+	if record.state.Tail().Seq().Uint64() != 0 && record.identity.Backend() == session.BackendCodex {
+		return 0
 	}
 	if _, partial := record.transcript.PartialAssistantTurn(); partial {
 		return binding.LastReplayOffset

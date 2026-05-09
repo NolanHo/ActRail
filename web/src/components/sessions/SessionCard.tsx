@@ -31,7 +31,11 @@ export function sessionTransportHealth(session: SessionSummary, historical: bool
     return "unknown";
   }
   const state = String(session.transport_state || "").trim().toLowerCase();
+  const runtimeState = String(session.runtime_state || "").trim().toLowerCase();
   if (session.reset_required === true || unavailableTransportStates.has(state)) {
+    return "unhealthy";
+  }
+  if (runtimeState === "failed" || runtimeState === "ended") {
     return "unhealthy";
   }
   if (session.busy === true || session.pending_startup === true || state === "starting") {
@@ -40,11 +44,11 @@ export function sessionTransportHealth(session: SessionSummary, historical: bool
   if (session.has_unread_assistant === true) {
     return "unread";
   }
+  if (runtimeState === "idle" || availableTransportStates.has(state)) {
+    return "healthy";
+  }
   if (session.probing === true) {
     return "unknown";
-  }
-  if (availableTransportStates.has(state)) {
-    return "healthy";
   }
   return "unknown";
 }

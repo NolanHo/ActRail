@@ -475,6 +475,16 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 	if record.identity.Backend() == session.BackendCodex {
 		switch event.Boundary.Kind {
 		case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
+			partial, ok := record.transcript.PartialAssistantTurn()
+			if !ok {
+				return nil
+			}
+			if strings.TrimSpace(event.TurnID) != "" && partial.TurnID().String() != strings.TrimSpace(event.TurnID) {
+				return nil
+			}
+			if strings.TrimSpace(event.Boundary.Reason) == "turn_end" {
+				return nil
+			}
 			_, _, err := s.registry.DiscardPartialAssistantTurn(sessionID)
 			return err
 		default:
@@ -694,7 +704,7 @@ func (s *Stub) startRuntimeAskUserWait(sessionID session.SessionID, event pi.Eve
 	if !ok {
 		return
 	}
-	runtime := s.runtimeForSession(sessionID, record.identity.Backend(), record.runtime)
+	runtime := s.runtimeForRecord(record)
 	request := *event.UIRequest
 	go s.runRuntimeAskUserWait(sessionID, runtime, request)
 }

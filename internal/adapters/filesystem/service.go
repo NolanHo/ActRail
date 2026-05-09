@@ -152,12 +152,34 @@ func (s Service) Read(ctx context.Context, root workspace.Root, rel workspace.Re
 	if err != nil {
 		return workspace.FileRead{}, err
 	}
+	return s.readPath(ctx, abs, rel.String(), rel.Name(), "workspace path")
+}
+
+func (s Service) ReadAbsolute(ctx context.Context, rawPath string) (workspace.FileRead, error) {
+	if err := ctx.Err(); err != nil {
+		return workspace.FileRead{}, err
+	}
+	value := strings.TrimSpace(rawPath)
+	if value == "" {
+		return workspace.FileRead{}, fmt.Errorf("absolute file path is required")
+	}
+	if strings.ContainsRune(value, '\x00') {
+		return workspace.FileRead{}, fmt.Errorf("absolute file path contains NUL")
+	}
+	if !filepath.IsAbs(value) {
+		return workspace.FileRead{}, fmt.Errorf("file path %q must be absolute", rawPath)
+	}
+	abs := filepath.Clean(value)
+	return s.readPath(ctx, abs, abs, filepath.Base(abs), "file path")
+}
+
+func (s Service) readPath(ctx context.Context, abs string, displayPath string, downloadName string, errorLabel string) (workspace.FileRead, error) {
 	info, err := os.Stat(abs)
 	if err != nil {
 		return workspace.FileRead{}, err
 	}
 	if info.IsDir() {
-		return workspace.FileRead{}, fmt.Errorf("workspace path %q is a directory", rel.String())
+		return workspace.FileRead{}, fmt.Errorf("%s %q is a directory", errorLabel, displayPath)
 	}
 	f, err := os.Open(abs)
 	if err != nil {
@@ -173,10 +195,10 @@ func (s Service) Read(ctx context.Context, root workspace.Root, rel workspace.Re
 	}
 	mimeType := detectMIME(abs, sample)
 	result := workspace.FileRead{
-		Path:         rel,
+		Path:         displayPath,
 		MIMEType:     mimeType,
 		SizeBytes:    info.Size(),
-		DownloadName: rel.Name(),
+		DownloadName: downloadName,
 	}
 	if isImageMime(mimeType) {
 		result.Kind = workspace.ContentKindImage

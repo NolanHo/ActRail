@@ -30,7 +30,7 @@ func (s *Stub) withCodexRuntimeState(sessionID session.SessionID, apply func(*co
 		return
 	}
 	_, _, err := s.registry.Update(sessionID, false, func(record *sessionRecord) error {
-		record.runtime = s.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime)
+		record.runtime = s.runtimeForRecord(*record)
 		if record.runtime.codex != nil {
 			apply(record.runtime.codex)
 		}
@@ -69,7 +69,7 @@ func (s *Stub) noteCodexInitialized(sessionID session.SessionID) {
 	}
 }
 
-func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string) {
+func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string, sourcePath ...string) {
 	changed := false
 	accepted := false
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
@@ -89,7 +89,7 @@ func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string) {
 	if !ok || record.identity.Backend() != session.BackendCodex {
 		return
 	}
-	s.rememberCodexThreadBinding(record, threadID)
+	s.rememberCodexThreadBinding(record, threadID, sourcePath...)
 	transport := sessionTransportSnapshot(record)
 	if transport.State != SessionTransportStateStarting {
 		_ = s.syncCodexRuntimeActivity(sessionID, "thread_id", changed)
@@ -226,6 +226,9 @@ func codexVisibleActivity(record sessionRecord) codexRuntimeActivity {
 		return codexRuntimeActivity{Phase: codexRuntimePhaseFailed, Reason: reason}
 	}
 	if transport.State == SessionTransportStateEnded {
+		if strings.TrimSpace(transport.Reason) == "authoritative_final_answer" {
+			return codexRuntimeActivity{Phase: codexRuntimePhaseIdle}
+		}
 		reason := strings.TrimSpace(transport.Reason)
 		if reason == "" {
 			reason = "transport_ended"

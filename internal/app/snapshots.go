@@ -197,10 +197,11 @@ type UpdateSessionWorkspaceRequest struct {
 }
 
 type SessionWorkspaceResponse struct {
-	RootPath     string                 `json:"root_path"`
-	SelectedPath string                 `json:"selected_path,omitempty"`
-	OpenPaths    []string               `json:"open_paths"`
-	HistoryItems []WorkspaceHistoryItem `json:"history_items"`
+	RootPath          string                 `json:"root_path"`
+	CanonicalRootPath string                 `json:"canonical_root_path,omitempty"`
+	SelectedPath      string                 `json:"selected_path,omitempty"`
+	OpenPaths         []string               `json:"open_paths"`
+	HistoryItems      []WorkspaceHistoryItem `json:"history_items"`
 }
 
 type WorkspaceHistoryItem struct {
@@ -216,10 +217,11 @@ type WorkspaceFileListRequest struct {
 }
 
 type WorkspaceFileListResponse struct {
-	RootPath  string               `json:"root_path"`
-	Path      string               `json:"path"`
-	Items     []WorkspaceFileEntry `json:"items"`
-	Truncated bool                 `json:"truncated"`
+	RootPath          string               `json:"root_path"`
+	CanonicalRootPath string               `json:"canonical_root_path,omitempty"`
+	Path              string               `json:"path"`
+	Items             []WorkspaceFileEntry `json:"items"`
+	Truncated         bool                 `json:"truncated"`
 }
 
 type WorkspaceFileEntry struct {
@@ -331,7 +333,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 	if response, ok, err := s.loadDetachedImportedPIHistory(ctx, record, req); ok {
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
 	}
-	if response, ok, err := s.loadCodexIODHistory(ctx, record, req); ok {
+	if response, ok, err := s.loadCodexSessionFileHistory(ctx, record, req); ok {
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
 	}
 	activeTurnStartSeq := req.ActiveTurnStartSeq
@@ -488,11 +490,15 @@ func deferredToolDetails(msg SessionMessage) map[string]any {
 	return details
 }
 
-func (s *Stub) SessionState(_ context.Context, req SessionStateRequest) (SessionStateResponse, error) {
+func (s *Stub) SessionState(ctx context.Context, req SessionStateRequest) (SessionStateResponse, error) {
+	if err := s.waitRuntimeRestore(ctx); err != nil {
+		return SessionStateResponse{}, err
+	}
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
 		return SessionStateResponse{}, err
 	}
+	record = s.reconcileCodexSessionFileFinalForState(ctx, record)
 	return s.sessionStateResponse(record), nil
 }
 
@@ -595,7 +601,7 @@ func (s *Stub) lookupSession(sessionID session.SessionID) (sessionRecord, error)
 	if !ok {
 		return sessionRecord{}, NotFound(fmt.Sprintf("session %q not found", sessionID))
 	}
-	record.runtime = s.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime)
+	record.runtime = s.runtimeForRecord(record)
 	return record, nil
 }
 

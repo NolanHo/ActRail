@@ -1178,6 +1178,21 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		}
 	})
 
+	t.Run("workspace file read absolute path", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/sessions/s_123/file/read?path=/root/docs/AGENTS.md", nil)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+
+		var payload app.WorkspaceFileReadResponse
+		decodeJSON(t, res, &payload)
+		if payload.Path != "/root/docs/AGENTS.md" || payload.Kind != "text" {
+			t.Fatalf("unexpected file read payload: %+v", payload)
+		}
+		if svc.fileReadReq.Path != "/root/docs/AGENTS.md" {
+			t.Fatalf("expected absolute path, got %+v", svc.fileReadReq)
+		}
+	})
+
 	t.Run("git file versions", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/sessions/s_123/git/file_versions?path=go.mod", nil)
 		res := httptest.NewRecorder()
@@ -1216,7 +1231,6 @@ func TestRouteValidationReturnsErrorEnvelope(t *testing.T) {
 		{name: "messages invalid before seq", method: http.MethodGet, target: "/api/sessions/s_123/messages?before_seq=nope", status: http.StatusBadRequest, code: "invalid_request", field: "before_seq"},
 		{name: "messages invalid init", method: http.MethodGet, target: "/api/sessions/s_123/messages?init=nope", status: http.StatusBadRequest, code: "invalid_request", field: "init"},
 		{name: "file read missing path", method: http.MethodGet, target: "/api/sessions/s_123/file/read", status: http.StatusBadRequest, code: "invalid_request", field: "path"},
-		{name: "file read absolute path", method: http.MethodGet, target: "/api/sessions/s_123/file/read?path=/etc/passwd", status: http.StatusBadRequest, code: "invalid_request", field: "path"},
 		{name: "git file versions path escape", method: http.MethodGet, target: "/api/sessions/s_123/git/file_versions?path=../go.mod", status: http.StatusBadRequest, code: "invalid_request", field: "path"},
 	}
 

@@ -1103,6 +1103,12 @@ func (s *Stub) runtimeForSession(sessionID session.SessionID, backend session.Ba
 	}
 	attachment, ok := s.helpers.Attachment(sessionID)
 	if !ok {
+		if runtime.protocol == runtimeProtocolCodexRPC && runtime.codex != nil {
+			_, threadID, _ := runtime.codex.snapshot()
+			if strings.TrimSpace(threadID) != "" {
+				runtime.codex = newCodexRuntimeStateWithResumeThread(backend, threadID)
+			}
+		}
 		return runtime
 	}
 	binding := &RuntimeHelperBinding{GenerationID: attachment.Binding.GenerationID, LastReplayOffset: attachment.Binding.LastReplayOffset}
@@ -1111,6 +1117,25 @@ func (s *Stub) runtimeForSession(sessionID session.SessionID, backend session.Ba
 	runtime.currentHelperBinding = func(session.SessionID) (*RuntimeHelperBinding, error) {
 		resolved := *binding
 		return &resolved, nil
+	}
+	return runtime
+}
+
+func (s *Stub) runtimeForRecord(record sessionRecord) sessionRuntime {
+	runtime := s.runtimeForSession(record.identity.SessionID(), record.identity.Backend(), record.runtime)
+	if record.identity.Backend() != session.BackendCodex || runtime.codex == nil {
+		return runtime
+	}
+	threadID := strings.TrimSpace(record.importedBackendSessionID)
+	if threadID == "" {
+		return runtime
+	}
+	_, currentThreadID, _ := runtime.codex.snapshot()
+	if strings.TrimSpace(currentThreadID) == "" {
+		if runtime.codex.pendingResumeThreadID() != "" {
+			return runtime
+		}
+		runtime.codex = newCodexRuntimeStateWithResumeThread(record.identity.Backend(), threadID)
 	}
 	return runtime
 }

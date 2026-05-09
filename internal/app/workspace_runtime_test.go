@@ -58,6 +58,14 @@ func TestStubWorkspaceUsesSessionRootAndFilesystem(t *testing.T) {
 	if read.MIMEType != "text/plain; charset=utf-8" || read.Encoding != "utf-8" || read.SizeBytes != 5 {
 		t.Fatalf("WorkspaceFileRead() unexpected metadata: %+v", read)
 	}
+
+	absoluteRead, err := svc.WorkspaceFileRead(context.Background(), WorkspaceFileReadRequest{SessionID: sessionID, Path: filepath.Join(rootDir, "nested", "beta.txt")})
+	if err != nil {
+		t.Fatalf("WorkspaceFileRead() absolute error = %v", err)
+	}
+	if absoluteRead.Path != filepath.Join(rootDir, "nested", "beta.txt") || absoluteRead.Kind != "text" || absoluteRead.Text != "beta" {
+		t.Fatalf("WorkspaceFileRead() absolute payload: %+v", absoluteRead)
+	}
 }
 
 func TestStubWorkspaceReturnsNotFoundAndRejectsEscapingPaths(t *testing.T) {

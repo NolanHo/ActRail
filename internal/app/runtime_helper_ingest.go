@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 
+	"actrail/internal/adapters/iod"
 	"actrail/internal/domain/session"
 )
 
@@ -28,21 +29,25 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 			}
 			return
 		}
-		if err := s.applyRuntimeHelperPacket(sessionID, backend, packet); err != nil {
+		if err := s.applyRuntimeHelperPacket(sessionID, backend, helper.generationID, packet); err != nil {
 			continue
 		}
 	}
 }
 
-func (s *Stub) applyRuntimeHelperPacket(sessionID session.SessionID, backend session.Backend, packet any) error {
+func (s *Stub) applyRuntimeHelperPacket(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, packet any) error {
 	if s == nil {
 		return nil
 	}
+	if generationID != "" && !s.runtimeHelperGenerationCurrent(sessionID, generationID) {
+		return nil
+	}
 	key := struct {
-		stub      *Stub
-		sessionID session.SessionID
-		backend   session.Backend
-	}{stub: s, sessionID: sessionID, backend: backend}
+		stub       *Stub
+		sessionID  session.SessionID
+		backend    session.Backend
+		generation iod.GenerationID
+	}{stub: s, sessionID: sessionID, backend: backend, generation: generationID}
 	projectorAny, _ := runtimeHelperProjectors.LoadOrStore(key, &runtimeHelperProjector{decoder: runtimeEventDecoder{backend: backend}})
 	projector := projectorAny.(*runtimeHelperProjector)
 	projector.mu.Lock()
@@ -55,4 +60,37 @@ func (s *Stub) applyRuntimeHelperPacket(sessionID session.SessionID, backend ses
 		return err
 	}
 	return s.applyRuntimeProjection(sessionID, projection)
+}
+
+func (s *Stub) runtimeHelperGenerationCurrent(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if s == nil || generationID == "" {
+		return true
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return false
+	}
+	if record.runtime.helper != nil && record.runtime.helper.generationID == generationID {
+		return true
+	}
+	if s.helpers != nil {
+		if attachment, ok := s.helpers.Attachment(sessionID); ok && attachment.Binding.GenerationID == generationID {
+			return true
+		}
+	}
+	if binding, err := record.runtime.CurrentHelperBinding(sessionID); err == nil && binding != nil {
+		return binding.GenerationID == generationID
+	}
+	if s.helperBindings.root != "" {
+		bindings, err := s.helperBindings.Load()
+		if err != nil {
+			return false
+		}
+		binding, ok := bindings[sessionID]
+		return ok && binding.GenerationID == generationID
+	}
+	if record.transport.GenerationID != "" {
+		return record.transport.GenerationID == generationID.String()
+	}
+	return false
 }

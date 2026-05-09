@@ -315,6 +315,92 @@ describe("FileViewerDialog", () => {
     expect(root.textContent).toContain("line 18");
   });
 
+  it("converts absolute file references under the workspace root before reading", async () => {
+    const { api } = await import("../../lib/api");
+    (api as any).getWorkspace.mockResolvedValue({ root_path: "/tmp/project" });
+    (api as any).getFiles.mockResolvedValue({ root_path: "/tmp/project", path: "", items: [] });
+    (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "hello" });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <FileViewerDialog
+          open
+          sessionId="sess-absolute"
+          initialPath="/tmp/project/docs/intro.md"
+          onClose={() => undefined}
+        />,
+        root!,
+      );
+      await settle(12);
+    });
+    await settle(8);
+
+    expect((api as any).getFileRead).toHaveBeenCalledWith("sess-absolute", "docs/intro.md", expect.any(AbortSignal));
+    expect(root.textContent).toContain("docs/intro.md");
+  });
+
+  it("converts absolute file references under the canonical workspace root before reading", async () => {
+    const { api } = await import("../../lib/api");
+    (api as any).getWorkspace.mockResolvedValue({
+      root_path: "/root/docs",
+      canonical_root_path: "/vePFS-Mindverse/user/nolanho/docs",
+    });
+    (api as any).getFiles.mockResolvedValue({
+      root_path: "/root/docs",
+      canonical_root_path: "/vePFS-Mindverse/user/nolanho/docs",
+      path: "",
+      items: [],
+    });
+    (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "hello" });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <FileViewerDialog
+          open
+          sessionId="sess-canonical"
+          initialPath="/vePFS-Mindverse/user/nolanho/docs/AGENTS.md"
+          onClose={() => undefined}
+        />,
+        root!,
+      );
+      await settle(12);
+    });
+    await settle(8);
+
+    expect((api as any).getFileRead).toHaveBeenCalledWith("sess-canonical", "AGENTS.md", expect.any(AbortSignal));
+    expect(root.textContent).toContain("AGENTS.md");
+  });
+
+  it("reads workspace-external absolute paths directly", async () => {
+    const { api } = await import("../../lib/api");
+    (api as any).getWorkspace.mockResolvedValue({ root_path: "/tmp/project" });
+    (api as any).getFiles.mockResolvedValue({ root_path: "/tmp/project", path: "", items: [] });
+    (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "hello" });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <FileViewerDialog
+          open
+          sessionId="sess-absolute-global"
+          initialPath="/var/log/system.log"
+          onClose={() => undefined}
+        />,
+        root!,
+      );
+      await settle(12);
+    });
+    await settle(8);
+
+    expect((api as any).getFileRead).toHaveBeenCalledWith("sess-absolute-global", "/var/log/system.log", expect.any(AbortSignal));
+    expect(root.textContent).toContain("/var/log/system.log");
+  });
+
   it("shows a friendly error when the file list payload is malformed", async () => {
     const { api } = await import("../../lib/api");
     (api as any).getFiles.mockResolvedValue({ path: "", items: null });

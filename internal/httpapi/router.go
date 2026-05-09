@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -744,7 +745,7 @@ func (r Router) workspaceFileRead(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	pathValue, err := queryRelativePath(req, "path", true)
+	pathValue, err := queryFileReadPath(req, "path")
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -1274,6 +1275,20 @@ func queryRelativePath(req *http.Request, key string, required bool) (string, er
 		return "", app.Invalid(key, key+" escapes workspace root")
 	}
 	return strings.TrimPrefix(cleaned, "./"), nil
+}
+
+func queryFileReadPath(req *http.Request, key string) (string, error) {
+	value := strings.TrimSpace(req.URL.Query().Get(key))
+	if value == "" {
+		return "", app.Invalid(key, key+" required")
+	}
+	if strings.ContainsRune(value, '\x00') {
+		return "", app.Invalid(key, key+" contains NUL")
+	}
+	if strings.HasPrefix(value, "/") {
+		return filepath.Clean(value), nil
+	}
+	return queryRelativePath(req, key, true)
 }
 
 func (r Router) schedulerSnapshot(w http.ResponseWriter, req *http.Request) {

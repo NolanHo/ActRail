@@ -180,6 +180,40 @@ func (s *codexRuntimeState) setThreadID(threadID string) (bool, bool) {
 	return true, changed
 }
 
+func (s *codexRuntimeState) attachInitializedThread(threadID string) (bool, bool) {
+	if s == nil {
+		return false, false
+	}
+	resolved := strings.TrimSpace(threadID)
+	if resolved == "" {
+		return false, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.threadID != "" && s.threadID != resolved {
+		return false, false
+	}
+	before := s.activityLocked()
+	changed := !s.initialized ||
+		s.initializeSent ||
+		s.threadID != resolved ||
+		s.threadStartSent ||
+		s.threadResumeSent ||
+		s.resumeThreadID != "" ||
+		phaseIsStarting(s.phase)
+	s.initialized = true
+	s.initializeSent = false
+	s.threadID = resolved
+	s.threadStartSent = false
+	s.threadResumeSent = false
+	s.resumeThreadID = ""
+	if s.activeTurnID == "" && phaseIsStarting(s.phase) {
+		s.setPhaseLocked(codexRuntimePhaseIdle, "")
+	}
+	after := s.activityLocked()
+	return true, changed || before != after
+}
+
 func (s *codexRuntimeState) setActiveTurnID(turnID string) {
 	if s == nil {
 		return

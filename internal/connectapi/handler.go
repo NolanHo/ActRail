@@ -555,6 +555,9 @@ func statusForCommandError(err error) int {
 			return http.StatusNotImplemented
 		}
 	}
+	if strings.Contains(err.Error(), "session runtime changed before send") {
+		return http.StatusConflict
+	}
 	return http.StatusInternalServerError
 }
 
@@ -562,6 +565,9 @@ func codeForCommandError(err error) string {
 	var appErr *app.Error
 	if errors.As(err, &appErr) && strings.TrimSpace(appErr.Code) != "" {
 		return appErr.Code
+	}
+	if strings.Contains(err.Error(), "session runtime changed before send") {
+		return "conflict"
 	}
 	return "internal"
 }

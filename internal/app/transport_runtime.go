@@ -17,6 +17,12 @@ func transportSnapshotAttached(generationID iod.GenerationID) SessionTransportSn
 	}
 }
 
+func transportSnapshotAttachedWithReason(generationID iod.GenerationID, reason string) SessionTransportSnapshot {
+	transport := transportSnapshotAttached(generationID)
+	transport.Reason = strings.TrimSpace(reason)
+	return transport
+}
+
 func transportSnapshotPIAgentGRPCStarting() SessionTransportSnapshot {
 	return SessionTransportSnapshot{State: SessionTransportStateStarting, GenerationID: "pi_agent_grpc", Reason: "pi_agent_grpc_starting"}
 }

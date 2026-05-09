@@ -3,11 +3,14 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -290,6 +293,20 @@ func TestHelperReplayAfterOffset(t *testing.T) {
 		t.Fatalf("helperReplayAfterOffset(empty transcript) = %d, want 0", got)
 	}
 
+	tailOnly := sessionRecord{transcript: message.NewTranscript()}
+	var err error
+	tailOnly.identity, err = session.NewDetachedIdentity(sessionID.String(), "codex")
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	tailOnly.state, err = session.NewState(tailOnly.identity, false, session.EmptyQueueSnapshot(), message.NewCommittedTail(8))
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	if got := helperReplayAfterOffset(tailOnly, binding); got != 0 {
+		t.Fatalf("helperReplayAfterOffset(tail-only transcript) = %d, want 0", got)
+	}
+
 	withMessage := sessionRecord{transcript: message.NewTranscript()}
 	if _, err := withMessage.transcript.AppendMessage(message.RoleUser.String(), message.KindMessage.String(), "hello", time.Unix(1760000000, 0).UTC()); err != nil {
 		t.Fatalf("AppendMessage() error = %v", err)
@@ -372,10 +389,12 @@ func TestCodexReattachIgnoresProjectionError(t *testing.T) {
 	if state.Transport.State != SessionTransportStateAttached {
 		t.Fatalf("SessionState().Transport = %+v, want attached after projection error", state.Transport)
 	}
-	messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
-	if err != nil {
-		t.Fatalf("SessionMessages() error = %v", err)
-	}
+	var messages SessionMessagesResponse
+	waitForTestCondition(t, func() bool {
+		var err error
+		messages, err = rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		return err == nil && len(messages.Items) == 1
+	})
 	if len(messages.Items) != 1 || messages.Items[0].Text != "Recovered after projection error." {
 		t.Fatalf("SessionMessages().Items = %#v, want replay to continue through projection error", messages.Items)
 	}
@@ -520,10 +539,12 @@ func TestReattachRebuildsEmptyTranscript(t *testing.T) {
 	if attachment.Binding.LastReplayOffset != 1 {
 		t.Fatalf("attachment last replay offset = %d, want 1", attachment.Binding.LastReplayOffset)
 	}
-	messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
-	if err != nil {
-		t.Fatalf("SessionMessages() error = %v", err)
-	}
+	var messages SessionMessagesResponse
+	waitForTestCondition(t, func() bool {
+		var err error
+		messages, err = rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		return err == nil && len(messages.Items) == 1
+	})
 	if len(messages.Items) != 1 || messages.Items[0].Text != "Rebuilt from saved cursor." {
 		t.Fatalf("SessionMessages().Items = %#v, want transcript rebuilt from WAL", messages.Items)
 	}
@@ -678,6 +699,61 @@ func TestReplayCursorNotAdvancedOnReplayGap(t *testing.T) {
 	assertReplayCursorPreserved(t, rehydrated, sessionID, generationID, 5, helperFenceReplayGap)
 }
 
+func TestCodexReattachToleratesReplayGap(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_replay_gap")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID, LastReplayOffset: 5}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-replay-gap"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{
+		AfterOffset: 0,
+		Items:       []iod.ReplayItemPacket{mustReplayItemPacket(t, sessionID, generationID, 7, 5)},
+		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 7),
+	})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	attachment, ok := rehydrated.helpers.Attachment(sessionID)
+	if !ok {
+		t.Fatalf("helper attachment for %q not found", sessionID)
+	}
+	if !attachment.ReplayFailed || attachment.ReplayReason != helperFenceReplayGap {
+		t.Fatalf("attachment replay = failed:%v reason:%q, want replay gap marker", attachment.ReplayFailed, attachment.ReplayReason)
+	}
+	if hasFenceReason(rehydrated.helpers.Fenced(), generationID, helperFenceReplayGap) {
+		t.Fatalf("fenced helpers = %+v, want codex replay gap attached not fenced", rehydrated.helpers.Fenced())
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
+	}
+	if !strings.Contains(state.Transport.Reason, "codex_replay_failed:replay_gap") {
+		t.Fatalf("SessionState().Transport.Reason = %q, want codex replay marker", state.Transport.Reason)
+	}
+	bindings, err := rehydrated.helperBindings.Load()
+	if err != nil {
+		t.Fatalf("helperBindings.Load() error = %v", err)
+	}
+	if bindings[sessionID].LastReplayOffset != 5 {
+		t.Fatalf("saved binding = %+v, want last replay offset preserved", bindings[sessionID])
+	}
+}
+
 func assertReplayCursorPreserved(t *testing.T, rehydrated *Stub, sessionID session.SessionID, generationID iod.GenerationID, offset iod.WALOffset, reason helperFenceReason) {
 	t.Helper()
 	if attachment, ok := rehydrated.helpers.Attachment(sessionID); ok {
@@ -740,66 +816,213 @@ func startReplayHelper(t *testing.T, manifest iod.GenerationManifest, script hel
 	if err != nil {
 		t.Fatalf("Listen(unix, %q) error = %v", manifest.ControlSocketPath, err)
 	}
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 8)
+	doneCh := make(chan struct{})
+	var connMu sync.Mutex
+	conns := make([]net.Conn, 0, 2)
 	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			if !strings.Contains(err.Error(), "closed network connection") {
-				errCh <- err
-			}
-			close(errCh)
-			return
-		}
-		defer close(errCh)
-		defer conn.Close()
-		enc := json.NewEncoder(conn)
-		dec := json.NewDecoder(conn)
-		hello, err := iod.NewHelloPacket(manifest.SessionID, manifest.GenerationID, 1, manifest.HelloProof)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		if err := enc.Encode(hello); err != nil {
-			errCh <- err
-			return
-		}
-		var replayReq iod.ReplayRequestPacket
-		if err := dec.Decode(&replayReq); err != nil {
-			errCh <- err
-			return
-		}
-		if replayReq.SessionID != manifest.SessionID || replayReq.GenerationID != manifest.GenerationID {
-			errCh <- fmt.Errorf("replay request = %q/%q, want %q/%q", replayReq.SessionID, replayReq.GenerationID, manifest.SessionID, manifest.GenerationID)
-			return
-		}
-		if replayReq.AfterOffset != script.AfterOffset {
-			errCh <- fmt.Errorf("replay after offset = %d, want %d", replayReq.AfterOffset, script.AfterOffset)
-			return
-		}
-		for _, packet := range script.Items {
-			if err := enc.Encode(packet); err != nil {
-				errCh <- err
+		defer close(doneCh)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if !strings.Contains(err.Error(), "closed network connection") {
+					errCh <- err
+				}
 				return
 			}
-		}
-		if err := enc.Encode(script.Done); err != nil {
-			errCh <- err
-			return
-		}
-		for _, packet := range script.LivePackets {
-			if err := enc.Encode(packet); err != nil {
-				errCh <- err
-				return
-			}
+			connMu.Lock()
+			conns = append(conns, conn)
+			connMu.Unlock()
+			go func() {
+				if err := serveReplayHelperConn(conn, manifest, script); err != nil {
+					errCh <- err
+				}
+			}()
 		}
 	}()
 	return func() {
 		_ = listener.Close()
-		if err := <-errCh; err != nil {
-			t.Fatalf("helper server error = %v", err)
+		connMu.Lock()
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+		connMu.Unlock()
+		<-doneCh
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("helper server error = %v", err)
+			}
+		default:
 		}
 		_ = os.Remove(manifest.ControlSocketPath)
 	}
+}
+
+func startCommandHelper(t *testing.T, manifest iod.GenerationManifest, commands chan<- iod.CommandPacket) func() {
+	t.Helper()
+	if err := os.RemoveAll(manifest.ControlSocketPath); err != nil {
+		t.Fatalf("RemoveAll(%q) error = %v", manifest.ControlSocketPath, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(manifest.ControlSocketPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(manifest.ControlSocketPath), err)
+	}
+	listener, err := net.Listen("unix", manifest.ControlSocketPath)
+	if err != nil {
+		t.Fatalf("Listen(unix, %q) error = %v", manifest.ControlSocketPath, err)
+	}
+	errCh := make(chan error, 8)
+	doneCh := make(chan struct{})
+	var connMu sync.Mutex
+	conns := make([]net.Conn, 0, 2)
+	go func() {
+		defer close(doneCh)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if !strings.Contains(err.Error(), "closed network connection") {
+					errCh <- err
+				}
+				return
+			}
+			connMu.Lock()
+			conns = append(conns, conn)
+			connMu.Unlock()
+			go func() {
+				if err := serveCommandHelperConn(conn, manifest, commands); err != nil {
+					errCh <- err
+				}
+			}()
+		}
+	}()
+	return func() {
+		_ = listener.Close()
+		connMu.Lock()
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+		connMu.Unlock()
+		<-doneCh
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("helper server error = %v", err)
+			}
+		default:
+		}
+		_ = os.Remove(manifest.ControlSocketPath)
+	}
+}
+
+func serveCommandHelperConn(conn net.Conn, manifest iod.GenerationManifest, commands chan<- iod.CommandPacket) error {
+	defer conn.Close()
+	enc := json.NewEncoder(conn)
+	dec := json.NewDecoder(conn)
+	hello, err := iod.NewHelloPacket(manifest.SessionID, manifest.GenerationID, 1, manifest.HelloProof)
+	if err != nil {
+		return err
+	}
+	if err := enc.Encode(hello); err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
+			return nil
+		}
+		return err
+	}
+	var peek struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(raw, &peek); err != nil {
+		return err
+	}
+	switch iod.PacketKind(peek.Kind) {
+	case iod.PacketReplayRequest:
+		var request iod.ReplayRequestPacket
+		if err := json.Unmarshal(raw, &request); err != nil {
+			return err
+		}
+		done, err := iod.NewReplayDonePacket(manifest.SessionID, manifest.GenerationID, request.AfterOffset, request.AfterOffset, false)
+		if err != nil {
+			return err
+		}
+		return enc.Encode(done)
+	case iod.PacketCommandSend, iod.PacketCommandEnqueue, iod.PacketCommandInterrupt, iod.PacketCommandUIResponseSubmit:
+		var command iod.CommandPacket
+		if err := json.Unmarshal(raw, &command); err != nil {
+			return err
+		}
+		select {
+		case commands <- command:
+		default:
+		}
+		outcome, err := iod.NewCommandOutcome(command.CommandID, 1, false, nil)
+		if err != nil {
+			return err
+		}
+		accepted, err := iod.NewCommandAcceptedPacket(manifest.SessionID, manifest.GenerationID, outcome)
+		if err != nil {
+			return err
+		}
+		return enc.Encode(accepted)
+	default:
+		return fmt.Errorf("unexpected helper packet kind %q", peek.Kind)
+	}
+}
+
+func serveReplayHelperConn(conn net.Conn, manifest iod.GenerationManifest, script helperReplayScript) error {
+	defer conn.Close()
+	enc := json.NewEncoder(conn)
+	dec := json.NewDecoder(conn)
+	hello, err := iod.NewHelloPacket(manifest.SessionID, manifest.GenerationID, 1, manifest.HelloProof)
+	if err != nil {
+		return err
+	}
+	if err := enc.Encode(hello); err != nil {
+		return err
+	}
+	var replayReq iod.ReplayRequestPacket
+	if err := dec.Decode(&replayReq); err != nil {
+		if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
+			return nil
+		}
+		return err
+	}
+	if replayReq.SessionID != manifest.SessionID || replayReq.GenerationID != manifest.GenerationID {
+		return fmt.Errorf("replay request = %q/%q, want %q/%q", replayReq.SessionID, replayReq.GenerationID, manifest.SessionID, manifest.GenerationID)
+	}
+	if replayReq.AfterOffset != script.AfterOffset {
+		return fmt.Errorf("replay after offset = %d, want %d", replayReq.AfterOffset, script.AfterOffset)
+	}
+	for _, packet := range script.Items {
+		if err := enc.Encode(packet); err != nil {
+			if helperConnClosed(err) {
+				return nil
+			}
+			return err
+		}
+	}
+	if err := enc.Encode(script.Done); err != nil {
+		if helperConnClosed(err) {
+			return nil
+		}
+		return err
+	}
+	for _, packet := range script.LivePackets {
+		if err := enc.Encode(packet); err != nil {
+			if helperConnClosed(err) {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func helperConnClosed(err error) bool {
+	return errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection")
 }
 
 func fakeRuntimeConfigWithHelperBinding(binding RuntimeHelperBinding) RuntimeConfig {

@@ -101,11 +101,17 @@ func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.
 }
 
 func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection runtimeProjection) error {
+	if len(projection.events) > 0 {
+		if err := s.applyPIEvents(sessionID, projection.events); err != nil {
+			return err
+		}
+		projection.events = nil
+	}
 	if projection.codexInitialized {
 		s.noteCodexInitialized(sessionID)
 	}
 	if strings.TrimSpace(projection.codexThreadID) != "" {
-		s.noteCodexThreadID(sessionID, projection.codexThreadID)
+		s.noteCodexThreadID(sessionID, projection.codexThreadID, projection.codexSessionPath)
 	}
 	codexMainProjection := s.codexThreadIDInMainThread(sessionID, projection.codexThreadID)
 	if codexMainProjection && !projection.clearCodexTurn && strings.TrimSpace(projection.codexTurnID) != "" {
@@ -122,6 +128,9 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 			}
 		}
 	}
+	if codexMainProjection && projection.probeCodexTurn {
+		s.startCodexTurnCompletionWatch(sessionID, projection.codexThreadID, projection.codexTurnID)
+	}
 	if projection.piRPCStateFailure != nil {
 		if s.applyPIRPCStateFailure(sessionID, *projection.piRPCStateFailure) {
 			return nil
@@ -131,9 +140,6 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 		if err := s.applyPIRPCState(sessionID, *projection.piRPCState); err != nil {
 			return err
 		}
-	}
-	if err := s.applyPIEvents(sessionID, projection.events); err != nil {
-		return err
 	}
 	if projection.codexBusy != nil && codexMainProjection {
 		if err := s.applyCodexBusy(sessionID, *projection.codexBusy); err != nil {

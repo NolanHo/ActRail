@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/process"
 	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
@@ -31,6 +32,129 @@ func fakeRuntimeConfig() RuntimeConfig {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	handle.SetPID(321)
 	return RuntimeConfig{Runner: &process.FakeRunner{NextHandle: handle}}
+}
+
+func TestLookupSessionSeedsCodexRuntimeFromPersistedBackendSessionID(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+	if err := catalog.ReplaceImportBundle(context.Background(), sqlitestore.ImportBundle{
+		Sessions: []sqlitestore.SessionSnapshotRow{{
+			Session: sqlitestore.SessionRow{
+				SessionID:  "codex-resume-seed",
+				Backend:    "codex",
+				CWD:        "/workspace/codex-resume-seed",
+				Title:      "Codex Resume Seed",
+				CreatedAt:  now,
+				UpdatedAt:  now,
+				ActivityAt: now,
+			},
+		}},
+		SessionSourceRefs: []sqlitestore.SessionSourceRefRow{{
+			SessionID:        "codex-resume-seed",
+			Backend:          "codex",
+			BackendSessionID: "thread-codex-resume-seed",
+		}},
+		AppState: sqlitestore.AppStateRow{RecentCwds: []string{}, CwdGroups: []sqlitestore.CwdGroupRow{}},
+		Provenance: sqlitestore.ImportProvenanceRow{
+			Source:     "fixture",
+			SnapshotAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceImportBundle() error = %v", err)
+	}
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	sessionID := mustSessionID(t, "codex-resume-seed")
+	generationID := mustHelperGenerationID(t, "g_codex_resume_seed")
+	svc.helpers.replaceAll(map[session.SessionID]attachedHelper{
+		sessionID: {
+			Binding: helperGenerationBinding{SessionID: sessionID, GenerationID: generationID},
+			Manifest: iod.GenerationManifest{
+				SessionID:    sessionID,
+				GenerationID: generationID,
+				HelloProof:   iod.HelloProof{ControlSocketPath: "/tmp/codex-resume-seed.sock"},
+			},
+			Hello: iod.HelloPacket{HelloProof: iod.HelloProof{ControlSocketPath: "/tmp/codex-resume-seed.sock"}},
+		},
+	}, nil)
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	if record.runtime.codex == nil {
+		t.Fatal("lookupSession().runtime.codex = nil, want seeded codex runtime")
+	}
+	if got := record.runtime.PendingCodexResumeThreadID(); got != "thread-codex-resume-seed" {
+		t.Fatalf("PendingCodexResumeThreadID() = %q, want persisted backend session id", got)
+	}
+	if _, threadID, _ := record.runtime.codex.snapshot(); threadID != "" {
+		t.Fatalf("codex thread id = %q, want empty until Codex confirms resume", threadID)
+	}
+}
+
+func TestLookupSessionWithoutHelperKeepsCodexResumePending(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+	if err := catalog.ReplaceImportBundle(context.Background(), sqlitestore.ImportBundle{
+		Sessions: []sqlitestore.SessionSnapshotRow{{
+			Session: sqlitestore.SessionRow{
+				SessionID:  "codex-resume-pending",
+				Backend:    "codex",
+				CWD:        "/workspace/codex-resume-pending",
+				Title:      "Codex Resume Pending",
+				CreatedAt:  now,
+				UpdatedAt:  now,
+				ActivityAt: now,
+			},
+			Live: sqlitestore.LiveStateRow{
+				TransportGenerationID: "g_missing_codex",
+				TransportState:        string(SessionTransportStateAttached),
+			},
+		}},
+		SessionSourceRefs: []sqlitestore.SessionSourceRefRow{{
+			SessionID:        "codex-resume-pending",
+			Backend:          "codex",
+			BackendSessionID: "thread-codex-resume-pending",
+		}},
+		AppState: sqlitestore.AppStateRow{RecentCwds: []string{}, CwdGroups: []sqlitestore.CwdGroupRow{}},
+		Provenance: sqlitestore.ImportProvenanceRow{
+			Source:     "fixture",
+			SnapshotAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceImportBundle() error = %v", err)
+	}
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	record, err := svc.lookupSession(mustSessionID(t, "codex-resume-pending"))
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	if got := record.runtime.PendingCodexResumeThreadID(); got != "thread-codex-resume-pending" {
+		t.Fatalf("PendingCodexResumeThreadID() = %q, want persisted backend session id", got)
+	}
+	if _, threadID, _ := record.runtime.codex.snapshot(); threadID != "" {
+		t.Fatalf("codex thread id = %q, want empty until attached or resumed", threadID)
+	}
+	if transport := sessionTransportSnapshot(record); transport.State != SessionTransportStateEnded || transport.Reason == "" {
+		t.Fatalf("sessionTransportSnapshot() = %+v, want ended with reason", transport)
+	}
 }
 
 type importedPIDetachedFixture struct {
