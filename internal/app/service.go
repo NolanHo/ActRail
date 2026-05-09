@@ -23,6 +23,7 @@ type Service interface {
 	PromptTeam(context.Context, PromptTeamRequest) (TeamCommandResponse, error)
 	FollowupTeam(context.Context, FollowupTeamRequest) (TeamCommandResponse, error)
 	SendTeam(context.Context, SendTeamRequest) (TeamDeliveryResponse, error)
+	AskTeam(context.Context, AskTeamRequest) (AskParentResponse, error)
 	AskParent(context.Context, AskParentRequest) (AskParentResponse, error)
 	ResumeAskParent(context.Context, AskParentRequest) (AskParentResponse, error)
 	AnswerTeam(context.Context, AnswerTeamRequest) (TeamCommandResponse, error)

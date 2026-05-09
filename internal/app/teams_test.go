@@ -27,6 +27,9 @@ func TestListTeamsEmptyUntilRuntimeBackendCreatesActors(t *testing.T) {
 	if !res.OK || len(res.Roots) != 0 || res.TotalCount != 0 || res.NonLeafCount != 0 {
 		t.Fatalf("ListTeams() = %#v, want empty ok snapshot", res)
 	}
+	if len(res.Members) != 1 || res.Members[0].Handle != DefaultHumanMemberHandle || res.Members[0].Kind != TeamMemberKindHuman {
+		t.Fatalf("ListTeams() members = %#v, want default human teammate", res.Members)
+	}
 }
 
 func TestPersistentStubListTeamsEmpty(t *testing.T) {
@@ -108,6 +111,62 @@ func TestPersistentStubResumeAskParentAfterRestart(t *testing.T) {
 type appAskParentResult struct {
 	answer AskParentResponse
 	err    error
+}
+
+func TestAskTeamDefaultsToHumanTeammate(t *testing.T) {
+	s := newStub(config.Load(), time.Now)
+	actor, err := s.teams.spawn("parent", "", "child", "reviewer", "review", "pi", "", "/repo")
+	if err != nil {
+		t.Fatalf("spawn() error = %v", err)
+	}
+
+	answerCh := make(chan appAskParentResult, 1)
+	go func() {
+		answer, err := s.AskTeam(context.Background(), AskTeamRequest{ActorID: actor.ActorID, TurnID: "turn_1", Question: "Proceed?", Context: "Need approval"})
+		answerCh <- appAskParentResult{answer: answer, err: err}
+	}()
+
+	var questionID string
+	deadline := time.After(time.Second)
+	for questionID == "" {
+		select {
+		case <-deadline:
+			t.Fatal("AskTeam did not create a pending human question")
+		default:
+			node := s.teams.lookupNode(actor.ActorID)
+			if node != nil && node.Status == TeamStatusWaitingForParent && node.Question != nil {
+				questionID = node.Question.QuestionID
+				if node.Question.Context != "Need approval" {
+					t.Fatalf("question context = %q, want Need approval", node.Question.Context)
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	if _, err := s.AnswerTeam(context.Background(), AnswerTeamRequest{ActorID: actor.ActorID, QuestionID: questionID, Answer: "Continue"}); err != nil {
+		t.Fatalf("AnswerTeam() error = %v", err)
+	}
+	select {
+	case got := <-answerCh:
+		if got.err != nil {
+			t.Fatalf("AskTeam() error = %v", got.err)
+		}
+		if got.answer.Answer != "Continue" || got.answer.TargetMember != DefaultHumanMemberHandle || got.answer.QuestionID != questionID {
+			t.Fatalf("AskTeam() = %+v, want human answer", got.answer)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("AskTeam did not return after human answer")
+	}
+}
+
+func TestAskTeamRejectsUnknownTarget(t *testing.T) {
+	s := newStub(config.Load(), time.Now)
+	_, err := s.AskTeam(context.Background(), AskTeamRequest{ActorID: "actor_1", To: "reviewer", Question: "Proceed?"})
+	var appErr *Error
+	if !errors.As(err, &appErr) || appErr.Code != "invalid_request" || appErr.Field != "to" {
+		t.Fatalf("AskTeam() error = %v, want invalid to", err)
+	}
 }
 
 func TestPersistentStubRehydratesTeamActorsAndEvents(t *testing.T) {

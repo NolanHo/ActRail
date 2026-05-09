@@ -29,10 +29,33 @@ type ListTeamsRequest struct {
 }
 
 type ListTeamsResponse struct {
-	OK           bool       `json:"ok"`
-	Roots        []TeamNode `json:"roots"`
-	TotalCount   int        `json:"total_count"`
-	NonLeafCount int        `json:"non_leaf_count"`
+	OK           bool         `json:"ok"`
+	Members      []TeamMember `json:"members,omitempty"`
+	Roots        []TeamNode   `json:"roots"`
+	TotalCount   int          `json:"total_count"`
+	NonLeafCount int          `json:"non_leaf_count"`
+}
+
+type TeamMemberKind string
+
+const (
+	TeamMemberKindHuman TeamMemberKind = "human"
+	TeamMemberKindAgent TeamMemberKind = "agent"
+)
+
+const (
+	DefaultHumanMemberID          = "member_human"
+	DefaultHumanMemberHandle      = "human"
+	DefaultHumanMemberDisplayName = "Human"
+	DefaultHumanMemberDescription = "The human operator using ActRail. Ask this teammate when a decision, approval, or clarification is needed."
+)
+
+type TeamMember struct {
+	MemberID    string         `json:"member_id"`
+	Handle      string         `json:"handle"`
+	Kind        TeamMemberKind `json:"kind"`
+	DisplayName string         `json:"display_name"`
+	Description string         `json:"description,omitempty"`
 }
 
 type TeamNode struct {
@@ -146,12 +169,21 @@ type AskParentRequest struct {
 	Context    string `json:"context"`
 }
 
+type AskTeamRequest struct {
+	ActorID  string `json:"actor_id"`
+	To       string `json:"to"`
+	TurnID   string `json:"turn_id"`
+	Question string `json:"question"`
+	Context  string `json:"context"`
+}
+
 type AskParentResponse struct {
-	OK         bool   `json:"ok"`
-	ActorID    string `json:"actor_id"`
-	QuestionID string `json:"question_id"`
-	Answer     string `json:"answer,omitempty"`
-	Terminal   string `json:"terminal,omitempty"`
+	OK           bool   `json:"ok"`
+	ActorID      string `json:"actor_id"`
+	QuestionID   string `json:"question_id"`
+	TargetMember string `json:"target_member,omitempty"`
+	Answer       string `json:"answer,omitempty"`
+	Terminal     string `json:"terminal,omitempty"`
 }
 
 type AnswerTeamRequest struct {
@@ -263,9 +295,19 @@ func newTeamRegistry(now func() time.Time, stores ...teamStore) *teamRegistry {
 	return &teamRegistry{now: now, store: store, actors: map[string]*teamActor{}}
 }
 
+func DefaultHumanTeamMember() TeamMember {
+	return TeamMember{
+		MemberID:    DefaultHumanMemberID,
+		Handle:      DefaultHumanMemberHandle,
+		Kind:        TeamMemberKindHuman,
+		DisplayName: DefaultHumanMemberDisplayName,
+		Description: DefaultHumanMemberDescription,
+	}
+}
+
 func (s *Stub) ListTeams(_ context.Context, req ListTeamsRequest) (ListTeamsResponse, error) {
 	roots := s.teams.snapshot(req.IncludeClosed)
-	return ListTeamsResponse{OK: true, Roots: roots, TotalCount: countTeamNodes(roots), NonLeafCount: countNonLeafTeamNodes(roots)}, nil
+	return ListTeamsResponse{OK: true, Members: []TeamMember{DefaultHumanTeamMember()}, Roots: roots, TotalCount: countTeamNodes(roots), NonLeafCount: countNonLeafTeamNodes(roots)}, nil
 }
 
 func (s *Stub) SpawnTeam(ctx context.Context, req SpawnTeamRequest) (TeamCommandResponse, error) {
@@ -395,7 +437,18 @@ func (s *Stub) AskParent(ctx context.Context, req AskParentRequest) (AskParentRe
 	if err != nil {
 		return AskParentResponse{}, err
 	}
-	return AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: questionID, Answer: answer.answer, Terminal: answer.terminal}, nil
+	return AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: questionID, TargetMember: DefaultHumanMemberHandle, Answer: answer.answer, Terminal: answer.terminal}, nil
+}
+
+func (s *Stub) AskTeam(ctx context.Context, req AskTeamRequest) (AskParentResponse, error) {
+	target := strings.TrimSpace(req.To)
+	if target == "" {
+		target = DefaultHumanMemberHandle
+	}
+	if target != DefaultHumanMemberHandle {
+		return AskParentResponse{}, Invalid("to", fmt.Sprintf("unsupported team ask target %q; only %q is available", target, DefaultHumanMemberHandle))
+	}
+	return s.AskParent(ctx, AskParentRequest{ActorID: req.ActorID, TurnID: req.TurnID, Question: req.Question, Context: req.Context})
 }
 
 func (s *Stub) ResumeAskParent(ctx context.Context, req AskParentRequest) (AskParentResponse, error) {
@@ -410,7 +463,7 @@ func (s *Stub) ResumeAskParent(ctx context.Context, req AskParentRequest) (AskPa
 	if err != nil {
 		return AskParentResponse{}, err
 	}
-	return AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: questionID, Answer: answer.answer, Terminal: answer.terminal}, nil
+	return AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: questionID, TargetMember: DefaultHumanMemberHandle, Answer: answer.answer, Terminal: answer.terminal}, nil
 }
 
 func (s *Stub) AnswerTeam(_ context.Context, req AnswerTeamRequest) (TeamCommandResponse, error) {
