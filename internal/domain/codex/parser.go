@@ -17,6 +17,7 @@ type Projection struct {
 	ProbeTurn   bool
 	Busy        *bool
 	Initialized bool
+	Desynced    bool
 	Model       string
 	Usage       *ContextUsage
 	Timing      *TurnTiming
@@ -274,10 +275,21 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 	if alreadyInitializedError(line.Error) {
 		return Projection{Initialized: true}, true
 	}
+	if notInitializedError(line.Error) {
+		return Projection{Desynced: true}, true
+	}
 	return Projection{}, false
 }
 
 func alreadyInitializedError(raw json.RawMessage) bool {
+	return errorMessageContains(raw, "already initialized")
+}
+
+func notInitializedError(raw json.RawMessage) bool {
+	return errorMessageContains(raw, "not initialized")
+}
+
+func errorMessageContains(raw json.RawMessage, needle string) bool {
 	if len(raw) == 0 || string(raw) == "null" {
 		return false
 	}
@@ -287,7 +299,7 @@ func alreadyInitializedError(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return false
 	}
-	return strings.Contains(strings.ToLower(strings.TrimSpace(payload.Message)), "already initialized")
+	return strings.Contains(strings.ToLower(strings.TrimSpace(payload.Message)), strings.ToLower(strings.TrimSpace(needle)))
 }
 
 func turnEnvelopeThreadID(params turnEnvelope) string {

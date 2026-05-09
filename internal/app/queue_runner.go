@@ -54,7 +54,6 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		runtime := current.runtime
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			s.trackCodexOutboundPrompt(sessionID, queued.Text())
-			defer s.clearCodexOutboundPrompt(sessionID, queued.Text())
 			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseSending, "codex_queued_sending", "queued_send")
 		}
 		if err := runtime.SendPromptWithStaleCheck(context.Background(), queued.Text(), func() bool {
@@ -66,6 +65,9 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		}); err != nil {
 			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_queued_send_failed", "queued_send_failed")
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
+			if runtime.protocol == runtimeProtocolCodexRPC {
+				s.clearCodexOutboundPrompt(sessionID, queued.Text())
+			}
 			return nil
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {

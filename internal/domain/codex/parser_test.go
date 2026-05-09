@@ -37,6 +37,19 @@ func TestDecodeAppServerLineAlreadyInitializedError(t *testing.T) {
 	}
 }
 
+func TestDecodeAppServerLineNotInitializedError(t *testing.T) {
+	projection, ok := DecodeAppServerLine([]byte(`{"error":{"code":-32600,"message":"Not initialized"},"id":"turn-start-1"}`))
+	if !ok {
+		t.Fatal("DecodeAppServerLine(not initialized) ok = false")
+	}
+	if !projection.Desynced {
+		t.Fatalf("projection.Desynced = false, want true")
+	}
+	if projection.Initialized {
+		t.Fatalf("projection.Initialized = true, want false")
+	}
+}
+
 func TestDecodeAppServerLineToolReasoningUsageAndError(t *testing.T) {
 	toolProjection, ok := DecodeAppServerLine([]byte(`{"method":"item/completed","params":{"threadId":"thread-codex-2","turnId":"turn-codex-2","item":{"type":"commandExecution","id":"cmd-1","command":"go test ./...","cwd":"/root/code/ActRail","status":"completed","aggregatedOutput":"ok\n","exitCode":0,"durationMs":1200}}}`))
 	if !ok {

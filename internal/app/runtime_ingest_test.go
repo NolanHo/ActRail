@@ -1901,6 +1901,153 @@ func TestProbeSessionStateRequestsCodexThreadReadAndAppliesResponse(t *testing.T
 	}
 }
 
+func TestCodexNotInitializedRecoversProtocolBeforeThreadRead(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	pty := &recordingPTY{reader: stdoutR}
+	handle.SetPTY(pty)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-recover\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		if !ok || record.runtime.codex == nil {
+			return false
+		}
+		_, threadID, _ := record.runtime.codex.snapshot()
+		return threadID == "thread-codex-recover"
+	})
+
+	_, _ = stdoutW.Write([]byte(`{"error":{"code":-32600,"message":"Not initialized"},"id":"turn-start-3"}` + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy && state.RuntimeState == string(codexRuntimePhaseInitializing) && state.RuntimeStateReason == "codex_protocol_recovering"
+	})
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok || record.runtime.codex == nil {
+		t.Fatalf("Lookup(%q) missing runtime", sessionID)
+	}
+	if initialized, threadID, turnID := record.runtime.codex.snapshot(); initialized || threadID != "" || turnID != "" {
+		t.Fatalf("snapshot after desync = initialized:%v thread:%q turn:%q, want reset", initialized, threadID, turnID)
+	}
+	if pending := record.runtime.PendingCodexResumeThreadID(); pending != "thread-codex-recover" {
+		t.Fatalf("PendingCodexResumeThreadID() = %q, want thread-codex-recover", pending)
+	}
+	waitForAppCondition(t, func() bool {
+		writes := strings.Join(pty.Writes(), "\n")
+		return strings.Contains(writes, `"method":"initialize"`) && strings.Contains(writes, `"id":"initialize-2"`)
+	})
+	if _, err := svc.ProbeSessionState(context.Background(), ProbeSessionStateRequest{SessionID: sessionID}); err != nil {
+		t.Fatalf("ProbeSessionState() during recovery error = %v", err)
+	}
+	writesBeforeReady := strings.Join(pty.Writes(), "\n")
+	if strings.Contains(writesBeforeReady, `"method":"thread/read"`) {
+		t.Fatalf("writes during recovery contain thread/read before ready: %s", writesBeforeReady)
+	}
+
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"initialize-2\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-recover\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.RuntimeState == string(codexRuntimePhaseIdle)
+	})
+	if _, err := svc.ProbeSessionState(context.Background(), ProbeSessionStateRequest{SessionID: sessionID}); err != nil {
+		t.Fatalf("ProbeSessionState() after recovery error = %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		for _, write := range pty.Writes() {
+			if strings.Contains(write, `"method":"thread/read"`) && strings.Contains(write, `"threadId":"thread-codex-recover"`) {
+				return true
+			}
+		}
+		return false
+	})
+	_ = stdoutW.Close()
+}
+
+func TestCodexNotInitializedRetriesExplicitlyRejectedPromptWithoutDuplicateUserMessage(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	pty := &recordingPTY{reader: stdoutR}
+	handle.SetPTY(pty)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-retry\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		if !ok || record.runtime.codex == nil {
+			return false
+		}
+		_, threadID, _ := record.runtime.codex.snapshot()
+		return threadID == "thread-codex-retry"
+	})
+
+	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "retry exactly once"}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		return countRuntimeWritesContaining(pty.Writes(), `"method":"turn/start"`) == 1
+	})
+	_, _ = stdoutW.Write([]byte(`{"error":{"code":-32600,"message":"Not initialized"},"id":"turn-start-3"}` + "\n"))
+	waitForAppCondition(t, func() bool {
+		writes := strings.Join(pty.Writes(), "\n")
+		return strings.Contains(writes, `"method":"initialize"`) && strings.Contains(writes, `"id":"initialize-3"`)
+	})
+	_, _ = stdoutW.Write([]byte(`{"id":"initialize-3","result":{"userAgent":"actrail-test"}}` + "\n"))
+	waitForAppCondition(t, func() bool {
+		writes := strings.Join(pty.Writes(), "\n")
+		return strings.Contains(writes, `"method":"thread/resume"`) && strings.Contains(writes, `"threadId":"thread-codex-retry"`)
+	})
+	_, _ = stdoutW.Write([]byte(`{"method":"thread/started","params":{"thread":{"id":"thread-codex-retry","status":{"type":"idle"}}}}` + "\n"))
+	waitForAppCondition(t, func() bool {
+		writes := pty.Writes()
+		return countRuntimeWritesContaining(writes, `"method":"turn/start"`) == 2 &&
+			countRuntimeWritesContaining(writes, `retry exactly once`) == 2
+	})
+	_, _ = stdoutW.Write([]byte(`{"method":"turn/started","params":{"turn":{"id":"turn-codex-retry"},"threadId":"thread-codex-retry"}}` + "\n"))
+	waitForAppCondition(t, func() bool {
+		return svc.codexOutboundPromptText(sessionID) == ""
+	})
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Role != "user" || messages.Items[0].Text != "retry exactly once" {
+		t.Fatalf("SessionMessages() = %+v, want one committed user message", messages.Items)
+	}
+	_ = stdoutW.Close()
+}
+
+func countRuntimeWritesContaining(writes []string, needle string) int {
+	count := 0
+	for _, write := range writes {
+		if strings.Contains(write, needle) {
+			count++
+		}
+	}
+	return count
+}
+
 func TestCreateSessionMapsCodexToolReasoningUsageAndErrors(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()

@@ -137,7 +137,6 @@ func (s *Stub) send(ctx context.Context, req SendRequest, followUp bool) (SendRe
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			s.trackCodexOutboundPrompt(req.SessionID, text)
-			defer s.clearCodexOutboundPrompt(req.SessionID, text)
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			_ = s.transitionCodexRuntime(req.SessionID, codexRuntimePhaseSending, "codex_sending", "send")
@@ -154,6 +153,9 @@ func (s *Stub) send(ctx context.Context, req SendRequest, followUp bool) (SendRe
 			}
 			_ = s.transitionCodexRuntime(req.SessionID, codexRuntimePhaseFailed, "codex_send_failed", "send_failed")
 			_ = s.emitRuntimeControlDiagnostic(req.SessionID, "send", err)
+			if runtime.protocol == runtimeProtocolCodexRPC {
+				s.clearCodexOutboundPrompt(req.SessionID, text)
+			}
 			return mapRuntimeControlError(err)
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
@@ -462,7 +464,9 @@ func (s *Stub) startCodexTurnStartWatch(sessionID session.SessionID, runtime ses
 		}
 		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseTurnStarting, "codex_turn_start_probe", "turn_start_watch_timeout")
 		if err := runtime.RequestCodexThreadState(context.Background()); err != nil {
-			_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_turn_start_probe", err)
+			if !errors.Is(err, errCodexThreadNotReady) {
+				_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_turn_start_probe", err)
+			}
 		}
 	}()
 }
@@ -494,7 +498,9 @@ func (s *Stub) startCodexTurnCompletionWatch(sessionID session.SessionID, thread
 			return
 		}
 		if err := record.runtime.RequestCodexThreadState(context.Background()); err != nil {
-			_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_turn_completion_probe", err)
+			if !errors.Is(err, errCodexThreadNotReady) {
+				_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_turn_completion_probe", err)
+			}
 		}
 	}()
 }

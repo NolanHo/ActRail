@@ -147,6 +147,7 @@ type piRPCAbortCommand struct {
 }
 
 var errRuntimeInputUnavailable = errors.New("session runtime input is unavailable")
+var errCodexThreadNotReady = errors.New("codex thread is not ready")
 
 func newRuntimeLauncher(cfg RuntimeConfig) runtimeLauncher {
 	env, err := process.InheritEnv()
@@ -786,9 +787,12 @@ func (r sessionRuntime) RequestCodexThreadState(ctx context.Context) error {
 	if r.codex == nil {
 		return errRuntimeInputUnavailable
 	}
+	if err := r.EnsureCodexThread(ctx); err != nil {
+		return err
+	}
 	_, threadID, _ := r.codex.snapshot()
 	if threadID == "" {
-		return errRuntimeInputUnavailable
+		return errCodexThreadNotReady
 	}
 	request := map[string]any{
 		"method": "thread/read",
@@ -799,6 +803,28 @@ func (r sessionRuntime) RequestCodexThreadState(ctx context.Context) error {
 		},
 	}
 	return r.writeCodexCommand(ctx, request)
+}
+
+func (r sessionRuntime) WaitCodexThreadReady(ctx context.Context) error {
+	if r.protocol != runtimeProtocolCodexRPC {
+		return nil
+	}
+	if r.codex == nil {
+		return errRuntimeInputUnavailable
+	}
+	ticker := time.NewTicker(codexRuntimePollInterval)
+	defer ticker.Stop()
+	for {
+		_, threadID, _ := r.codex.snapshot()
+		if strings.TrimSpace(threadID) != "" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errCodexThreadNotReady
+		case <-ticker.C:
+		}
+	}
 }
 
 func (r sessionRuntime) SendPrompt(ctx context.Context, text string) error {

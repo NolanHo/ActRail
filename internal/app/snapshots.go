@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -510,6 +511,9 @@ func (s *Stub) ProbeSessionState(ctx context.Context, req ProbeSessionStateReque
 	probeID := fmt.Sprintf("actrail-manual-state-%d", time.Now().UTC().UnixNano())
 	if record.identity.Backend() == session.BackendCodex && record.runtime.protocol == runtimeProtocolCodexRPC {
 		if err := record.runtime.RequestCodexThreadState(ctx); err != nil {
+			if errors.Is(err, errCodexThreadNotReady) {
+				return ProbeSessionStateResponse{ProbeID: probeID, State: s.sessionStateResponse(record)}, nil
+			}
 			return ProbeSessionStateResponse{}, mapRuntimeControlError(err)
 		}
 		return ProbeSessionStateResponse{ProbeID: probeID, State: s.sessionStateResponse(record)}, nil

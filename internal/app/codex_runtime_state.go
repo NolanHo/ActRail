@@ -76,7 +76,9 @@ func (s *codexRuntimeState) bootstrapRequests() []any {
 	if !s.initialized && !s.initializeSent {
 		s.requestSeq++
 		s.initializeSent = true
-		s.setPhaseLocked(codexRuntimePhaseInitializing, "codex_initializing")
+		if s.phase != codexRuntimePhaseInitializing || strings.TrimSpace(s.phaseReason) != "codex_protocol_recovering" {
+			s.setPhaseLocked(codexRuntimePhaseInitializing, "codex_initializing")
+		}
 		requests = append(requests, map[string]any{
 			"method": "initialize",
 			"id":     fmt.Sprintf("initialize-%d", s.requestSeq),
@@ -178,6 +180,32 @@ func (s *codexRuntimeState) setThreadID(threadID string) (bool, bool) {
 		s.setPhaseLocked(codexRuntimePhaseIdle, "")
 	}
 	return true, changed
+}
+
+func (s *codexRuntimeState) resetProtocolForResume(fallbackThreadID string) (codexRuntimeActivity, bool) {
+	if s == nil {
+		return codexRuntimeActivity{Phase: codexRuntimePhaseIdle}, false
+	}
+	resolved := strings.TrimSpace(fallbackThreadID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if resolved == "" {
+		resolved = strings.TrimSpace(s.threadID)
+	}
+	if resolved == "" {
+		resolved = strings.TrimSpace(s.resumeThreadID)
+	}
+	before := s.activityLocked()
+	s.initialized = false
+	s.initializeSent = false
+	s.threadStartSent = false
+	s.threadResumeSent = false
+	s.threadID = ""
+	s.activeTurnID = ""
+	s.resumeThreadID = resolved
+	s.setPhaseLocked(codexRuntimePhaseInitializing, "codex_protocol_recovering")
+	after := s.activityLocked()
+	return after, before != after || resolved != ""
 }
 
 func (s *codexRuntimeState) attachInitializedThread(threadID string) (bool, bool) {

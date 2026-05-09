@@ -36,6 +36,7 @@ type runtimeProjection struct {
 	probeCodexTurn    bool
 	codexBusy         *bool
 	codexInitialized  bool
+	codexDesynced     bool
 	model             string
 	provider          string
 	contextUsage      *SessionContextUsageSnapshot
@@ -72,6 +73,9 @@ func mergeRuntimeProjection(dst, src runtimeProjection) runtimeProjection {
 	}
 	if src.codexInitialized {
 		dst.codexInitialized = true
+	}
+	if src.codexDesynced {
+		dst.codexDesynced = true
 	}
 	if strings.TrimSpace(src.model) != "" {
 		dst.model = strings.TrimSpace(src.model)
@@ -200,6 +204,7 @@ func runtimeProjectionFromCodex(projection codex.Projection) runtimeProjection {
 		probeCodexTurn:   projection.ProbeTurn,
 		codexBusy:        projection.Busy,
 		codexInitialized: projection.Initialized,
+		codexDesynced:    projection.Desynced,
 		model:            projection.Model,
 		contextUsage:     contextUsageFromCodex(projection.Usage),
 		turnTiming:       turnTimingFromCodex(projection.Timing),

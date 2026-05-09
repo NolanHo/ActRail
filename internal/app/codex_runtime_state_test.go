@@ -93,6 +93,33 @@ func TestCodexRuntimeStateBootstrapsInitializeThenThreadResume(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeStateResetsProtocolForResume(t *testing.T) {
+	state := newCodexRuntimeStateWithResumeThread(session.BackendCodex, "thread-existing")
+	state.markInitialized()
+	accepted, changed := state.setThreadID("thread-existing")
+	if !accepted || !changed {
+		t.Fatalf("setThreadID(existing) = accepted=%v changed=%v, want true true", accepted, changed)
+	}
+	state.setActiveTurnID("turn-before-desync")
+
+	activity, changed := state.resetProtocolForResume("")
+	if !changed || activity.Phase != codexRuntimePhaseInitializing || activity.Reason != "codex_protocol_recovering" || !activity.Busy {
+		t.Fatalf("resetProtocolForResume() = %+v changed=%v, want recovering busy", activity, changed)
+	}
+	initialized, threadID, activeTurnID := state.snapshot()
+	if initialized || threadID != "" || activeTurnID != "" {
+		t.Fatalf("snapshot after reset = initialized:%v thread:%q turn:%q, want empty uninitialized", initialized, threadID, activeTurnID)
+	}
+	if pending := state.pendingResumeThreadID(); pending != "thread-existing" {
+		t.Fatalf("pendingResumeThreadID() = %q, want thread-existing", pending)
+	}
+	requests := state.bootstrapRequests()
+	if len(requests) != 1 {
+		t.Fatalf("bootstrap after reset returned %d requests, want initialize", len(requests))
+	}
+	assertRuntimeRequest(t, requests[0], "initialize", "initialize-1")
+}
+
 func TestCodexRuntimeStateAttachInitializedThreadSkipsBootstrap(t *testing.T) {
 	state := newCodexRuntimeStateWithResumeThread(session.BackendCodex, "thread-existing")
 	if requests := state.bootstrapRequests(); len(requests) != 1 {

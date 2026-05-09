@@ -101,6 +101,54 @@ func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string, s
 	_ = s.syncCodexRuntimeActivity(sessionID, "thread_attached", true)
 }
 
+func (s *Stub) noteCodexProtocolDesynced(sessionID session.SessionID) {
+	var runtime sessionRuntime
+	fallbackThreadID := ""
+	if record, ok := s.registry.Lookup(sessionID); ok {
+		fallbackThreadID = record.importedBackendSessionID
+	}
+	changed := false
+	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+		before := state.activity()
+		_, stateChanged := state.resetProtocolForResume(fallbackThreadID)
+		after := state.activity()
+		changed = stateChanged || before != after
+	})
+	_ = s.syncCodexRuntimeActivity(sessionID, "protocol_desynced", changed)
+	if record, ok := s.registry.Lookup(sessionID); ok {
+		record.runtime = s.runtimeForRecord(record)
+		runtime = record.runtime
+	}
+	if runtime.protocol == runtimeProtocolCodexRPC && runtime.canWriteInput() {
+		pendingPrompt := s.codexOutboundPromptText(sessionID)
+		go func() {
+			if err := runtime.EnsureCodexThread(context.Background()); err != nil {
+				_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_protocol_recovery_failed", "protocol_recovery_failed")
+				_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_protocol_recovery", err)
+				return
+			}
+			if pendingPrompt == "" {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), codexRuntimeBootstrapTimeout)
+			defer cancel()
+			if err := runtime.WaitCodexThreadReady(ctx); err != nil {
+				_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_recovered_thread_unavailable", "protocol_recovered_thread_unavailable")
+				_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_protocol_recovered_send", err)
+				return
+			}
+			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseSending, "codex_recovered_sending", "protocol_recovered_send")
+			if err := runtime.SendPrompt(context.Background(), pendingPrompt); err != nil {
+				_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_recovered_send_failed", "protocol_recovered_send_failed")
+				_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_protocol_recovered_send", err)
+				return
+			}
+			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseTurnStarting, "codex_recovered_turn_starting", "protocol_recovered_turn_starting")
+			s.startCodexTurnStartWatch(sessionID, runtime)
+		}()
+	}
+}
+
 func (s *Stub) noteCodexTurnID(sessionID session.SessionID, turnID string) {
 	changed := false
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
@@ -109,6 +157,7 @@ func (s *Stub) noteCodexTurnID(sessionID session.SessionID, turnID string) {
 		after := state.activity()
 		changed = before != after
 	})
+	s.clearCodexOutboundPromptForSession(sessionID)
 	_ = s.syncCodexRuntimeActivity(sessionID, "turn_started", changed)
 }
 

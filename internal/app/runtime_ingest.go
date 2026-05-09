@@ -110,6 +110,9 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 	if projection.codexInitialized {
 		s.noteCodexInitialized(sessionID)
 	}
+	if projection.codexDesynced {
+		s.noteCodexProtocolDesynced(sessionID)
+	}
 	if strings.TrimSpace(projection.codexThreadID) != "" {
 		s.noteCodexThreadID(sessionID, projection.codexThreadID, projection.codexSessionPath)
 	}

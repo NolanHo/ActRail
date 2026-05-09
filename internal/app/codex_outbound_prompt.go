@@ -37,6 +37,26 @@ func (s *Stub) clearCodexOutboundPrompt(sessionID session.SessionID, text string
 	}
 }
 
+func (s *Stub) clearCodexOutboundPromptForSession(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	s.codexOutboundMu.Lock()
+	defer s.codexOutboundMu.Unlock()
+	if s.codexOutboundPrompt != nil {
+		delete(s.codexOutboundPrompt, sessionID)
+	}
+}
+
+func (s *Stub) codexOutboundPromptText(sessionID session.SessionID) string {
+	if s == nil {
+		return ""
+	}
+	s.codexOutboundMu.Lock()
+	defer s.codexOutboundMu.Unlock()
+	return strings.TrimSpace(s.codexOutboundPrompt[sessionID])
+}
+
 func (s *Stub) codexOutboundPromptMatches(sessionID session.SessionID, text string) bool {
 	if s == nil {
 		return false
