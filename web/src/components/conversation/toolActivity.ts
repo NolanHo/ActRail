@@ -281,17 +281,16 @@ export function buildToolActivitySummary(events: MessageEvent[], options: ToolAc
   const runningToolNames = uniqueFirst(runningCalls.map((call) => call.name || "tool"), 3);
   const parts: string[] = [];
   if (toolRuns > 0) {
-    parts.push(runningCalls.length > 0
-      ? `Running ${runningCalls.length}/${toolRuns} ${toolRuns === 1 ? "tool" : "tools"}`
-      : `Ran ${pluralize(toolRuns, "tool")}`);
+    parts.push(`Ran ${pluralize(toolRuns, "tool")}`);
+    parts.push(`${ok} ok`);
+    if (runningCalls.length > 0) {
+      parts.push(`${runningCalls.length} running`);
+    }
   } else {
     parts.push("Activity");
   }
-  if (ok) {
-    parts.push(`${ok} ok`);
-  }
   if (failed) {
-    parts.push(`${failed} failed`);
+    parts.push(pluralize(failed, "error"));
   }
   if (reasoning) {
     parts.push(`${reasoning} reasoning`);

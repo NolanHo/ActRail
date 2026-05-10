@@ -184,6 +184,14 @@ describe("conversation layout scroll guards", () => {
     expect(footerAsideRule).toContain("align-items: center;");
   });
 
+  it("uses a blue status light for running machine trace summaries", () => {
+    const runningRule = ruleBody(css, ".machineTraceSummaryRow.isRunning .machineTraceSummaryStatus");
+    const runningWithErrorRule = ruleBody(css, ".machineTraceSummaryRow.isRunning.isError .machineTraceSummaryStatus,\n.machineTraceSummaryRow.isRunning.isStalled .machineTraceSummaryStatus");
+
+    expect(runningRule).toContain("background: #3b82f6;");
+    expect(runningWithErrorRule).toContain("background: #3b82f6;");
+  });
+
   it("keeps the mobile composer and shell sizing rules scoped to the 880px media block", () => {
     const mobileRules = mediaBody(css, "(max-width: 880px)");
     const mobileShellRule = ruleBody(mobileRules, ".appShell.editorialShell");

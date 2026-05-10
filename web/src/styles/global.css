@@ -2124,7 +2124,8 @@ button.conversationStatusChip {
 }
 
 .machineTraceSummaryRow.isRunning {
-  border-color: color-mix(in srgb, hsl(var(--primary)) 40%, var(--chrome-border));
+  border-color: color-mix(in srgb, #3b82f6 52%, var(--chrome-border));
+  background: color-mix(in srgb, #3b82f6 9%, var(--message-card-system-bg));
 }
 
 .machineTraceSummaryRow.isError,
@@ -2142,14 +2143,20 @@ button.conversationStatusChip {
 }
 
 .machineTraceSummaryRow.isRunning .machineTraceSummaryStatus {
-  background: hsl(var(--primary));
-  box-shadow: 0 0 0 3px color-mix(in srgb, hsl(var(--primary)) 18%, transparent);
+  background: #3b82f6;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #3b82f6 20%, transparent);
 }
 
 .machineTraceSummaryRow.isError .machineTraceSummaryStatus,
 .machineTraceSummaryRow.isStalled .machineTraceSummaryStatus {
   background: hsl(var(--destructive));
   box-shadow: 0 0 0 3px color-mix(in srgb, hsl(var(--destructive)) 18%, transparent);
+}
+
+.machineTraceSummaryRow.isRunning.isError .machineTraceSummaryStatus,
+.machineTraceSummaryRow.isRunning.isStalled .machineTraceSummaryStatus {
+  background: #3b82f6;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #3b82f6 20%, transparent);
 }
 
 .machineTraceSummaryMain {
