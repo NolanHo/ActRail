@@ -359,10 +359,7 @@ func startupTransportAlreadyTerminal(record sessionRecord) bool {
 func startupTransportForSession(sessionID session.SessionID, bindings map[session.SessionID]helperGenerationBinding, attachments map[session.SessionID]attachedHelper, fences []helperFence) SessionTransportSnapshot {
 	if attachment, ok := attachments[sessionID]; ok {
 		if attachment.ReplayFailed {
-			if attachment.ReplayReason == helperFenceReplayGap {
-				return transportSnapshotAttachedWithReason(attachment.Binding.GenerationID, "codex_replay_failed:"+string(attachment.ReplayReason))
-			}
-			return transportSnapshotBroken(attachment.Binding.GenerationID, "codex_replay_failed:"+string(attachment.ReplayReason), true)
+			return transportSnapshotAttachedWithReason(attachment.Binding.GenerationID, "codex_replay_failed:"+string(attachment.ReplayReason))
 		}
 		return transportSnapshotAttached(attachment.Binding.GenerationID)
 	}
@@ -412,9 +409,9 @@ func (s *Stub) reattachHelper(ctx context.Context, backend session.Backend, bind
 		replayAfterOffset := binding.LastReplayOffset
 		if record, ok := s.registry.Lookup(binding.SessionID); ok {
 			replayAfterOffset = helperReplayAfterOffset(record, binding)
-		}
-		if backend == session.BackendCodex {
-			replayAfterOffset = 0
+			if backend == session.BackendCodex && strings.TrimSpace(record.importedBackendSessionID) != "" {
+				replayAfterOffset = binding.LastReplayOffset
+			}
 		}
 		replayState := newHelperReplayState(replayAfterOffset, func(packet iod.ReplayItemPacket) error {
 			record, ok := s.registry.Lookup(binding.SessionID)
