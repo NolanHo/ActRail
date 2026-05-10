@@ -460,6 +460,34 @@ func TestPersistentStubColdStartRehydratesLiveSessionState(t *testing.T) {
 	}
 }
 
+func TestSessionStateDoesNotWaitForDeferredRuntimeRestore(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfig())
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/deferred-state"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	rehydrated, err := newPersistentStubWithRuntimeOptions(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{}, persistentStubOptions{DeferRuntimeRestore: true})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntimeOptions(rehydrate) error = %v", err)
+	}
+	rehydrated.markRuntimeRestorePending()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := rehydrated.SessionState(ctx, SessionStateRequest{SessionID: sessionID}); err != nil {
+		t.Fatalf("SessionState() while runtime restore pending error = %v", err)
+	}
+}
+
 func TestPersistentStubMarksUnavailablePIAgentGRPCEndedOnRehydrate(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

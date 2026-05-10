@@ -506,9 +506,6 @@ func deferredToolDetails(msg SessionMessage) map[string]any {
 }
 
 func (s *Stub) SessionState(ctx context.Context, req SessionStateRequest) (SessionStateResponse, error) {
-	if err := s.waitRuntimeRestore(ctx); err != nil {
-		return SessionStateResponse{}, err
-	}
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
 		return SessionStateResponse{}, err
