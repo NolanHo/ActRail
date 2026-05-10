@@ -55,12 +55,17 @@ describe("conversation layout scroll guards", () => {
   it("defines the editorial shell as a fixed two-column layout with a quiet conversation stack", () => {
     const shellRule = ruleBody(css, ".appShell.editorialShell");
     const sidebarRule = ruleBody(css, ".sidebarColumn");
+    const desktopSessionsRailRule = ruleBody(css, ".appShell.withGlobalNav > .desktopSessionsRail");
+    const desktopMainRule = ruleBody(css, ".appShell.withGlobalNav > .conversationColumn,\n.appShell.withGlobalNav > .askUserView,\n.appShell.withGlobalNav > .teamsThreadView");
     const conversationRule = ruleBody(css, ".conversationColumn");
     const paneRule = ruleBody(css, ".conversationPane");
 
     expect(shellRule).toContain("position: fixed;");
     expect(shellRule).toContain("inset: 0;");
     expect(shellRule).toContain("grid-template-columns: minmax(18rem, var(--sidebar-w)) minmax(0, 1fr);");
+    expect(desktopSessionsRailRule).toContain("grid-column: 2;");
+    expect(desktopMainRule).toContain("grid-column: 3;");
+    expect(desktopMainRule).toContain("min-width: 0;");
     expect(sidebarRule).toContain("min-height: 0;");
     expect(sidebarRule).toContain("overflow: hidden;");
     expect(conversationRule).toContain("display: flex;");
