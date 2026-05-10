@@ -2401,6 +2401,7 @@ button.conversationStatusChip {
 }
 
 .messageBubble {
+  position: relative;
   max-width: min(980px, 100%);
   min-width: 0;
   padding: 8px 10px;
@@ -2427,6 +2428,13 @@ button.conversationStatusChip {
   border-color: color-mix(in srgb, var(--chrome-border) 82%, transparent);
   background: color-mix(in srgb, var(--message-card-base) 88%, var(--panel));
   box-shadow: var(--shadow-sm);
+}
+
+.messageBubble .messageBody,
+.messageBubble .commandIOBlock,
+.messageBubble .assistantTurnMetaCard,
+.messageBubble .supervisorRunStack {
+  padding-right: 38px;
 }
 
 .messageBubble.ask_user,
@@ -2922,18 +2930,21 @@ button.conversationStatusChip {
 }
 
 .messageBubbleActions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
   display: flex;
   justify-content: flex-end;
-  margin-top: 10px;
+  margin: 0;
 }
 
 .messageCopyButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 34px;
-  min-width: 34px;
-  padding: 6px;
+  min-height: 28px;
+  min-width: 28px;
+  padding: 5px;
   border: 1px solid var(--control-border);
   border-radius: 999px;
   background: var(--control-surface);
@@ -2954,8 +2965,8 @@ button.conversationStatusChip {
 }
 
 .messageCopyIcon {
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
   flex: 0 0 auto;
 }
 
