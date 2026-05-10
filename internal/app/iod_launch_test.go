@@ -26,9 +26,10 @@ import (
 )
 
 const (
-	fakePIChildEnv     = "ACTRAIL_P3A_FAKE_PI_CHILD"
-	fakePIChildLogEnv  = "ACTRAIL_P3A_FAKE_PI_CHILD_LOG"
-	fakePIChildMarkEnv = "ACTRAIL_P2_FAKE_PI_CHILD_MARK"
+	fakePIChildEnv          = "ACTRAIL_P3A_FAKE_PI_CHILD"
+	fakePIChildLogEnv       = "ACTRAIL_P3A_FAKE_PI_CHILD_LOG"
+	fakePIChildMarkEnv      = "ACTRAIL_P2_FAKE_PI_CHILD_MARK"
+	fakeCodexSessionPathEnv = "ACTRAIL_FAKE_CODEX_SESSION_PATH"
 )
 
 var (
@@ -150,6 +151,7 @@ func TestP3AFakeCodexUnixAppServer(t *testing.T) {
 	}
 	defer file.Close()
 	threadID := "codex-thread-1"
+	sessionPath := strings.TrimSpace(os.Getenv(fakeCodexSessionPathEnv))
 	turn := 0
 	for {
 		messageType, msg, err := conn.ReadMessage()
@@ -172,21 +174,52 @@ func TestP3AFakeCodexUnixAppServer(t *testing.T) {
 			}
 		}
 		if strings.Contains(line, `"method":"thread/start"`) {
+			if sessionPath != "" {
+				if err := appendFakeCodexSessionLine(sessionPath, `{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"codex-thread-1","cwd":"/tmp/fake-codex"}}`); err != nil {
+					t.Fatalf("append fake Codex session meta error = %v", err)
+				}
+			}
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"id":"thread-start-2","result":{"thread":{"id":"codex-thread-1"}}}`)); err != nil {
 				t.Fatalf("fake Codex write thread response error = %v", err)
 			}
-			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"method":"thread/started","params":{"thread":{"id":"codex-thread-1"}}}`)); err != nil {
+			threadStarted := `{"method":"thread/started","params":{"thread":{"id":"codex-thread-1"}}}`
+			if sessionPath != "" {
+				encodedPath, err := json.Marshal(sessionPath)
+				if err != nil {
+					t.Fatalf("json.Marshal(sessionPath) error = %v", err)
+				}
+				threadStarted = fmt.Sprintf(`{"method":"thread/started","params":{"thread":{"id":"codex-thread-1","path":%s}}}`, encodedPath)
+			}
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(threadStarted)); err != nil {
 				t.Fatalf("fake Codex write thread notification error = %v", err)
 			}
 		}
 		if strings.Contains(line, `"method":"turn/start"`) {
 			turn++
 			turnID := fmt.Sprintf("codex-turn-%d", turn)
+			if sessionPath != "" {
+				prompt := fakeCodexTurnText(line)
+				if prompt == "" {
+					prompt = "Implement P6 Codex transport"
+				}
+				if err := appendFakeCodexSessionLine(sessionPath, fmt.Sprintf(`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":%s}}`, mustJSONQuote(t, prompt))); err != nil {
+					t.Fatalf("append fake Codex user message error = %v", err)
+				}
+				if err := appendFakeCodexSessionLine(sessionPath, `{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"IOD history reached ActRail.","phase":"final_answer"}}`); err != nil {
+					t.Fatalf("append fake Codex assistant message error = %v", err)
+				}
+				if err := appendFakeCodexSessionLine(sessionPath, `{"timestamp":"2026-05-08T15:58:05.000Z","type":"event_msg","payload":{"type":"task_complete"}}`); err != nil {
+					t.Fatalf("append fake Codex task_complete error = %v", err)
+				}
+			}
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"id":"turn-start-3","result":{"turn":{"id":"%s","status":"inProgress","error":null}}}`, turnID))); err != nil {
 				t.Fatalf("fake Codex write turn response error = %v", err)
 			}
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"method":"turn/started","params":{"threadId":"%s","turn":{"id":"%s","status":"inProgress","error":null}}}`, threadID, turnID))); err != nil {
 				t.Fatalf("fake Codex write turn notification error = %v", err)
+			}
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"method":"turn/completed","params":{"threadId":"%s","turn":{"id":"%s","status":"completed","error":null}}}`, threadID, turnID))); err != nil {
+				t.Fatalf("fake Codex write turn completed notification error = %v", err)
 			}
 		}
 		if strings.Contains(line, `"method":"turn/interrupt"`) {
@@ -198,6 +231,49 @@ func TestP3AFakeCodexUnixAppServer(t *testing.T) {
 			t.Fatalf("Sync(%q) error = %v", logPath, err)
 		}
 	}
+}
+
+func appendFakeCodexSessionLine(path string, line string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := file.WriteString(line + "\n"); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+func fakeCodexTurnText(line string) string {
+	var packet struct {
+		Params struct {
+			Input []struct {
+				Text string `json:"text"`
+			} `json:"input"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(line), &packet); err != nil {
+		return ""
+	}
+	for _, item := range packet.Params.Input {
+		if text := strings.TrimSpace(item.Text); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func mustJSONQuote(t *testing.T, text string) string {
+	t.Helper()
+	encoded, err := json.Marshal(text)
+	if err != nil {
+		t.Fatalf("json.Marshal(%q) error = %v", text, err)
+	}
+	return string(encoded)
 }
 
 func TestCreateSessionViaIod(t *testing.T) {
@@ -369,6 +445,87 @@ func TestCodexIODControl(t *testing.T) {
 		`"id":"turn-interrupt-4"`,
 		`"turnId":"codex-turn-1"`,
 	})
+	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandSend})
+}
+
+func TestCodexIODSessionHistoryEndToEnd(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	sessionPath := filepath.Join(t.TempDir(), "codex", "rollout-codex-thread-1.jsonl")
+	t.Setenv(fakePIChildLogEnv, childLog)
+	t.Setenv(fakePIChildMarkEnv, "codex-history-via-helper")
+	t.Setenv(fakePIChildEnv, "codex-unix")
+	t.Setenv(fakeCodexSessionPathEnv, sessionPath)
+	t.Setenv("ACTRAIL_TEST_BINARY", os.Args[0])
+	cwd := filepath.Join(t.TempDir(), "cwd-codex-history")
+	childPath := writeFakeCodexAppServerScript(t)
+	runtimeCfg := realIODHelperRuntimeConfigForBackend(t, session.BackendCodex, []string{"app-server", "--model", "gpt-4.1"}, func(session.Backend) (string, error) {
+		return childPath, nil
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, runtimeCfg)
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	_, sessionID, record, binding, manifest := createIODBackedSessionForBackend(t, svc, cfg, "codex", cwd)
+	defer deleteSessionIfPresent(t, svc, sessionID)
+	paths, err := iod.NewGenerationPaths(cfg.Storage.IODRuntimeRoot(), sessionID, binding.GenerationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	if err := record.runtime.EnsureCodexThread(context.Background()); err != nil {
+		t.Fatalf("EnsureCodexThread() error = %v", err)
+	}
+	waitForIODCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		if err != nil {
+			return false
+		}
+		_, threadID, _ := record.runtime.codex.snapshot()
+		return threadID == "codex-thread-1" && state.RuntimeState != string(codexRuntimePhaseThreadStarting)
+	})
+	waitForChildLogLines(t, childLog, []string{
+		"cwd=" + cwd,
+		"argv[0]=app-server",
+		"argv[1]=--listen",
+		"argv[2]=unix://" + paths.ChildSocketPath,
+		"env[" + fakePIChildMarkEnv + "]=codex-history-via-helper",
+	})
+	sent, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "Check IOD history"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if !sent.Busy {
+		t.Fatalf("Send() = %+v, want busy true while fake Codex turn is accepted", sent)
+	}
+	waitForIODCondition(t, func() bool {
+		response, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 20, IncludeToolEvents: true})
+		if err != nil {
+			return false
+		}
+		if response.TailSeq < 3 {
+			return false
+		}
+		var sawUser, sawAssistant bool
+		for _, item := range response.Items {
+			if item.Role == "user" && item.Text == "Check IOD history" && strings.HasPrefix(item.EventID, "codex:event:user:") {
+				sawUser = true
+			}
+			if item.Role == "assistant" && item.Text == "IOD history reached ActRail." && stringValue(item.Details["phase"]) == "final_answer" && strings.HasPrefix(item.EventID, "codex:event:assistant:") {
+				sawAssistant = true
+			}
+		}
+		return sawUser && sawAssistant
+	})
+	history, err := record.runtime.helper.sessionHistory(context.Background())
+	if err != nil {
+		t.Fatalf("sessionHistory() error = %v", err)
+	}
+	if got := history.SourcePath; got != sessionPath {
+		t.Fatalf("helper history path = %q, want %q", got, sessionPath)
+	}
+	if !history.TaskComplete || history.IndexedCount != 2 {
+		t.Fatalf("sessionHistory() = %+v, want task_complete with two indexed display messages", history)
+	}
 	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandSend})
 }
 

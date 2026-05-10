@@ -148,3 +148,63 @@ func TestSessionHistoryCacheCodexAppendUpdatesIndexAndTail(t *testing.T) {
 		t.Fatalf("last tail line = %q, want appended task_complete", got)
 	}
 }
+
+func TestSessionHistoryCacheCodexIgnoresPartialTailUntilComplete(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"wor`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	first, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() with partial line error = %v", err)
+	}
+	if first.IndexedCount != 1 || len(first.Messages) != 1 || first.Messages[0].Text != "hello" {
+		t.Fatalf("Snapshot() = %#v, want only complete first line", first)
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString(`ld","phase":"final_answer"}}` + "\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	second, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() after completing partial line error = %v", err)
+	}
+	if second.IndexedCount != 2 || len(second.Messages) != 2 || second.Messages[1].Text != "world" {
+		t.Fatalf("Snapshot() = %#v, want completed assistant line indexed once", second)
+	}
+}
+
+func TestSessionHistoryCacheCodexDedupeKeepsRepeatedPrompts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := strings.Join([]string{
+		`{"type":"event_msg","payload":{"type":"user_message","message":"continue"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"continue"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"done","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}],"phase":"final_answer"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	snapshot, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if snapshot.IndexedCount != 3 {
+		t.Fatalf("Snapshot().IndexedCount = %d, want two repeated prompts plus one assistant", snapshot.IndexedCount)
+	}
+	if len(snapshot.Messages) != 3 || snapshot.Messages[0].Text != "continue" || snapshot.Messages[1].Text != "continue" || snapshot.Messages[2].Text != "done" {
+		t.Fatalf("Snapshot().Messages = %#v, want repeated prompts preserved and event/response assistant collapsed", snapshot.Messages)
+	}
+}

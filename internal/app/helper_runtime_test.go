@@ -319,6 +319,35 @@ func TestRuntimeLauncherAttachesExistingIODBeforeStartingNewHelper(t *testing.T)
 	}
 }
 
+func TestRuntimeLauncherForceNewIODSkipsExistingAttach(t *testing.T) {
+	sessionID := mustSessionID(t, "s_force_new_iod")
+	generationID := mustHelperGenerationID(t, "g_force_new_existing")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	wantErr := errors.New("new helper requested")
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			return "", wantErr
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return &RuntimeHelperBinding{GenerationID: generationID}, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir(), ForceNewIOD: true})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Launch() error = %v, want forced new helper path error", err)
+	}
+	if runtime.helper != nil {
+		t.Fatalf("runtime.helper = %+v, want no existing attachment when ForceNewIOD is true", runtime.helper)
+	}
+}
+
 func TestHelperReplayAfterOffset(t *testing.T) {
 	sessionID := mustSessionID(t, "s_replay_after_offset")
 	generationID := mustHelperGenerationID(t, "g_replay_after_offset")

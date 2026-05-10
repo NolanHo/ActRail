@@ -695,7 +695,7 @@ func (s *Stub) createSessionResponseForExistingCodexOwner(ctx context.Context, o
 	record := owner
 	transport := sessionTransportSnapshot(owner)
 	if transport.ResetRequired || transport.State == SessionTransportStateBroken {
-		updated, _, err := s.replaceSessionRuntime(ctx, owner.identity.SessionID(), owner, false)
+		updated, _, err := s.replaceSessionRuntime(ctx, owner.identity.SessionID(), owner, false, false)
 		if err != nil {
 			return CreateSessionResponse{}, err
 		}

@@ -558,7 +558,7 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	packet, err := record.runtime.helper.sessionHistory(historyCtx)
-	if err != nil || !packet.Complete || len(packet.Messages) == 0 {
+	if err != nil || !packet.Complete {
 		return record
 	}
 	items := sessionMessagesFromIODHistory(packet.Messages)
@@ -566,7 +566,9 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	if !complete {
 		return record
 	}
-	go s.emitCodexSessionFileLiveCommits(record.identity.SessionID(), items)
+	if len(items) > 0 {
+		go s.emitCodexSessionFileLiveCommits(record.identity.SessionID(), items)
+	}
 	s.reconcileCodexSessionFileCompletion(record, complete)
 	updated, ok := s.registry.Lookup(record.identity.SessionID())
 	if !ok {

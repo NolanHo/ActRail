@@ -53,6 +53,7 @@ type sessionHistoryIndexEntry struct {
 	Kind     string
 	TS       float64
 	TextHash string
+	Source   string
 }
 
 func newSessionHistoryCache(path string, codex bool) *sessionHistoryCache {
@@ -392,7 +393,9 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 	indexed := append([]sessionHistoryIndexEntry(nil), existing...)
 	lastRelevant := ""
 	lineNo := startLineNo
+	committedLineNo := startLineNo
 	offset := startOffset
+	committedOffset := startOffset
 	reader := bufio.NewReaderSize(file, 64*1024)
 	for {
 		raw, readErr := reader.ReadString('\n')
@@ -407,6 +410,10 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 		}
 		lineNo++
 		line := strings.TrimRight(raw, "\r\n")
+		message, ok, err := codexHistoryMessageFromLine(line, lineNo)
+		if readErr == io.EOF && !strings.HasSuffix(raw, "\n") && err != nil {
+			break
+		}
 		if tailLimit > 0 {
 			if len(tail) == tailLimit {
 				copy(tail, tail[1:])
@@ -415,7 +422,6 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 				tail = append(tail, line)
 			}
 		}
-		message, ok, err := codexHistoryMessageFromLine(line, lineNo)
 		if err != nil {
 			return nil, nil, "", startLineNo, 0, time.Time{}, err
 		}
@@ -431,12 +437,15 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 				Kind:     message.Kind,
 				TS:       message.TS,
 				TextHash: codexHistoryMessageTextHash(message),
+				Source:   codexHistorySource(line),
 			}
 			if !duplicateCodexHistoryIndex(indexed, index) {
 				indexed = append(indexed, index)
 			}
 		}
 		offset += int64(len(raw))
+		committedOffset = offset
+		committedLineNo = lineNo
 		if readErr == io.EOF {
 			break
 		}
@@ -444,7 +453,7 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 			return nil, nil, "", startLineNo, 0, time.Time{}, fmt.Errorf("scan codex session history %q: %w", path, readErr)
 		}
 	}
-	return tail, indexed, lastRelevant, lineNo, info.Size(), info.ModTime(), nil
+	return tail, indexed, lastRelevant, committedLineNo, committedOffset, info.ModTime(), nil
 }
 
 func codexHistoryRelevantKind(raw string) string {
@@ -472,6 +481,18 @@ func codexHistoryRelevantKind(raw string) string {
 		}
 	}
 	return ""
+}
+
+func codexHistorySource(raw string) string {
+	line := strings.TrimSpace(raw)
+	if line == "" {
+		return ""
+	}
+	var entry codexHistoryLine
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(entry.Type)
 }
 
 func readCodexHistoryMessagesAt(ctx context.Context, path string, indexed []sessionHistoryIndexEntry) ([]SessionHistoryMessage, error) {
@@ -757,11 +778,17 @@ func duplicateCodexHistoryIndex(items []sessionHistoryIndexEntry, candidate sess
 		if item.Kind != candidate.Kind || item.Role != candidate.Role || item.TextHash != candidate.TextHash {
 			continue
 		}
-		if item.TS == 0 || candidate.TS == 0 || closeHistoryTimestamp(item.TS, candidate.TS) {
+		if codexHistoryDuplicateSources(item.Source, candidate.Source) {
 			return true
 		}
 	}
 	return false
+}
+
+func codexHistoryDuplicateSources(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	return (left == "event_msg" && right == "response_item") || (left == "response_item" && right == "event_msg")
 }
 
 func duplicateCodexHistoryMessage(items []SessionHistoryMessage, candidate SessionHistoryMessage) bool {
@@ -774,11 +801,19 @@ func duplicateCodexHistoryMessage(items []SessionHistoryMessage, candidate Sessi
 		if item.Kind != candidate.Kind || item.Role != candidate.Role || strings.TrimSpace(item.Text) != text {
 			continue
 		}
-		if item.TS == 0 || candidate.TS == 0 || closeHistoryTimestamp(item.TS, candidate.TS) {
+		if codexHistoryDuplicateEventIDs(item.EventID, candidate.EventID) || (item.TS != 0 && candidate.TS != 0 && closeHistoryTimestamp(item.TS, candidate.TS)) {
 			return true
 		}
 	}
 	return false
+}
+
+func codexHistoryDuplicateEventIDs(left, right string) bool {
+	leftEvent := strings.HasPrefix(strings.TrimSpace(left), "codex:event:")
+	rightEvent := strings.HasPrefix(strings.TrimSpace(right), "codex:event:")
+	leftItem := strings.HasPrefix(strings.TrimSpace(left), "codex:item:")
+	rightItem := strings.HasPrefix(strings.TrimSpace(right), "codex:item:")
+	return (leftEvent && rightItem) || (leftItem && rightEvent)
 }
 
 func closeHistoryTimestamp(a, b float64) bool {

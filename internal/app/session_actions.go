@@ -532,7 +532,7 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 			return Unsupported("historical sessions cannot be restarted")
 		}
 		var err error
-		updated, previousRuntimeID, err = s.replaceSessionRuntime(ctx, req.SessionID, record, restartSessionUsesPIAgentGRPC(record))
+		updated, previousRuntimeID, err = s.replaceSessionRuntime(ctx, req.SessionID, record, restartSessionUsesPIAgentGRPC(record), true)
 		return err
 	}); err != nil {
 		return RestartSessionResponse{}, err
@@ -569,7 +569,7 @@ func (s *Stub) switchSessionIODMode(ctx context.Context, record sessionRecord, m
 	if record.identity.Backend() != session.BackendPI {
 		return sessionRecord{}, Unsupported("iod mode is only available for pi backend")
 	}
-	updated, _, err := s.replaceSessionRuntime(ctx, record.identity.SessionID(), record, mode == "grpc")
+	updated, _, err := s.replaceSessionRuntime(ctx, record.identity.SessionID(), record, mode == "grpc", true)
 	return updated, err
 }
 
@@ -577,7 +577,7 @@ func restartSessionUsesPIAgentGRPC(record sessionRecord) bool {
 	return record.identity.Backend() == session.BackendPI
 }
 
-func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.SessionID, record sessionRecord, usePIAgentGRPC bool) (sessionRecord, session.RuntimeID, error) {
+func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.SessionID, record sessionRecord, usePIAgentGRPC bool, forceNewIOD bool) (sessionRecord, session.RuntimeID, error) {
 	identity, _, ok, err := s.registry.ReserveRestartIdentity(routeID)
 	if err != nil {
 		return sessionRecord{}, "", err
@@ -620,6 +620,7 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		SessionPath:     sourcePath,
 		CodexThreadID:   codexThreadID,
 		PIAgentGRPC:     usePIAgentGRPC,
+		ForceNewIOD:     forceNewIOD,
 	})
 	if sourcePath != "" && sourcePath == strings.TrimSpace(record.importedSourcePath) {
 		sourcePath = ""

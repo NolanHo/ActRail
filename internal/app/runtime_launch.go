@@ -72,6 +72,7 @@ type runtimeLaunchRequest struct {
 	CodexThreadID   string
 	PIAgentGRPC     bool
 	AttachOnly      bool
+	ForceNewIOD     bool
 }
 
 type processRuntimeLauncher struct {
@@ -460,8 +461,10 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	if runtimeRoot == "" {
 		return sessionRuntime{}, fmt.Errorf("iod runtime root is required")
 	}
-	if runtime, ok := l.attachExistingIODHelper(ctx, req, runtimeRoot); ok {
-		return runtime, nil
+	if !req.ForceNewIOD {
+		if runtime, ok := l.attachExistingIODHelper(ctx, req, runtimeRoot); ok {
+			return runtime, nil
+		}
 	}
 	helperBinPath, err := l.resolveIODHelperBinPath()
 	if err != nil {
