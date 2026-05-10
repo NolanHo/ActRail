@@ -136,6 +136,61 @@ func TestSessionCatalogPersistsSessionSourceRefProvenanceAcrossReload(t *testing
 	}
 }
 
+func TestSessionCatalogEnforcesUniqueCodexRuntimeClaims(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "actrail.db")
+	catalog, err := OpenSessionCatalog(path)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+
+	now := time.Unix(1760000000, 0).UTC()
+	for _, id := range []string{"s_1", "s_2"} {
+		if err := catalog.UpsertSessionSnapshot(context.Background(), SessionSnapshotRow{
+			Session:   SessionRow{SessionID: id, Backend: "codex", CWD: "/tmp/project", CreatedAt: now, UpdatedAt: now, ActivityAt: now},
+			Queue:     []QueueItemRow{},
+			Workspace: WorkspaceStateRow{OpenPaths: []string{}, HistoryItems: []WorkspaceHistoryItemRow{}},
+		}); err != nil {
+			t.Fatalf("UpsertSessionSnapshot(%q) error = %v", id, err)
+		}
+	}
+	if err := catalog.UpsertCodexRuntimeClaim(context.Background(), CodexRuntimeClaimRow{
+		SessionID:        "s_1",
+		BackendSessionID: "thread-1",
+		SourcePath:       "/tmp/codex-session.jsonl",
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("UpsertCodexRuntimeClaim(first) error = %v", err)
+	}
+	if err := catalog.UpsertCodexRuntimeClaim(context.Background(), CodexRuntimeClaimRow{
+		SessionID:        "s_2",
+		BackendSessionID: "thread-1",
+		SourcePath:       "/tmp/other-codex-session.jsonl",
+		UpdatedAt:        now,
+	}); err == nil {
+		t.Fatalf("UpsertCodexRuntimeClaim(duplicate backend session id) succeeded, want unique constraint error")
+	}
+	if err := catalog.UpsertCodexRuntimeClaim(context.Background(), CodexRuntimeClaimRow{
+		SessionID:        "s_2",
+		BackendSessionID: "thread-2",
+		SourcePath:       "/tmp/codex-session.jsonl",
+		UpdatedAt:        now,
+	}); err == nil {
+		t.Fatalf("UpsertCodexRuntimeClaim(duplicate source path) succeeded, want unique constraint error")
+	}
+	if err := catalog.DeleteCodexRuntimeClaim(context.Background(), "s_1"); err != nil {
+		t.Fatalf("DeleteCodexRuntimeClaim() error = %v", err)
+	}
+	if err := catalog.UpsertCodexRuntimeClaim(context.Background(), CodexRuntimeClaimRow{
+		SessionID:        "s_2",
+		BackendSessionID: "thread-1",
+		SourcePath:       "/tmp/codex-session.jsonl",
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("UpsertCodexRuntimeClaim(after release) error = %v", err)
+	}
+}
+
 func TestSessionCatalogPersistsQueueWorkspaceAndAppState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "actrail.db")
 	catalog, err := OpenSessionCatalog(path)

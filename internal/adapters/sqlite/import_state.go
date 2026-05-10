@@ -18,6 +18,13 @@ type SessionSourceRefRow struct {
 	HasLegacySessionUIState bool
 }
 
+type CodexRuntimeClaimRow struct {
+	SessionID        string
+	BackendSessionID string
+	SourcePath       string
+	UpdatedAt        time.Time
+}
+
 type HiddenSessionKeyRow struct {
 	Key string
 }
@@ -205,6 +212,29 @@ func (c *SessionCatalog) ListSessionSourceRefs(ctx context.Context) ([]SessionSo
 		return nil, fmt.Errorf("iterate session source ref rows: %w", err)
 	}
 	return items, nil
+}
+
+func (c *SessionCatalog) UpsertCodexRuntimeClaim(ctx context.Context, row CodexRuntimeClaimRow) error {
+	if c == nil || c.db == nil {
+		return fmt.Errorf("sqlite catalog is not initialized")
+	}
+	_, err := c.db.ExecContext(ctx, `INSERT INTO codex_runtime_claims(session_id, backend_session_id, source_path, updated_at) VALUES(?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET backend_session_id=excluded.backend_session_id, source_path=excluded.source_path, updated_at=excluded.updated_at`,
+		row.SessionID, row.BackendSessionID, row.SourcePath, row.UpdatedAt.UTC().Format(tsLayout))
+	if err != nil {
+		return fmt.Errorf("upsert codex runtime claim %q: %w", row.SessionID, err)
+	}
+	return nil
+}
+
+func (c *SessionCatalog) DeleteCodexRuntimeClaim(ctx context.Context, sessionID string) error {
+	if c == nil || c.db == nil {
+		return fmt.Errorf("sqlite catalog is not initialized")
+	}
+	if _, err := c.db.ExecContext(ctx, `DELETE FROM codex_runtime_claims WHERE session_id = ?`, sessionID); err != nil {
+		return fmt.Errorf("delete codex runtime claim %q: %w", sessionID, err)
+	}
+	return nil
 }
 
 func (c *SessionCatalog) ListHiddenSessionKeys(ctx context.Context) ([]HiddenSessionKeyRow, error) {

@@ -196,6 +196,29 @@ func (r *sessionRegistry) ListAll() []sessionRecord {
 	return items
 }
 
+func (r *sessionRegistry) FindCodexRuntimeOwner(backendSessionID, sourcePath string) (sessionRecord, bool) {
+	backendSessionID = strings.TrimSpace(backendSessionID)
+	sourcePath = cleanOptionalPath(sourcePath)
+	if backendSessionID == "" && sourcePath == "" {
+		return sessionRecord{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, sessionID := range r.order {
+		record, ok := r.sessions[sessionID]
+		if !ok || record.identity.Backend() != session.BackendCodex || record.archivedAt != nil {
+			continue
+		}
+		if backendSessionID != "" && strings.TrimSpace(record.importedBackendSessionID) == backendSessionID {
+			return copySessionRecord(record), true
+		}
+		if sourcePath != "" && cleanOptionalPath(record.importedSourcePath) == sourcePath {
+			return copySessionRecord(record), true
+		}
+	}
+	return sessionRecord{}, false
+}
+
 func (r *sessionRegistry) Update(routeID session.SessionID, touchActivity bool, apply func(*sessionRecord) error) (sessionRecord, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -388,6 +411,14 @@ func (r *sessionRegistry) allocateIdentityLocked(backend session.Backend) (sessi
 		}
 		return candidate, nil
 	}
+}
+
+func cleanOptionalPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
 }
 
 func (r *sessionRegistry) resolveLocked(routeID session.SessionID) (session.SessionID, sessionRecord, bool) {

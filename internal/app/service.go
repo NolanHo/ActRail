@@ -590,6 +590,9 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 						resumeSourcePath = path
 					}
 				}
+				if owner, ok := s.registry.FindCodexRuntimeOwner(resumeBackendSessionID, resumeSourcePath); ok {
+					return s.createSessionResponseForExistingCodexOwner(ctx, owner)
+				}
 			default:
 				return CreateSessionResponse{}, Unsupported("session resume is not implemented for this backend")
 			}
@@ -681,6 +684,30 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	return CreateSessionResponse{
 		OK:      true,
 		Session: s.createdSessionFromRecord(responseRecord),
+		WSAttach: &SessionAttachRequest{
+			SessionID:            record.identity.SessionID().String(),
+			SuggestSubscriptions: []string{stream.String()},
+		},
+	}, nil
+}
+
+func (s *Stub) createSessionResponseForExistingCodexOwner(ctx context.Context, owner sessionRecord) (CreateSessionResponse, error) {
+	record := owner
+	transport := sessionTransportSnapshot(owner)
+	if transport.ResetRequired || transport.State == SessionTransportStateBroken {
+		updated, _, err := s.replaceSessionRuntime(ctx, owner.identity.SessionID(), owner, false)
+		if err != nil {
+			return CreateSessionResponse{}, err
+		}
+		record = updated
+	}
+	stream, err := session.MainStream(record.identity)
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	return CreateSessionResponse{
+		OK:      true,
+		Session: s.createdSessionFromRecord(record),
 		WSAttach: &SessionAttachRequest{
 			SessionID:            record.identity.SessionID().String(),
 			SuggestSubscriptions: []string{stream.String()},

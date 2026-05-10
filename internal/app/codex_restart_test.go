@@ -98,7 +98,7 @@ func TestRestartCodexSessionResumesExistingThread(t *testing.T) {
 	_ = second.stdout.Close()
 }
 
-func TestCreateCodexSessionFromLiveResumeUsesExistingThread(t *testing.T) {
+func TestCreateCodexSessionFromLiveResumeReusesExistingSession(t *testing.T) {
 	const threadID = "thread-codex-live-resume-1"
 
 	runtimes := make([]codexTestRuntimeIO, 0, 2)
@@ -145,25 +145,16 @@ func TestCreateCodexSessionFromLiveResumeUsesExistingThread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession(resume codex) error = %v", err)
 	}
-	if resumed.Session.SessionID == created.Session.SessionID {
-		t.Fatalf("resumed session id = %q, want a new ActRail slot bound to existing Codex thread", resumed.Session.SessionID)
+	if resumed.Session.SessionID != created.Session.SessionID {
+		t.Fatalf("resumed session id = %q, want existing %q", resumed.Session.SessionID, created.Session.SessionID)
 	}
-	second := waitForCodexTestRuntime(t, &runtimesMu, &runtimes, 1)
-	waitForAppCondition(t, func() bool {
-		return writesContain(second.pty.Writes(), `"method":"initialize"`)
-	})
-	if _, err := io.WriteString(second.stdout, `{"id":"initialize-1","result":{"protocolVersion":1}}`+"\n"); err != nil {
-		t.Fatalf("write second initialize response: %v", err)
-	}
-	waitForAppCondition(t, func() bool {
-		writes := second.pty.Writes()
-		return writesContain(writes, `"method":"thread/resume"`) && writesContain(writes, `"threadId":"`+threadID+`"`)
-	})
-	if writesContain(second.pty.Writes(), `"method":"thread/start"`) {
-		t.Fatalf("second runtime writes = %q, want no new thread/start", strings.Join(second.pty.Writes(), "\n"))
+	runtimesMu.Lock()
+	runtimeCount := len(runtimes)
+	runtimesMu.Unlock()
+	if runtimeCount != 1 {
+		t.Fatalf("runtime count = %d, want existing runtime only", runtimeCount)
 	}
 	_ = first.stdout.Close()
-	_ = second.stdout.Close()
 }
 
 func TestCreateCodexSessionFromHistoricalResumeUsesSessionFileThread(t *testing.T) {

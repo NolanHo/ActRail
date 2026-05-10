@@ -16,6 +16,8 @@ import (
 type sessionStore interface {
 	UpsertSessionSnapshot(context.Context, sqlitestore.SessionSnapshotRow) error
 	UpsertSessionSourceRef(context.Context, sqlitestore.SessionSourceRefRow) error
+	UpsertCodexRuntimeClaim(context.Context, sqlitestore.CodexRuntimeClaimRow) error
+	DeleteCodexRuntimeClaim(context.Context, string) error
 	ListSessionSnapshots(context.Context, bool) ([]sqlitestore.SessionSnapshotRow, error)
 }
 
@@ -358,16 +360,31 @@ func (r *sessionRegistry) persistLocked(record sessionRecord) error {
 		return err
 	}
 	if strings.TrimSpace(record.importedSourcePath) != "" || strings.TrimSpace(record.importedBackendSessionID) != "" {
-		return r.store.UpsertSessionSourceRef(context.Background(), sqlitestore.SessionSourceRefRow{
+		if err := r.store.UpsertSessionSourceRef(context.Background(), sqlitestore.SessionSourceRefRow{
 			SessionID:        record.identity.SessionID().String(),
 			Backend:          record.identity.Backend().String(),
 			BackendSessionID: strings.TrimSpace(record.importedBackendSessionID),
 			SourcePath:       strings.TrimSpace(record.importedSourcePath),
 			SourceConfidence: strings.TrimSpace(record.importedSourceConfidence),
 			FirstUserMessage: strings.TrimSpace(record.importedFirstUserMessage),
-		})
+		}); err != nil {
+			return err
+		}
 	}
-	return nil
+	if record.identity.Backend() != session.BackendCodex {
+		return nil
+	}
+	backendSessionID := strings.TrimSpace(record.importedBackendSessionID)
+	sourcePath := strings.TrimSpace(record.importedSourcePath)
+	if record.archivedAt != nil || (backendSessionID == "" && sourcePath == "") {
+		return r.store.DeleteCodexRuntimeClaim(context.Background(), record.identity.SessionID().String())
+	}
+	return r.store.UpsertCodexRuntimeClaim(context.Background(), sqlitestore.CodexRuntimeClaimRow{
+		SessionID:        record.identity.SessionID().String(),
+		BackendSessionID: backendSessionID,
+		SourcePath:       sourcePath,
+		UpdatedAt:        record.updatedAt.UTC(),
+	})
 }
 
 func (r *sessionRegistry) PersistAll() error {

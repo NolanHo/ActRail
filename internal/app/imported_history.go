@@ -880,6 +880,9 @@ func (s *Stub) rememberCodexThreadBinding(record sessionRecord, threadID string,
 		strings.TrimSpace(record.importedSourceConfidence) == sourceConfidenceExact {
 		return
 	}
+	if owner, ok := s.registry.FindCodexRuntimeOwner(resolved, sourcePath); ok && owner.identity.SessionID() != record.identity.SessionID() {
+		return
+	}
 	_, _, _ = s.registry.SetSourceBinding(record.identity.SessionID(), resolved, sourcePath, sourceConfidenceExact)
 }
 

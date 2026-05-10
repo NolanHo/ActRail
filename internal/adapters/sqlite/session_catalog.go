@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 11
+const currentSchemaVersion = 12
 
 const tsLayout = time.RFC3339Nano
 
@@ -481,6 +481,29 @@ var migrations = []migration{
 				return err
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 11, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 12,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS codex_runtime_claims (
+					session_id TEXT PRIMARY KEY,
+					backend_session_id TEXT NOT NULL DEFAULT '',
+					source_path TEXT NOT NULL DEFAULT '',
+					updated_at TEXT NOT NULL,
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE UNIQUE INDEX IF NOT EXISTS codex_runtime_claims_backend_session_id_idx ON codex_runtime_claims(backend_session_id) WHERE backend_session_id <> ''`,
+				`CREATE UNIQUE INDEX IF NOT EXISTS codex_runtime_claims_source_path_idx ON codex_runtime_claims(source_path) WHERE source_path <> ''`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 12, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},

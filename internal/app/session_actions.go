@@ -603,6 +603,11 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	if err != nil {
 		return sessionRecord{}, "", err
 	}
+	if record.identity.Backend() == session.BackendCodex {
+		if owner, ok := s.registry.FindCodexRuntimeOwner(codexThreadID, sourcePath); ok && owner.identity.SessionID() != record.identity.SessionID() {
+			return sessionRecord{}, "", Conflict(fmt.Sprintf("codex session file is already attached to session %q", owner.identity.SessionID()))
+		}
+	}
 	newRuntime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
 		SessionID:       identity.SessionID(),
 		Backend:         record.identity.Backend(),
