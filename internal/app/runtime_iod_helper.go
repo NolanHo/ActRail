@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"actrail/internal/adapters/iod"
@@ -168,9 +169,23 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 		return fmt.Errorf("find iod helper pid %d: %w", h.helperPID, err)
 	}
 	if err := proc.Signal(os.Interrupt); err != nil {
+		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
 		return fmt.Errorf("signal iod helper pid %d: %w", h.helperPID, err)
 	}
 	return nil
+}
+
+func shutdownIODManifest(ctx context.Context, manifest iod.GenerationManifest) error {
+	helper := &runtimeIODHelper{
+		manifest:     manifest,
+		sessionID:    manifest.SessionID,
+		generationID: manifest.GenerationID,
+		helperPID:    manifest.HelperPID,
+		childPID:     manifest.ChildPID,
+	}
+	return helper.shutdown(ctx)
 }
 
 func removeRuntimeGenerationArtifacts(runtimeDir string) error {

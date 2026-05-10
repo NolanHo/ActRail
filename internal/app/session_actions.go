@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/iodclient"
 	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
 )
@@ -667,6 +669,7 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		_ = newRuntime.CleanupHelperArtifacts()
 		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
 	}
+	s.shutdownPreviousHelperGeneration(identity.SessionID(), previousBinding)
 	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
 	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), newRuntime)
 	s.startCodexThreadBootstrap(updated.identity.SessionID(), newRuntime)
@@ -677,6 +680,27 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	_ = record.runtime.CleanupHelperArtifacts()
 	previousRuntimeID, _ := record.identity.RuntimeID()
 	return updated, previousRuntimeID, nil
+}
+
+func (s *Stub) shutdownPreviousHelperGeneration(sessionID session.SessionID, binding *RuntimeHelperBinding) {
+	if s == nil || binding == nil || binding.GenerationID == "" {
+		return
+	}
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(s.cfg.Storage.DataDir), sessionID, binding.GenerationID)
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return
+	}
+	var manifest iod.GenerationManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return
+	}
+	if manifest.SessionID != sessionID || manifest.GenerationID != binding.GenerationID {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
+	defer cancel()
+	_ = shutdownIODManifest(ctx, manifest)
 }
 
 func (s *Stub) waitForHandoffRuntimeReady(ctx context.Context, sessionID session.SessionID) error {
