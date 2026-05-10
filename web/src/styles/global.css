@@ -2432,7 +2432,7 @@ button.conversationStatusChip {
 
 .messageBubble .messageBody,
 .messageBubble .commandIOBlock,
-.messageBubble .assistantTurnMetaCard,
+.messageBubble .assistantTurnSummaryRow,
 .messageBubble .supervisorRunStack {
   padding-right: 38px;
 }
@@ -2909,24 +2909,20 @@ button.conversationStatusChip {
   margin-bottom: 0;
 }
 
-.assistantTurnMetaCard {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
+.assistantTurnSummaryRow {
   margin-top: 8px;
-  padding: 7px 9px;
-  border: 1px solid color-mix(in srgb, hsl(var(--primary)) 34%, var(--chrome-border));
-  border-left-width: 4px;
-  border-radius: 8px;
-  background: color-mix(in srgb, hsl(var(--primary)) 7%, var(--panel));
-  color: var(--muted-text);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 36%, transparent);
-  font-size: 0.75rem;
-  line-height: 1.35;
+  cursor: default;
 }
 
-.assistantTurnMetaCard span {
-  white-space: nowrap;
+.assistantTurnSummaryRow:hover {
+  border-color: color-mix(in srgb, var(--chrome-border) 82%, transparent);
+  background: color-mix(in srgb, var(--message-card-system-bg) 84%, var(--panel));
+  box-shadow: var(--shadow-sm);
+}
+
+.assistantTurnSummaryRow.isError:hover {
+  border-color: color-mix(in srgb, hsl(var(--destructive)) 38%, var(--chrome-border));
+  background: color-mix(in srgb, hsl(var(--destructive)) 8%, var(--message-card-system-bg));
 }
 
 .messageBubbleActions {

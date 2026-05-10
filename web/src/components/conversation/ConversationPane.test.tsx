@@ -1482,7 +1482,7 @@ describe("ConversationPane", () => {
     expect(root.querySelectorAll('[data-testid="message-surface"][data-kind="assistant"]')).toHaveLength(1);
   });
 
-  it("renders assistant turn metadata and counts extension ui requests as operations", () => {
+  it("renders assistant turn summary with tool counts and timing", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-meta", loading: false, newSessionDefaults: null },
       { refresh: () => Promise.resolve(), select: () => undefined },
@@ -1519,11 +1519,12 @@ describe("ConversationPane", () => {
     );
 
     const meta = root.querySelector('[data-testid="assistant-turn-meta"]');
-    expect(meta?.textContent).toContain("operations: 4");
-    expect(meta?.textContent).toContain("errors: 1");
-    expect(meta?.textContent).toContain("max(tool call time): 1m5s");
-    expect(meta?.textContent).toContain("turn time: 2m5s");
-    expect(meta?.textContent).toContain("end time:");
+    expect(meta?.textContent).toContain("Ran 2 tools");
+    expect(meta?.textContent).toContain("1 ok");
+    expect(meta?.textContent).toContain("1 error");
+    expect(meta?.textContent).toContain("max tool 1m5s");
+    expect(meta?.textContent).toContain("turn 2m5s");
+    expect(meta?.textContent).toContain("finished");
     expandMachineTrace(root);
     expect(root.querySelectorAll(".machineTraceToken.isExtensionUI")).toHaveLength(1);
   });
@@ -1576,9 +1577,12 @@ describe("ConversationPane", () => {
       root,
     );
 
-    const summary = root.querySelector('[data-testid="machine-trace-summary"]');
+    const summary = root.querySelector('[data-testid="assistant-turn-meta"]');
     expect(summary?.textContent).toContain("Ran 1 tool");
-    expect(summary?.textContent).toContain("1 failed");
+    expect(summary?.textContent).toContain("0 ok");
+    expect(summary?.textContent).toContain("1 error");
+    expect(summary?.textContent).toContain("finished");
+    expect(root.querySelector("[data-row-key^='machine-summary:']")).toBeNull();
     expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(0);
     expect(root.querySelector('[data-testid="message-surface"][data-kind="assistant"]')?.textContent).toContain("finished");
   });
