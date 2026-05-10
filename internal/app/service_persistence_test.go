@@ -310,11 +310,11 @@ func TestPersistentStubColdStartRehydratesSessionCatalog(t *testing.T) {
 	if item.RuntimeID != "" {
 		t.Fatalf("RuntimeID = %q, want empty after cold start", item.RuntimeID)
 	}
-	if item.DisplayName != cwd {
-		t.Fatalf("DisplayName = %q, want %q", item.DisplayName, cwd)
+	if item.DisplayName != "project" {
+		t.Fatalf("DisplayName = %q, want %q", item.DisplayName, "project")
 	}
-	if item.Title != cwd || item.Alias != cwd {
-		t.Fatalf("cold-start title/alias = (%q, %q), want (%q, %q)", item.Title, item.Alias, cwd, cwd)
+	if item.Title != "project" || item.Alias != "project" {
+		t.Fatalf("cold-start title/alias = (%q, %q), want (%q, %q)", item.Title, item.Alias, "project", "project")
 	}
 	if item.ProviderChoice != provider || item.Model != model || item.ReasoningEffort != reasoning {
 		t.Fatalf("persisted launch metadata = %+v", item)
@@ -328,7 +328,7 @@ func TestPersistentStubColdStartRehydratesSessionCatalog(t *testing.T) {
 	if details.SessionID != created.Session.SessionID {
 		t.Fatalf("details.SessionID = %q, want %q", details.SessionID, created.Session.SessionID)
 	}
-	if details.DisplayName != cwd || details.Provider != provider || details.Model != model {
+	if details.DisplayName != "project" || details.Provider != provider || details.Model != model {
 		t.Fatalf("details = %+v", details)
 	}
 	if details.RuntimeID != "" {

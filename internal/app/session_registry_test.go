@@ -112,11 +112,11 @@ func TestSessionRegistryListPreservesCreationOrder(t *testing.T) {
 	if items[1].identity.SessionID() != second.identity.SessionID() {
 		t.Fatalf("items[1].SessionID() = %q, want %q", items[1].identity.SessionID(), second.identity.SessionID())
 	}
-	if items[0].title != "/tmp/one" {
-		t.Fatalf("items[0].title = %q, want %q", items[0].title, "/tmp/one")
+	if items[0].title != "one" {
+		t.Fatalf("items[0].title = %q, want %q", items[0].title, "one")
 	}
-	if items[1].title != "/tmp/two" {
-		t.Fatalf("items[1].title = %q, want %q", items[1].title, "/tmp/two")
+	if items[1].title != "two" {
+		t.Fatalf("items[1].title = %q, want %q", items[1].title, "two")
 	}
 }
 

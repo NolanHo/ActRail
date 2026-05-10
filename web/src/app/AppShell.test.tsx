@@ -2383,7 +2383,7 @@ describe("AppShell", () => {
       mountNode,
     );
 
-    expect(getRoot().querySelector(".conversationTitle")?.textContent).toContain("/root/code/ActRail");
+    expect(getRoot().querySelector(".conversationTitle")?.textContent).toContain("ActRail");
     expect(getRoot().querySelector(".conversationTitle")?.textContent).not.toContain("我准备用 preact + vite 重构web端，请帮我出个规划");
   });
 

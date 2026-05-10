@@ -238,7 +238,7 @@ describe("SessionsPane", () => {
       tmuxAvailable: false,
     });
 
-    expect(root?.querySelector(".sessionTitle")?.textContent).toContain("/Users/huapeixuan/Documents/Code/ActRail");
+    expect(root?.querySelector(".sessionTitle")?.textContent).toContain("ActRail");
     expect(root?.querySelector(".sessionTitle")?.textContent).not.toContain("我准备用 preact + vite 重构web端，请帮我出个规划");
   });
 
