@@ -369,7 +369,7 @@ func (l processRuntimeLauncher) launchPIAgentGRPC(ctx context.Context, req runti
 		handle, err = l.runner.Start(ctx, launchSpec)
 		if err != nil {
 			_ = client.Close()
-			return sessionRuntime{}, err
+			return sessionRuntime{}, invalidLaunchCWD(err)
 		}
 		if handle == nil {
 			_ = client.Close()
@@ -437,7 +437,7 @@ func (l processRuntimeLauncher) launchDirect(ctx context.Context, req runtimeLau
 	}
 	handle, err := l.runner.Start(ctx, launchSpec)
 	if err != nil {
-		return sessionRuntime{}, err
+		return sessionRuntime{}, invalidLaunchCWD(err)
 	}
 	if handle == nil {
 		return sessionRuntime{}, fmt.Errorf("start runtime %q: nil process handle", req.Backend)
@@ -481,7 +481,7 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	}
 	handle, err := l.runner.Start(ctx, helperLaunchSpec)
 	if err != nil {
-		return sessionRuntime{}, err
+		return sessionRuntime{}, invalidLaunchCWD(err)
 	}
 	if handle == nil {
 		return sessionRuntime{}, fmt.Errorf("start iod helper for %q: nil process handle", req.SessionID)
@@ -681,6 +681,18 @@ func copyIntPtr(raw *int) *int {
 	}
 	copied := *raw
 	return &copied
+}
+
+func invalidLaunchCWD(err error) error {
+	var cwdErr *process.WorkingDirError
+	if !errors.As(err, &cwdErr) {
+		return err
+	}
+	message := cwdErr.Error()
+	if errors.Is(cwdErr.Err, os.ErrNotExist) {
+		message = fmt.Sprintf("working directory %q does not exist", cwdErr.Dir)
+	}
+	return Invalid("cwd", message)
 }
 
 func (r sessionRuntime) UsesPIAgentGRPC() bool {

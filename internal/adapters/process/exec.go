@@ -190,12 +190,36 @@ func openLogFile(path string) (io.WriteCloser, error) {
 func ensureWorkingDir(dir WorkingDir) error {
 	info, err := os.Stat(dir.String())
 	if err != nil {
-		return fmt.Errorf("stat working directory %q: %w", dir, err)
+		return &WorkingDirError{Dir: dir.String(), Err: err}
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("working directory %q is not a directory", dir)
+		return &WorkingDirError{Dir: dir.String(), NotDirectory: true}
 	}
 	return nil
+}
+
+// WorkingDirError reports that a child process cannot use its configured cwd.
+type WorkingDirError struct {
+	Dir          string
+	Err          error
+	NotDirectory bool
+}
+
+func (e *WorkingDirError) Error() string {
+	if e == nil {
+		return "working directory error"
+	}
+	if e.NotDirectory {
+		return fmt.Sprintf("working directory %q is not a directory", e.Dir)
+	}
+	return fmt.Sprintf("stat working directory %q: %v", e.Dir, e.Err)
+}
+
+func (e *WorkingDirError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
 }
 
 type execHandle struct {

@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
 )
@@ -241,6 +244,22 @@ func TestStubCreateSessionReturnsNotFoundForUnknownResumeSession(t *testing.T) {
 		ResumeSessionID: &resume,
 	})
 	assertNotFound(t, err)
+}
+
+func TestStubCreateSessionReturnsInvalidForMissingWorkingDirectory(t *testing.T) {
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{
+		Runner: process.NewExecRunner(),
+		ResolveBinPath: func(session.Backend) (string, error) {
+			return "/bin/true", nil
+		},
+	})
+	missing := filepath.Join(t.TempDir(), "missing")
+
+	_, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: missing})
+	assertInvalid(t, err, "cwd")
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("CreateSession() error = %v, want does not exist", err)
+	}
 }
 
 func assertNotFound(t *testing.T, err error) {
