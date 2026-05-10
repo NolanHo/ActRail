@@ -600,6 +600,10 @@ func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 			tailSeq = mirrored
 		}
 	}
+	partial := partialAssistantTurn(record.transcript)
+	if !busy {
+		partial = nil
+	}
 	return SessionStateResponse{
 		Busy:                 busy,
 		BusyReason:           busyReason,
@@ -608,7 +612,7 @@ func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 		Queue:                queueSnapshotFromState(record.state),
 		Transport:            s.sessionTransportSnapshot(record),
 		UIRequest:            copySessionUIRequest(record.uiRequest),
-		PartialAssistantTurn: partialAssistantTurn(record.transcript),
+		PartialAssistantTurn: partial,
 		TailSeq:              tailSeq,
 		ResumeCursors:        record.resumeCursors,
 		ContextUsage:         contextUsage,
