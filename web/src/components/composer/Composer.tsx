@@ -120,6 +120,16 @@ function sessionRuntimeTerminal(session: SessionSummary | null) {
 	return state === "failed" || state === "ended";
 }
 
+function composerActionErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  return fallback;
+}
+
 const MOBILE_COMPOSER_QUERY = "(max-width: 880px)";
 const MOBILE_COMPOSER_MIN_HEIGHT_PX = 56;
 const MOBILE_COMPOSER_MAX_HEIGHT_PX = 112;
@@ -387,6 +397,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [mobileWaitSubmitting, setMobileWaitSubmitting] = useState(false);
   const [mobileWaitError, setMobileWaitError] = useState("");
+  const [composerActionError, setComposerActionError] = useState("");
   const [mobileComposerAutosize, setMobileComposerAutosize] = useState(() => shouldUseMobileComposerAutosize());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -410,9 +421,21 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
 		&& !activeSessionTerminalRuntime
 		&& (hasActiveSessionLiveBusy ? activeSessionLiveBusy : activeSession.busy === true),
 	);
-	const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
+  const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
 		? Math.max(0, Math.round(activeSession.queue_len))
 		: 0;
+  const queueButtonLabel = activeSessionBusy
+    ? activeQueueCount > 0 ? `Queue next (${activeQueueCount})` : "Queue next"
+    : activeQueueCount > 0 ? `Queue ${activeQueueCount}` : "Queue";
+  const queueButtonTitle = supervisorEnabled
+    ? supervisorBlockReason
+    : activeSessionBackendUnavailable
+      ? "Queue this draft until the session backend is restarted."
+      : activeSessionBusy
+        ? "Queue this draft after the current turn."
+        : "Queue this draft instead of sending it now.";
+  const sendButtonLabel = sending ? "Sending" : activeSessionBusy ? "Send now" : "Send";
+  const sendButtonTitle = activeSessionSendBlockReason || (activeSessionBusy ? "Send immediately to the busy session." : undefined);
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsCodex = activeSession?.agent_backend === "codex";
   const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
@@ -465,6 +488,10 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
     typing: draft.trim().length > 0,
   });
   const commandMenuVisible = composerMode === "slash_menu";
+
+  useEffect(() => {
+    setComposerActionError("");
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -735,15 +762,19 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
       return;
     }
 
+    setComposerActionError("");
     (activeSessionRuntimeId
       ? composerStoreApi.submit(activeSessionId, activeSessionRuntimeId)
       : composerStoreApi.submit(activeSessionId))
       .then(async (response) => {
         clearAttachmentCount(activeSessionId);
+        setComposerActionError("");
         const target = await resolvePostSendSessionIdentity(response, activeSessionId, activeSessionRuntimeId);
         await refreshSessionAfterSend(target.sessionId, target.runtimeId, activeSession?.agent_backend);
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        setComposerActionError(composerActionErrorMessage(error, "Failed to send message"));
+      });
   };
 
   const queueCurrentDraft = () => {
@@ -752,6 +783,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
     }
 
     const queuedText = draft;
+    setComposerActionError("");
     composerStoreApi.setDraft(activeSessionId, "");
     (activeSessionRuntimeId
       ? api.enqueueMessage(activeSessionId, queuedText, activeSessionRuntimeId)
@@ -766,8 +798,9 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
           ? sessionUiStoreApi.refresh(target.sessionId, { agentBackend: activeSession?.agent_backend, runtimeId: target.runtimeId })
           : sessionUiStoreApi.refresh(target.sessionId, { agentBackend: activeSession?.agent_backend });
       })
-      .catch(() => {
+      .catch((error) => {
         composerStoreApi.setDraft(activeSessionId, queuedText);
+        setComposerActionError(composerActionErrorMessage(error, "Failed to queue message"));
       });
   };
 
@@ -949,6 +982,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
         <CardContent className="p-3 sm:p-4 space-y-2">
           {commandMenu}
           {activeSessionSendBlocked && activeSessionSendBlockReason ? <div className="composerModelError">{activeSessionSendBlockReason}</div> : null}
+          {composerActionError ? <div className="composerActionError" role="alert">{composerActionError}</div> : null}
           <form
             className={cn("composer composerShell flex items-end gap-2 border-t-0", draft.includes("\n") && "multiline")}
             onSubmit={(event) => {
@@ -981,6 +1015,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                 className="composerTextarea"
                 onInput={(event) => {
                   syncComposerTextareaHeight(event.currentTarget, mobileComposerAutosize);
+                  setComposerActionError("");
                   composerStoreApi.setDraft(activeSessionId, event.currentTarget.value);
                 }}
                 onKeyDown={(event) => {
@@ -1052,21 +1087,21 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                     className="composerQueueButton"
                     aria-label="Queue message"
                     disabled={sending || Boolean(visibleActiveWait) || supervisorEnabled || !draft.trim()}
-                    title={supervisorEnabled ? supervisorBlockReason : activeSessionBackendUnavailable ? "Queue this draft until the session backend is restarted." : undefined}
+                    title={queueButtonTitle}
                     onClick={queueCurrentDraft}
                   >
-                    {activeQueueCount > 0 ? `Queue ${activeQueueCount}` : "Queue"}
+                    {queueButtonLabel}
                   </Button>
                 ) : null}
                 <Button
                   type="submit"
                   className="sendButton"
-                  aria-label={sending ? "Sending" : "Send"}
+                  aria-label={sendButtonLabel}
                   disabled={sending || activeSessionSendBlocked || !draft.trim()}
-                  title={activeSessionSendBlockReason || undefined}
+                  title={sendButtonTitle}
                 >
                   <span className="buttonGlyph">➤</span>
-                  <span className="visuallyHidden">{sending ? "Sending..." : "Send"}</span>
+                  <span className="visuallyHidden">{sending ? "Sending..." : sendButtonLabel}</span>
                 </Button>
               </div>
             </div>

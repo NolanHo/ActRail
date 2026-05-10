@@ -3540,6 +3540,17 @@ button.conversationStatusChip {
   color: var(--danger);
 }
 
+.composerActionError {
+  grid-column: 1 / -1;
+  border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--legacy-border));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--danger);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  padding: 0.5rem 0.65rem;
+}
+
 .composerControlsColumn.compactMobile {
   min-width: 0;
   width: 100%;
