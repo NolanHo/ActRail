@@ -185,6 +185,45 @@ func TestSessionHistoryCacheCodexIgnoresPartialTailUntilComplete(t *testing.T) {
 	}
 }
 
+func TestSessionHistoryCacheCodexIgnoresValidJSONTailUntilNewline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	first, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if first.TaskComplete {
+		t.Fatal("Snapshot().TaskComplete = true, want false before newline-committed task_complete")
+	}
+	if first.IndexedCount != 1 || len(first.Messages) != 1 || first.Messages[0].Text != "hello" {
+		t.Fatalf("Snapshot() = %#v, want only newline-committed first message", first)
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString("\n"); err != nil {
+		t.Fatalf("WriteString(newline) error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	second, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() after newline error = %v", err)
+	}
+	if !second.TaskComplete {
+		t.Fatal("Snapshot().TaskComplete = false, want true after newline commit")
+	}
+}
+
 func TestSessionHistoryCacheCodexDedupeKeepsRepeatedPrompts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	body := strings.Join([]string{

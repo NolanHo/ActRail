@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -345,6 +346,287 @@ func TestRuntimeLauncherForceNewIODSkipsExistingAttach(t *testing.T) {
 	}
 	if runtime.helper != nil {
 		t.Fatalf("runtime.helper = %+v, want no existing attachment when ForceNewIOD is true", runtime.helper)
+	}
+}
+
+func TestRuntimeLauncherDoesNotAttachStaleIODWhenCurrentBindingFails(t *testing.T) {
+	sessionID := mustSessionID(t, "s_no_stale_attach")
+	currentGeneration := mustHelperGenerationID(t, "g_current_attach")
+	staleGeneration := mustHelperGenerationID(t, "g_stale_attach")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	currentManifestPath := iodclient.GenerationManifestPath(root, sessionID, currentGeneration)
+	_ = writeHelperManifest(t, currentManifestPath, sessionID, currentGeneration, 1760000007)
+	staleManifestPath := iodclient.GenerationManifestPath(root, sessionID, staleGeneration)
+	staleManifest := writeHelperManifest(t, staleManifestPath, sessionID, staleGeneration, 1760000006)
+	cleanup := startReplayHelper(t, staleManifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	wantErr := errors.New("new helper requested instead of stale attach")
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			return "", wantErr
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return &RuntimeHelperBinding{GenerationID: currentGeneration}, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir()})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Launch() error = %v, want new-helper path error after current attach fails", err)
+	}
+	if runtime.helper != nil {
+		t.Fatalf("runtime.helper = %+v, want no stale existing attachment", runtime.helper)
+	}
+}
+
+func TestAttachedExistingIODRollbackReleaseDoesNotShutdownOrCleanupHelper(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attach_rollback")
+	generationID := mustHelperGenerationID(t, "g_attach_rollback")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	history := iod.SessionHistorySnapshot{
+		SourcePath:   "/tmp/codex/session.jsonl",
+		Messages:     []iod.SessionHistoryMessage{{Seq: 1, Role: "user", Kind: "message", Text: "still alive"}},
+		IndexedCount: 1,
+		Warmed:       true,
+		Complete:     true,
+	}
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, history)
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true, History: &packet})
+	defer cleanup()
+	launcher := processRuntimeLauncher{}
+	runtime, err := launcher.attachIODManifest(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex}, iodclient.DiscoveredManifest{Path: manifestPath, Manifest: manifest})
+	if err != nil {
+		t.Fatalf("attachIODManifest() error = %v", err)
+	}
+	if !runtime.attachedExistingIOD {
+		t.Fatal("runtime.attachedExistingIOD = false, want true")
+	}
+	runtime.ReleaseAttachedHelperRollback()
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("Stat(%q) after attached rollback cleanup error = %v", manifestPath, err)
+	}
+	client, hello, err := launcher.attachHelper(context.Background(), manifest)
+	if err != nil {
+		t.Fatalf("attachHelper() after rollback error = %v", err)
+	}
+	defer client.Close()
+	if hello.GenerationID != generationID {
+		t.Fatalf("hello generation = %q, want %q", hello.GenerationID, generationID)
+	}
+	req, err := iod.NewSessionHistoryRequestPacket(sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewSessionHistoryRequestPacket() error = %v", err)
+	}
+	response, err := client.SessionHistory(context.Background(), req)
+	if err != nil {
+		t.Fatalf("SessionHistory() after rollback error = %v", err)
+	}
+	if len(response.Messages) != 1 || response.Messages[0].Text != "still alive" {
+		t.Fatalf("SessionHistory() = %+v, want live helper history after rollback", response)
+	}
+}
+
+func TestAttachedExistingIODOwnerKillShutsDownAndCleansArtifacts(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attach_owner_kill")
+	generationID := mustHelperGenerationID(t, "g_attach_owner_kill")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	_ = writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetWaitResult(process.ExitStatus{Code: 0}, nil)
+	runtime := sessionRuntime{
+		helper:              &runtimeIODHelper{handle: handle, runtimeDir: filepath.Dir(manifestPath)},
+		attachedExistingIOD: true,
+	}
+	if err := runtime.Kill(context.Background()); err != nil {
+		t.Fatalf("Kill(attached owner) error = %v", err)
+	}
+	if handle.InterruptCalls() == 0 {
+		t.Fatal("Kill(attached owner) did not interrupt helper handle")
+	}
+	if err := runtime.CleanupHelperArtifacts(); err != nil {
+		t.Fatalf("CleanupHelperArtifacts(attached owner) error = %v", err)
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(%q) after owner cleanup error = %v, want not exist", manifestPath, err)
+	}
+}
+
+func TestPIDOnlyIODShutdownWaitsForProcessExit(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("sleep start error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		default:
+		}
+	})
+	sessionID := mustSessionID(t, "s_pid_shutdown")
+	generationID := mustHelperGenerationID(t, "g_pid_shutdown")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, cmd.Process.Pid, 1760000007)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	helper := &runtimeIODHelper{manifest: manifest, sessionID: sessionID, generationID: generationID, helperPID: cmd.Process.Pid}
+	if err := helper.shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown(pid-only) error = %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(helperStopTimeout + time.Second):
+		t.Fatal("pid-only helper process still running after shutdown")
+	}
+}
+
+func TestPIDOnlyIODShutdownSkipsUnverifiedProcess(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("sleep start error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		default:
+		}
+	})
+	sessionID := mustSessionID(t, "s_pid_skip")
+	generationID := mustHelperGenerationID(t, "g_pid_skip")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, cmd.Process.Pid, 1760000007)
+	helper := &runtimeIODHelper{manifest: manifest, sessionID: sessionID, generationID: generationID, helperPID: cmd.Process.Pid}
+	if err := helper.shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown(unverified pid-only) error = %v", err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("unverified pid-only shutdown exited process unexpectedly: %v", err)
+	default:
+	}
+}
+
+func TestPIDOnlyIODShutdownRejectsHelloProofMismatch(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("sleep start error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		default:
+		}
+	})
+	sessionID := mustSessionID(t, "s_pid_mismatch")
+	generationID := mustHelperGenerationID(t, "g_pid_mismatch")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, cmd.Process.Pid, 1760000007)
+	forged := manifest
+	forged.HelperPID = os.Getpid()
+	cleanup := startReplayHelper(t, forged, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	helper := &runtimeIODHelper{manifest: manifest, sessionID: sessionID, generationID: generationID, helperPID: cmd.Process.Pid}
+	if err := helper.shutdown(context.Background()); err == nil {
+		t.Fatal("shutdown(proof mismatch) error = nil, want proof mismatch")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("proof mismatch shutdown exited process unexpectedly: %v", err)
+	default:
+	}
+}
+
+func TestRuntimeIODHelperFromAttachmentPreservesMetadata(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attach_metadata")
+	generationID := mustHelperGenerationID(t, "g_attach_metadata")
+	proof, err := iod.NewHelloProof(123, nil, "/tmp/metadata.wal", "/tmp/metadata.sock", 1760000006)
+	if err != nil {
+		t.Fatalf("NewHelloProof() error = %v", err)
+	}
+	hello, err := iod.NewHelloPacket(sessionID, generationID, 1, proof)
+	if err != nil {
+		t.Fatalf("NewHelloPacket() error = %v", err)
+	}
+	hello.IODBuildDate = "2026-05-10"
+	hello.IODGitSHA = "abc123"
+	helper := runtimeIODHelperFromAttachment(attachedHelper{
+		Binding: helperGenerationBinding{
+			SessionID:    sessionID,
+			GenerationID: generationID,
+		},
+		ManifestPath: "/tmp/metadata/generation-manifest.json",
+		Hello:        hello,
+	}, nil)
+	summary := helper.iodSummary()
+	if summary == nil || summary.BuildDate != "2026-05-10" || summary.GitSHA != "abc123" || summary.StartTS != 1760000006 {
+		t.Fatalf("iodSummary() = %+v, want restored hello metadata", summary)
+	}
+}
+
+func TestSessionHistoryRejectsHelloProofMismatch(t *testing.T) {
+	sessionID := mustSessionID(t, "s_history_proof")
+	generationID := mustHelperGenerationID(t, "g_history_proof")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath:   "/tmp/codex/session.jsonl",
+		Messages:     []iod.SessionHistoryMessage{{Seq: 1, Role: "assistant", Kind: "message", Text: "forged"}},
+		IndexedCount: 1,
+		Warmed:       true,
+		Complete:     true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	forged := manifest
+	forged.HelperPID = manifest.HelperPID + 1
+	cleanup := startReplayHelper(t, forged, helperReplayScript{SkipReplay: true, History: &packet})
+	defer cleanup()
+	helper := &runtimeIODHelper{
+		manifest:     manifest,
+		sessionID:    sessionID,
+		generationID: generationID,
+	}
+	if _, err := helper.sessionHistory(context.Background()); err == nil {
+		t.Fatal("sessionHistory() error = nil, want hello proof mismatch")
 	}
 }
 
@@ -951,8 +1233,13 @@ func hasFenceReason(fences []helperFence, generationID iod.GenerationID, reason 
 
 func writeHelperManifest(t *testing.T, manifestPath string, sessionID session.SessionID, generationID iod.GenerationID, startUnix int64) iod.GenerationManifest {
 	t.Helper()
-	childPID := os.Getpid()
-	proof, err := iod.NewHelloProof(os.Getpid(), &childPID, filepath.Join(filepath.Dir(manifestPath), "transport.wal"), filepath.Join(filepath.Dir(manifestPath), "io"), float64(startUnix))
+	return writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, os.Getpid(), startUnix)
+}
+
+func writeHelperManifestWithPID(t *testing.T, manifestPath string, sessionID session.SessionID, generationID iod.GenerationID, helperPID int, startUnix int64) iod.GenerationManifest {
+	t.Helper()
+	childPID := helperPID
+	proof, err := iod.NewHelloProof(helperPID, &childPID, filepath.Join(filepath.Dir(manifestPath), "transport.wal"), filepath.Join(filepath.Dir(manifestPath), "io"), float64(startUnix))
 	if err != nil {
 		t.Fatalf("NewHelloProof() error = %v", err)
 	}

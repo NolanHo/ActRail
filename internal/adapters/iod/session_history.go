@@ -409,11 +409,11 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 			return nil, nil, "", startLineNo, 0, time.Time{}, err
 		}
 		lineNo++
-		line := strings.TrimRight(raw, "\r\n")
-		message, ok, err := codexHistoryMessageFromLine(line, lineNo)
-		if readErr == io.EOF && !strings.HasSuffix(raw, "\n") && err != nil {
+		if readErr == io.EOF && !strings.HasSuffix(raw, "\n") {
 			break
 		}
+		line := strings.TrimRight(raw, "\r\n")
+		message, ok, err := codexHistoryMessageFromLine(line, lineNo)
 		if tailLimit > 0 {
 			if len(tail) == tailLimit {
 				copy(tail, tail[1:])

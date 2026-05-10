@@ -893,7 +893,7 @@ func codexSessionLinesHaveTaskComplete(ctx context.Context, lines []string) bool
 	return lastRelevant == "task_complete"
 }
 
-func (s *Stub) codexThreadIDForRuntimeRestart(ctx context.Context, record sessionRecord) (string, error) {
+func (s *Stub) codexThreadIDForRuntimeRestart(_ context.Context, record sessionRecord) (string, error) {
 	if record.identity.Backend() != session.BackendCodex {
 		return "", nil
 	}
@@ -905,15 +905,6 @@ func (s *Stub) codexThreadIDForRuntimeRestart(ctx context.Context, record sessio
 	}
 	if threadID := strings.TrimSpace(record.importedBackendSessionID); threadID != "" {
 		return threadID, nil
-	}
-	if sourcePath := strings.TrimSpace(record.importedSourcePath); sourcePath != "" {
-		threadID, ok, err := codexSessionIDFromFile(ctx, sourcePath)
-		if err != nil {
-			return "", err
-		}
-		if ok {
-			return threadID, nil
-		}
 	}
 	return "", nil
 }

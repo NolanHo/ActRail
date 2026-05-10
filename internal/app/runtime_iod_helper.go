@@ -121,7 +121,11 @@ func (h *runtimeIODHelper) sessionHistory(ctx context.Context) (iod.SessionHisto
 		return iod.SessionHistoryResponsePacket{}, err
 	}
 	defer client.Close()
-	if _, err := client.Hello(ctx); err != nil {
+	hello, err := client.Hello(ctx)
+	if err != nil {
+		return iod.SessionHistoryResponsePacket{}, err
+	}
+	if err := iodclient.VerifyHelloProof(h.manifest, hello); err != nil {
 		return iod.SessionHistoryResponsePacket{}, err
 	}
 	request, err := iod.NewSessionHistoryRequestPacket(h.sessionID, h.generationID)
@@ -164,6 +168,19 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 	if h.helperPID <= 0 {
 		return nil
 	}
+	shutdownCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		shutdownCtx, cancel = context.WithTimeout(ctx, helperStopTimeout)
+		defer cancel()
+	}
+	verified, err := h.verifyShutdownTarget(shutdownCtx)
+	if err != nil {
+		return err
+	}
+	if !verified {
+		return nil
+	}
 	proc, err := os.FindProcess(h.helperPID)
 	if err != nil {
 		return fmt.Errorf("find iod helper pid %d: %w", h.helperPID, err)
@@ -174,7 +191,56 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 		}
 		return fmt.Errorf("signal iod helper pid %d: %w", h.helperPID, err)
 	}
-	return nil
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !processPIDAlive(h.helperPID) {
+			return nil
+		}
+		select {
+		case <-shutdownCtx.Done():
+			if err := proc.Signal(os.Kill); err != nil {
+				if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+					return nil
+				}
+				return fmt.Errorf("kill iod helper pid %d: %w", h.helperPID, err)
+			}
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func (h *runtimeIODHelper) verifyShutdownTarget(ctx context.Context) (bool, error) {
+	if h == nil {
+		return false, nil
+	}
+	client, err := iodclient.DialContext(ctx, h.manifest.ControlSocketPath, h.dialer)
+	if err != nil {
+		if os.IsNotExist(err) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT) {
+			return false, nil
+		}
+		return false, fmt.Errorf("verify iod helper shutdown target: %w", err)
+	}
+	defer client.Close()
+	hello, err := client.Hello(ctx)
+	if err != nil {
+		return false, fmt.Errorf("verify iod helper shutdown target hello: %w", err)
+	}
+	if err := iodclient.VerifyHelloProof(h.manifest, hello); err != nil {
+		return false, fmt.Errorf("verify iod helper shutdown target proof: %w", err)
+	}
+	return true, nil
+}
+
+func processPIDAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	if err := syscall.Kill(pid, 0); err != nil {
+		return !errors.Is(err, syscall.ESRCH)
+	}
+	return true
 }
 
 func shutdownIODManifest(ctx context.Context, manifest iod.GenerationManifest) error {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -518,7 +519,9 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 		t.Fatalf("SessionState().UIRequest after RespondUI() = %+v, want nil", state.UIRequest)
 	}
 	writes = pty.Writes()
-	if len(writes) != 3 || writes[1] != "{\"type\":\"abort\"}\n" || writes[2] != "{\"type\":\"extension_ui_response\",\"id\":\"ask_1\",\"value\":\"A\"}\n" {
+	abortIdx := slices.Index(writes, "{\"type\":\"abort\"}\n")
+	responseIdx := slices.Index(writes, "{\"type\":\"extension_ui_response\",\"id\":\"ask_1\",\"value\":\"A\"}\n")
+	if abortIdx < 0 || responseIdx < 0 || abortIdx > responseIdx {
 		t.Fatalf("pty writes after RespondUI() = %#v, want RPC abort and ui response commands", writes)
 	}
 }

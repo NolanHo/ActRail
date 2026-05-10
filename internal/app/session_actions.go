@@ -629,22 +629,22 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		_ = newRuntime.CleanupHelperArtifacts()
 		return sessionRecord{}, "", err
 	}
+	releaseNewRuntime := func() {
+		newRuntime.ReleaseAttachedHelperRollback()
+	}
 	previousBinding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID())
 	if err != nil {
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
 	nextBinding, err := newRuntime.CurrentHelperBinding(identity.SessionID())
 	if err != nil {
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
 	reusedHelper := helperBindingSameGeneration(previousBinding, nextBinding)
 	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), newRuntime); err != nil {
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
 	restoreBinding := func() {
@@ -660,21 +660,18 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	}
 	if err := s.setRuntimeAgentRunning(routeID, false); err != nil {
 		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
 	updated, ok, err := s.registry.SwapRuntime(routeID, identity, newRuntime, sourcePath)
 	if err != nil {
 		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
 	if !ok {
 		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
 	}
 	if !reusedHelper {

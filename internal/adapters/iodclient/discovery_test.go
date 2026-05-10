@@ -7,7 +7,7 @@ import (
 	"actrail/internal/domain/session"
 )
 
-func TestManifestIndexCandidatesPreferBindingThenNewest(t *testing.T) {
+func TestManifestIndexCandidatesRestrictToPreferredBinding(t *testing.T) {
 	sessionID := mustSessionID(t, "s_123")
 	preferred := mustGenerationID(t, "g_2")
 	old := discoveredManifestForTest(t, sessionID, "g_1", 10)
@@ -17,14 +17,11 @@ func TestManifestIndexCandidatesPreferBindingThenNewest(t *testing.T) {
 
 	index := NewManifestIndex([]DiscoveredManifest{old, newer, bound, otherSession})
 	got := index.Candidates(sessionID, &preferred)
-	if len(got) != 3 {
-		t.Fatalf("len(Candidates()) = %d, want 3", len(got))
+	if len(got) != 1 {
+		t.Fatalf("len(Candidates()) = %d, want only preferred generation", len(got))
 	}
 	if got[0].Manifest.GenerationID != preferred {
 		t.Fatalf("first candidate generation = %q, want preferred %q", got[0].Manifest.GenerationID, preferred)
-	}
-	if got[1].Manifest.GenerationID != newer.Manifest.GenerationID {
-		t.Fatalf("second candidate generation = %q, want newest fallback %q", got[1].Manifest.GenerationID, newer.Manifest.GenerationID)
 	}
 }
 

@@ -1183,6 +1183,15 @@ func (r sessionRuntime) CloseHelperStream() {
 	_ = r.helper.streamClient.Close()
 }
 
+func (r sessionRuntime) ReleaseAttachedHelperRollback() {
+	if !r.attachedExistingIOD {
+		_ = r.Kill(context.Background())
+		_ = r.CleanupHelperArtifacts()
+		return
+	}
+	r.CloseHelperStream()
+}
+
 func (r sessionRuntime) PID() int {
 	if r.helper != nil && r.helper.childPID != nil {
 		return *r.helper.childPID
@@ -1262,6 +1271,9 @@ func runtimeIODHelperFromAttachment(attachment attachedHelper, dialer iodclient.
 		generationID: attachment.Binding.GenerationID,
 		helperPID:    attachment.Hello.HelperPID,
 		childPID:     copyIntPtr(attachment.Hello.ChildPID),
+		buildDate:    attachment.Hello.IODBuildDate,
+		gitSHA:       attachment.Hello.IODGitSHA,
+		startTS:      attachment.Hello.StartTS,
 		runtimeDir:   filepath.Dir(attachment.ManifestPath),
 	}
 }
