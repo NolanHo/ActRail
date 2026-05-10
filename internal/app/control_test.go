@@ -54,12 +54,13 @@ func (p *fakePTY) Writes() []string {
 
 func newControlFixture(t *testing.T) (*Stub, session.SessionID, *process.FakeHandle, *fakePTY) {
 	t.Helper()
+	t.Setenv("PI_HOME", t.TempDir())
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	pty := &fakePTY{}
 	handle.SetPTY(pty)
 	runner := &process.FakeRunner{NextHandle: handle}
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

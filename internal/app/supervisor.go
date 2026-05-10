@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,6 +47,7 @@ type supervisorStore interface {
 	LookupSessionSupervisorConfig(context.Context, string) (sqlitestore.SessionSupervisorConfigRow, bool, error)
 	UpsertSessionSupervisorConfig(context.Context, sqlitestore.SessionSupervisorConfigRow) error
 	InsertSupervisorRun(context.Context, sqlitestore.SupervisorRunRow) error
+	UpdateSupervisorRun(context.Context, sqlitestore.SupervisorRunRow) error
 	ListSupervisorRuns(context.Context, string, int) ([]sqlitestore.SupervisorRunRow, error)
 	LookupSupervisorRunByAnchor(context.Context, string, string) (sqlitestore.SupervisorRunRow, bool, error)
 }
@@ -128,6 +130,32 @@ type supervisorDecision struct {
 	Reason  string `json:"reason"`
 }
 
+const (
+	supervisorRunStatusEvaluating     = "evaluating"
+	supervisorRunStatusStop           = "stop"
+	supervisorRunStatusInjected       = "injected"
+	supervisorRunStatusError          = "error"
+	supervisorRunStatusSkippedStale   = "skipped_stale"
+	supervisorRunStatusSkippedBlocked = "skipped_blocked"
+)
+
+type supervisorCommitSkip struct {
+	status string
+	reason string
+}
+
+func (e supervisorCommitSkip) Error() string {
+	return e.reason
+}
+
+type supervisorInjectedWarning struct {
+	reason string
+}
+
+func (e supervisorInjectedWarning) Error() string {
+	return e.reason
+}
+
 type SessionSupervisorResponse struct {
 	OK                       bool     `json:"ok"`
 	Supported                bool     `json:"supported"`
@@ -202,6 +230,18 @@ func (m *memorySupervisorStore) InsertSupervisorRun(_ context.Context, row sqlit
 	}
 	m.runs = append(m.runs, row)
 	return nil
+}
+
+func (m *memorySupervisorStore) UpdateSupervisorRun(_ context.Context, row sqlitestore.SupervisorRunRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.runs {
+		if m.runs[i].RunID == row.RunID {
+			m.runs[i] = row
+			return nil
+		}
+	}
+	return fmt.Errorf("supervisor run %q not found", row.RunID)
 }
 
 func (m *memorySupervisorStore) ListSupervisorRuns(_ context.Context, sessionID string, limit int) ([]sqlitestore.SupervisorRunRow, error) {
@@ -288,6 +328,8 @@ func (s *Stub) UpdateSessionSupervisor(ctx context.Context, req UpdateSessionSup
 	if record.identity.Backend() != session.BackendPI {
 		return SessionSupervisorResponse{}, UnsupportedBackend("supervisor mode is only supported for pi sessions")
 	}
+	s.deferredInputMu.Lock()
+	defer s.deferredInputMu.Unlock()
 	config, err := s.sessionSupervisorConfig(ctx, record.identity.SessionID())
 	if err != nil {
 		return SessionSupervisorResponse{}, err
@@ -450,7 +492,10 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 	if config.ConsecutiveInjections >= config.MaxConsecutiveInjections {
 		return SupervisorRunOnceResponse{}, Conflict("supervisor consecutive injection limit reached")
 	}
-	if record.state.Busy() {
+	if busy, reason := effectiveBusy(record); busy {
+		if reason != "" {
+			return SupervisorRunOnceResponse{}, Conflict("session is busy: " + reason)
+		}
 		return SupervisorRunOnceResponse{}, Conflict("session is busy")
 	}
 	if record.state.Queue().Len() > 0 {
@@ -488,45 +533,11 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 		AnchorAssistantEventID:  anchor.EventID,
 		AnchorAssistantTS:       anchor.TS,
 		AnchorAssistantTextHash: textHash(anchor.Text),
+		Status:                  supervisorRunStatusEvaluating,
 		Model:                   provider.Model,
 		BaseURL:                 provider.BaseURL,
 		SnapshotJSON:            "{}",
 		CreatedAt:               s.registry.now(),
-	}
-	snapshot, snapshotErr := buildSupervisorSnapshot(record.cwd, messages, anchor.EventID, config)
-	if snapshotErr != nil {
-		run.Status = "error"
-		run.Error = snapshotErr.Error()
-	} else {
-		snapshotJSON, _ := json.Marshal(snapshot)
-		run.SnapshotJSON = string(snapshotJSON)
-		decision, rawOutput, evalErr := evaluateSupervisorModel(ctx, providerRow, snapshot)
-		run.RawOutput = rawOutput
-		if evalErr != nil {
-			run.Status = "error"
-			run.Error = evalErr.Error()
-		} else {
-			run.Action = decision.Action
-			run.Reason = decision.Reason
-			if decision.Action == "inject" {
-				run.InjectedText = decision.Message
-				if req.DryRun {
-					run.Status = "stop"
-				} else {
-					if _, err := s.Send(ctx, SendRequest{SessionID: record.identity.SessionID(), Text: decision.Message}); err != nil {
-						run.Status = "error"
-						run.Error = err.Error()
-					} else {
-						run.Status = "injected"
-						config.ConsecutiveInjections++
-						config.UpdatedAt = s.registry.now()
-						_ = s.supervisorStore.UpsertSessionSupervisorConfig(ctx, config)
-					}
-				}
-			} else {
-				run.Status = "stop"
-			}
-		}
 	}
 	if err := s.supervisorStore.InsertSupervisorRun(ctx, run); err != nil {
 		if existing, ok, lookupErr := s.supervisorStore.LookupSupervisorRunByAnchor(ctx, record.identity.SessionID().String(), anchor.EventID); lookupErr == nil && ok {
@@ -534,7 +545,134 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 		}
 		return SupervisorRunOnceResponse{}, err
 	}
+	snapshot, snapshotErr := buildSupervisorSnapshot(record.cwd, messages, anchor.EventID, config)
+	if snapshotErr != nil {
+		run.Status = supervisorRunStatusError
+		run.Error = snapshotErr.Error()
+	} else {
+		snapshotJSON, _ := json.Marshal(snapshot)
+		run.SnapshotJSON = string(snapshotJSON)
+		decision, rawOutput, evalErr := evaluateSupervisorModel(ctx, providerRow, snapshot)
+		run.RawOutput = rawOutput
+		if evalErr != nil {
+			run.Status = supervisorRunStatusError
+			run.Error = evalErr.Error()
+		} else {
+			run.Action = decision.Action
+			run.Reason = decision.Reason
+			if decision.Action == "inject" {
+				run.InjectedText = decision.Message
+				if req.DryRun {
+					run.Status = supervisorRunStatusStop
+				} else {
+					if err := s.commitSupervisorInjection(ctx, record.identity.SessionID(), anchor, decision.Message); err != nil {
+						var skip supervisorCommitSkip
+						var warning supervisorInjectedWarning
+						if errors.As(err, &skip) {
+							run.Status = skip.status
+						} else if errors.As(err, &warning) {
+							run.Status = supervisorRunStatusInjected
+						} else {
+							run.Status = supervisorRunStatusError
+						}
+						run.Error = err.Error()
+					} else {
+						run.Status = supervisorRunStatusInjected
+					}
+				}
+			} else {
+				run.Status = supervisorRunStatusStop
+			}
+		}
+	}
+	if err := s.supervisorStore.UpdateSupervisorRun(ctx, run); err != nil {
+		return SupervisorRunOnceResponse{}, err
+	}
 	return SupervisorRunOnceResponse{OK: true, Run: supervisorRunSummary(run)}, nil
+}
+
+func (s *Stub) commitSupervisorInjection(ctx context.Context, sessionID session.SessionID, anchor SessionMessage, message string) error {
+	s.deferredInputMu.Lock()
+	defer s.deferredInputMu.Unlock()
+
+	var config sqlitestore.SessionSupervisorConfigRow
+	if _, err := s.sendWithPrecondition(ctx, SendRequest{SessionID: sessionID, Text: message}, false, func(record sessionRecord) error {
+		currentConfig, err := s.sessionSupervisorConfig(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		config = currentConfig
+		return s.supervisorCommitPrecondition(ctx, record, anchor, currentConfig)
+	}); err != nil {
+		return err
+	}
+	config.ConsecutiveInjections++
+	config.UpdatedAt = s.registry.now()
+	if err := s.supervisorStore.UpsertSessionSupervisorConfig(ctx, config); err != nil {
+		return supervisorInjectedWarning{reason: "supervisor injected but failed to update consecutive injection count: " + err.Error()}
+	}
+	return nil
+}
+
+func (s *Stub) supervisorCommitPrecondition(ctx context.Context, record sessionRecord, anchor SessionMessage, config sqlitestore.SessionSupervisorConfigRow) error {
+	sessionID := record.identity.SessionID()
+	if record.identity.Backend() != session.BackendPI {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "supervisor mode is only supported for pi sessions")
+	}
+	if !config.Enabled {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "supervisor mode is disabled")
+	}
+	if config.ConsecutiveInjections >= config.MaxConsecutiveInjections {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "supervisor consecutive injection limit reached")
+	}
+	if busy, reason := effectiveBusy(record); busy {
+		if reason != "" {
+			return supervisorSkip(supervisorRunStatusSkippedBlocked, "session is busy: "+reason)
+		}
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "session is busy")
+	}
+	if record.state.Queue().Len() > 0 {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "session has queued prompts")
+	}
+	if record.uiRequest != nil {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "session has unresolved UI request")
+	}
+	if s.activeWaitForSession(sessionID) != nil {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "session has active wait")
+	}
+	if err := transportControlError(sessionTransportSnapshot(record)); err != nil {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, err.Error())
+	}
+	now := s.registry.now().UTC()
+	due, err := s.schedulerStore.CountDueSchedulerItemsForSession(ctx, sessionID.String(), now)
+	if err != nil {
+		return err
+	}
+	if due > 0 {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "session has due scheduler items")
+	}
+	openInbox, err := s.schedulerStore.CountOpenInboxItemsForSession(ctx, sessionID.String())
+	if err != nil {
+		return err
+	}
+	if openInbox > 0 {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "session inbox is not empty")
+	}
+	_, currentAnchor, err := s.supervisorMessagesAndAnchor(ctx, record)
+	if err != nil {
+		return supervisorSkip(supervisorRunStatusSkippedStale, err.Error())
+	}
+	if currentAnchor.EventID != anchor.EventID || textHash(currentAnchor.Text) != textHash(anchor.Text) {
+		return supervisorSkip(supervisorRunStatusSkippedStale, "last assistant anchor changed before supervisor injection")
+	}
+	if currentAnchor.TS > 0 && now.Sub(time.Unix(int64(currentAnchor.TS), 0)) < time.Duration(config.IdleAfterMinutes)*time.Minute {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "assistant message has not been idle long enough")
+	}
+	return nil
+}
+
+func supervisorSkip(status string, reason string) error {
+	return supervisorCommitSkip{status: status, reason: strings.TrimSpace(reason)}
 }
 
 func (s *Stub) lastStablePIAssistantAnchor(ctx context.Context, record sessionRecord) (SessionMessage, error) {

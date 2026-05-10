@@ -79,6 +79,21 @@ func TestSupervisorRunRoundTripAndAnchorLookup(t *testing.T) {
 	if len(runs) != 1 || runs[0].RunID != "supervisor_1" {
 		t.Fatalf("ListSupervisorRuns() = %+v", runs)
 	}
+	run.Status = "injected"
+	run.Action = "inject"
+	run.InjectedText = "continue"
+	run.Reason = "needs follow up"
+	run.RawOutput = `{"action":"inject","message":"continue","reason":"needs follow up"}`
+	if err := catalog.UpdateSupervisorRun(context.Background(), run); err != nil {
+		t.Fatalf("UpdateSupervisorRun() error = %v", err)
+	}
+	updated, ok, err := catalog.LookupSupervisorRunByAnchor(context.Background(), "s_1", "pi:message:a1")
+	if err != nil {
+		t.Fatalf("LookupSupervisorRunByAnchor(updated) error = %v", err)
+	}
+	if !ok || updated.Status != "injected" || updated.Action != "inject" || updated.InjectedText != "continue" {
+		t.Fatalf("updated supervisor run = %+v ok=%v", updated, ok)
+	}
 }
 
 func TestSessionSupervisorConfigRoundTrip(t *testing.T) {

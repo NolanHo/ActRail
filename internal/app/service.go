@@ -94,6 +94,7 @@ type Stub struct {
 	waitBlockers        map[string]waitBlocker
 	supervisorStore     supervisorStore
 	schedulerStore      schedulerStore
+	deferredInputMu     sync.Mutex
 	teams               *teamRegistry
 	runtimeAgentMu      sync.RWMutex
 	runtimeAgentRunning map[session.SessionID]bool
