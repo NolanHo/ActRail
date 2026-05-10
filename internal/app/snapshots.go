@@ -583,6 +583,12 @@ func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 	turnTiming := copyTurnTiming(record.turnTiming)
 	busy, busyReason := effectiveBusy(record)
 	runtimeState, runtimeStateReason := runtimeStateFields(record)
+	tailSeq := record.transcript.TailSeq().Uint64()
+	if record.identity.Backend() == session.BackendCodex && s != nil {
+		if mirrored := s.codexLiveMirroredTail(record.identity.SessionID()); mirrored > tailSeq {
+			tailSeq = mirrored
+		}
+	}
 	return SessionStateResponse{
 		Busy:                 busy,
 		BusyReason:           busyReason,
@@ -592,7 +598,7 @@ func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 		Transport:            s.sessionTransportSnapshot(record),
 		UIRequest:            copySessionUIRequest(record.uiRequest),
 		PartialAssistantTurn: partialAssistantTurn(record.transcript),
-		TailSeq:              record.transcript.TailSeq().Uint64(),
+		TailSeq:              tailSeq,
 		ResumeCursors:        record.resumeCursors,
 		ContextUsage:         contextUsage,
 		TurnTiming:           turnTiming,

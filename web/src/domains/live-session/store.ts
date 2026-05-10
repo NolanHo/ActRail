@@ -123,6 +123,19 @@ function isMainStreamFrame(type: string) {
     || type === "transport.reset_required";
 }
 
+function assistantCommitEndsGeneration(message: Record<string, unknown> | null) {
+  if (!message) {
+    return true;
+  }
+  const role = typeof message.role === "string" ? message.role : "";
+  if (role !== "assistant") {
+    return false;
+  }
+  const details = toObjectRecord(message.details);
+  const phase = typeof details?.phase === "string" ? details.phase.trim() : "";
+  return phase === "" || phase === "final_answer";
+}
+
 function isUIStreamFrame(type: string) {
   return type === "ui.request" || type === "ui.resolved";
 }
@@ -673,7 +686,8 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           : "";
         const message = toObjectRecord(payload?.message);
         const role = typeof message?.role === "string" ? message.role : typeof payload?.role === "string" ? payload.role : undefined;
-        if (role === "assistant") {
+        const assistantFinal = assistantCommitEndsGeneration(message);
+        if (assistantFinal) {
           clearStreamingFlushTimer(sessionId, turnId);
           if (turnId) {
             streamingTextBySessionId.get(sessionId)?.delete(turnId);
@@ -695,7 +709,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
           generatingBySessionId: {
             ...state.generatingBySessionId,
-            [sessionId]: role === "assistant" ? false : state.generatingBySessionId[sessionId] === true,
+            [sessionId]: assistantFinal ? false : state.generatingBySessionId[sessionId] === true,
           },
         };
         emit();

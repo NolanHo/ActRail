@@ -129,6 +129,30 @@ func TestDecodeAppServerLineAssistantCompletedDoesNotEndTurn(t *testing.T) {
 	}
 }
 
+func TestDecodeAppServerLineAssistantCompletedPreservesPhase(t *testing.T) {
+	commentary, ok := DecodeAppServerLine([]byte(`{"method":"item/completed","params":{"threadId":"thread-codex-phase","turnId":"turn-codex-phase","item":{"type":"agentMessage","id":"agent-commentary-1","text":"progress update","phase":"commentary"}}}`))
+	if !ok {
+		t.Fatal("DecodeAppServerLine(commentary) ok = false")
+	}
+	if len(commentary.Events) != 1 || commentary.Events[0].Message == nil {
+		t.Fatalf("commentary events = %+v, want assistant message", commentary.Events)
+	}
+	if commentary.Events[0].Message.Phase != "commentary" {
+		t.Fatalf("commentary phase = %q, want commentary", commentary.Events[0].Message.Phase)
+	}
+
+	final, ok := DecodeAppServerLine([]byte(`{"method":"item/completed","params":{"threadId":"thread-codex-phase","turnId":"turn-codex-phase","item":{"type":"agentMessage","id":"agent-final-1","text":"done","content":[{"type":"output_text","text":"done","textSignature":"{\"phase\":\"final_answer\"}"}]}}}`))
+	if !ok {
+		t.Fatal("DecodeAppServerLine(final) ok = false")
+	}
+	if len(final.Events) != 1 || final.Events[0].Message == nil {
+		t.Fatalf("final events = %+v, want assistant message", final.Events)
+	}
+	if final.Events[0].Message.Phase != "final_answer" {
+		t.Fatalf("final phase = %q, want final_answer", final.Events[0].Message.Phase)
+	}
+}
+
 func TestDecodeAppServerLineTurnTimingAndCompletion(t *testing.T) {
 	started, ok := DecodeAppServerLine([]byte(`{"method":"turn/started","params":{"threadId":"thread-codex-2","turn":{"id":"turn-codex-2","status":"inProgress","startedAt":1760000001000,"error":null}}}`))
 	if !ok {

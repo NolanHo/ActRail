@@ -342,7 +342,7 @@ func itemEvents(method string, raw json.RawMessage, completed bool) []runtimeeve
 		if text == "" {
 			return nil
 		}
-		return []runtimeevent.Event{{Kind: runtimeevent.EventKindMessage, RawType: method, RawID: itemID, ThreadID: threadID, TurnID: turnID, Message: &runtimeevent.Message{ID: itemID, Role: runtimeevent.MessageRoleAssistant, Text: text, Class: runtimeevent.MessageClassCommitted, CommitLike: true}}}
+		return []runtimeevent.Event{{Kind: runtimeevent.EventKindMessage, RawType: method, RawID: itemID, ThreadID: threadID, TurnID: turnID, Message: &runtimeevent.Message{ID: itemID, Role: runtimeevent.MessageRoleAssistant, Text: text, Class: runtimeevent.MessageClassCommitted, Phase: agentMessagePhase(item), CommitLike: true}}}
 	case "reasoning", "plan":
 		text := reasoningText(item)
 		if text == "" {
@@ -382,6 +382,40 @@ func toolLikeItem(itemType string) bool {
 	default:
 		return false
 	}
+}
+
+func agentMessagePhase(item map[string]any) string {
+	if phase := strings.TrimSpace(stringValue(item["phase"])); phase != "" {
+		return phase
+	}
+	if phase := phaseFromTextSignature(stringValue(item["textSignature"])); phase != "" {
+		return phase
+	}
+	content, _ := item["content"].([]any)
+	for _, part := range content {
+		obj, ok := part.(map[string]any)
+		if !ok {
+			continue
+		}
+		if phase := strings.TrimSpace(stringValue(obj["phase"])); phase != "" {
+			return phase
+		}
+		if phase := phaseFromTextSignature(stringValue(obj["textSignature"])); phase != "" {
+			return phase
+		}
+	}
+	return ""
+}
+
+func phaseFromTextSignature(signature string) string {
+	if strings.TrimSpace(signature) == "" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(signature), &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(stringValue(payload["phase"]))
 }
 
 func toolEventFromItem(itemType string, item map[string]any, completed bool) *runtimeevent.ToolEvent {

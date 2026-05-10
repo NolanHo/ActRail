@@ -61,6 +61,7 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		helperBindings:      newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
+		codexLiveMirror:     map[session.SessionID]uint64{},
 		runtimeRestoreDone:  closedRuntimeRestoreDone(),
 		waitStore:           catalog,
 		waitBlockers:        map[string]waitBlocker{},
