@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { TeamMessage, TeamNodeResponse } from "@/lib/types";
+import type { TeamMemberResponse, TeamMessage, TeamNodeResponse } from "@/lib/types";
 
 type TeamNodeStatus = "waiting_for_parent" | "running" | "failed" | "idle" | "completed" | "aborted" | "closed" | string;
 type ThreadMessageKind = "leader" | "member" | "system" | string;
@@ -26,6 +26,14 @@ export interface TeamNode {
   messages: ThreadMessage[];
 }
 
+export interface TeamMember {
+  memberId: string;
+  handle: string;
+  kind: string;
+  displayName: string;
+  description: string;
+}
+
 interface ThreadMessage {
   id: string;
   kind: ThreadMessageKind;
@@ -36,6 +44,7 @@ interface ThreadMessage {
 }
 
 export interface TeamsData {
+  members: TeamMember[];
   roots: TeamNode[];
   totalCount: number;
   nonLeafCount: number;
@@ -120,6 +129,16 @@ function normalizeMessage(message: TeamMessage, index: number): ThreadMessage {
   };
 }
 
+function normalizeMember(member: TeamMemberResponse): TeamMember {
+  return {
+    memberId: member.member_id,
+    handle: member.handle,
+    kind: member.kind || "agent",
+    displayName: member.display_name || member.handle,
+    description: member.description || "",
+  };
+}
+
 function normalizeNode(node: TeamNodeResponse): TeamNode {
   const children = (node.children ?? []).map(normalizeNode);
   const status = normalizeStatus(node.status);
@@ -177,6 +196,7 @@ function selectableNodes(nodes: TeamNode[]) {
 
 export function useTeamsData(refreshMs = 5000): TeamsData {
   const enabled = refreshMs > 0;
+  const [members, setMembers] = useState<TeamMember[]>([]);
   const [roots, setRoots] = useState<TeamNode[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [nonLeafCount, setNonLeafCount] = useState(0);
@@ -186,6 +206,7 @@ export function useTeamsData(refreshMs = 5000): TeamsData {
 
   useEffect(() => {
     if (!enabled) {
+      setMembers([]);
       setLoading(false);
       setError("");
       return;
@@ -201,6 +222,7 @@ export function useTeamsData(refreshMs = 5000): TeamsData {
           return;
         }
         const nextRoots = (response.roots ?? []).map(normalizeNode);
+        setMembers((response.members ?? []).map(normalizeMember));
         setRoots(nextRoots);
         setTotalCount(response.total_count ?? allTeamNodes(nextRoots).length);
         setNonLeafCount(response.non_leaf_count ?? visibleTeamNodes(nextRoots).length);
@@ -257,6 +279,7 @@ export function useTeamsData(refreshMs = 5000): TeamsData {
   }, [enabled]);
 
   return {
+    members,
     roots,
     totalCount,
     nonLeafCount,
@@ -288,6 +311,7 @@ export function TeamsRail({ selectedActorId, data, onSelect }: TeamsRailProps) {
         <p className="sessionsEyebrow">Teams</p>
         <h2 className="sessionsSurfaceTitle">Teams</h2>
         <div className="teamsRailStats" aria-label="Team counts">
+          <span>{data.members.length} members</span>
           <span>{data.nonLeafCount} team leads</span>
           <span>{data.totalCount} total</span>
         </div>
@@ -295,6 +319,11 @@ export function TeamsRail({ selectedActorId, data, onSelect }: TeamsRailProps) {
         <div className="teamsFilterRow" aria-label="Live filters">
           <Badge variant="outline">live</Badge>
           <Badge variant="outline">{data.loading ? "loading" : "synced"}</Badge>
+          {data.members.map((member) => (
+            <Badge key={member.memberId || member.handle} variant="outline" title={member.description || member.displayName}>
+              @{member.handle}
+            </Badge>
+          ))}
         </div>
         {data.error ? <p className="text-xs text-destructive">{data.error}</p> : null}
       </section>

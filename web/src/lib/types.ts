@@ -325,9 +325,18 @@ export interface TeamNodeResponse {
   children?: TeamNodeResponse[];
 }
 
+export interface TeamMemberResponse {
+  member_id: string;
+  handle: string;
+  kind: "human" | "agent" | string;
+  display_name: string;
+  description?: string;
+}
+
 export interface TeamsResponse {
   trace_id?: string;
   ok?: boolean;
+  members?: TeamMemberResponse[];
   roots?: TeamNodeResponse[];
   total_count?: number;
   non_leaf_count?: number;

@@ -23,8 +23,12 @@ type teamCommand struct {
 	SystemPrompt    string          `json:"systemPrompt"`
 	InitialPrompt   string          `json:"initialPrompt"`
 	Prompt          string          `json:"prompt"`
+	TurnID          string          `json:"turnId"`
 	QueuedMessages  []string        `json:"queuedMessages"`
 	Message         string          `json:"message"`
+	To              string          `json:"to"`
+	Question        string          `json:"question"`
+	Context         string          `json:"context"`
 	QuestionID      string          `json:"questionId"`
 	Answer          string          `json:"answer"`
 	RoleConfig      *teamRoleConfig `json:"roleConfig"`
@@ -43,6 +47,10 @@ type teamCommandResult struct {
 	Error          string         `json:"error,omitempty"`
 	ExitCode       *int           `json:"exitCode,omitempty"`
 	Delivery       string         `json:"delivery,omitempty"`
+	QuestionID     string         `json:"questionId,omitempty"`
+	TargetMember   string         `json:"targetMember,omitempty"`
+	Answer         string         `json:"answer,omitempty"`
+	Terminal       string         `json:"terminal,omitempty"`
 }
 
 func (r Router) teamCommand(w http.ResponseWriter, req *http.Request) {
@@ -92,6 +100,16 @@ func (r Router) dispatchTeamCommand(req *http.Request, cmd teamCommand) (teamCom
 	case "team.send":
 		res, err := r.app.SendTeam(req.Context(), app.SendTeamRequest{ActorID: cmd.ActorID, Message: cmd.Message})
 		return teamCommandResult{RequestID: cmd.RequestID, ActorID: res.ActorID, TurnID: res.TurnID, Delivery: res.Delivery}, err
+	case "team.ask", "ask_user":
+		question := strings.TrimSpace(cmd.Question)
+		if question == "" {
+			question = cmd.Message
+		}
+		if strings.TrimSpace(cmd.To) == "" {
+			cmd.To = app.DefaultHumanMemberHandle
+		}
+		res, err := r.app.AskTeam(req.Context(), app.AskTeamRequest{ActorID: cmd.ActorID, To: cmd.To, TurnID: cmd.TurnID, Question: question, Context: cmd.Context})
+		return teamResultFromAskCommand(cmd.RequestID, res), err
 	case "team.answer":
 		res, err := r.app.AnswerTeam(req.Context(), app.AnswerTeamRequest{ActorID: cmd.ActorID, QuestionID: cmd.QuestionID, Answer: cmd.Answer})
 		return teamResultFromTeamCommand(cmd.RequestID, res), err
@@ -111,6 +129,10 @@ func (r Router) dispatchTeamCommand(req *http.Request, cmd teamCommand) (teamCom
 
 func teamResultFromTeamCommand(requestID string, res app.TeamCommandResponse) teamCommandResult {
 	return teamCommandResult{RequestID: requestID, ActorID: res.ActorID, ChildSessionID: res.ChildSessionID, Status: res.Status, TurnID: res.TurnID}
+}
+
+func teamResultFromAskCommand(requestID string, res app.AskParentResponse) teamCommandResult {
+	return teamCommandResult{RequestID: requestID, ActorID: res.ActorID, QuestionID: res.QuestionID, TargetMember: res.TargetMember, Answer: res.Answer, Terminal: res.Terminal}
 }
 
 func (r Router) teamEventsJSON(w http.ResponseWriter, req *http.Request) {

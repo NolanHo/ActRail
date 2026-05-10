@@ -835,6 +835,9 @@ func startReplayHelper(t *testing.T, manifest iod.GenerationManifest, script hel
 			connMu.Unlock()
 			go func() {
 				if err := serveReplayHelperConn(conn, manifest, script); err != nil {
+					if helperConnClosed(err) {
+						return
+					}
 					errCh <- err
 				}
 			}()
@@ -890,6 +893,9 @@ func startCommandHelper(t *testing.T, manifest iod.GenerationManifest, commands 
 			connMu.Unlock()
 			go func() {
 				if err := serveCommandHelperConn(conn, manifest, commands); err != nil {
+					if helperConnClosed(err) {
+						return
+					}
 					errCh <- err
 				}
 			}()

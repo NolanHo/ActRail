@@ -88,6 +88,10 @@ func (s serviceStub) SendTeam(ctx context.Context, req app.SendTeamRequest) (app
 	return s.base.SendTeam(ctx, req)
 }
 
+func (s serviceStub) AskTeam(ctx context.Context, req app.AskTeamRequest) (app.AskParentResponse, error) {
+	return s.base.AskTeam(ctx, req)
+}
+
 func (s serviceStub) AskParent(ctx context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
 	return s.base.AskParent(ctx, req)
 }
@@ -429,6 +433,13 @@ func (s *fixtureService) ListTeams(_ context.Context, req app.ListTeamsRequest) 
 	s.teamsReq = req
 	return app.ListTeamsResponse{
 		OK: true,
+		Members: []app.TeamMember{{
+			MemberID:    app.DefaultHumanMemberID,
+			Handle:      app.DefaultHumanMemberHandle,
+			Kind:        app.TeamMemberKindHuman,
+			DisplayName: app.DefaultHumanMemberDisplayName,
+			Description: app.DefaultHumanMemberDescription,
+		}},
 		Roots: []app.TeamNode{{
 			ActorID:         "actor_lead",
 			ChildSessionID:  "child_lead",
@@ -465,6 +476,10 @@ func (s *fixtureService) FollowupTeam(_ context.Context, req app.FollowupTeamReq
 
 func (s *fixtureService) SendTeam(_ context.Context, req app.SendTeamRequest) (app.TeamDeliveryResponse, error) {
 	return app.TeamDeliveryResponse{OK: true, ActorID: req.ActorID, TurnID: "turn_1", Delivery: "live"}, nil
+}
+
+func (s *fixtureService) AskTeam(_ context.Context, req app.AskTeamRequest) (app.AskParentResponse, error) {
+	return app.AskParentResponse{OK: true, ActorID: req.ActorID, QuestionID: "question_1", TargetMember: req.To, Answer: "answer"}, nil
 }
 
 func (s *fixtureService) AskParent(_ context.Context, req app.AskParentRequest) (app.AskParentResponse, error) {
@@ -986,6 +1001,9 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		if payload.Roots[0].ActorID != "actor_lead" || payload.Roots[0].Children[0].ActorID != "actor_leaf" {
 			t.Fatalf("unexpected team tree: %+v", payload.Roots)
 		}
+		if len(payload.Members) != 1 || payload.Members[0].Handle != app.DefaultHumanMemberHandle || payload.Members[0].Kind != app.TeamMemberKindHuman {
+			t.Fatalf("unexpected team members: %+v", payload.Members)
+		}
 		if !svc.teamsReq.IncludeClosed {
 			t.Fatalf("expected include_closed request, got %+v", svc.teamsReq)
 		}
@@ -1021,6 +1039,23 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		decodeJSON(t, res, &payload)
 		if payload["requestId"] != "req_1" || payload["actorId"] != "actor_1" || payload["childSessionId"] != "s_child" {
 			t.Fatalf("unexpected team command payload: %+v", payload)
+		}
+	})
+
+	t.Run("team command ask human", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"protocol":"pi.team.v1","type":"team.ask","requestId":"req_ask","actorId":"actor_lead","to":"human","turnId":"turn_1","question":"Proceed?","context":"Need approval"}`)
+		req := httptest.NewRequest(http.MethodPost, "/team/command", body)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, res.Code, res.Body.String())
+		}
+
+		var payload map[string]any
+		decodeJSON(t, res, &payload)
+		if payload["requestId"] != "req_ask" || payload["actorId"] != "actor_lead" || payload["questionId"] != "question_1" || payload["targetMember"] != "human" || payload["answer"] != "answer" {
+			t.Fatalf("unexpected ask command payload: %+v", payload)
 		}
 	})
 
