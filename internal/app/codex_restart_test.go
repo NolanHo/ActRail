@@ -13,6 +13,7 @@ import (
 
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
+	"actrail/internal/domain/session"
 )
 
 type codexTestRuntimeIO struct {
@@ -266,6 +267,55 @@ func TestCodexResumeCandidatesScanOnlyRequestedBatch(t *testing.T) {
 	}
 	if len(second.Sessions) != 1 || second.Sessions[0].SessionID != "history:codex:"+middle || second.Sessions[0].FirstUserMessage != "middle prompt" {
 		t.Fatalf("second scan sessions = %+v, want middle only", second.Sessions)
+	}
+}
+
+func TestCodexResumeCandidatesUseActRailRename(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	threadID := "019e1111-0000-7000-8000-000000000004"
+	sourcePath := writeCodexResumeCandidateFile(t, codexHome, threadID, cwd, "first prompt should not be title", time.Unix(1760000300, 0))
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	record, err := svc.registry.Create(sessionCreateSpec{
+		Backend:          session.BackendCodex,
+		CWD:              cwd,
+		Title:            "Original Title",
+		SourcePath:       sourcePath,
+		BackendSessionID: threadID,
+		SourceConfidence: sourceConfidenceExact,
+	})
+	if err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, err := svc.RenameSession(context.Background(), RenameSessionRequest{SessionID: record.identity.SessionID(), Name: "Renamed In ActRail"}); err != nil {
+		t.Fatalf("RenameSession() error = %v", err)
+	}
+
+	resume, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{
+		CWD:          cwd,
+		AgentBackend: "codex",
+		ScanOffset:   0,
+		ScanLimit:    1,
+	})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	var candidate SessionResumeCandidate
+	for _, item := range resume.Sessions {
+		if item.SessionID == "history:codex:"+threadID {
+			candidate = item
+			break
+		}
+	}
+	if candidate.SessionID != "history:codex:"+threadID || candidate.Title != "Renamed In ActRail" || candidate.Alias != "Renamed In ActRail" || candidate.DisplayName != "Renamed In ActRail" {
+		t.Fatalf("resume candidate = %+v, want ActRail rename on historical candidate", candidate)
+	}
+	if candidate.FirstUserMessage != "first prompt should not be title" {
+		t.Fatalf("FirstUserMessage = %q", candidate.FirstUserMessage)
 	}
 }
 

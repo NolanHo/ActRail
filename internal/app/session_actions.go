@@ -223,7 +223,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		}
 	}
 	if backend == session.BackendCodex.String() {
-		scannedCandidates := scanCodexResumeCandidates(cwd, req.ScanOffset, req.ScanLimit)
+		scannedCandidates := s.scanCodexResumeCandidates(cwd, req.ScanOffset, req.ScanLimit)
 		scanOffset = scannedCandidates.Offset
 		scanLimit = scannedCandidates.Limit
 		scanned = scannedCandidates.Scanned
@@ -1124,13 +1124,14 @@ func truncateResumeTitle(value string) string {
 	return string(runes[:80])
 }
 
-func scanCodexResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
+func (s *Stub) scanCodexResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
 	paths := listCodexResumeSourcePaths()
 	start, end := paginate(len(paths), offset, limit)
 	candidates := make([]SessionResumeCandidate, 0, end-start)
 	for _, path := range paths[start:end] {
 		candidate, ok := codexResumeCandidateFromSourcePath(cwd, path)
 		if ok {
+			candidate = s.decorateCodexResumeCandidate(candidate, path)
 			candidates = append(candidates, candidate)
 		}
 	}
@@ -1148,6 +1149,31 @@ func scanCodexResumeCandidates(cwd string, offset, limit int) piResumeCandidateS
 		Remaining: len(paths) - end,
 		Complete:  end >= len(paths),
 	}
+}
+
+func (s *Stub) decorateCodexResumeCandidate(candidate SessionResumeCandidate, sourcePath string) SessionResumeCandidate {
+	if s == nil || s.registry == nil {
+		return candidate
+	}
+	backendSessionID := ""
+	if ref, err := session.ParseHistoricalSessionID(candidate.SessionID); err == nil && ref.Backend == session.BackendCodex {
+		backendSessionID = ref.Durable.String()
+	}
+	owner, ok := s.registry.FindCodexRuntimeOwner(backendSessionID, sourcePath)
+	if !ok {
+		return candidate
+	}
+	name := strings.TrimSpace(sessionDisplayName(owner))
+	if name == "" {
+		name = strings.TrimSpace(displayAlias(owner))
+	}
+	if name == "" {
+		return candidate
+	}
+	candidate.Title = name
+	candidate.Alias = name
+	candidate.DisplayName = name
+	return candidate
 }
 
 func listCodexResumeSourcePaths() []string {
