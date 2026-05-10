@@ -222,38 +222,98 @@ func sessionMessageFromCodexSessionEntry(entry codexSessionLine, lineNo int) (Se
 			return msg, true
 		}
 	case "response_item":
-		if strings.TrimSpace(stringValue(payload["type"])) != "message" {
-			return SessionMessage{}, false
+		switch strings.TrimSpace(stringValue(payload["type"])) {
+		case "message":
+			role := strings.TrimSpace(stringValue(payload["role"]))
+			if role != "assistant" && role != "user" && role != "system" && role != "developer" {
+				return SessionMessage{}, false
+			}
+			text := strings.TrimSpace(codexContentText(payload["content"]))
+			if text == "" {
+				text = strings.TrimSpace(stringValue(payload["text"]))
+			}
+			if text == "" {
+				return SessionMessage{}, false
+			}
+			kind := "message"
+			if codexSessionResponseItemIsInjectedPrompt(role, text) {
+				role = "system"
+				kind = "system_prompt"
+			}
+			msg := SessionMessage{
+				Seq:         uint64(lineNo),
+				Role:        role,
+				Kind:        kind,
+				Text:        text,
+				TS:          ts,
+				EventID:     fmt.Sprintf("codex:item:%s:%06d", role, lineNo),
+				SourceOrder: fmt.Sprintf("codex:%06d", lineNo),
+			}
+			if phase := strings.TrimSpace(stringValue(payload["phase"])); phase != "" {
+				msg.Details = map[string]any{"phase": phase}
+			}
+			return msg, true
+		case "function_call":
+			name := strings.TrimSpace(stringValue(payload["name"]))
+			callID := strings.TrimSpace(stringValue(payload["call_id"]))
+			arguments := strings.TrimSpace(stringValue(payload["arguments"]))
+			if name == "" && callID == "" {
+				return SessionMessage{}, false
+			}
+			msg := SessionMessage{
+				Seq:         uint64(lineNo),
+				Kind:        "tool",
+				Type:        "tool",
+				Text:        arguments,
+				TS:          ts,
+				EventID:     fmt.Sprintf("codex:item:tool:%06d", lineNo),
+				SourceOrder: fmt.Sprintf("codex:%06d", lineNo),
+				Name:        name,
+				Summary:     name,
+				ToolCallID:  callID,
+				Details: map[string]any{
+					"name":      name,
+					"arguments": arguments,
+				},
+			}
+			return msg, true
+		case "function_call_output":
+			callID := strings.TrimSpace(stringValue(payload["call_id"]))
+			output := strings.TrimSpace(stringValue(payload["output"]))
+			if callID == "" && output == "" {
+				return SessionMessage{}, false
+			}
+			msg := SessionMessage{
+				Seq:         uint64(lineNo),
+				Kind:        "tool_result",
+				Type:        "tool_result",
+				Text:        output,
+				TS:          ts,
+				EventID:     fmt.Sprintf("codex:item:tool-result:%06d", lineNo),
+				SourceOrder: fmt.Sprintf("codex:%06d", lineNo),
+				ToolCallID:  callID,
+				IsError:     boolValue(payload["is_error"]) || codexFunctionOutputIsError(output),
+				Details: map[string]any{
+					"output": output,
+				},
+			}
+			return msg, true
+		case "reasoning":
+			summary := strings.TrimSpace(codexReasoningSummary(payload["summary"]))
+			if summary == "" {
+				return SessionMessage{}, false
+			}
+			return SessionMessage{
+				Seq:         uint64(lineNo),
+				Kind:        "reasoning",
+				Type:        "reasoning",
+				Text:        summary,
+				Summary:     summary,
+				TS:          ts,
+				EventID:     fmt.Sprintf("codex:item:reasoning:%06d", lineNo),
+				SourceOrder: fmt.Sprintf("codex:%06d", lineNo),
+			}, true
 		}
-		role := strings.TrimSpace(stringValue(payload["role"]))
-		if role != "assistant" && role != "user" && role != "system" && role != "developer" {
-			return SessionMessage{}, false
-		}
-		text := strings.TrimSpace(codexContentText(payload["content"]))
-		if text == "" {
-			text = strings.TrimSpace(stringValue(payload["text"]))
-		}
-		if text == "" {
-			return SessionMessage{}, false
-		}
-		kind := "message"
-		if codexSessionResponseItemIsInjectedPrompt(role, text) {
-			role = "system"
-			kind = "system_prompt"
-		}
-		msg := SessionMessage{
-			Seq:         uint64(lineNo),
-			Role:        role,
-			Kind:        kind,
-			Text:        text,
-			TS:          ts,
-			EventID:     fmt.Sprintf("codex:item:%s:%06d", role, lineNo),
-			SourceOrder: fmt.Sprintf("codex:%06d", lineNo),
-		}
-		if phase := strings.TrimSpace(stringValue(payload["phase"])); phase != "" {
-			msg.Details = map[string]any{"phase": phase}
-		}
-		return msg, true
 	}
 	return SessionMessage{}, false
 }
@@ -313,6 +373,42 @@ func firstStringValue(values ...any) string {
 		}
 	}
 	return ""
+}
+
+func codexFunctionOutputIsError(output string) bool {
+	text := strings.TrimSpace(output)
+	if text == "" {
+		return false
+	}
+	marker := "Process exited with code "
+	index := strings.LastIndex(text, marker)
+	if index < 0 {
+		return false
+	}
+	code := strings.TrimSpace(text[index+len(marker):])
+	return code != "" && !strings.HasPrefix(code, "0")
+}
+
+func codexReasoningSummary(value any) string {
+	items, ok := value.([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		if text := strings.TrimSpace(stringValue(item)); text != "" {
+			parts = append(parts, text)
+			continue
+		}
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text := strings.TrimSpace(firstStringValue(obj["text"], obj["summary"])); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func duplicateCodexSessionMessage(items []SessionMessage, candidate SessionMessage) bool {

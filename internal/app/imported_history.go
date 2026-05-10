@@ -307,7 +307,7 @@ func filterSessionMessagesForRequest(items []SessionMessage, req SessionMessages
 		}
 		visible = append(visible, item)
 	}
-	return visible
+	return annotateHiddenToolActivitySummaries(visible, items)
 }
 
 func sessionMessageIsToolEvent(item SessionMessage) bool {

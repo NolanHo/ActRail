@@ -112,6 +112,27 @@ interface ToolTracePairInfo {
   id: string;
   state: ToolPairState;
 }
+
+interface BackendToolActivitySummary {
+  operations: number;
+  total_tools: number;
+  tool_calls: number;
+  tool_results: number;
+  running: number;
+  ok: number;
+  failed: number;
+  reasoning: number;
+  todo_snapshots: number;
+  process_updates: number;
+  system_events: number;
+  started_at?: number;
+  last_activity_at?: number;
+  elapsed_seconds?: number;
+  max_tool_call_seconds?: number;
+  running_tool_names?: string[];
+  summary_text?: string;
+  status_text?: string;
+}
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
 const MACHINE_TRACE_VISIBLE_LIMIT = 12;
@@ -2143,6 +2164,74 @@ function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, Assistant
   return result;
 }
 
+function numberFromRecord(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function backendToolActivitySummary(event: MessageEvent): BackendToolActivitySummary | null {
+  const details = asRecord(event.details);
+  const raw = asRecord(details?.tool_activity_summary);
+  if (!raw) {
+    return null;
+  }
+  const totalTools = numberFromRecord(raw, "total_tools");
+  const operations = numberFromRecord(raw, "operations");
+  if (totalTools <= 0 && operations <= 0) {
+    return null;
+  }
+  const runningNames = Array.isArray(raw.running_tool_names)
+    ? raw.running_tool_names.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+  return {
+    operations,
+    total_tools: totalTools,
+    tool_calls: numberFromRecord(raw, "tool_calls"),
+    tool_results: numberFromRecord(raw, "tool_results"),
+    running: numberFromRecord(raw, "running"),
+    ok: numberFromRecord(raw, "ok"),
+    failed: numberFromRecord(raw, "failed"),
+    reasoning: numberFromRecord(raw, "reasoning"),
+    todo_snapshots: numberFromRecord(raw, "todo_snapshots"),
+    process_updates: numberFromRecord(raw, "process_updates"),
+    system_events: numberFromRecord(raw, "system_events"),
+    started_at: numberFromRecord(raw, "started_at") || undefined,
+    last_activity_at: numberFromRecord(raw, "last_activity_at") || undefined,
+    elapsed_seconds: numberFromRecord(raw, "elapsed_seconds") || undefined,
+    max_tool_call_seconds: numberFromRecord(raw, "max_tool_call_seconds") || undefined,
+    running_tool_names: runningNames,
+    summary_text: typeof raw.summary_text === "string" ? raw.summary_text : undefined,
+    status_text: typeof raw.status_text === "string" ? raw.status_text : undefined,
+  };
+}
+
+function toolActivitySummaryFromBackend(summary: BackendToolActivitySummary): ReturnType<typeof buildToolActivitySummary> {
+  const lastActivityAgeSeconds = summary.last_activity_at ? Math.max(0, Date.now() / 1000 - summary.last_activity_at) : null;
+  return {
+    totalTools: summary.total_tools,
+    toolCalls: summary.tool_calls,
+    toolResults: summary.tool_results,
+    running: summary.running,
+    ok: summary.ok,
+    failed: summary.failed,
+    reasoning: summary.reasoning,
+    todoSnapshots: summary.todo_snapshots,
+    processUpdates: summary.process_updates,
+    systemEvents: summary.system_events,
+    startedAt: summary.started_at ?? null,
+    lastActivityAt: summary.last_activity_at ?? null,
+    elapsedSeconds: summary.elapsed_seconds ?? null,
+    lastActivityAgeSeconds,
+    maxRunningSeconds: null,
+    stalled: false,
+    runningToolNames: summary.running_tool_names ?? [],
+    visibleEvents: [],
+    hiddenEventCount: 0,
+    summaryText: summary.summary_text || (summary.total_tools > 0 ? `Ran ${summary.total_tools} ${summary.total_tools === 1 ? "tool" : "tools"}` : "Activity"),
+    statusText: summary.status_text || (summary.failed > 0 ? `${summary.failed} failed` : `${summary.operations} operations`),
+  };
+}
+
 function buildToolTracePairs(events: MessageEvent[]): Map<number, ToolTracePairInfo> {
   const calls = new Map<string, number[]>();
   const results = new Map<string, number[]>();
@@ -2476,10 +2565,12 @@ function MachineTraceSummaryRow({
   summary,
   expanded,
   onToggle,
+  metaLabel,
 }: {
   summary: ReturnType<typeof buildToolActivitySummary>;
   expanded: boolean;
   onToggle: () => void;
+  metaLabel?: string;
 }) {
   const runningLabel = summary.runningToolNames.length ? summary.runningToolNames.join(", ") : "";
   return (
@@ -2508,7 +2599,7 @@ function MachineTraceSummaryRow({
         </span>
       </span>
       <span className="machineTraceSummaryMeta">
-        {summary.hiddenEventCount > 0 && expanded ? `showing ${summary.visibleEvents.length}/${summary.visibleEvents.length + summary.hiddenEventCount}` : expanded ? "Hide" : "Details"}
+        {metaLabel ?? (summary.hiddenEventCount > 0 && expanded ? `showing ${summary.visibleEvents.length}/${summary.visibleEvents.length + summary.hiddenEventCount}` : expanded ? "Hide" : "Details")}
       </span>
     </button>
   );
@@ -2698,6 +2789,19 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
           {renderMachineTraceDetail(selectedEvent, selectedKind, options)}
         </div>
       ) : null}
+    </MessageSurface>
+  );
+}
+
+function BackendMachineTraceSummary({ event }: { event: MessageEvent }) {
+  const summary = backendToolActivitySummary(event);
+  if (!summary) {
+    return null;
+  }
+  const activity = toolActivitySummaryFromBackend(summary);
+  return (
+    <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
+      <MachineTraceSummaryRow summary={activity} expanded={false} onToggle={() => undefined} metaLabel="Summary" />
     </MessageSurface>
   );
 }
@@ -3170,9 +3274,23 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       return out;
     }
 
-    const prevKind = index > 0 ? eventKind(messages[index - 1]) : null;
     const rowKey = messageRowKey(message, kind, index);
     const ts = eventTimestampSeconds(message);
+    const hiddenToolSummary = kind === "assistant" ? backendToolActivitySummary(message) : null;
+    if (hiddenToolSummary) {
+      out.push({
+        key: `machine-summary:${rowKey}`,
+        kind: "machine_trace_summary",
+        grouped: false,
+        events: [message],
+        firstTs: hiddenToolSummary.started_at ?? ts,
+        lastTs: hiddenToolSummary.last_activity_at ?? ts,
+        allowFuzzyLiveMatch: true,
+        allowLegacyFallback: false,
+        messageIndex: index,
+      });
+    }
+    const prevKind = index > 0 ? eventKind(messages[index - 1]) : null;
     out.push({
       key: rowKey,
       kind,
@@ -3441,6 +3559,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                     <div data-row-key={row.key} className={cn("messageRow flex", row.kind, row.grouped && "grouped")}>
                       {row.kind === "machine_trace"
                         ? <CompactMachineTrace events={row.events} options={markdownOptions} isBusy={isBusy && index === rows.length - 1} />
+                        : row.kind === "machine_trace_summary"
+                          ? <BackendMachineTraceSummary event={row.events[0]} />
                         : renderConversationEvent(
                           row.events[0],
                           row.kind,
