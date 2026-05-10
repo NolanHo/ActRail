@@ -1127,12 +1127,44 @@ func truncateResumeTitle(value string) string {
 func (s *Stub) scanCodexResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
 	paths := listCodexResumeSourcePaths()
 	start, end := paginate(len(paths), offset, limit)
+	type pendingName struct {
+		index            int
+		backendSessionID string
+		sourcePath       string
+	}
 	candidates := make([]SessionResumeCandidate, 0, end-start)
+	pendingNames := make([]pendingName, 0, end-start)
 	for _, path := range paths[start:end] {
 		candidate, ok := codexResumeCandidateFromSourcePath(cwd, path)
 		if ok {
-			candidate = s.decorateCodexResumeCandidate(candidate, path)
+			var named bool
+			candidate, named = s.decorateCodexResumeCandidate(candidate, path)
+			if !named {
+				if backendSessionID := codexBackendSessionIDFromHistoricalCandidate(candidate); backendSessionID != "" {
+					pendingNames = append(pendingNames, pendingName{
+						index:            len(candidates),
+						backendSessionID: backendSessionID,
+						sourcePath:       path,
+					})
+				}
+			}
 			candidates = append(candidates, candidate)
+		}
+	}
+	if len(pendingNames) > 0 {
+		ids := make([]string, 0, len(pendingNames))
+		for _, pending := range pendingNames {
+			ids = append(ids, pending.backendSessionID)
+		}
+		indexNames := codexThreadNamesByIDs(ids)
+		for _, pending := range pendingNames {
+			name := strings.TrimSpace(indexNames[pending.backendSessionID])
+			if name == "" {
+				name = codexThreadNameFromSourcePath(pending.sourcePath)
+			}
+			if name != "" {
+				candidates[pending.index] = applyCodexResumeCandidateName(candidates[pending.index], name)
+			}
 		}
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -1151,22 +1183,27 @@ func (s *Stub) scanCodexResumeCandidates(cwd string, offset, limit int) piResume
 	}
 }
 
-func (s *Stub) decorateCodexResumeCandidate(candidate SessionResumeCandidate, sourcePath string) SessionResumeCandidate {
+func (s *Stub) decorateCodexResumeCandidate(candidate SessionResumeCandidate, sourcePath string) (SessionResumeCandidate, bool) {
 	if s == nil || s.registry == nil {
-		return candidate
+		return candidate, false
 	}
-	backendSessionID := ""
-	if ref, err := session.ParseHistoricalSessionID(candidate.SessionID); err == nil && ref.Backend == session.BackendCodex {
-		backendSessionID = ref.Durable.String()
-	}
+	backendSessionID := codexBackendSessionIDFromHistoricalCandidate(candidate)
 	owner, ok := s.registry.FindCodexRuntimeOwner(backendSessionID, sourcePath)
 	if !ok {
-		return candidate
+		return candidate, false
 	}
 	name := strings.TrimSpace(sessionDisplayName(owner))
 	if name == "" {
 		name = strings.TrimSpace(displayAlias(owner))
 	}
+	if name == "" {
+		return candidate, false
+	}
+	return applyCodexResumeCandidateName(candidate, name), true
+}
+
+func applyCodexResumeCandidateName(candidate SessionResumeCandidate, name string) SessionResumeCandidate {
+	name = strings.TrimSpace(name)
 	if name == "" {
 		return candidate
 	}
@@ -1174,6 +1211,91 @@ func (s *Stub) decorateCodexResumeCandidate(candidate SessionResumeCandidate, so
 	candidate.Alias = name
 	candidate.DisplayName = name
 	return candidate
+}
+
+func codexBackendSessionIDFromHistoricalCandidate(candidate SessionResumeCandidate) string {
+	ref, err := session.ParseHistoricalSessionID(candidate.SessionID)
+	if err != nil || ref.Backend != session.BackendCodex {
+		return ""
+	}
+	return strings.TrimSpace(ref.Durable.String())
+}
+
+type codexSessionIndexEntry struct {
+	ID         string `json:"id"`
+	ThreadName string `json:"thread_name"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+func codexThreadNamesByIDs(ids []string) map[string]string {
+	needed := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			needed[id] = struct{}{}
+		}
+	}
+	if len(needed) == 0 {
+		return nil
+	}
+	file, err := os.Open(codexSessionIndexPath())
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	names := make(map[string]string, len(needed))
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), codexSessionFileMaxLineBytes)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry codexSessionIndexEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		id := strings.TrimSpace(entry.ID)
+		name := strings.TrimSpace(entry.ThreadName)
+		if name == "" {
+			continue
+		}
+		if _, ok := needed[id]; ok {
+			names[id] = name
+		}
+	}
+	return names
+}
+
+func codexSessionIndexPath() string {
+	return filepath.Join(filepath.Dir(codexSessionRoot()), "session_index.jsonl")
+}
+
+func codexThreadNameFromSourcePath(sourcePath string) string {
+	file, err := os.Open(strings.TrimSpace(sourcePath))
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	name := ""
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), codexSessionFileMaxLineBytes)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry codexSessionLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return ""
+		}
+		if strings.TrimSpace(entry.Type) != "event_msg" || strings.TrimSpace(stringValue(entry.Payload["type"])) != "thread_name_updated" {
+			continue
+		}
+		if updated := strings.TrimSpace(stringValue(entry.Payload["thread_name"])); updated != "" {
+			name = updated
+		}
+	}
+	return name
 }
 
 func listCodexResumeSourcePaths() []string {

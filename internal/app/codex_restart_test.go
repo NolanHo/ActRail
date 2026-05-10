@@ -319,6 +319,82 @@ func TestCodexResumeCandidatesUseActRailRename(t *testing.T) {
 	}
 }
 
+func TestCodexResumeCandidatesUseCodexSessionIndexName(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	threadID := "019e1111-0000-7000-8000-000000000005"
+	writeCodexResumeCandidateFile(t, codexHome, threadID, cwd, "first prompt should not be title", time.Unix(1760000300, 0))
+	writeCodexSessionIndex(t, codexHome,
+		`{"id":"`+threadID+`","thread_name":"Old Codex Name","updated_at":"2026-05-10T08:00:00Z"}`,
+		`{"id":"`+threadID+`","thread_name":"Codex Indexed Rename","updated_at":"2026-05-10T08:01:00Z"}`,
+	)
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+
+	resume, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{
+		CWD:          cwd,
+		AgentBackend: "codex",
+		ScanOffset:   0,
+		ScanLimit:    1,
+	})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	if len(resume.Sessions) != 1 {
+		t.Fatalf("resume sessions = %+v, want one candidate", resume.Sessions)
+	}
+	candidate := resume.Sessions[0]
+	if candidate.SessionID != "history:codex:"+threadID || candidate.Title != "Codex Indexed Rename" || candidate.Alias != "Codex Indexed Rename" || candidate.DisplayName != "Codex Indexed Rename" {
+		t.Fatalf("resume candidate = %+v, want Codex indexed name", candidate)
+	}
+	if candidate.FirstUserMessage != "first prompt should not be title" {
+		t.Fatalf("FirstUserMessage = %q", candidate.FirstUserMessage)
+	}
+}
+
+func TestCodexResumeCandidatesUseThreadNameUpdatedEvent(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	threadID := "019e1111-0000-7000-8000-000000000006"
+	sourcePath := writeCodexResumeCandidateFile(t, codexHome, threadID, cwd, "first prompt should not be title", time.Unix(1760000300, 0))
+	file, err := os.OpenFile(sourcePath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open source path: %v", err)
+	}
+	if _, err := file.WriteString(`{"timestamp":"2026-05-10T08:00:02Z","type":"event_msg","payload":{"type":"thread_name_updated","thread_id":"` + threadID + `","thread_name":"Event Rename"}}` + "\n"); err != nil {
+		_ = file.Close()
+		t.Fatalf("append source path: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close source path: %v", err)
+	}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+
+	resume, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{
+		CWD:          cwd,
+		AgentBackend: "codex",
+		ScanOffset:   0,
+		ScanLimit:    1,
+	})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	if len(resume.Sessions) != 1 {
+		t.Fatalf("resume sessions = %+v, want one candidate", resume.Sessions)
+	}
+	candidate := resume.Sessions[0]
+	if candidate.SessionID != "history:codex:"+threadID || candidate.Title != "Event Rename" || candidate.Alias != "Event Rename" || candidate.DisplayName != "Event Rename" {
+		t.Fatalf("resume candidate = %+v, want thread_name_updated event name", candidate)
+	}
+}
+
 func writeCodexResumeCandidateFile(t *testing.T, codexHome, threadID, cwd, prompt string, modTime time.Time) string {
 	t.Helper()
 	path := filepath.Join(codexHome, "sessions", "2026", "05", "10", "rollout-2026-05-10T01-02-03-"+threadID+".jsonl")
@@ -339,6 +415,15 @@ func writeCodexResumeCandidateFile(t *testing.T, codexHome, threadID, cwd, promp
 func quoteJSON(value string) string {
 	raw, _ := json.Marshal(value)
 	return string(raw)
+}
+
+func writeCodexSessionIndex(t *testing.T, codexHome string, lines ...string) {
+	t.Helper()
+	path := filepath.Join(codexHome, "session_index.jsonl")
+	body := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write codex session index: %v", err)
+	}
 }
 
 func waitForCodexTestRuntime(t *testing.T, mu *sync.Mutex, runtimes *[]codexTestRuntimeIO, index int) codexTestRuntimeIO {
