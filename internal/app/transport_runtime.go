@@ -201,8 +201,11 @@ func (s *Stub) applyPITransportPacket(sessionID session.SessionID, packet any) e
 	}
 }
 
-func (s *Stub) handlePIHelperReadError(sessionID session.SessionID, err error) {
+func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, err error) {
 	if s == nil || err == nil {
+		return
+	}
+	if generationID != "" && !s.runtimeHelperGenerationCurrent(sessionID, generationID) {
 		return
 	}
 	state, stateErr := s.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
@@ -212,8 +215,13 @@ func (s *Stub) handlePIHelperReadError(sessionID session.SessionID, err error) {
 	if state.Transport.State == SessionTransportStateEnded || state.Transport.State == SessionTransportStateBroken {
 		return
 	}
-	generationID := mustTransportGenerationID(state.Transport.GenerationID)
 	if generationID == "" {
+		generationID = mustTransportGenerationID(state.Transport.GenerationID)
+		if generationID == "" {
+			return
+		}
+	}
+	if strings.TrimSpace(state.Transport.GenerationID) != "" && strings.TrimSpace(state.Transport.GenerationID) != generationID.String() {
 		return
 	}
 	_ = s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String())

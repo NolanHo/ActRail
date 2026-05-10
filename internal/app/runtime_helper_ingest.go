@@ -25,7 +25,7 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 		packet, err := helper.streamClient.ReadPacket(context.Background())
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				s.handlePIHelperReadError(sessionID, err)
+				s.handleHelperReadError(sessionID, backend, helper.generationID, err)
 			}
 			return
 		}
