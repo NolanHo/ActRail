@@ -983,7 +983,8 @@ func teamStatusFromSession(record sessionRecord, transport SessionTransportSnaps
 	case SessionTransportStateBroken, SessionTransportStateFailed:
 		return TeamStatusFailed, transport.Reason
 	case SessionTransportStateEnded:
-		if strings.TrimSpace(transport.Reason) == "pi_agent_grpc_unavailable" {
+		reason := strings.TrimSpace(transport.Reason)
+		if reason == "pi_agent_grpc_unavailable" || (reason == "helper_binding_missing" && record.identity.Backend() == session.BackendCodex) {
 			return TeamStatusFailed, transport.Reason
 		}
 		if record.identity.Backend() != session.BackendCodex {
