@@ -1126,8 +1126,9 @@ func truncateResumeTitle(value string) string {
 
 func scanCodexResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
 	paths := listCodexResumeSourcePaths()
-	candidates := make([]SessionResumeCandidate, 0, len(paths))
-	for _, path := range paths {
+	start, end := paginate(len(paths), offset, limit)
+	candidates := make([]SessionResumeCandidate, 0, end-start)
+	for _, path := range paths[start:end] {
 		candidate, ok := codexResumeCandidateFromSourcePath(cwd, path)
 		if ok {
 			candidates = append(candidates, candidate)
@@ -1139,14 +1140,13 @@ func scanCodexResumeCandidates(cwd string, offset, limit int) piResumeCandidateS
 		}
 		return candidates[i].SessionID < candidates[j].SessionID
 	})
-	start, end := paginate(len(candidates), offset, limit)
 	return piResumeCandidateScan{
-		Sessions:  append([]SessionResumeCandidate(nil), candidates[start:end]...),
+		Sessions:  append([]SessionResumeCandidate(nil), candidates...),
 		Offset:    offset,
 		Limit:     limit,
-		Scanned:   len(paths),
-		Remaining: len(candidates) - end,
-		Complete:  true,
+		Scanned:   end - start,
+		Remaining: len(paths) - end,
+		Complete:  end >= len(paths),
 	}
 }
 
@@ -1248,6 +1248,9 @@ func codexResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string
 					firstUser = strings.TrimSpace(stringValue(entry.Payload["text"]))
 				}
 			}
+		}
+		if sessionID != "" && cwd != "" && firstUser != "" {
+			break
 		}
 	}
 	if scanner.Err() != nil {

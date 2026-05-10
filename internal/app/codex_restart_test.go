@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -218,6 +219,76 @@ func TestCreateCodexSessionFromHistoricalResumeUsesSessionFileThread(t *testing.
 		t.Fatalf("runtime writes = %q, want no new thread/start", strings.Join(runtime.pty.Writes(), "\n"))
 	}
 	_ = runtime.stdout.Close()
+}
+
+func TestCodexResumeCandidatesScanOnlyRequestedBatch(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	newest := "019e1111-0000-7000-8000-000000000001"
+	middle := "019e1111-0000-7000-8000-000000000002"
+	oldest := "019e1111-0000-7000-8000-000000000003"
+	writeCodexResumeCandidateFile(t, codexHome, newest, cwd, "newest prompt", time.Unix(1760000300, 0))
+	writeCodexResumeCandidateFile(t, codexHome, middle, cwd, "middle prompt", time.Unix(1760000200, 0))
+	writeCodexResumeCandidateFile(t, codexHome, oldest, cwd, "oldest prompt", time.Unix(1760000100, 0))
+
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	first, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{
+		CWD:          cwd,
+		AgentBackend: "codex",
+		ScanOffset:   0,
+		ScanLimit:    1,
+	})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates(first) error = %v", err)
+	}
+	if first.Scanned != 1 || first.ScanRemaining != 2 || first.ScanComplete {
+		t.Fatalf("first scan metadata = scanned:%d remaining:%d complete:%v, want 1/2/false", first.Scanned, first.ScanRemaining, first.ScanComplete)
+	}
+	if len(first.Sessions) != 1 || first.Sessions[0].SessionID != "history:codex:"+newest || first.Sessions[0].FirstUserMessage != "newest prompt" {
+		t.Fatalf("first scan sessions = %+v, want newest only", first.Sessions)
+	}
+
+	second, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{
+		CWD:          cwd,
+		AgentBackend: "codex",
+		ScanOffset:   1,
+		ScanLimit:    1,
+	})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates(second) error = %v", err)
+	}
+	if second.Scanned != 1 || second.ScanRemaining != 1 || second.ScanComplete {
+		t.Fatalf("second scan metadata = scanned:%d remaining:%d complete:%v, want 1/1/false", second.Scanned, second.ScanRemaining, second.ScanComplete)
+	}
+	if len(second.Sessions) != 1 || second.Sessions[0].SessionID != "history:codex:"+middle || second.Sessions[0].FirstUserMessage != "middle prompt" {
+		t.Fatalf("second scan sessions = %+v, want middle only", second.Sessions)
+	}
+}
+
+func writeCodexResumeCandidateFile(t *testing.T, codexHome, threadID, cwd, prompt string, modTime time.Time) string {
+	t.Helper()
+	path := filepath.Join(codexHome, "sessions", "2026", "05", "10", "rollout-2026-05-10T01-02-03-"+threadID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir codex session dir: %v", err)
+	}
+	body := `{"timestamp":"2026-05-10T08:00:00Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":` + quoteJSON(cwd) + `}}` + "\n" +
+		`{"timestamp":"2026-05-10T08:00:01Z","type":"event_msg","payload":{"type":"user_message","message":` + quoteJSON(prompt) + `}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write codex session file: %v", err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("chtimes codex session file: %v", err)
+	}
+	return filepath.Clean(path)
+}
+
+func quoteJSON(value string) string {
+	raw, _ := json.Marshal(value)
+	return string(raw)
 }
 
 func waitForCodexTestRuntime(t *testing.T, mu *sync.Mutex, runtimes *[]codexTestRuntimeIO, index int) codexTestRuntimeIO {
