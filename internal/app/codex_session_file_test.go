@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -564,6 +565,9 @@ func TestSessionStateCodexFinalAnswerMirrorsLiveCommits(t *testing.T) {
 	if state.Busy || state.TailSeq != 4 {
 		t.Fatalf("SessionState() = busy:%v tail:%d, want idle tail 4", state.Busy, state.TailSeq)
 	}
+	waitForAppCondition(t, func() bool {
+		return len(sink.snapshot().commits) == 2
+	})
 	snapshot := sink.snapshot()
 	if len(snapshot.commits) != 2 {
 		t.Fatalf("live commits = %+v, want commentary/final", snapshot.commits)
@@ -578,6 +582,72 @@ func TestSessionStateCodexFinalAnswerMirrorsLiveCommits(t *testing.T) {
 	if len(sink.snapshot().commits) != 2 {
 		t.Fatalf("live commits after second state = %d, want no duplicates", len(sink.snapshot().commits))
 	}
+}
+
+func TestSessionStateCodexFinalAnswerDoesNotBlockOnLiveCommitPublish(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_state_nonblocking")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-state-nonblocking","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"weekly report"}}`,
+		`{"timestamp":"2026-05-08T15:58:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"checking","phase":"commentary"}}`,
+		`{"timestamp":"2026-05-08T15:59:11.297Z","type":"event_msg","payload":{"type":"agent_message","message":"done","phase":"final_answer"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	sink := &blockingCommitSink{started: make(chan struct{}), release: make(chan struct{})}
+	svc.SetRuntimeEventSink(sink)
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_state_nonblocking", "t_state_nonblocking", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-state-nonblocking",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)},
+		Transport:        SessionTransportSnapshot{State: SessionTransportStateStarting, Reason: "codex_thread_resuming"},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy {
+		t.Fatalf("SessionState().Busy = true, want idle even when live commit publishing is blocked")
+	}
+	select {
+	case <-sink.started:
+	case <-time.After(time.Second):
+		t.Fatal("PublishMessageCommit did not start")
+	}
+	close(sink.release)
+}
+
+type blockingCommitSink struct {
+	captureRuntimeSink
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingCommitSink) PublishMessageCommit(event MessageCommitEvent) {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	s.captureRuntimeSink.PublishMessageCommit(event)
 }
 
 func TestListSessionsCodexFinalAnswerDoesNotScanSessionFile(t *testing.T) {
