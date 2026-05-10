@@ -121,8 +121,8 @@ func TestSessionRegistryListPreservesCreationOrder(t *testing.T) {
 }
 
 func TestNormalizeSessionTitleFallsBackToCWD(t *testing.T) {
-	if got := normalizeSessionTitle("  ", "/root/code/ActRail"); got != "/root/code/ActRail" {
-		t.Fatalf("normalizeSessionTitle() = %q, want %q", got, "/root/code/ActRail")
+	if got := normalizeSessionTitle("  ", "/root/code/ActRail"); got != "ActRail" {
+		t.Fatalf("normalizeSessionTitle() = %q, want %q", got, "ActRail")
 	}
 	if got := normalizeSessionTitle("  Focus  ", "/root/code/ActRail"); got != "Focus" {
 		t.Fatalf("normalizeSessionTitle() explicit = %q, want %q", got, "Focus")
