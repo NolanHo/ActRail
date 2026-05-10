@@ -568,7 +568,7 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	if !complete {
 		return record
 	}
-	s.emitCodexSessionFileLiveCommits(record.identity.SessionID(), items)
+	go s.emitCodexSessionFileLiveCommits(record.identity.SessionID(), items)
 	s.reconcileCodexSessionFileCompletion(record, complete)
 	updated, ok := s.registry.Lookup(record.identity.SessionID())
 	if !ok {
