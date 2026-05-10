@@ -185,3 +185,16 @@ func TestDecodeAppServerLineTurnTimingAndCompletion(t *testing.T) {
 		t.Fatalf("completed events = %+v, want commit-like boundary", completed.Events)
 	}
 }
+
+func TestDecodeAppServerLineSessionTaskCompleteClearsBusy(t *testing.T) {
+	projection, ok := DecodeAppServerLine([]byte(`{"timestamp":"2026-05-10T08:22:58.956Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-codex-task-complete","last_agent_message":null,"completed_at":1778401378}}`))
+	if !ok {
+		t.Fatal("DecodeAppServerLine(task_complete) ok = false")
+	}
+	if projection.TurnID != "turn-codex-task-complete" {
+		t.Fatalf("projection.TurnID = %q, want task_complete turn id", projection.TurnID)
+	}
+	if !projection.ClearTurn || projection.Busy == nil || *projection.Busy {
+		t.Fatalf("projection busy/clear = (%v, %v), want false/true", projection.Busy, projection.ClearTurn)
+	}
+}

@@ -196,7 +196,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 	seen := make(map[string]struct{}, len(ordered))
 	if req.ScanOffset <= 0 {
 		for _, item := range ordered {
-			if item.record.identity.Backend() != session.BackendPI || strings.TrimSpace(item.record.importedSourcePath) == "" {
+			if strings.TrimSpace(item.record.importedSourcePath) == "" && strings.TrimSpace(item.record.importedBackendSessionID) == "" {
 				continue
 			}
 			candidate := sessionResumeCandidateFromRecord(item.record, item.updatedAt)
@@ -207,6 +207,21 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 	scanOffset, scanLimit, scanned, scanRemaining, scanComplete := 0, 0, 0, 0, true
 	if backend == "" || backend == session.BackendPI.String() {
 		scannedCandidates := s.scanPIResumeCandidates(cwd, req.ScanOffset, req.ScanLimit)
+		scanOffset = scannedCandidates.Offset
+		scanLimit = scannedCandidates.Limit
+		scanned = scannedCandidates.Scanned
+		scanRemaining = scannedCandidates.Remaining
+		scanComplete = scannedCandidates.Complete
+		for _, candidate := range scannedCandidates.Sessions {
+			if _, ok := seen[candidate.SessionID]; ok {
+				continue
+			}
+			seen[candidate.SessionID] = struct{}{}
+			resumeItems = append(resumeItems, candidate)
+		}
+	}
+	if backend == session.BackendCodex.String() {
+		scannedCandidates := scanCodexResumeCandidates(cwd, req.ScanOffset, req.ScanLimit)
 		scanOffset = scannedCandidates.Offset
 		scanLimit = scannedCandidates.Limit
 		scanned = scannedCandidates.Scanned
@@ -1078,6 +1093,163 @@ func truncateResumeTitle(value string) string {
 		return trimmed
 	}
 	return string(runes[:80])
+}
+
+func scanCodexResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
+	paths := listCodexResumeSourcePaths()
+	candidates := make([]SessionResumeCandidate, 0, len(paths))
+	for _, path := range paths {
+		candidate, ok := codexResumeCandidateFromSourcePath(cwd, path)
+		if ok {
+			candidates = append(candidates, candidate)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].UpdatedTS != candidates[j].UpdatedTS {
+			return candidates[i].UpdatedTS > candidates[j].UpdatedTS
+		}
+		return candidates[i].SessionID < candidates[j].SessionID
+	})
+	start, end := paginate(len(candidates), offset, limit)
+	return piResumeCandidateScan{
+		Sessions:  append([]SessionResumeCandidate(nil), candidates[start:end]...),
+		Offset:    offset,
+		Limit:     limit,
+		Scanned:   len(paths),
+		Remaining: len(candidates) - end,
+		Complete:  true,
+	}
+}
+
+func listCodexResumeSourcePaths() []string {
+	root := codexSessionRoot()
+	entries := make([]piResumePathEntry, 0)
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" || !strings.HasPrefix(entry.Name(), "rollout-") {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		entries = append(entries, piResumePathEntry{Path: filepath.Clean(path), ModTime: info.ModTime()})
+		return nil
+	})
+	sort.SliceStable(entries, func(i, j int) bool {
+		if !entries[i].ModTime.Equal(entries[j].ModTime) {
+			return entries[i].ModTime.After(entries[j].ModTime)
+		}
+		return entries[i].Path < entries[j].Path
+	})
+	paths := make([]string, len(entries))
+	for i, entry := range entries {
+		paths[i] = entry.Path
+	}
+	return paths
+}
+
+func codexResumeCandidateFromSourcePath(cwd, sourcePath string) (SessionResumeCandidate, bool) {
+	backendSessionID, sourceCWD, firstUser, ok := codexResumeCandidateMetaFromSourcePath(sourcePath)
+	if !ok {
+		return SessionResumeCandidate{}, false
+	}
+	if sourceCWD != "" && !sameSessionCWD(sourceCWD, cwd) {
+		return SessionResumeCandidate{}, false
+	}
+	durableID, err := session.NewDurableID(backendSessionID)
+	if err != nil {
+		return SessionResumeCandidate{}, false
+	}
+	sessionID, err := session.NewHistoricalSessionID(session.BackendCodex, durableID)
+	if err != nil {
+		return SessionResumeCandidate{}, false
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil || info.IsDir() {
+		return SessionResumeCandidate{}, false
+	}
+	title := truncateResumeTitle(firstUser)
+	if title == "" {
+		title = backendSessionID
+	}
+	return SessionResumeCandidate{
+		SessionID:        sessionID.String(),
+		Title:            title,
+		Alias:            title,
+		DisplayName:      title,
+		CWD:              sourceCWD,
+		FirstUserMessage: firstUser,
+		UpdatedTS:        timestampSeconds(info.ModTime()),
+	}, true
+}
+
+func codexResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string, cwd string, firstUser string, ok bool) {
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return "", "", "", false
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), codexSessionFileMaxLineBytes)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry codexSessionLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return "", "", "", false
+		}
+		switch strings.TrimSpace(entry.Type) {
+		case "session_meta":
+			if entry.Payload != nil {
+				sessionID = firstNonEmptyString(sessionID, strings.TrimSpace(stringValue(entry.Payload["id"])))
+				cwd = firstNonEmptyString(cwd, strings.TrimSpace(stringValue(entry.Payload["cwd"])))
+			}
+		case "event_msg":
+			if firstUser == "" && strings.TrimSpace(stringValue(entry.Payload["type"])) == "user_message" {
+				firstUser = strings.TrimSpace(firstStringValue(entry.Payload["message"], entry.Payload["text"]))
+			}
+		case "response_item":
+			if firstUser == "" &&
+				strings.TrimSpace(stringValue(entry.Payload["type"])) == "message" &&
+				strings.TrimSpace(stringValue(entry.Payload["role"])) == "user" {
+				firstUser = strings.TrimSpace(codexContentText(entry.Payload["content"]))
+				if firstUser == "" {
+					firstUser = strings.TrimSpace(stringValue(entry.Payload["text"]))
+				}
+			}
+		}
+	}
+	if scanner.Err() != nil {
+		return "", "", "", false
+	}
+	return sessionID, cwd, firstUser, sessionID != ""
+}
+
+func codexSourcePathForHistoricalSession(cwd string, sessionID session.SessionID) (string, string, bool) {
+	ref, err := session.ParseHistoricalSessionID(sessionID.String())
+	if err != nil || ref.Backend != session.BackendCodex {
+		return "", "", false
+	}
+	if path, ok := discoverCodexSessionFileByID(context.Background(), ref.Durable.String()); ok {
+		candidate, candidateOK := codexResumeCandidateFromSourcePath(cwd, path)
+		if candidateOK && candidate.SessionID == sessionID.String() {
+			return path, ref.Durable.String(), true
+		}
+	}
+	return "", "", false
+}
+
+func sourcePathForHistoricalSession(cwd string, sessionID session.SessionID, backend session.Backend) (string, string, bool) {
+	switch backend {
+	case session.BackendPI:
+		return piSourcePathForHistoricalSession(cwd, sessionID)
+	case session.BackendCodex:
+		return codexSourcePathForHistoricalSession(cwd, sessionID)
+	default:
+		return "", "", false
+	}
 }
 
 func piSourcePathForHistoricalSession(cwd string, sessionID session.SessionID) (string, string, bool) {

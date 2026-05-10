@@ -35,11 +35,13 @@ type TurnTiming struct {
 }
 
 type appServerLine struct {
-	ID     string          `json:"id"`
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params"`
-	Result json.RawMessage `json:"result"`
-	Error  json.RawMessage `json:"error"`
+	ID      string          `json:"id"`
+	Type    string          `json:"type"`
+	Method  string          `json:"method"`
+	Payload json.RawMessage `json:"payload"`
+	Params  json.RawMessage `json:"params"`
+	Result  json.RawMessage `json:"result"`
+	Error   json.RawMessage `json:"error"`
 }
 
 type threadEnvelope struct {
@@ -88,6 +90,9 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 	var line appServerLine
 	if err := json.Unmarshal(raw, &line); err != nil {
 		return Projection{}, false
+	}
+	if strings.TrimSpace(line.Type) == "event_msg" {
+		return decodeSessionEventMessage(line.Payload)
 	}
 	if strings.TrimSpace(line.Method) != "" {
 		switch strings.TrimSpace(line.Method) {
@@ -279,6 +284,25 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 		return Projection{Desynced: true}, true
 	}
 	return Projection{}, false
+}
+
+func decodeSessionEventMessage(raw json.RawMessage) (Projection, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return Projection{}, false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return Projection{}, true
+	}
+	if strings.TrimSpace(stringValue(payload["type"])) != "task_complete" {
+		return Projection{}, true
+	}
+	turnID := strings.TrimSpace(stringValue(payload["turn_id"]))
+	if turnID == "" {
+		turnID = strings.TrimSpace(stringValue(payload["turnId"]))
+	}
+	busy := false
+	return Projection{TurnID: turnID, ClearTurn: true, Busy: &busy}, true
 }
 
 func alreadyInitializedError(raw json.RawMessage) bool {

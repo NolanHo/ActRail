@@ -285,7 +285,7 @@ describe("NewSessionDialog", () => {
     expect(root.textContent).not.toContain("Old history");
   });
 
-  it("hides resume history when the selected backend does not support it", async () => {
+  it("shows resume history for codex when the backend supports it", async () => {
     const { api } = await import("../../lib/api");
     vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
       exists: true,
@@ -307,7 +307,7 @@ describe("NewSessionDialog", () => {
           pi: {},
         },
         backend_capabilities: {
-          codex: { resume_history: false },
+          codex: { resume_history: true },
           pi: { resume_history: true },
         },
       },
@@ -326,8 +326,16 @@ describe("NewSessionDialog", () => {
     await wait(220);
     await flush();
 
-    expect(root.textContent).not.toContain("Resume");
-    expect(api.getSessionResumeCandidates).not.toHaveBeenCalled();
+    const resumeTab = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Resume") as HTMLButtonElement;
+    expect(resumeTab).toBeDefined();
+    await act(async () => {
+      resumeTab.click();
+    });
+    await wait(220);
+    await flush();
+
+    expect(root.textContent).toContain("Codex history");
+    expect(api.getSessionResumeCandidates).toHaveBeenCalledWith("/root/docs", "codex", { offset: 0, limit: 0, scanOffset: 0, scanLimit: 20 });
   });
 
   it("creates a session and selects the returned session id", async () => {
