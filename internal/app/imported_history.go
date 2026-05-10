@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -535,14 +536,11 @@ func (s *Stub) reconcilePIAuthoritativeFinal(record sessionRecord, items []Sessi
 }
 
 func (s *Stub) reconcileCodexSessionFileFinal(record sessionRecord, items []SessionMessage) {
-	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) || len(items) == 0 {
-		return
-	}
-	last := items[len(items)-1]
-	if last.Role != "assistant" || strings.TrimSpace(last.Text) == "" {
-		return
-	}
-	if strings.TrimSpace(stringValue(last.Details["phase"])) != "final_answer" {
+	s.reconcileCodexSessionFileCompletion(record, codexSessionMessagesHaveAuthoritativeCompletion(items))
+}
+
+func (s *Stub) reconcileCodexSessionFileCompletion(record sessionRecord, complete bool) {
+	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) || !complete {
 		return
 	}
 	s.completeCodexRuntimeFromAuthoritativeSource(record.identity.SessionID())
@@ -560,11 +558,18 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 		s.rememberCodexThreadBinding(record, threadID, sourcePath)
 	}
 	items, err := codexSessionMessagesFromFile(ctx, sourcePath)
-	if err != nil || !codexSessionFileHasFinalAnswer(items) {
+	if err != nil {
+		return record
+	}
+	complete := codexSessionMessagesHaveAuthoritativeCompletion(items)
+	if !complete {
+		complete = codexSessionFileHasTaskComplete(ctx, sourcePath)
+	}
+	if !complete {
 		return record
 	}
 	s.emitCodexSessionFileLiveCommits(record.identity.SessionID(), items)
-	s.reconcileCodexSessionFileFinal(record, items)
+	s.reconcileCodexSessionFileCompletion(record, complete)
 	updated, ok := s.registry.Lookup(record.identity.SessionID())
 	if !ok {
 		return record
@@ -714,10 +719,11 @@ func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRe
 		return SessionMessagesResponse{}, false, nil
 	}
 	if items, ok := s.messageCache.Get(sessionID, cacheKey); ok {
-		if !codexSessionFileHistoryUsable(record, items) {
+		complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, sourcePath)
+		if !codexSessionFileHistoryUsable(record, items, complete) {
 			return SessionMessagesResponse{}, false, nil
 		}
-		s.reconcileCodexSessionFileFinal(record, items)
+		s.reconcileCodexSessionFileCompletion(record, complete)
 		return paginateSessionMessagesForRequest(items, req), true, nil
 	}
 	items, err := codexSessionMessagesFromFile(ctx, sourcePath)
@@ -727,19 +733,20 @@ func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRe
 	if len(items) == 0 {
 		return SessionMessagesResponse{}, false, nil
 	}
-	if !codexSessionFileHistoryUsable(record, items) {
+	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, sourcePath)
+	if !codexSessionFileHistoryUsable(record, items, complete) {
 		return SessionMessagesResponse{}, false, nil
 	}
-	s.reconcileCodexSessionFileFinal(record, items)
+	s.reconcileCodexSessionFileCompletion(record, complete)
 	s.messageCache.Put(sessionID, cacheKey, items)
 	return paginateSessionMessagesForRequest(items, req), true, nil
 }
 
-func codexSessionFileHistoryUsable(record sessionRecord, items []SessionMessage) bool {
+func codexSessionFileHistoryUsable(record sessionRecord, items []SessionMessage, complete bool) bool {
 	if len(items) == 0 {
 		return false
 	}
-	if codexSessionFileHasFinalAnswer(items) {
+	if complete {
 		return true
 	}
 	if _, ok := record.transcript.PartialAssistantTurn(); ok {
@@ -752,14 +759,66 @@ func codexSessionFileHistoryUsable(record sessionRecord, items []SessionMessage)
 }
 
 func codexSessionFileHasFinalAnswer(items []SessionMessage) bool {
+	return codexSessionMessagesHaveAuthoritativeCompletion(items)
+}
+
+func codexSessionMessagesHaveAuthoritativeCompletion(items []SessionMessage) bool {
 	for i := len(items) - 1; i >= 0; i-- {
 		item := items[i]
-		if item.Role != "assistant" || strings.TrimSpace(item.Text) == "" {
+		if strings.TrimSpace(item.Text) == "" {
 			continue
+		}
+		if item.Role != "assistant" {
+			return false
 		}
 		return strings.TrimSpace(stringValue(item.Details["phase"])) == "final_answer"
 	}
 	return false
+}
+
+func codexSessionFileHasTaskComplete(ctx context.Context, sourcePath string) bool {
+	if strings.TrimSpace(sourcePath) == "" {
+		return false
+	}
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), codexSessionFileMaxLineBytes)
+	lastRelevant := ""
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry codexSessionLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return false
+		}
+		switch strings.TrimSpace(entry.Type) {
+		case "event_msg":
+			switch strings.TrimSpace(stringValue(entry.Payload["type"])) {
+			case "user_message", "agent_message", "task_complete":
+				lastRelevant = strings.TrimSpace(stringValue(entry.Payload["type"]))
+			}
+		case "response_item":
+			if strings.TrimSpace(stringValue(entry.Payload["type"])) != "message" {
+				continue
+			}
+			switch strings.TrimSpace(stringValue(entry.Payload["role"])) {
+			case "user", "assistant":
+				lastRelevant = "response_message"
+			}
+		}
+	}
+	return scanner.Err() == nil && lastRelevant == "task_complete"
 }
 
 func (s *Stub) codexThreadIDForRuntimeRestart(ctx context.Context, record sessionRecord) (string, error) {

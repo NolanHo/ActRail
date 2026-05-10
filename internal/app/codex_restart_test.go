@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -94,6 +96,137 @@ func TestRestartCodexSessionResumesExistingThread(t *testing.T) {
 	})
 	_ = first.stdout.Close()
 	_ = second.stdout.Close()
+}
+
+func TestCreateCodexSessionFromLiveResumeUsesExistingThread(t *testing.T) {
+	const threadID = "thread-codex-live-resume-1"
+
+	runtimes := make([]codexTestRuntimeIO, 0, 2)
+	var runtimesMu sync.Mutex
+	runner := &process.FakeRunner{
+		HandleBuild: func(spec process.LaunchSpec) process.Handle {
+			stdoutR, stdoutW := io.Pipe()
+			pty := &recordingPTY{reader: stdoutR}
+			handle := process.NewFakeHandle(spec)
+			handle.SetPTY(pty)
+			runtimesMu.Lock()
+			runtimes = append(runtimes, codexTestRuntimeIO{pty: pty, stdout: stdoutW})
+			runtimesMu.Unlock()
+			return handle
+		},
+	}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	first := waitForCodexTestRuntime(t, &runtimesMu, &runtimes, 0)
+	waitForAppCondition(t, func() bool {
+		return writesContain(first.pty.Writes(), `"method":"initialize"`)
+	})
+	if _, err := io.WriteString(first.stdout, `{"id":"initialize-1","result":{"protocolVersion":1}}`+"\n"); err != nil {
+		t.Fatalf("write first initialize response: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		return writesContain(first.pty.Writes(), `"method":"thread/start"`)
+	})
+	if _, err := io.WriteString(first.stdout, `{"method":"thread/started","params":{"thread":{"id":"`+threadID+`","status":{"type":"idle"}}}}`+"\n"); err != nil {
+		t.Fatalf("write first thread started: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		return ok && record.importedBackendSessionID == threadID
+	})
+
+	resumeID := created.Session.SessionID
+	resumed, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail", ResumeSessionID: &resumeID})
+	if err != nil {
+		t.Fatalf("CreateSession(resume codex) error = %v", err)
+	}
+	if resumed.Session.SessionID == created.Session.SessionID {
+		t.Fatalf("resumed session id = %q, want a new ActRail slot bound to existing Codex thread", resumed.Session.SessionID)
+	}
+	second := waitForCodexTestRuntime(t, &runtimesMu, &runtimes, 1)
+	waitForAppCondition(t, func() bool {
+		return writesContain(second.pty.Writes(), `"method":"initialize"`)
+	})
+	if _, err := io.WriteString(second.stdout, `{"id":"initialize-1","result":{"protocolVersion":1}}`+"\n"); err != nil {
+		t.Fatalf("write second initialize response: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		writes := second.pty.Writes()
+		return writesContain(writes, `"method":"thread/resume"`) && writesContain(writes, `"threadId":"`+threadID+`"`)
+	})
+	if writesContain(second.pty.Writes(), `"method":"thread/start"`) {
+		t.Fatalf("second runtime writes = %q, want no new thread/start", strings.Join(second.pty.Writes(), "\n"))
+	}
+	_ = first.stdout.Close()
+	_ = second.stdout.Close()
+}
+
+func TestCreateCodexSessionFromHistoricalResumeUsesSessionFileThread(t *testing.T) {
+	const threadID = "019e0500-1111-7222-8333-444455556666"
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	sessionDir := filepath.Join(codexHome, "sessions", "2026", "05", "10")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir codex session dir: %v", err)
+	}
+	sessionPath := filepath.Join(sessionDir, "rollout-2026-05-10T01-02-03-"+threadID+".jsonl")
+	body := `{"timestamp":"2026-05-10T08:00:00Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":"` + cwd + `"}}` + "\n" +
+		`{"timestamp":"2026-05-10T08:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"resume codex please"}}` + "\n"
+	if err := os.WriteFile(sessionPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write codex session file: %v", err)
+	}
+
+	runtimes := make([]codexTestRuntimeIO, 0, 1)
+	var runtimesMu sync.Mutex
+	runner := &process.FakeRunner{
+		HandleBuild: func(spec process.LaunchSpec) process.Handle {
+			stdoutR, stdoutW := io.Pipe()
+			pty := &recordingPTY{reader: stdoutR}
+			handle := process.NewFakeHandle(spec)
+			handle.SetPTY(pty)
+			runtimesMu.Lock()
+			runtimes = append(runtimes, codexTestRuntimeIO{pty: pty, stdout: stdoutW})
+			runtimesMu.Unlock()
+			return handle
+		},
+	}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	candidates, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{CWD: cwd, AgentBackend: "codex"})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates(codex) error = %v", err)
+	}
+	if len(candidates.Sessions) != 1 || candidates.Sessions[0].SessionID != "history:codex:"+threadID || candidates.Sessions[0].FirstUserMessage != "resume codex please" {
+		t.Fatalf("SessionResumeCandidates(codex) = %+v, want historical codex candidate", candidates)
+	}
+
+	resumeID := candidates.Sessions[0].SessionID
+	if _, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: cwd, ResumeSessionID: &resumeID}); err != nil {
+		t.Fatalf("CreateSession(historical codex resume) error = %v", err)
+	}
+	runtime := waitForCodexTestRuntime(t, &runtimesMu, &runtimes, 0)
+	waitForAppCondition(t, func() bool {
+		return writesContain(runtime.pty.Writes(), `"method":"initialize"`)
+	})
+	if _, err := io.WriteString(runtime.stdout, `{"id":"initialize-1","result":{"protocolVersion":1}}`+"\n"); err != nil {
+		t.Fatalf("write initialize response: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		writes := runtime.pty.Writes()
+		return writesContain(writes, `"method":"thread/resume"`) && writesContain(writes, `"threadId":"`+threadID+`"`)
+	})
+	if writesContain(runtime.pty.Writes(), `"method":"thread/start"`) {
+		t.Fatalf("runtime writes = %q, want no new thread/start", strings.Join(runtime.pty.Writes(), "\n"))
+	}
+	_ = runtime.stdout.Close()
 }
 
 func waitForCodexTestRuntime(t *testing.T, mu *sync.Mutex, runtimes *[]codexTestRuntimeIO, index int) codexTestRuntimeIO {

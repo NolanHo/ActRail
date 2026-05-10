@@ -405,7 +405,7 @@ func backendCapabilitySnapshot(backend string) BackendCapabilitySnapshot {
 			IODUnix:               true,
 			GRPC:                  false,
 			Supervisor:            false,
-			ResumeHistory:         false,
+			ResumeHistory:         true,
 		}
 	default:
 		return BackendCapabilitySnapshot{}

@@ -533,12 +533,16 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 			return CreateSessionResponse{}, Invalid("resume_session_id", err.Error())
 		}
 		if parsed.IsHistorical() {
-			if backend != session.BackendPI {
-				return CreateSessionResponse{}, Invalid("resume_session_id", "historical Pi resume requires pi backend")
+			ref, err := session.ParseHistoricalSessionID(parsed.String())
+			if err != nil {
+				return CreateSessionResponse{}, Invalid("resume_session_id", err.Error())
 			}
-			path, backendSessionID, ok := piSourcePathForHistoricalSession(cwd, parsed)
+			if backend != ref.Backend {
+				return CreateSessionResponse{}, Invalid("resume_session_id", "historical session backend does not match requested backend")
+			}
+			path, backendSessionID, ok := sourcePathForHistoricalSession(cwd, parsed, backend)
 			if !ok {
-				return CreateSessionResponse{}, NotFound(fmt.Sprintf("pi session %q not found for cwd %q", parsed, cwd))
+				return CreateSessionResponse{}, NotFound(fmt.Sprintf("%s session %q not found for cwd %q", backend, parsed, cwd))
 			}
 			resumeSourcePath = path
 			resumeBackendSessionID = backendSessionID
@@ -550,18 +554,44 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 			if backend != record.identity.Backend() {
 				return CreateSessionResponse{}, Invalid("resume_session_id", "resume session backend does not match requested backend")
 			}
-			if backend != session.BackendPI {
-				return CreateSessionResponse{}, Unsupported("session resume is only implemented for pi backend history")
-			}
-			resumeSourcePath = strings.TrimSpace(record.importedSourcePath)
-			if resumeSourcePath == "" {
-				return CreateSessionResponse{}, NotFound(fmt.Sprintf("pi session %q has no source path to resume", parsed))
-			}
-			resumeBackendSessionID = strings.TrimSpace(record.importedBackendSessionID)
-			if resumeBackendSessionID == "" {
-				if backendSessionID, ok, err := piSessionIDFromSourcePath(resumeSourcePath); err == nil && ok {
-					resumeBackendSessionID = backendSessionID
+			switch backend {
+			case session.BackendPI:
+				resumeSourcePath = strings.TrimSpace(record.importedSourcePath)
+				if resumeSourcePath == "" {
+					return CreateSessionResponse{}, NotFound(fmt.Sprintf("pi session %q has no source path to resume", parsed))
 				}
+				resumeBackendSessionID = strings.TrimSpace(record.importedBackendSessionID)
+				if resumeBackendSessionID == "" {
+					if backendSessionID, ok, err := piSessionIDFromSourcePath(resumeSourcePath); err == nil && ok {
+						resumeBackendSessionID = backendSessionID
+					}
+				}
+			case session.BackendCodex:
+				resumeSourcePath = strings.TrimSpace(record.importedSourcePath)
+				resumeBackendSessionID = strings.TrimSpace(record.importedBackendSessionID)
+				if resumeBackendSessionID == "" {
+					if record.runtime.codex != nil {
+						_, threadID, _ := record.runtime.codex.snapshot()
+						resumeBackendSessionID = strings.TrimSpace(threadID)
+					}
+				}
+				if resumeBackendSessionID == "" && resumeSourcePath != "" {
+					if threadID, ok, err := codexSessionIDFromFile(ctx, resumeSourcePath); err != nil {
+						return CreateSessionResponse{}, err
+					} else if ok {
+						resumeBackendSessionID = threadID
+					}
+				}
+				if resumeBackendSessionID == "" {
+					return CreateSessionResponse{}, NotFound(fmt.Sprintf("codex session %q has no thread id to resume", parsed))
+				}
+				if resumeSourcePath == "" {
+					if path, ok := discoverCodexSessionFileByID(ctx, resumeBackendSessionID); ok {
+						resumeSourcePath = path
+					}
+				}
+			default:
+				return CreateSessionResponse{}, Unsupported("session resume is not implemented for this backend")
 			}
 		}
 	}
@@ -590,6 +620,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		Model:           optionalString(req.Model),
 		ReasoningEffort: optionalString(req.ReasoningEffort),
 		SessionPath:     sourcePath,
+		CodexThreadID:   resumeBackendSessionID,
 		PIAgentGRPC:     createSessionUsesPIAgentGRPC(req, backend),
 	})
 	if err != nil {
