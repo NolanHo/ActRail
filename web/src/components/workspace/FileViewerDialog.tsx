@@ -267,7 +267,7 @@ function shouldUseCompactFileViewer() {
 
 function PlainTextWorkspace({ value }: { value: string }) {
   return (
-    <ScrollArea className="fileViewerSurface rounded-2xl border border-border/60 bg-slate-950 p-4 text-slate-100" data-testid="file-text-view">
+    <ScrollArea className="codeSurface fileViewerSurface rounded-2xl border border-border/60 p-4" data-testid="file-text-view">
       <pre data-testid="file-text-body" className="whitespace-pre-wrap break-words text-sm leading-6">{value}</pre>
     </ScrollArea>
   );
@@ -276,12 +276,12 @@ function PlainTextWorkspace({ value }: { value: string }) {
 function PlainDiffWorkspace({ baseText, currentText }: { baseText: string; currentText: string }) {
   return (
     <div className="fileViewerDiffSurface grid gap-4" data-testid="file-diff-view">
-      <ScrollArea className="rounded-2xl border border-border/60 bg-slate-950 p-4 text-slate-100">
-        <p className="mb-3 text-xs uppercase tracking-[0.14em] text-slate-400">Base</p>
+      <ScrollArea className="codeSurface rounded-2xl border border-border/60 p-4">
+        <p className="codeSurfaceLabel mb-3 text-xs uppercase tracking-[0.14em]">Base</p>
         <pre data-testid="file-diff-base" className="whitespace-pre-wrap break-words text-sm leading-6">{baseText}</pre>
       </ScrollArea>
-      <ScrollArea className="rounded-2xl border border-border/60 bg-slate-950 p-4 text-slate-100">
-        <p className="mb-3 text-xs uppercase tracking-[0.14em] text-slate-400">Current</p>
+      <ScrollArea className="codeSurface rounded-2xl border border-border/60 p-4">
+        <p className="codeSurfaceLabel mb-3 text-xs uppercase tracking-[0.14em]">Current</p>
         <pre data-testid="file-diff-current" className="whitespace-pre-wrap break-words text-sm leading-6">{currentText}</pre>
       </ScrollArea>
     </div>

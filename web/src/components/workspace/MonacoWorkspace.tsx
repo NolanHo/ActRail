@@ -226,7 +226,7 @@ export function MonacoWorkspace({ mode, path, line = null, originalText = "", mo
   }, [line, mode, modifiedText, originalText, path]);
 
   return (
-    <div className="relative h-[58vh] overflow-hidden rounded-2xl border border-border/60 bg-slate-950">
+    <div className="codeSurface relative h-[58vh] overflow-hidden rounded-2xl border border-border/60">
       <div ref={containerRef} className={`h-full w-full ${ready && !useFallback ? "" : "invisible"}`} />
       {!ready || useFallback ? <div className="absolute inset-0">{fallback}</div> : null}
     </div>

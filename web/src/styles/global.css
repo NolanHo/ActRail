@@ -1828,6 +1828,79 @@ button.conversationStatusChip {
   max-width: 100%;
 }
 
+.messageToneError {
+  border-color: color-mix(in srgb, hsl(var(--destructive)) 42%, var(--chrome-border));
+  background: color-mix(in srgb, hsl(var(--destructive)) 7%, var(--message-card-base));
+  color: var(--text);
+}
+
+.messageToneUser {
+  border-color: color-mix(in srgb, hsl(var(--primary)) 28%, var(--chrome-border));
+  background: color-mix(in srgb, hsl(var(--primary)) 10%, var(--message-card-base));
+  color: var(--text);
+}
+
+.messageToneSystem,
+.messageToneDefault {
+  border-color: var(--message-card-system-border);
+  background: var(--message-card-system-bg);
+  color: var(--text);
+}
+
+.messageToneAssistant {
+  border-color: color-mix(in srgb, var(--chrome-border) 82%, transparent);
+  background: color-mix(in srgb, var(--message-card-base) 88%, var(--panel));
+  color: var(--text);
+}
+
+.messageToneAskUser {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--chrome-border));
+  background: color-mix(in srgb, var(--warning) 8%, var(--message-card-base));
+  color: var(--text);
+}
+
+.messageToneReasoning {
+  border-color: var(--message-card-reasoning-border);
+  background: var(--message-card-reasoning-bg);
+  color: var(--text);
+}
+
+.messageToneTool {
+  border-color: var(--message-card-tool-border);
+  background: var(--message-card-tool-bg);
+  color: var(--text);
+}
+
+.messageToneToolResult {
+  border-color: var(--message-card-tool-result-border);
+  background: var(--message-card-tool-result-bg);
+  color: var(--text);
+}
+
+.messageToneTeam {
+  border-color: var(--message-card-team-border);
+  background: var(--message-card-team-bg);
+  color: var(--text);
+}
+
+.codeSurface {
+  background: var(--markdown-code-bg);
+  color: var(--markdown-code-fg);
+}
+
+.codeSurfaceLabel {
+  color: var(--text-muted);
+}
+
+.dialogBackdropLayer,
+.sheetBackdropLayer {
+  background: var(--dialog-backdrop);
+}
+
+.askUserAnswer.isAnswered {
+  color: color-mix(in srgb, var(--warning) 78%, var(--text));
+}
+
 .teamCardIcon {
   display: inline-flex;
   align-items: center;
@@ -3958,100 +4031,132 @@ button.conversationStatusChip {
   padding: 1rem 1.25rem;
 }
 
+:root[data-theme="graphite"] .composerTodoPanel ,
 :root[data-theme="dark"] .composerTodoPanel {
   background: color-mix(in srgb, var(--panel) 94%, #14111b);
   border-color: var(--chrome-border);
 }
 
+:root[data-theme="graphite"] .composerTodoItem ,
 :root[data-theme="dark"] .composerTodoItem {
   background: color-mix(in srgb, var(--panel) 90%, #191621);
   border-color: var(--control-border);
 }
 
+:root[data-theme="graphite"] .composerTodoStatus,
 :root[data-theme="dark"] .composerTodoStatus,
+:root[data-theme="graphite"] .messageTodoStatus ,
 :root[data-theme="dark"] .messageTodoStatus {
   background: rgba(255, 255, 255, 0.06);
   color: var(--legacy-muted);
 }
 
+:root[data-theme="graphite"] .composerTodoStatus.completed,
 :root[data-theme="dark"] .composerTodoStatus.completed,
+:root[data-theme="graphite"] .messageTodoStatus.completed ,
 :root[data-theme="dark"] .messageTodoStatus.completed {
   background: rgba(23, 185, 120, 0.16);
   color: #7ee0b0;
 }
 
+:root[data-theme="graphite"] .composerTodoStatus.in-progress,
 :root[data-theme="dark"] .composerTodoStatus.in-progress,
+:root[data-theme="graphite"] .messageTodoStatus.in-progress ,
 :root[data-theme="dark"] .messageTodoStatus.in-progress {
   background: rgba(69, 170, 255, 0.16);
   color: #8dc7ff;
 }
 
+:root[data-theme="graphite"] .composerTodoStatus.not-started,
 :root[data-theme="dark"] .composerTodoStatus.not-started,
+:root[data-theme="graphite"] .messageTodoStatus.not-started ,
 :root[data-theme="dark"] .messageTodoStatus.not-started {
   background: rgba(255, 201, 60, 0.16);
   color: #ffd772;
 }
 
+:root[data-theme="graphite"] .sessionGroupRenameButton,
 :root[data-theme="dark"] .sessionGroupRenameButton,
+:root[data-theme="graphite"] .sessionGroupMoreButton,
 :root[data-theme="dark"] .sessionGroupMoreButton,
+:root[data-theme="graphite"] .sessionCardSurface,
 :root[data-theme="dark"] .sessionCardSurface,
+:root[data-theme="graphite"] .ownerBadge,
 :root[data-theme="dark"] .ownerBadge,
+:root[data-theme="graphite"] .composerShell,
 :root[data-theme="dark"] .composerShell,
+:root[data-theme="graphite"] .composerInputWrap,
 :root[data-theme="dark"] .composerInputWrap,
+:root[data-theme="graphite"] .composerQueueButton,
 :root[data-theme="dark"] .composerQueueButton,
+:root[data-theme="graphite"] .composerCommandMenu,
 :root[data-theme="dark"] .composerCommandMenu,
+:root[data-theme="graphite"] .composerCommandSheet,
 :root[data-theme="dark"] .composerCommandSheet,
+:root[data-theme="graphite"] .focusSessionItem,
 :root[data-theme="dark"] .focusSessionItem,
+:root[data-theme="graphite"] .focusSessionEmpty,
 :root[data-theme="dark"] .focusSessionEmpty,
+:root[data-theme="graphite"] .focusRailEmpty ,
 :root[data-theme="dark"] .focusRailEmpty {
   background: var(--chrome-elevated);
 }
 
+:root[data-theme="graphite"] .conversationStatusChip ,
 :root[data-theme="dark"] .conversationStatusChip {
   border-color: color-mix(in srgb, var(--chrome-border) 86%, white 0%);
   background: color-mix(in srgb, var(--chrome-elevated) 88%, white 0%);
   color: color-mix(in srgb, var(--text-muted) 92%, white 0%);
 }
 
+:root[data-theme="graphite"] .conversationStatusChip strong ,
 :root[data-theme="dark"] .conversationStatusChip strong {
   color: var(--text);
 }
 
+:root[data-theme="graphite"] .conversationStatusChip.actionable:hover ,
 :root[data-theme="dark"] .conversationStatusChip.actionable:hover {
   border-color: color-mix(in srgb, var(--primary) 58%, var(--chrome-border));
   background: color-mix(in srgb, var(--primary) 16%, var(--chrome-elevated));
 }
 
+:root[data-theme="graphite"] .conversationStatusChip.attention ,
 :root[data-theme="dark"] .conversationStatusChip.attention {
   border-color: color-mix(in srgb, #f59e0b 48%, var(--chrome-border));
   background: color-mix(in srgb, #f59e0b 16%, var(--chrome-elevated));
 }
 
+:root[data-theme="graphite"] .conversationStatusChip.busy ,
 :root[data-theme="dark"] .conversationStatusChip.busy {
   border-color: color-mix(in srgb, #3b82f6 54%, var(--chrome-border));
   background: color-mix(in srgb, #3b82f6 18%, var(--chrome-elevated));
 }
 
+:root[data-theme="graphite"] .conversationStatusChip.success ,
 :root[data-theme="dark"] .conversationStatusChip.success {
   border-color: color-mix(in srgb, #22c55e 52%, var(--chrome-border));
   background: color-mix(in srgb, #22c55e 16%, var(--chrome-elevated));
 }
 
+:root[data-theme="graphite"] .conversationStatusChip.error ,
 :root[data-theme="dark"] .conversationStatusChip.error {
   border-color: color-mix(in srgb, hsl(var(--destructive)) 48%, var(--chrome-border));
   background: color-mix(in srgb, hsl(var(--destructive)) 16%, var(--chrome-elevated));
 }
 
+:root[data-theme="graphite"] .composerContextUsage ,
 :root[data-theme="dark"] .composerContextUsage {
   color: color-mix(in srgb, var(--text-muted) 88%, var(--text));
 }
 
+:root[data-theme="graphite"] .composerCard ,
 :root[data-theme="dark"] .composerCard {
   border-color: var(--chrome-border) !important;
   background: var(--chrome-surface) !important;
   box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28) !important;
 }
 
+:root[data-theme="graphite"] .composerModelInput ,
 :root[data-theme="dark"] .composerModelInput {
   background-color: var(--chrome-elevated);
   border-color: var(--chrome-border);
@@ -4060,54 +4165,82 @@ button.conversationStatusChip {
   -webkit-text-fill-color: var(--text);
 }
 
+:root[data-theme="graphite"] .composerModelInput:-webkit-autofill,
 :root[data-theme="dark"] .composerModelInput:-webkit-autofill,
+:root[data-theme="graphite"] .composerModelInput:-webkit-autofill:hover,
 :root[data-theme="dark"] .composerModelInput:-webkit-autofill:hover,
+:root[data-theme="graphite"] .composerModelInput:-webkit-autofill:focus ,
 :root[data-theme="dark"] .composerModelInput:-webkit-autofill:focus {
   -webkit-text-fill-color: var(--text);
   box-shadow: 0 0 0 1000px var(--chrome-elevated) inset;
   transition: background-color 9999s ease-out 0s;
 }
 
+:root[data-theme="graphite"] .composerModelCurrent ,
 :root[data-theme="dark"] .composerModelCurrent {
   color: var(--text-muted);
 }
 
+:root[data-theme="graphite"] .sessionCardSurface,
 :root[data-theme="dark"] .sessionCardSurface,
+:root[data-theme="graphite"] .composerQueueButton,
 :root[data-theme="dark"] .composerQueueButton,
+:root[data-theme="graphite"] .composerInterruptButton,
 :root[data-theme="dark"] .composerInterruptButton,
+:root[data-theme="graphite"] .composerCommandMenu,
 :root[data-theme="dark"] .composerCommandMenu,
+:root[data-theme="graphite"] .conversationColumn,
 :root[data-theme="dark"] .conversationColumn,
+:root[data-theme="graphite"] .mobileShell,
 :root[data-theme="dark"] .mobileShell,
+:root[data-theme="graphite"] .conversationToolbar,
 :root[data-theme="dark"] .conversationToolbar,
+:root[data-theme="graphite"] .workspaceRail,
 :root[data-theme="dark"] .workspaceRail,
+:root[data-theme="graphite"] .sidebarFooter,
 :root[data-theme="dark"] .sidebarFooter,
+:root[data-theme="graphite"] .focusSessionItem,
 :root[data-theme="dark"] .focusSessionItem,
+:root[data-theme="graphite"] .focusSessionEmpty,
 :root[data-theme="dark"] .focusSessionEmpty,
+:root[data-theme="graphite"] .focusRailEmpty ,
 :root[data-theme="dark"] .focusRailEmpty {
   border-color: var(--chrome-border);
 }
 
+:root[data-theme="graphite"] .sessionGroupRenameButton,
 :root[data-theme="dark"] .sessionGroupRenameButton,
+:root[data-theme="graphite"] .sessionGroupMoreButton,
 :root[data-theme="dark"] .sessionGroupMoreButton,
+:root[data-theme="graphite"] .ownerBadge ,
 :root[data-theme="dark"] .ownerBadge {
   color: var(--text);
   border-color: var(--control-border);
 }
 
+:root[data-theme="graphite"] .sessionGroupRenameButton:hover,
 :root[data-theme="dark"] .sessionGroupRenameButton:hover,
+:root[data-theme="graphite"] .sessionGroupMoreButton:hover,
 :root[data-theme="dark"] .sessionGroupMoreButton:hover,
+:root[data-theme="graphite"] .sessionActionIconButton:hover,
 :root[data-theme="dark"] .sessionActionIconButton:hover,
+:root[data-theme="graphite"] .sessionActionIconButton:focus-visible,
 :root[data-theme="dark"] .sessionActionIconButton:focus-visible,
+:root[data-theme="graphite"] .sessionCard:hover .sessionCardSurface,
 :root[data-theme="dark"] .sessionCard:hover .sessionCardSurface,
+:root[data-theme="graphite"] .sessionCard:focus-within .sessionCardSurface,
 :root[data-theme="dark"] .sessionCard:focus-within .sessionCardSurface,
+:root[data-theme="graphite"] .sessionCard.active .sessionCardSurface ,
 :root[data-theme="dark"] .sessionCard.active .sessionCardSurface {
   background: color-mix(in srgb, var(--accent) 88%, var(--panel));
 }
 
+:root[data-theme="graphite"] .conversationPane.emptyState ,
 :root[data-theme="dark"] .conversationPane.emptyState {
   background: color-mix(in srgb, var(--panel) 92%, #14111b);
 }
 
+:root[data-theme="graphite"] .messageCopyButton.isCopied ,
 :root[data-theme="dark"] .messageCopyButton.isCopied {
   background: color-mix(in srgb, var(--primary) 18%, var(--panel));
   border-color: color-mix(in srgb, var(--primary) 34%, var(--control-border));

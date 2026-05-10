@@ -326,7 +326,7 @@ export function AskUserCard({
         )}
 
         {answerText && (
-          <div className="askUserAnswer mt-2 text-sm font-medium text-amber-800">
+          <div className="askUserAnswer isAnswered mt-2 text-sm font-medium">
             Answer: {answerText}
           </div>
         )}

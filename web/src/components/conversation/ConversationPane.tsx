@@ -844,30 +844,30 @@ function surfaceBadgeVariant(kind: string): "default" | "secondary" | "outline" 
 
 function messageSurfaceTone(kind: string, isError = false): string {
   if (isError) {
-    return "border-destructive/40 bg-destructive/5";
+    return "messageToneError";
   }
 
   switch (kind) {
     case "user":
-      return "border-primary/30 bg-primary/10 text-foreground";
+      return "messageToneUser text-foreground";
     case "system":
-      return "border-cyan-300/40 bg-cyan-950/20 text-foreground";
+      return "messageToneSystem";
     case "assistant":
-      return "border-border/70 bg-card/95";
+      return "messageToneAssistant";
     case "ask_user":
-      return "border-amber-300/70 bg-amber-50/90";
+      return "messageToneAskUser";
     case "reasoning":
-      return "border-sky-200/80 bg-sky-50/80";
+      return "messageToneReasoning";
     case "tool":
-      return "border-indigo-200/80 bg-indigo-50/80";
+      return "messageToneTool";
     case "tool_result":
-      return "border-emerald-200/80 bg-emerald-50/80";
+      return "messageToneToolResult";
     case "team":
-      return "border-slate-200/80 bg-slate-50/85";
+      return "messageToneTeam";
     case "todo_snapshot":
       return "";
     default:
-      return "border-border/60 bg-muted/30";
+      return "messageToneDefault";
   }
 }
 
