@@ -416,7 +416,7 @@ func TestSessionStateCodexFinalAnswerMirrorsLiveCommits(t *testing.T) {
 	}
 }
 
-func TestListSessionsCodexFinalAnswerClearsRuntimeAgentRunning(t *testing.T) {
+func TestListSessionsCodexFinalAnswerDoesNotScanSessionFile(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sessionID := mustSessionID(t, "s_codex_file_list_clears_running")
@@ -458,8 +458,8 @@ func TestListSessionsCodexFinalAnswerClearsRuntimeAgentRunning(t *testing.T) {
 	if len(listed.Items) != 1 {
 		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
 	}
-	if listed.Items[0].Busy || listed.Items[0].RuntimeState != string(codexRuntimePhaseIdle) {
-		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want idle", listed.Items[0].Busy, listed.Items[0].RuntimeState)
+	if !listed.Items[0].Busy || listed.Items[0].RuntimeState != string(codexRuntimePhaseThreadStarting) {
+		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want cached starting state without session-file scan", listed.Items[0].Busy, listed.Items[0].RuntimeState)
 	}
 }
 
