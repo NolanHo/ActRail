@@ -51,6 +51,37 @@ type FinalResponseSignature = {
   sessionId: string;
 };
 
+const SIDEBAR_WIDTH_STORAGE_KEY = "actrail.sidebarWidthPx.v1";
+const SIDEBAR_WIDTH_DEFAULT_PX = 320;
+const SIDEBAR_WIDTH_MIN_PX = 288;
+const SIDEBAR_WIDTH_MAX_PX = 480;
+const SIDEBAR_WIDTH_STEP_PX = 16;
+
+function clampSidebarWidth(value: number) {
+  if (!Number.isFinite(value)) {
+    return SIDEBAR_WIDTH_DEFAULT_PX;
+  }
+  return Math.min(SIDEBAR_WIDTH_MAX_PX, Math.max(SIDEBAR_WIDTH_MIN_PX, Math.round(value)));
+}
+
+function readSidebarWidthPx() {
+  if (typeof window === "undefined") {
+    return SIDEBAR_WIDTH_DEFAULT_PX;
+  }
+  const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+  if (!raw) {
+    return SIDEBAR_WIDTH_DEFAULT_PX;
+  }
+  return clampSidebarWidth(Number(raw));
+}
+
+function writeSidebarWidthPx(value: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(value)));
+}
+
 function formatTokenK(value: number) {
   const normalized = Math.max(0, Math.round(value));
   if (normalized <= 0) {
@@ -225,6 +256,8 @@ export function AppShell() {
   const [fileViewerMode, setFileViewerMode] = useState<FileViewMode | null>(null);
   const [fileViewerRequestKey, setFileViewerRequestKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarWidthPx, setSidebarWidthPx] = useState(readSidebarWidthPx);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
   const [desktopGlobalView, setDesktopGlobalView] = useState<DesktopGlobalView>("sessions");
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const teamsData = useTeamsData(desktopGlobalView === "teams" ? 5000 : 0);
@@ -265,6 +298,8 @@ export function AppShell() {
   const backgroundReplySoundPrimedSessionIdsRef = useRef(new Set<string>());
   const suppressedReplySoundSessionIdsRef = useRef(new Set<string>());
   const activeSessionReplySoundPrimingRef = useRef<string | null>(null);
+  const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const sidebarWidthPxRef = useRef(sidebarWidthPx);
 
   useEffect(() => {
     applyUserDisplaySettings(displaySettings);
@@ -579,7 +614,78 @@ export function AppShell() {
     setWorkspaceInitialTab("metadata");
   }, [activeSessionId]);
 
-  const shellClassName = useMemo(() => ["appShell", "editorialShell", "withGlobalNav"].join(" "), []);
+  useEffect(() => {
+    sidebarWidthPxRef.current = sidebarWidthPx;
+  }, [sidebarWidthPx]);
+
+  const shellClassName = useMemo(() => ["appShell", "editorialShell", "withGlobalNav", sidebarResizing ? "isResizingSidebar" : ""].filter(Boolean).join(" "), [sidebarResizing]);
+  const shellStyle = useMemo(() => ({ "--sidebar-w": `${sidebarWidthPx}px` }), [sidebarWidthPx]);
+
+  const commitSidebarWidth = useCallback((value: number) => {
+    const next = clampSidebarWidth(value);
+    setSidebarWidthPx(next);
+    writeSidebarWidthPx(next);
+  }, []);
+
+  const beginSidebarResize = useCallback((event: any) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    sidebarResizeRef.current = { startX: event.clientX, startWidth: sidebarWidthPxRef.current };
+    setSidebarResizing(true);
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarResizing) {
+      return;
+    }
+
+    const handleResizeMove = (event: MouseEvent | PointerEvent) => {
+      const resize = sidebarResizeRef.current;
+      if (!resize) {
+        return;
+      }
+      const next = clampSidebarWidth(resize.startWidth + event.clientX - resize.startX);
+      sidebarWidthPxRef.current = next;
+      setSidebarWidthPx(next);
+    };
+
+    const finishResize = () => {
+      sidebarResizeRef.current = null;
+      setSidebarResizing(false);
+      writeSidebarWidthPx(sidebarWidthPxRef.current);
+    };
+
+    window.addEventListener("pointermove", handleResizeMove);
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+    window.addEventListener("mousemove", handleResizeMove);
+    window.addEventListener("mouseup", finishResize);
+    return () => {
+      window.removeEventListener("pointermove", handleResizeMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+      window.removeEventListener("mousemove", handleResizeMove);
+      window.removeEventListener("mouseup", finishResize);
+    };
+  }, [sidebarResizing]);
+
+  const handleSidebarResizeKeyDown = useCallback((event: any) => {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      commitSidebarWidth(sidebarWidthPxRef.current - SIDEBAR_WIDTH_STEP_PX);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      commitSidebarWidth(sidebarWidthPxRef.current + SIDEBAR_WIDTH_STEP_PX);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      commitSidebarWidth(SIDEBAR_WIDTH_MIN_PX);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      commitSidebarWidth(SIDEBAR_WIDTH_MAX_PX);
+    }
+  }, [commitSidebarWidth]);
 
   const renderWorkspaceDetails = () => (
     sessionUiMatchesActiveSession || visibleActiveWait ? (
@@ -705,7 +811,7 @@ export function AppShell() {
 
   return (
     <>
-      <div className={shellClassName} data-testid="app-shell">
+      <div className={shellClassName} data-testid="app-shell" style={shellStyle}>
         <audio ref={liveAudioRef} className="liveAudioElement" preload="none" />
         {mobileLayout ? (
           <MobileShell
@@ -753,6 +859,20 @@ export function AppShell() {
               }} />
             </div>
             <aside className="sidebarColumn desktopSessionsRail">{renderSessionsRail()}</aside>
+            <div
+              aria-label="Resize sessions sidebar"
+              aria-orientation="vertical"
+              aria-valuemax={SIDEBAR_WIDTH_MAX_PX}
+              aria-valuemin={SIDEBAR_WIDTH_MIN_PX}
+              aria-valuenow={sidebarWidthPx}
+              className="sidebarResizeHandle"
+              onKeyDown={handleSidebarResizeKeyDown}
+              onMouseDown={beginSidebarResize}
+              onPointerDown={beginSidebarResize}
+              role="separator"
+              tabIndex={0}
+              title="Drag to resize sessions"
+            />
             {desktopGlobalView === "sessions" ? (
               <section className="conversationColumn">
                 <AppShellToolbar

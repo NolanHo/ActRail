@@ -3,7 +3,7 @@
 }
 
 :root {
-  --sidebar-w: 23rem;
+  --sidebar-w: 20rem;
   --workspace-w: 24rem;
   --conversation-font-size: 16px;
   --composer-font-size: 16px;
@@ -90,7 +90,7 @@ select {
 
 .appShell.editorialShell {
   display: grid;
-  grid-template-columns: minmax(16rem, var(--sidebar-w)) minmax(0, 1fr);
+  grid-template-columns: minmax(18rem, var(--sidebar-w)) minmax(0, 1fr);
   grid-template-rows: 1fr;
   position: fixed;
   inset: 0;
@@ -102,7 +102,7 @@ select {
 }
 
 .appShell.editorialShell.withGlobalNav {
-  grid-template-columns: 4.5rem minmax(16rem, var(--sidebar-w)) minmax(0, 1fr);
+  grid-template-columns: 4.5rem minmax(18rem, var(--sidebar-w)) minmax(0, 1fr);
 }
 
 .mobileSheetTrigger,
@@ -111,6 +111,7 @@ select {
 }
 
 .sidebarColumn {
+  position: relative;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -119,6 +120,54 @@ select {
   border-radius: 30px;
   background: var(--chrome-surface);
   box-shadow: var(--shadow);
+}
+
+.sidebarResizeHandle {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
+  align-self: stretch;
+  width: 16px;
+  min-width: 16px;
+  margin-block: 1.5rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: col-resize;
+  outline: none;
+  transform: translateX(calc(0.5rem + 50%));
+  z-index: 20;
+  touch-action: none;
+}
+
+.appShell.withGlobalNav .sidebarResizeHandle {
+  grid-column: 2;
+}
+
+.sidebarResizeHandle::before {
+  content: "";
+  display: block;
+  width: 3px;
+  height: 100%;
+  margin-inline: auto;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chrome-border) 70%, transparent);
+  opacity: 0.54;
+  transition: background 160ms ease, opacity 160ms ease, width 160ms ease;
+}
+
+.sidebarResizeHandle:hover::before,
+.sidebarResizeHandle:focus-visible::before,
+.appShell.isResizingSidebar .sidebarResizeHandle::before {
+  width: 5px;
+  background: color-mix(in srgb, var(--primary) 62%, var(--chrome-border));
+  opacity: 0.94;
+}
+
+.appShell.isResizingSidebar,
+.appShell.isResizingSidebar * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 .sidebarBanner {
@@ -4304,6 +4353,10 @@ button.conversationStatusChip {
 
   .appShell.editorialShell.withGlobalNav {
     grid-template-columns: 1fr;
+  }
+
+  .sidebarResizeHandle {
+    display: none;
   }
 
   .appShell.legacyShell {

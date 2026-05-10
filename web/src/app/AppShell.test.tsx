@@ -464,6 +464,7 @@ describe("AppShell", () => {
 
     expect(getRoot().querySelector("[data-testid='app-shell']")).not.toBeNull();
     expect(getRoot().querySelector(".sidebarColumn.desktopSessionsRail")).not.toBeNull();
+    expect(getRoot().querySelector('[role="separator"][aria-label="Resize sessions sidebar"]')).not.toBeNull();
     expect(getRoot().querySelector(".conversationColumn")).not.toBeNull();
     expect(getRoot().querySelector("[data-testid='mobile-sessions-sheet']")).not.toBeNull();
     expect(getRoot().querySelector("[data-testid='workspace-rail']")).toBeNull();
@@ -482,6 +483,51 @@ describe("AppShell", () => {
     expect(findButtonByAriaLabel("Inbox")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt (Esc)")).not.toBeNull();
 
+  });
+
+  it("persists desktop session rail width after dragging the resize handle", async () => {
+    renderAppShell({ activeSessionId: null, diagnostics: null });
+
+    const shell = getRoot().querySelector("[data-testid='app-shell']") as HTMLElement;
+    const handle = getRoot().querySelector('[role="separator"][aria-label="Resize sessions sidebar"]') as HTMLElement;
+
+    expect(shell.style.getPropertyValue("--sidebar-w")).toBe("320px");
+
+    await act(async () => {
+      handle.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 320 }));
+      await flush();
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 380 }));
+      window.dispatchEvent(new MouseEvent("mouseup", { clientX: 380 }));
+      await flush();
+    });
+
+    expect(shell.style.getPropertyValue("--sidebar-w")).toBe("380px");
+    expect(window.localStorage.getItem("actrail.sidebarWidthPx.v1")).toBe("380");
+  });
+
+  it("supports keyboard resizing for the desktop session rail", async () => {
+    renderAppShell({ activeSessionId: null, diagnostics: null });
+
+    const shell = getRoot().querySelector("[data-testid='app-shell']") as HTMLElement;
+    const handle = getRoot().querySelector('[role="separator"][aria-label="Resize sessions sidebar"]') as HTMLElement;
+
+    await act(async () => {
+      handle.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" }));
+      await flush();
+    });
+
+    expect(shell.style.getPropertyValue("--sidebar-w")).toBe("304px");
+    expect(window.localStorage.getItem("actrail.sidebarWidthPx.v1")).toBe("304");
+
+    await act(async () => {
+      handle.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Home" }));
+      await flush();
+    });
+
+    expect(shell.style.getPropertyValue("--sidebar-w")).toBe("288px");
   });
 
   it("renders bottom navigation on narrow viewports and defaults to the sessions page without an active session", () => {

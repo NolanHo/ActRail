@@ -60,7 +60,7 @@ describe("conversation layout scroll guards", () => {
 
     expect(shellRule).toContain("position: fixed;");
     expect(shellRule).toContain("inset: 0;");
-    expect(shellRule).toContain("grid-template-columns: minmax(16rem, var(--sidebar-w)) minmax(0, 1fr);");
+    expect(shellRule).toContain("grid-template-columns: minmax(18rem, var(--sidebar-w)) minmax(0, 1fr);");
     expect(sidebarRule).toContain("min-height: 0;");
     expect(sidebarRule).toContain("overflow: hidden;");
     expect(conversationRule).toContain("display: flex;");
