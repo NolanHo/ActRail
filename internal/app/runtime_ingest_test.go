@@ -609,6 +609,50 @@ func TestPIRPCTurnCompletedClearsBusyAfterPromptLatch(t *testing.T) {
 	}
 }
 
+func TestCodexTurnCompletedClearsBusyAndRuntimeRunning(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-final\",\"status\":{\"type\":\"idle\"}}}}" + "\n" +
+		"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-final\",\"turn\":{\"id\":\"turn-codex-final\",\"status\":\"inProgress\",\"error\":null}}}" + "\n" +
+		"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-final\",\"turnId\":\"turn-codex-final\",\"itemId\":\"item-codex-final\",\"delta\":\"final answer\"}}" + "\n" +
+		"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-final\",\"turnId\":\"turn-codex-final\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-final\",\"text\":\"final answer\"}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Busy && state.BusyReason == "codex_running" && state.PartialAssistantTurn == nil && state.RuntimeState == string(codexRuntimePhaseRunning)
+	})
+
+	_, _ = stdoutW.Write([]byte("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-final\",\"turn\":{\"id\":\"turn-codex-final\",\"status\":\"completed\",\"error\":null}}}" + "\n"))
+	_ = stdoutW.Close()
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.RuntimeState == string(codexRuntimePhaseIdle) && !svc.isRuntimeAgentRunning(sessionID)
+	})
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) {
+		t.Fatalf("SessionState() = %+v, want idle after turn/completed", state)
+	}
+	if svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = true, want false after Codex turn/completed")
+	}
+}
+
 func TestPIRPCBusyHoldIgnoresEarlyIdleGetState(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	runner := &process.FakeRunner{NextHandle: handle}

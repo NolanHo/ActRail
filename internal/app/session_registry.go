@@ -182,6 +182,20 @@ func (r *sessionRegistry) List() []sessionRecord {
 	return items
 }
 
+func (r *sessionRegistry) ListAll() []sessionRecord {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	items := make([]sessionRecord, 0, len(r.order))
+	for _, sessionID := range r.order {
+		record, ok := r.sessions[sessionID]
+		if !ok {
+			continue
+		}
+		items = append(items, copySessionRecord(record))
+	}
+	return items
+}
+
 func (r *sessionRegistry) Update(routeID session.SessionID, touchActivity bool, apply func(*sessionRecord) error) (sessionRecord, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

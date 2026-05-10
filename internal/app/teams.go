@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -930,6 +931,98 @@ func (r *teamRegistry) rehydrate(snapshots []sqlitestore.TeamSnapshotRow) error 
 		r.observeActorCountersLocked(actor)
 	}
 	return nil
+}
+
+func (r *teamRegistry) reconcilePersistedActors(ctx context.Context, stub *Stub) error {
+	r.mu.Lock()
+	actors := make([]*teamActor, 0, len(r.actors))
+	for _, actor := range r.actors {
+		if actor == nil {
+			continue
+		}
+		if actor.Status == TeamStatusRunning || actor.Status == TeamStatusIdle {
+			actors = append(actors, actor)
+		}
+	}
+	r.mu.Unlock()
+
+	for _, actor := range actors {
+		record, err := stub.lookupSession(actor.ChildSessionID)
+		if err != nil {
+			var appErr *Error
+			if errors.As(err, &appErr) && appErr.Code == "not_found" {
+				_ = r.reconcileActorStatus(actor.ActorID, TeamStatusFailed, "child_session_missing")
+				continue
+			}
+			return err
+		}
+		transport := sessionTransportSnapshot(record)
+		busy, _ := effectiveBusy(record)
+		if _, ok := record.transcript.PartialAssistantTurn(); busy || ok || transport.State == SessionTransportStateStarting || transport.State == SessionTransportStateAttached || transport.State == SessionTransportStateSilent || transport.State == SessionTransportStateStalled {
+			continue
+		}
+		if transport.State == SessionTransportStateEnded && strings.TrimSpace(transport.Reason) == "helper_not_running" {
+			continue
+		}
+		status, reason := teamStatusFromSession(record, transport)
+		if status == TeamStatusUnknown {
+			continue
+		}
+		if err := r.reconcileActorStatus(actor.ActorID, status, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func teamStatusFromSession(record sessionRecord, transport SessionTransportSnapshot) (TeamStatus, string) {
+	if transport.ResetRequired {
+		return TeamStatusFailed, transport.Reason
+	}
+	switch transport.State {
+	case SessionTransportStateBroken, SessionTransportStateFailed:
+		return TeamStatusFailed, transport.Reason
+	case SessionTransportStateEnded:
+		if strings.TrimSpace(transport.Reason) == "pi_agent_grpc_unavailable" {
+			return TeamStatusFailed, transport.Reason
+		}
+		if record.identity.Backend() != session.BackendCodex {
+			return TeamStatusUnknown, ""
+		}
+		if transport.Reason == "" && !record.transcript.Tail().Live() {
+			return TeamStatusCompleted, ""
+		}
+		if strings.Contains(strings.ToLower(transport.Reason), "failed") {
+			return TeamStatusFailed, transport.Reason
+		}
+		return TeamStatusCompleted, transport.Reason
+	}
+	if record.identity.Historical() {
+		return TeamStatusCompleted, transport.Reason
+	}
+	return TeamStatusUnknown, ""
+}
+
+func (r *teamRegistry) reconcileActorStatus(actorID string, status TeamStatus, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	actor, err := r.getLocked(actorID)
+	if err != nil {
+		return err
+	}
+	if actor.Status == status {
+		return nil
+	}
+	actor.Status = status
+	if status == TeamStatusFailed || status == TeamStatusCompleted || status == TeamStatusClosed {
+		if actor.Question != nil && !actor.Question.done {
+			actor.Question.done = true
+			actor.Question.terminalText = string(status)
+			actor.Question.answer <- teamParentAnswer{terminal: string(status)}
+		}
+	}
+	r.appendEventLocked(actor, "team.status", actor.TurnID, "", reason, status)
+	return r.persistActorLocked(actor)
 }
 
 func (r *teamRegistry) observeActorCountersLocked(actor *teamActor) {

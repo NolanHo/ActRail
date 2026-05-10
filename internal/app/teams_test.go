@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"actrail/internal/adapters/process"
+	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
 )
@@ -214,6 +215,170 @@ func TestPersistentStubRehydratesTeamActorsAndEvents(t *testing.T) {
 	again, err := rehydrated.SpawnTeam(context.Background(), testSpawnTeamRequest(parent.Session.SessionID, "reviewer", "", cwd))
 	if err == nil || again.OK {
 		t.Fatalf("SpawnTeam duplicate = %+v, %v, want conflict", again, err)
+	}
+}
+
+func TestPersistentStubReconcilesTerminalTeamActorsAfterRuntimeRestore(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000200, 0).UTC()
+	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	if err := catalog.UpsertSessionSnapshot(context.Background(), sqlitestore.SessionSnapshotRow{
+		Session: sqlitestore.SessionRow{SessionID: "parent", Backend: "codex", CWD: "/repo", Title: "parent", CreatedAt: now, UpdatedAt: now, ActivityAt: now},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot(parent) error = %v", err)
+	}
+	if err := catalog.UpsertSessionSnapshot(context.Background(), sqlitestore.SessionSnapshotRow{
+		Session: sqlitestore.SessionRow{SessionID: "child", Backend: "codex", CWD: "/repo", Title: "reviewer", CreatedAt: now, UpdatedAt: now, ActivityAt: now, Hidden: true},
+		Live: sqlitestore.LiveStateRow{
+			Busy:                false,
+			TransportState:      string(SessionTransportStateEnded),
+			TransportReason:     "codex turn completed",
+			RuntimeAgentRunning: false,
+			UpdatedAt:           now,
+		},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot(child) error = %v", err)
+	}
+	if err := catalog.ReplaceTeamSnapshot(context.Background(), sqlitestore.TeamSnapshotRow{
+		Actor: sqlitestore.TeamActorRow{ActorID: "actor_1", ChildSessionID: "child", ParentSessionID: "parent", Name: "reviewer", Status: string(TeamStatusRunning), TurnID: "turn_1", LastEventID: "event_2", LastEventAt: &now, CWD: "/repo", CreatedAt: now, UpdatedAt: now},
+		Events: []sqlitestore.TeamEventRow{
+			{ActorID: "actor_1", EventID: "event_1", Type: "team.started", ChildSessionID: "child", ParentSessionID: "parent", Status: string(TeamStatusIdle), TS: teamTimestamp(now)},
+			{ActorID: "actor_1", EventID: "event_2", Type: "team.prompt", ChildSessionID: "child", ParentSessionID: "parent", TurnID: "turn_1", Message: "review", Status: string(TeamStatusRunning), TS: teamTimestamp(now)},
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceTeamSnapshot() error = %v", err)
+	}
+	if err := catalog.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	listed, err := rehydrated.ListTeams(context.Background(), ListTeamsRequest{IncludeClosed: true})
+	if err != nil {
+		t.Fatalf("ListTeams() error = %v", err)
+	}
+	if listed.TotalCount != 1 || listed.Roots[0].Status != TeamStatusCompleted {
+		t.Fatalf("ListTeams() = %+v, want reconciled completed actor", listed)
+	}
+	events, err := rehydrated.TeamEvents(context.Background(), TeamEventsRequest{ActorID: "actor_1"})
+	if err != nil {
+		t.Fatalf("TeamEvents() error = %v", err)
+	}
+	if len(events.Events) != 3 || events.Events[2].Type != "team.status" || events.Events[2].Status != TeamStatusCompleted {
+		t.Fatalf("TeamEvents() = %+v, want completed status reconciliation event", events.Events)
+	}
+}
+
+func TestPersistentStubReconcilesUnavailablePITeamActorsAfterRuntimeRestore(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000250, 0).UTC()
+	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	if err := catalog.UpsertSessionSnapshot(context.Background(), sqlitestore.SessionSnapshotRow{
+		Session: sqlitestore.SessionRow{SessionID: "parent", Backend: "pi", CWD: "/repo", Title: "parent", CreatedAt: now, UpdatedAt: now, ActivityAt: now},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot(parent) error = %v", err)
+	}
+	if err := catalog.UpsertSessionSnapshot(context.Background(), sqlitestore.SessionSnapshotRow{
+		Session: sqlitestore.SessionRow{SessionID: "child", Backend: "pi", CWD: "/repo", Title: "reviewer", CreatedAt: now, UpdatedAt: now, ActivityAt: now, Hidden: true},
+		Live: sqlitestore.LiveStateRow{
+			Busy:                false,
+			TransportState:      string(SessionTransportStateEnded),
+			TransportReason:     "pi_agent_grpc_unavailable",
+			RuntimeAgentRunning: false,
+			UpdatedAt:           now,
+		},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot(child) error = %v", err)
+	}
+	if err := catalog.ReplaceTeamSnapshot(context.Background(), sqlitestore.TeamSnapshotRow{
+		Actor: sqlitestore.TeamActorRow{ActorID: "actor_1", ChildSessionID: "child", ParentSessionID: "parent", Name: "reviewer", Status: string(TeamStatusRunning), TurnID: "turn_1", LastEventID: "event_2", LastEventAt: &now, CWD: "/repo", CreatedAt: now, UpdatedAt: now},
+		Events: []sqlitestore.TeamEventRow{
+			{ActorID: "actor_1", EventID: "event_1", Type: "team.started", ChildSessionID: "child", ParentSessionID: "parent", Status: string(TeamStatusIdle), TS: teamTimestamp(now)},
+			{ActorID: "actor_1", EventID: "event_2", Type: "team.prompt", ChildSessionID: "child", ParentSessionID: "parent", TurnID: "turn_1", Message: "review", Status: string(TeamStatusRunning), TS: teamTimestamp(now)},
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceTeamSnapshot() error = %v", err)
+	}
+	if err := catalog.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	listed, err := rehydrated.ListTeams(context.Background(), ListTeamsRequest{IncludeClosed: true})
+	if err != nil {
+		t.Fatalf("ListTeams() error = %v", err)
+	}
+	if listed.TotalCount != 1 || listed.Roots[0].Status != TeamStatusFailed {
+		t.Fatalf("ListTeams() = %+v, want failed unavailable PI actor", listed)
+	}
+}
+
+func TestRuntimeRestoreReconcilesHiddenTerminalTeamChildSessions(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000300, 0).UTC()
+	catalog, err := sqlitestore.OpenSessionCatalog(cfg.SQLitePath())
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	if err := catalog.UpsertSessionSnapshot(context.Background(), sqlitestore.SessionSnapshotRow{
+		Session: sqlitestore.SessionRow{SessionID: "parent", Backend: "codex", CWD: "/repo", Title: "parent", CreatedAt: now, UpdatedAt: now, ActivityAt: now},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot(parent) error = %v", err)
+	}
+	if err := catalog.UpsertSessionSnapshot(context.Background(), sqlitestore.SessionSnapshotRow{
+		Session: sqlitestore.SessionRow{SessionID: "child", Backend: "codex", CWD: "/repo", Title: "reviewer", CreatedAt: now, UpdatedAt: now, ActivityAt: now, Hidden: true},
+		Live: sqlitestore.LiveStateRow{
+			Busy:                false,
+			TransportState:      string(SessionTransportStateEnded),
+			TransportReason:     "codex turn completed",
+			RuntimeAgentRunning: true,
+			UpdatedAt:           now,
+		},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot(child) error = %v", err)
+	}
+	if err := catalog.ReplaceTeamSnapshot(context.Background(), sqlitestore.TeamSnapshotRow{
+		Actor: sqlitestore.TeamActorRow{ActorID: "actor_1", ChildSessionID: "child", ParentSessionID: "parent", Name: "reviewer", Status: string(TeamStatusRunning), TurnID: "turn_1", LastEventID: "event_2", LastEventAt: &now, CWD: "/repo", CreatedAt: now, UpdatedAt: now},
+		Events: []sqlitestore.TeamEventRow{
+			{ActorID: "actor_1", EventID: "event_1", Type: "team.started", ChildSessionID: "child", ParentSessionID: "parent", Status: string(TeamStatusIdle), TS: teamTimestamp(now)},
+			{ActorID: "actor_1", EventID: "event_2", Type: "team.prompt", ChildSessionID: "child", ParentSessionID: "parent", TurnID: "turn_1", Message: "review", Status: string(TeamStatusRunning), TS: teamTimestamp(now)},
+		},
+	}); err != nil {
+		t.Fatalf("ReplaceTeamSnapshot() error = %v", err)
+	}
+	if err := catalog.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	record, err := rehydrated.lookupSession("child")
+	if err != nil {
+		t.Fatalf("lookupSession(child) error = %v", err)
+	}
+	if record.hidden != true {
+		t.Fatal("child hidden = false, want true fixture")
+	}
+	listed, err := rehydrated.ListTeams(context.Background(), ListTeamsRequest{IncludeClosed: true})
+	if err != nil {
+		t.Fatalf("ListTeams() error = %v", err)
+	}
+	if listed.TotalCount != 1 || listed.Roots[0].Status != TeamStatusCompleted {
+		t.Fatalf("ListTeams() = %+v, want hidden child actor reconciled completed", listed)
 	}
 }
 

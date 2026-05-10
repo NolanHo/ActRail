@@ -22,7 +22,7 @@ func (s *Stub) reattachSurvivingPIAgentGRPCRuntimes(ctx context.Context) error {
 	if s == nil || s.launcher == nil {
 		return nil
 	}
-	for _, record := range s.registry.List() {
+	for _, record := range s.registry.ListAll() {
 		if !shouldReattachPIAgentGRPC(record) {
 			continue
 		}

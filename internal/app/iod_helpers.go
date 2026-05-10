@@ -316,7 +316,7 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 	for _, fence := range fenced {
 		fencedBySession[fence.SessionID] = append(fencedBySession[fence.SessionID], fence)
 	}
-	for _, record := range s.registry.List() {
+	for _, record := range s.registry.ListAll() {
 		sessionID := record.identity.SessionID()
 		if record.identity.Historical() || record.runtime.UsesPIAgentGRPC() {
 			continue
@@ -359,7 +359,10 @@ func startupTransportAlreadyTerminal(record sessionRecord) bool {
 func startupTransportForSession(sessionID session.SessionID, bindings map[session.SessionID]helperGenerationBinding, attachments map[session.SessionID]attachedHelper, fences []helperFence) SessionTransportSnapshot {
 	if attachment, ok := attachments[sessionID]; ok {
 		if attachment.ReplayFailed {
-			return transportSnapshotAttachedWithReason(attachment.Binding.GenerationID, "codex_replay_failed:"+string(attachment.ReplayReason))
+			if attachment.ReplayReason == helperFenceReplayGap {
+				return transportSnapshotAttachedWithReason(attachment.Binding.GenerationID, "codex_replay_failed:"+string(attachment.ReplayReason))
+			}
+			return transportSnapshotBroken(attachment.Binding.GenerationID, "codex_replay_failed:"+string(attachment.ReplayReason), true)
 		}
 		return transportSnapshotAttached(attachment.Binding.GenerationID)
 	}

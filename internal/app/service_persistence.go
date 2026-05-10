@@ -118,7 +118,11 @@ func (s *Stub) RestoreSurvivingRuntimes(ctx context.Context) error {
 		return err
 	}
 	s.reconcilePersistedBusySessions(ctx)
-	for _, record := range s.registry.List() {
+	if err := s.reconcilePersistedTeamActors(ctx); err != nil {
+		restoreErr = err
+		return err
+	}
+	for _, record := range s.registry.ListAll() {
 		runtime := s.runtimeForRecord(record)
 		transport := s.sessionTransportSnapshot(record)
 		updated, ok, err := s.registry.SetRuntimeTransportMemory(record.identity.SessionID(), runtime, transport)
@@ -132,5 +136,16 @@ func (s *Stub) RestoreSurvivingRuntimes(ctx context.Context) error {
 		}
 		s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), updated.runtime)
 	}
+	if err := s.reconcilePersistedTeamActors(ctx); err != nil {
+		restoreErr = err
+		return err
+	}
 	return nil
+}
+
+func (s *Stub) reconcilePersistedTeamActors(ctx context.Context) error {
+	if s == nil || s.teams == nil {
+		return nil
+	}
+	return s.teams.reconcilePersistedActors(ctx, s)
 }

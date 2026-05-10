@@ -528,16 +528,40 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 		case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
 			partial, ok := record.transcript.PartialAssistantTurn()
 			if !ok {
+				if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+					return err
+				}
+				if err := s.syncCodexRuntimeActivity(sessionID, "turn_boundary", true); err != nil {
+					return err
+				}
 				return nil
 			}
 			if strings.TrimSpace(event.TurnID) != "" && partial.TurnID().String() != strings.TrimSpace(event.TurnID) {
+				if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+					return err
+				}
+				if err := s.syncCodexRuntimeActivity(sessionID, "turn_boundary_mismatch", true); err != nil {
+					return err
+				}
 				return nil
 			}
 			if strings.TrimSpace(event.Boundary.Reason) == "turn_end" {
+				if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+					return err
+				}
+				if err := s.syncCodexRuntimeActivity(sessionID, "turn_boundary_end", true); err != nil {
+					return err
+				}
 				return nil
 			}
 			_, _, err := s.registry.DiscardPartialAssistantTurn(sessionID)
-			return err
+			if err != nil {
+				return err
+			}
+			if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
+				return err
+			}
+			return s.syncCodexRuntimeActivity(sessionID, "turn_boundary_discard", true)
 		default:
 			return nil
 		}
