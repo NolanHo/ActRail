@@ -68,6 +68,28 @@ func TestSessionMessagesLoadsCodexHistoryFromSessionFile(t *testing.T) {
 	}
 }
 
+func TestCodexSessionMessagesFromJSONLLines(t *testing.T) {
+	lines := []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"iod user"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"iod final","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+	}
+
+	items, err := codexSessionMessagesFromJSONLLines(context.Background(), "/tmp/session.jsonl", lines)
+	if err != nil {
+		t.Fatalf("codexSessionMessagesFromJSONLLines() error = %v", err)
+	}
+	got := messageRolesAndText(items)
+	want := []string{"user:iod user", "assistant:iod final"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	if !codexSessionLinesHaveTaskComplete(context.Background(), lines) {
+		t.Fatal("codexSessionLinesHaveTaskComplete() = false, want true")
+	}
+}
+
 func TestSessionMessagesCodexHistoryUsesSourceLineSeqForIncrementalResume(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

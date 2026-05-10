@@ -179,6 +179,28 @@ func codexSessionMessagesFromFile(ctx context.Context, path string) ([]SessionMe
 	return items, nil
 }
 
+func codexSessionMessagesFromJSONLLines(ctx context.Context, sourcePath string, lines []string) ([]SessionMessage, error) {
+	items := make([]SessionMessage, 0)
+	for idx, raw := range lines {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		lineNo := idx + 1
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		var entry codexSessionLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return nil, fmt.Errorf("parse codex session history %q line %d: %w", sourcePath, lineNo, err)
+		}
+		if msg, ok := sessionMessageFromCodexSessionEntry(entry, lineNo); ok && !duplicateCodexSessionMessage(items, msg) {
+			items = append(items, msg)
+		}
+	}
+	return items, nil
+}
+
 func sessionMessageFromCodexSessionEntry(entry codexSessionLine, lineNo int) (SessionMessage, bool) {
 	payload := entry.Payload
 	if payload == nil {

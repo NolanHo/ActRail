@@ -14,6 +14,7 @@ import (
 )
 
 const defaultSessionHistoryWarmLines = 3000
+const sessionHistoryMaxLineBytes = 64 << 20
 
 type SessionHistorySnapshot struct {
 	SourcePath string
@@ -35,14 +36,18 @@ type sessionHistoryCache struct {
 
 func newSessionHistoryCache(path string) *sessionHistoryCache {
 	trimmed := strings.TrimSpace(path)
-	if trimmed == "" {
-		return nil
+	cache := &sessionHistoryCache{}
+	if trimmed != "" {
+		cache.path = filepath.Clean(trimmed)
 	}
-	return &sessionHistoryCache{path: filepath.Clean(trimmed)}
+	return cache
 }
 
 func (c *sessionHistoryCache) Start(ctx context.Context) {
 	if c == nil {
+		return
+	}
+	if strings.TrimSpace(c.currentPath()) == "" {
 		return
 	}
 	_ = c.warmTail(defaultSessionHistoryWarmLines)
@@ -85,14 +90,64 @@ func (c *sessionHistoryCache) Snapshot(ctx context.Context) (SessionHistorySnaps
 	}, nil
 }
 
+func (c *sessionHistoryCache) SetPath(ctx context.Context, path string) {
+	if c == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return
+	}
+	cleaned := filepath.Clean(trimmed)
+	c.mu.Lock()
+	if c.path == cleaned {
+		c.mu.Unlock()
+		return
+	}
+	if c.loadCancel != nil {
+		c.loadCancel()
+	}
+	loadCtx, cancel := context.WithCancel(ctx)
+	c.path = cleaned
+	c.lines = nil
+	c.warmed = false
+	c.complete = false
+	c.lastSize = 0
+	c.lastMod = time.Time{}
+	c.loadCancel = cancel
+	c.mu.Unlock()
+
+	_ = c.warmTail(defaultSessionHistoryWarmLines)
+	go func() {
+		_ = c.loadFull(loadCtx)
+	}()
+}
+
+func (c *sessionHistoryCache) currentPath() string {
+	if c == nil {
+		return ""
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.path
+}
+
 func (c *sessionHistoryCache) warmTail(limit int) error {
 	if c == nil {
 		return nil
 	}
-	lines, size, mod, err := tailLines(c.path, limit)
+	path := c.currentPath()
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	lines, size, mod, err := tailLines(path, limit)
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.mu.Lock()
+			if c.path != path {
+				c.mu.Unlock()
+				return nil
+			}
 			c.lines = nil
 			c.warmed = true
 			c.complete = false
@@ -104,6 +159,10 @@ func (c *sessionHistoryCache) warmTail(limit int) error {
 		return err
 	}
 	c.mu.Lock()
+	if c.path != path {
+		c.mu.Unlock()
+		return nil
+	}
 	c.lines = lines
 	c.warmed = true
 	c.complete = false
@@ -117,10 +176,14 @@ func (c *sessionHistoryCache) loadFull(ctx context.Context) error {
 	if c == nil {
 		return nil
 	}
+	path := c.currentPath()
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	lines, size, mod, err := readAllLines(c.path)
+	lines, size, mod, err := readAllLines(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -131,6 +194,10 @@ func (c *sessionHistoryCache) loadFull(ctx context.Context) error {
 		return err
 	}
 	c.mu.Lock()
+	if c.path != path {
+		c.mu.Unlock()
+		return nil
+	}
 	c.lines = lines
 	c.warmed = true
 	c.complete = true
@@ -144,15 +211,19 @@ func (c *sessionHistoryCache) refreshIfChanged(ctx context.Context) error {
 	if c == nil {
 		return nil
 	}
+	path := c.currentPath()
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	info, err := os.Stat(c.path)
+	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("stat session history %q: %w", c.path, err)
+		return fmt.Errorf("stat session history %q: %w", path, err)
 	}
 	c.mu.RLock()
 	unchanged := c.warmed && info.Size() == c.lastSize && info.ModTime().Equal(c.lastMod)
@@ -175,7 +246,7 @@ func readAllLines(path string) ([]string, int64, time.Time, error) {
 	}
 	lines := make([]string, 0)
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), sessionHistoryMaxLineBytes)
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}

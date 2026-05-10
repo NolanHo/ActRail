@@ -1,6 +1,7 @@
 package iod
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,5 +49,35 @@ func TestTailLinesHandlesFileWithoutTrailingNewline(t *testing.T) {
 	}
 	if len(lines) != 2 || lines[0] != "b" || lines[1] != "c" {
 		t.Fatalf("tailLines() = %#v, want b,c", lines)
+	}
+}
+
+func TestCodexSessionPathFromOutput(t *testing.T) {
+	output := `{"method":"turn/started","params":{"turn":{"id":"turn-1"}}}` + "\n" +
+		`{"method":"thread/started","params":{"thread":{"id":"thread-1","path":"/tmp/codex/session.jsonl"}}}` + "\n"
+
+	if got := codexSessionPathFromOutput(output); got != "/tmp/codex/session.jsonl" {
+		t.Fatalf("codexSessionPathFromOutput() = %q, want session path", got)
+	}
+}
+
+func TestSessionHistoryCacheSetPathWarmsTail(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(path, []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache("")
+	cache.SetPath(context.Background(), path)
+
+	snapshot, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if snapshot.SourcePath != path {
+		t.Fatalf("Snapshot().SourcePath = %q, want %q", snapshot.SourcePath, path)
+	}
+	if len(snapshot.Lines) != 2 || snapshot.Lines[0] != "one" || snapshot.Lines[1] != "two" {
+		t.Fatalf("Snapshot().Lines = %#v, want warmed session lines", snapshot.Lines)
 	}
 }

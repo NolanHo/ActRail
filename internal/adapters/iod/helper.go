@@ -854,7 +854,9 @@ func (h *Helper) readChildSocket(ctx context.Context) {
 			if data[len(data)-1] != '\n' {
 				data = append(data, '\n')
 			}
-			_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: "unix", Data: string(data)})
+			text := string(data)
+			h.observeCodexOutput(ctx, text)
+			_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: "unix", Data: text})
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) || ctx.Err() != nil {
@@ -866,6 +868,42 @@ func (h *Helper) readChildSocket(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func (h *Helper) observeCodexOutput(ctx context.Context, data string) {
+	if h == nil || h.childIOMode != ChildIOModeUnix || h.history == nil {
+		return
+	}
+	if path := codexSessionPathFromOutput(data); path != "" {
+		h.history.SetPath(ctx, path)
+	}
+}
+
+func codexSessionPathFromOutput(data string) string {
+	for _, line := range strings.Split(data, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var packet struct {
+			Method string `json:"method"`
+			Params struct {
+				Thread struct {
+					Path string `json:"path"`
+				} `json:"thread"`
+			} `json:"params"`
+		}
+		if err := json.Unmarshal([]byte(line), &packet); err != nil {
+			continue
+		}
+		if strings.TrimSpace(packet.Method) != "thread/started" {
+			continue
+		}
+		if path := strings.TrimSpace(packet.Params.Thread.Path); path != "" {
+			return path
+		}
+	}
+	return ""
 }
 
 func (h *Helper) readOutput(ctx context.Context, stream string, reader io.Reader, pty bool) {

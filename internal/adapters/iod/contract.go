@@ -681,7 +681,7 @@ func (p ReplayDonePacket) Validate() error {
 	return nil
 }
 
-// SessionHistoryRequestPacket asks the helper for its in-memory Pi session JSONL cache.
+// SessionHistoryRequestPacket asks the helper for its in-memory session JSONL cache.
 type SessionHistoryRequestPacket struct {
 	Envelope
 }
@@ -708,7 +708,7 @@ func (p SessionHistoryRequestPacket) Validate() error {
 	return nil
 }
 
-// SessionHistoryResponsePacket returns cached authoritative Pi session JSONL lines.
+// SessionHistoryResponsePacket returns cached authoritative session JSONL lines.
 type SessionHistoryResponsePacket struct {
 	Envelope
 	SourcePath string   `json:"source_path,omitempty"`
