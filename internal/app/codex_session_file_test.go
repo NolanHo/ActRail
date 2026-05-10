@@ -456,6 +456,9 @@ func TestSessionStateCodexTaskCompleteClearsRuntimeAgentRunning(t *testing.T) {
 	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}
+	if _, err := svc.AppendAssistantDelta(sessionID, "turn-codex-task-complete", "stale partial"); err != nil {
+		t.Fatalf("AppendAssistantDelta() error = %v", err)
+	}
 
 	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
@@ -463,6 +466,9 @@ func TestSessionStateCodexTaskCompleteClearsRuntimeAgentRunning(t *testing.T) {
 	}
 	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) {
 		t.Fatalf("SessionState() = busy:%v runtime:%q reason:%q, want idle after task_complete", state.Busy, state.RuntimeState, state.RuntimeStateReason)
+	}
+	if state.PartialAssistantTurn != nil {
+		t.Fatalf("SessionState().PartialAssistantTurn = %+v, want nil after task_complete", state.PartialAssistantTurn)
 	}
 	if svc.isRuntimeAgentRunning(sessionID) {
 		t.Fatal("runtimeAgentRunning = true, want false after codex task_complete state reconcile")

@@ -574,6 +574,12 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	if !ok {
 		return record
 	}
+	if _, partial := updated.transcript.PartialAssistantTurn(); partial {
+		_, _, _ = s.registry.DiscardPartialAssistantTurn(updated.identity.SessionID())
+		if refreshed, refreshedOK := s.registry.Lookup(updated.identity.SessionID()); refreshedOK {
+			updated = refreshed
+		}
+	}
 	updated.runtime = s.runtimeForRecord(updated)
 	return updated
 }
