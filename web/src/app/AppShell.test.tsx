@@ -1242,8 +1242,8 @@ describe("AppShell", () => {
     });
     await flush();
     expect(getRoot().textContent).toContain("Theme");
+    expect(getRoot().textContent).toContain("Default dark workbench for long mixed Chinese and English reading.");
     expect(getRoot().textContent).toContain("Paper-like surfaces with cobalt markdown accents.");
-    expect(getRoot().textContent).toContain("Ink surfaces with brighter markdown contrast for long sessions.");
   });
 
   it("saves supervisor global model from settings", async () => {
@@ -1270,6 +1270,7 @@ describe("AppShell", () => {
   });
 
   it("persists the selected theme mode from settings", async () => {
+    localStorage.setItem("actrail.themeMode", "light");
     renderAppShell();
     await flush();
 
@@ -1286,18 +1287,18 @@ describe("AppShell", () => {
     });
     await flush();
 
-    const darkRadio = Array.from(getRoot().querySelectorAll<HTMLInputElement>('input[type="radio"]')).find(
-      (input) => input.nextElementSibling?.textContent?.includes("Dark"),
+    const graphiteRadio = Array.from(getRoot().querySelectorAll<HTMLInputElement>('input[type="radio"]')).find(
+      (input) => input.nextElementSibling?.textContent?.includes("Graphite"),
     );
-    expect(darkRadio).not.toBeUndefined();
+    expect(graphiteRadio).not.toBeUndefined();
 
     act(() => {
-      darkRadio!.click();
+      graphiteRadio!.click();
     });
     await flush();
 
-    expect(localStorage.getItem("actrail.themeMode")).toBe("dark");
-    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("actrail.themeMode")).toBe("graphite");
+    expect(document.documentElement.dataset.theme).toBe("graphite");
     expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 

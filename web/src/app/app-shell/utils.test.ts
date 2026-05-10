@@ -27,18 +27,24 @@ describe("app-shell utils", () => {
   });
 
   it("reads and applies persisted theme mode", () => {
-    writeThemeMode("dark");
+    writeThemeMode("graphite");
     applyThemeMode(readThemeMode());
 
-    expect(readThemeMode()).toBe("dark");
-    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(readThemeMode()).toBe("graphite");
+    expect(document.documentElement.dataset.theme).toBe("graphite");
     expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 
-  it("defaults to dark theme when no preference is persisted", () => {
-    localStorage.removeItem("actrail.theme");
+  it("defaults to graphite theme when no preference is persisted", () => {
+    localStorage.removeItem("actrail.themeMode");
 
-    expect(readThemeMode()).toBe("dark");
+    expect(readThemeMode()).toBe("graphite");
+  });
+
+  it("maps legacy dark theme preferences to graphite", () => {
+    localStorage.setItem("actrail.themeMode", "dark");
+
+    expect(readThemeMode()).toBe("graphite");
   });
 
   it("merges voice settings into the default nested shape", () => {
