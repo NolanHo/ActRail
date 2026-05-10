@@ -117,6 +117,64 @@ func TestSessionMessagesCodexHistoryUsesSourceLineSeqForIncrementalResume(t *tes
 	}
 }
 
+func TestSessionMessagesCodexHistorySummarizesHiddenToolActivity(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_tool_summary")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-tools","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"run command"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"false\"}","call_id":"call-false"}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-false","output":"Command: false\nProcess exited with code 1\nOutput:\n"}}`,
+		`{"timestamp":"2026-05-08T15:58:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"done","phase":"final_answer"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewDetachedIdentity(sessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-tools",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	got := messageRolesAndText(messages.Items)
+	want := []string{"user:run command", "assistant:done"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	summary, ok := messages.Items[1].Details[toolActivitySummaryDetailsKey].(sessionToolActivitySummary)
+	if !ok {
+		t.Fatalf("assistant details = %+v, want hidden tool activity summary", messages.Items[1].Details)
+	}
+	if summary.TotalTools != 1 || summary.Failed != 1 || summary.SummaryText != "Ran 1 tool · 1 failed · 7s" {
+		t.Fatalf("tool activity summary = %+v, want one failed codex tool", summary)
+	}
+
+	withTools, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10, IncludeToolEvents: true})
+	if err != nil {
+		t.Fatalf("SessionMessages(include tools) error = %v", err)
+	}
+	if len(withTools.Items) != 4 || withTools.Items[1].Type != "tool" || withTools.Items[2].Type != "tool_result" || !withTools.Items[2].IsError {
+		t.Fatalf("with tools = %+v, want raw codex tool call/result", withTools.Items)
+	}
+}
+
 func TestCodexThreadBindingStoresSessionFilePath(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

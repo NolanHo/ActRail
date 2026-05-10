@@ -354,6 +354,9 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 				response.Items = append(response.Items, msg)
 			}
 		}
+		if !req.IncludeToolEvents {
+			response.Items = annotateHiddenToolActivitySummaries(response.Items, sessionMessagesFromCommittedItems(record.transcript.Items()))
+		}
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
 	}
 	page := visibleTranscriptHistory(record.transcript, req)
@@ -367,6 +370,9 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		msg := sessionMessageForRequest(item, req, record.transcript.TailSeq().Uint64(), activeTurnStartSeq)
 		msg.SessionID = record.identity.SessionID().String()
 		response.Items = append(response.Items, msg)
+	}
+	if !req.IncludeToolEvents {
+		response.Items = annotateHiddenToolActivitySummaries(response.Items, sessionMessagesFromCommittedItems(record.transcript.Items()))
 	}
 	if nextBefore, ok := page.NextBefore(); ok {
 		value := nextBefore.Uint64()
@@ -403,6 +409,14 @@ func committedMessageIsToolEvent(item message.CommittedMessage) bool {
 
 func sessionMessageForRequest(item message.CommittedMessage, req SessionMessagesRequest, tailSeq uint64, activeTurnStartSeq uint64) SessionMessage {
 	return deferSessionMessageForRequest(sessionMessageFromCommitted(item), req, tailSeq, activeTurnStartSeq)
+}
+
+func sessionMessagesFromCommittedItems(items []message.CommittedMessage) []SessionMessage {
+	messages := make([]SessionMessage, 0, len(items))
+	for _, item := range items {
+		messages = append(messages, sessionMessageFromCommitted(item))
+	}
+	return messages
 }
 
 func deferSessionMessageForRequest(msg SessionMessage, req SessionMessagesRequest, tailSeq uint64, activeTurnStartSeq uint64) SessionMessage {

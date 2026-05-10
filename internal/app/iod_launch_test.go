@@ -324,6 +324,10 @@ func TestCodexIODControl(t *testing.T) {
 		_, threadID, _ := record.runtime.codex.snapshot()
 		return threadID == "codex-thread-1"
 	})
+	waitForIODCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.Transport.State == SessionTransportStateAttached
+	})
 	sent, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "Implement P6 Codex transport"})
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)

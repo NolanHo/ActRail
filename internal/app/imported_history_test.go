@@ -90,8 +90,8 @@ func TestSessionMessagesDefersOnlyToolEventsBeforeLatestTurn(t *testing.T) {
 func TestSessionMessagesFiltersToolEventsByDefaultBeforePagination(t *testing.T) {
 	items := []SessionMessage{
 		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},
-		{Seq: 2, Kind: "tool", Type: "tool", Text: "hidden tool"},
-		{Seq: 3, Kind: "tool_result", Type: "tool_result", Text: "hidden result"},
+		{Seq: 2, Kind: "tool", Type: "tool", Text: "hidden tool", Name: "read", ToolCallID: "call-read", TS: 10},
+		{Seq: 3, Kind: "tool_result", Type: "tool_result", Text: "hidden result", ToolCallID: "call-read", TS: 12},
 		{Seq: 4, Role: "assistant", Kind: "message", Text: "old answer"},
 		{Seq: 5, Role: "user", Kind: "message", Text: "new prompt"},
 		{Seq: 6, Role: "assistant", Kind: "message", Text: "new answer"},
@@ -109,10 +109,20 @@ func TestSessionMessagesFiltersToolEventsByDefaultBeforePagination(t *testing.T)
 	if response.TailSeq != 6 {
 		t.Fatalf("TailSeq = %d, want visible tail seq 6", response.TailSeq)
 	}
+	summary, ok := response.Items[1].Details[toolActivitySummaryDetailsKey].(sessionToolActivitySummary)
+	if !ok {
+		t.Fatalf("assistant details = %+v, want hidden tool activity summary", response.Items[1].Details)
+	}
+	if summary.TotalTools != 1 || summary.OK != 1 || summary.SummaryText != "Ran 1 tool · 1 ok · 2s" {
+		t.Fatalf("tool activity summary = %+v, want one successful tool", summary)
+	}
 
 	withTools := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Limit: 6, IncludeToolEvents: true})
 	if len(withTools.Items) != 6 {
 		t.Fatalf("len(withTools.Items) = %d, want all items when tool events requested", len(withTools.Items))
+	}
+	if _, ok := withTools.Items[3].Details[toolActivitySummaryDetailsKey]; ok {
+		t.Fatalf("assistant details = %+v, want no synthetic summary when raw tools are requested", withTools.Items[3].Details)
 	}
 }
 

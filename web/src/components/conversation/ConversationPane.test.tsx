@@ -1528,6 +1528,61 @@ describe("ConversationPane", () => {
     expect(root.querySelectorAll(".machineTraceToken.isExtensionUI")).toHaveLength(1);
   });
 
+  it("renders compact tool activity from backend summaries without raw tool events", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-summary", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const liveSessionStore = createStaticStore(
+      { offsetsBySessionId: {}, liveOffsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: {}, loadingBySessionId: {} },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-summary": [
+            { role: "user", text: "start", ts: 1_777_000_000 },
+            {
+              role: "assistant",
+              text: "finished",
+              ts: 1_777_000_125,
+              details: {
+                tool_activity_summary: {
+                  operations: 2,
+                  total_tools: 1,
+                  tool_calls: 1,
+                  tool_results: 1,
+                  ok: 0,
+                  failed: 1,
+                  summary_text: "Ran 1 tool · 1 failed · 2s",
+                  status_text: "1 failed",
+                },
+              },
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-summary": 2 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} liveSessionStore={liveSessionStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const summary = root.querySelector('[data-testid="machine-trace-summary"]');
+    expect(summary?.textContent).toContain("Ran 1 tool");
+    expect(summary?.textContent).toContain("1 failed");
+    expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(0);
+    expect(root.querySelector('[data-testid="message-surface"][data-kind="assistant"]')?.textContent).toContain("finished");
+  });
+
   it("groups consecutive assistant messages and avoids showing role labels as body text", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-3", loading: false, newSessionDefaults: null },
