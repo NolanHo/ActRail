@@ -203,7 +203,14 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	if err != nil {
 		return err
 	}
-	if event.Message.Role == pi.MessageRoleAssistant && event.Message.CommitLike && strings.TrimSpace(event.Message.StopReason) != "status" && event.Message.ToolCallCount == 0 {
+	applyRuntimeMessageDetails(&committed, event)
+	assistantFinal := runtimeAssistantMessageCompletesTurn(event)
+	if event.Message.Role == pi.MessageRoleAssistant && event.Message.CommitLike && !assistantFinal {
+		if err := s.markCodexRuntimeActiveFromAssistantCommit(sessionID, event); err != nil {
+			return err
+		}
+	}
+	if assistantFinal {
 		if record, ok := s.registry.Lookup(sessionID); ok && record.identity.Backend() == session.BackendPI {
 			if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 				s.holdPIRPCIdle(sessionID, record.runtime.helper.generationID)
@@ -232,9 +239,53 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	committed.EventID = piMessageEventID(event)
 	committed.ParentEventID = piParentEventID(event)
 	s.emitMessageCommit(sessionID, turnID, committed)
-	s.emitAssistantFinalNotification(sessionID, committed)
+	if assistantFinal {
+		s.emitAssistantFinalNotification(sessionID, committed)
+	}
 	s.emitSessionState(sessionID)
 	return nil
+}
+
+func runtimeAssistantMessageCompletesTurn(event pi.Event) bool {
+	if event.Message == nil || event.Message.Role != pi.MessageRoleAssistant || !event.Message.CommitLike {
+		return false
+	}
+	if strings.TrimSpace(event.Message.StopReason) == "status" || event.Message.ToolCallCount != 0 {
+		return false
+	}
+	phase := strings.TrimSpace(event.Message.Phase)
+	return phase == "" || phase == "final_answer"
+}
+
+func (s *Stub) markCodexRuntimeActiveFromAssistantCommit(sessionID session.SessionID, event pi.Event) error {
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return nil
+	}
+	if record.runtime.codex == nil {
+		return nil
+	}
+	turnID := runtimeTurnID(event)
+	if turnID != "" {
+		s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+			state.setActiveTurnID(turnID)
+		})
+	}
+	return s.syncCodexRuntimeActivity(sessionID, "assistant_"+strings.TrimSpace(event.Message.Phase), true)
+}
+
+func applyRuntimeMessageDetails(committed *SessionMessage, event pi.Event) {
+	if committed == nil || event.Message == nil {
+		return
+	}
+	phase := strings.TrimSpace(event.Message.Phase)
+	if phase == "" {
+		return
+	}
+	if committed.Details == nil {
+		committed.Details = map[string]any{}
+	}
+	committed.Details["phase"] = phase
 }
 
 func (s *Stub) duplicateRuntimeUserMessage(sessionID session.SessionID, text string) bool {

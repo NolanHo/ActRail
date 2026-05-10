@@ -95,6 +95,7 @@ type Message struct {
 	Role          MessageRole
 	Text          string
 	Class         MessageClass
+	Phase         string
 	StopReason    string
 	ToolCallCount int
 	ThinkingCount int

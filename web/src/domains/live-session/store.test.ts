@@ -420,6 +420,35 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
   });
 
+  it("keeps assistant generation active for commentary commits until final_answer", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "message.delta",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", delta: "partial" },
+    });
+    liveStore.applyFrame({
+      type: "message.commit",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", message: { seq: 1, role: "assistant", text: "checking", details: { phase: "commentary" } } },
+    });
+
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(true);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { seq: 1, role: "assistant", text: "checking", details: { phase: "commentary" }, turn_id: "turn-1" },
+    ]);
+
+    liveStore.applyFrame({
+      type: "message.commit",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-1", message: { seq: 2, role: "assistant", text: "done", details: { phase: "final_answer" } } },
+    });
+
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+  });
+
   it("treats realtime idle state as authoritative over stale local generating state", () => {
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);

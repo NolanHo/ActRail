@@ -1383,9 +1383,52 @@ func TestCodexAssistantItemCompletedWaitsForTurnCompleted(t *testing.T) {
 	assertCodexVisibleState(t, svc, sessionID, false, "", string(codexRuntimePhaseIdle))
 }
 
+func TestCodexAssistantCommentaryCommitKeepsRuntimeBusy(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	defer stdoutW.Close()
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetStdout(stdoutR)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+
+	_, _ = stdoutW.Write([]byte(
+		"{\"id\":\"init-1\",\"result\":{\"userAgent\":\"actrail-test\"}}\n" +
+			"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-commentary\",\"status\":{\"type\":\"idle\"}}}}\n" +
+			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-commentary\",\"turn\":{\"id\":\"turn-codex-commentary\",\"status\":\"inProgress\",\"error\":null}}}\n" +
+			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-commentary\",\"turnId\":\"turn-codex-commentary\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-commentary\",\"text\":\"I am checking this now\",\"phase\":\"commentary\"}}}\n"))
+
+	waitForAppCondition(t, func() bool {
+		messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+		return err == nil && len(messages.Items) == 1 && messages.Items[0].Role == "assistant" && messages.Items[0].Text == "I am checking this now"
+	})
+	snapshot := sink.snapshot()
+	if len(snapshot.commits) != 1 || snapshot.commits[0].Message.Details["phase"] != "commentary" {
+		t.Fatalf("live commits = %+v, want commentary phase", snapshot.commits)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseRunning) {
+		t.Fatalf("SessionState() after commentary = %+v, want running busy", state)
+	}
+	if len(snapshot.notifications) != 0 {
+		t.Fatalf("notifications after commentary = %+v, want none", snapshot.notifications)
+	}
+}
+
 func TestCodexHelperChildExitMarksTransportEnded(t *testing.T) {
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}

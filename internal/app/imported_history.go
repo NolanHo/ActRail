@@ -563,6 +563,7 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	if err != nil || !codexSessionFileHasFinalAnswer(items) {
 		return record
 	}
+	s.emitCodexSessionFileLiveCommits(record.identity.SessionID(), items)
 	s.reconcileCodexSessionFileFinal(record, items)
 	updated, ok := s.registry.Lookup(record.identity.SessionID())
 	if !ok {
@@ -570,6 +571,58 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	}
 	updated.runtime = s.runtimeForRecord(updated)
 	return updated
+}
+
+func (s *Stub) emitCodexSessionFileLiveCommits(sessionID session.SessionID, items []SessionMessage) {
+	if s == nil || s.sink == nil || len(items) == 0 {
+		return
+	}
+	toEmit := make([]SessionMessage, 0)
+	s.codexLiveMirrorMu.Lock()
+	if s.codexLiveMirror == nil {
+		s.codexLiveMirror = map[session.SessionID]uint64{}
+	}
+	lastMirrored := s.codexLiveMirror[sessionID]
+	for _, item := range items {
+		if item.Seq <= lastMirrored || item.Seq == 0 {
+			continue
+		}
+		if item.Role != "assistant" {
+			continue
+		}
+		if strings.TrimSpace(item.EventID) == "" {
+			item.EventID = fmt.Sprintf("codex:file:%s:%06d", item.Role, item.Seq)
+		}
+		item.SessionID = sessionID.String()
+		toEmit = append(toEmit, item)
+		lastMirrored = item.Seq
+	}
+	s.codexLiveMirror[sessionID] = lastMirrored
+	s.codexLiveMirrorMu.Unlock()
+	for _, item := range toEmit {
+		s.emitMessageCommit(sessionID, codexFileTurnID(item), item)
+	}
+}
+
+func (s *Stub) codexLiveMirroredTail(sessionID session.SessionID) uint64 {
+	if s == nil {
+		return 0
+	}
+	s.codexLiveMirrorMu.Lock()
+	defer s.codexLiveMirrorMu.Unlock()
+	return s.codexLiveMirror[sessionID]
+}
+
+func codexFileTurnID(item SessionMessage) string {
+	if item.Details != nil {
+		if turnID := strings.TrimSpace(stringValue(item.Details["turn_id"])); turnID != "" {
+			return turnID
+		}
+	}
+	if item.Role == "assistant" && strings.TrimSpace(item.SourceOrder) != "" {
+		return strings.TrimSpace(item.SourceOrder)
+	}
+	return ""
 }
 
 func codexRecordNeedsAuthoritativeFinalReconcile(record sessionRecord) bool {

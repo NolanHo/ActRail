@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -270,7 +271,22 @@ func (b *AppBridge) PublishMessageCommit(event app.MessageCommitEvent) {
 			},
 		}
 	})
-	b.publishGenerating(event.SessionID, event.TurnID, event.Message.Role, false)
+	if messageCommitEndsAssistantGeneration(event.Message) {
+		b.publishGenerating(event.SessionID, event.TurnID, event.Message.Role, false)
+	}
+}
+
+func messageCommitEndsAssistantGeneration(msg app.SessionMessage) bool {
+	if msg.Role != "assistant" {
+		return true
+	}
+	phase := ""
+	if msg.Details != nil {
+		if raw, ok := msg.Details["phase"].(string); ok {
+			phase = raw
+		}
+	}
+	return strings.TrimSpace(phase) == "" || strings.TrimSpace(phase) == "final_answer"
 }
 
 func (b *AppBridge) PublishQueueState(event app.QueueStateEvent) {

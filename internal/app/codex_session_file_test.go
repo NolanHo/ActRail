@@ -355,6 +355,67 @@ func TestSessionStateCodexFinalAnswerClearsRuntimeAgentRunning(t *testing.T) {
 	}
 }
 
+func TestSessionStateCodexFinalAnswerMirrorsLiveCommits(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_state_live_commits")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-state-live","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"weekly report"}}`,
+		`{"timestamp":"2026-05-08T15:58:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"checking","phase":"commentary"}}`,
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"done","phase":"final_answer"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_state_live", "t_state_live", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-state-live",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)},
+		Transport:        SessionTransportSnapshot{State: SessionTransportStateStarting, Reason: "codex_thread_resuming"},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.TailSeq != 4 {
+		t.Fatalf("SessionState() = busy:%v tail:%d, want idle tail 4", state.Busy, state.TailSeq)
+	}
+	snapshot := sink.snapshot()
+	if len(snapshot.commits) != 2 {
+		t.Fatalf("live commits = %+v, want commentary/final", snapshot.commits)
+	}
+	if snapshot.commits[0].Message.Details["phase"] != "commentary" || snapshot.commits[1].Message.Details["phase"] != "final_answer" {
+		t.Fatalf("commit phases = (%v, %v), want commentary/final_answer", snapshot.commits[0].Message.Details, snapshot.commits[1].Message.Details)
+	}
+	_, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState(second) error = %v", err)
+	}
+	if len(sink.snapshot().commits) != 2 {
+		t.Fatalf("live commits after second state = %d, want no duplicates", len(sink.snapshot().commits))
+	}
+}
+
 func TestListSessionsCodexFinalAnswerClearsRuntimeAgentRunning(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
