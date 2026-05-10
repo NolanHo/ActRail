@@ -492,9 +492,6 @@ func filterSessionRecords(records []sessionRecord, req ListSessionsRequest) []se
 }
 
 func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListSessionsResponse, error) {
-	if err := s.waitRuntimeRestore(ctx); err != nil {
-		return ListSessionsResponse{}, err
-	}
 	var groupKey *string
 	if req.GroupKey != "" {
 		v := req.GroupKey
@@ -507,7 +504,6 @@ func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListS
 	for _, item := range items[start:end] {
 		record := item.record
 		record.runtime = s.runtimeForRecord(record)
-		record = s.reconcileCodexSessionFileFinalForState(ctx, record)
 		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt))
 	}
 	return ListSessionsResponse{
