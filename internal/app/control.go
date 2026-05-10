@@ -447,6 +447,9 @@ func (s *Stub) startCodexThreadBootstrap(sessionID session.SessionID, runtime se
 	if runtime.protocol != runtimeProtocolCodexRPC || !runtime.canWriteInput() {
 		return
 	}
+	if runtime.attachedExistingIOD {
+		return
+	}
 	reason := "codex_initializing"
 	if runtime.PendingCodexResumeThreadID() != "" {
 		reason = "codex_thread_resuming"

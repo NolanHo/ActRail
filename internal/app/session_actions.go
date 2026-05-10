@@ -634,6 +634,13 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		_ = newRuntime.CleanupHelperArtifacts()
 		return sessionRecord{}, "", err
 	}
+	nextBinding, err := newRuntime.CurrentHelperBinding(identity.SessionID())
+	if err != nil {
+		_ = newRuntime.Kill(context.Background())
+		_ = newRuntime.CleanupHelperArtifacts()
+		return sessionRecord{}, "", err
+	}
+	reusedHelper := helperBindingSameGeneration(previousBinding, nextBinding)
 	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), newRuntime); err != nil {
 		_ = newRuntime.Kill(context.Background())
 		_ = newRuntime.CleanupHelperArtifacts()
@@ -669,17 +676,27 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		_ = newRuntime.CleanupHelperArtifacts()
 		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
 	}
-	s.shutdownPreviousHelperGeneration(identity.SessionID(), previousBinding)
+	if !reusedHelper {
+		s.shutdownPreviousHelperGeneration(identity.SessionID(), previousBinding)
+	}
 	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
 	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), newRuntime)
 	s.startCodexThreadBootstrap(updated.identity.SessionID(), newRuntime)
-	_ = record.runtime.Kill(context.Background())
-	if record.runtime.helper != nil && s.helpers != nil {
-		s.helpers.Remove(record.identity.SessionID())
+	if reusedHelper {
+		record.runtime.CloseHelperStream()
+	} else {
+		_ = record.runtime.Kill(context.Background())
+		if record.runtime.helper != nil && s.helpers != nil {
+			s.helpers.Remove(record.identity.SessionID())
+		}
+		_ = record.runtime.CleanupHelperArtifacts()
 	}
-	_ = record.runtime.CleanupHelperArtifacts()
 	previousRuntimeID, _ := record.identity.RuntimeID()
 	return updated, previousRuntimeID, nil
+}
+
+func helperBindingSameGeneration(left, right *RuntimeHelperBinding) bool {
+	return left != nil && right != nil && left.GenerationID != "" && left.GenerationID == right.GenerationID
 }
 
 func (s *Stub) shutdownPreviousHelperGeneration(sessionID session.SessionID, binding *RuntimeHelperBinding) {

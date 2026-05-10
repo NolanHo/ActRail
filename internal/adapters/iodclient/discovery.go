@@ -20,6 +20,10 @@ type DiscoveredManifest struct {
 	Manifest iod.GenerationManifest
 }
 
+type ManifestIndex struct {
+	BySession map[session.SessionID][]DiscoveredManifest
+}
+
 func RuntimeRoot(dataDir string) string {
 	trimmed := strings.TrimSpace(dataDir)
 	if trimmed == "" {
@@ -99,4 +103,56 @@ func DiscoverManifests(root string) ([]DiscoveredManifest, error) {
 		return left.Path < right.Path
 	})
 	return items, nil
+}
+
+func NewManifestIndex(items []DiscoveredManifest) ManifestIndex {
+	index := ManifestIndex{BySession: make(map[session.SessionID][]DiscoveredManifest)}
+	for _, item := range items {
+		index.BySession[item.Manifest.SessionID] = append(index.BySession[item.Manifest.SessionID], item)
+	}
+	for sessionID := range index.BySession {
+		sort.Slice(index.BySession[sessionID], func(i, j int) bool {
+			left := index.BySession[sessionID][i]
+			right := index.BySession[sessionID][j]
+			if left.Manifest.StartTS != right.Manifest.StartTS {
+				return left.Manifest.StartTS > right.Manifest.StartTS
+			}
+			if left.Manifest.GenerationID != right.Manifest.GenerationID {
+				return left.Manifest.GenerationID.String() > right.Manifest.GenerationID.String()
+			}
+			return left.Path > right.Path
+		})
+	}
+	return index
+}
+
+func DiscoverManifestIndex(root string) (ManifestIndex, error) {
+	items, err := DiscoverManifests(root)
+	if err != nil {
+		return ManifestIndex{}, err
+	}
+	return NewManifestIndex(items), nil
+}
+
+func (idx ManifestIndex) Candidates(sessionID session.SessionID, preferred *iod.GenerationID) []DiscoveredManifest {
+	items := append([]DiscoveredManifest(nil), idx.BySession[sessionID]...)
+	if len(items) == 0 {
+		return nil
+	}
+	if preferred == nil || strings.TrimSpace(preferred.String()) == "" {
+		return items
+	}
+	preferredID := *preferred
+	out := make([]DiscoveredManifest, 0, len(items))
+	for _, item := range items {
+		if item.Manifest.GenerationID == preferredID {
+			out = append(out, item)
+		}
+	}
+	for _, item := range items {
+		if item.Manifest.GenerationID != preferredID {
+			out = append(out, item)
+		}
+	}
+	return out
 }

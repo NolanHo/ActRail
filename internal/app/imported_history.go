@@ -775,9 +775,12 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	}
 	items, err := codexSessionMessagesFromJSONLLines(ctx, packet.SourcePath, packet.Lines)
 	if err != nil {
-		return SessionMessagesResponse{}, true, err
+		return SessionMessagesResponse{}, false, nil
 	}
 	if len(items) == 0 {
+		return SessionMessagesResponse{}, false, nil
+	}
+	if !packet.Complete {
 		return SessionMessagesResponse{}, false, nil
 	}
 	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionLinesHaveTaskComplete(ctx, packet.Lines)
