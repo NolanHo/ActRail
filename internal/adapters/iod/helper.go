@@ -244,7 +244,7 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 		protocolVersion:  protocolVersion,
 		buildDate:        strings.TrimSpace(opts.BuildDate),
 		gitSHA:           strings.TrimSpace(opts.GitSHA),
-		history:          newSessionHistoryCache(opts.SessionHistoryPath),
+		history:          newSessionHistoryCache(opts.SessionHistoryPath, childIOMode == ChildIOModeUnix),
 		runner:           runner,
 		now:              now,
 		conns:            make(map[*helperConn]struct{}),

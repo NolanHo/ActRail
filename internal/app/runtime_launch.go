@@ -538,6 +538,9 @@ func (l processRuntimeLauncher) attachExistingIODHelper(ctx context.Context, req
 			preferred = &generationID
 		}
 	}
+	if preferred == nil {
+		return sessionRuntime{}, false
+	}
 	for _, discovered := range index.Candidates(req.SessionID, preferred) {
 		runtime, err := l.attachIODManifest(ctx, req, discovered)
 		if err == nil {

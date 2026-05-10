@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,10 +65,15 @@ func TestCodexSessionPathFromOutput(t *testing.T) {
 func TestSessionHistoryCacheSetPathWarmsTail(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
-	if err := os.WriteFile(path, []byte("one\ntwo\n"), 0o644); err != nil {
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"world","phase":"final_answer"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	cache := newSessionHistoryCache("")
+	cache := newSessionHistoryCache("", true)
 	cache.SetPath(context.Background(), path)
 
 	snapshot, err := cache.Snapshot(context.Background())
@@ -77,7 +83,68 @@ func TestSessionHistoryCacheSetPathWarmsTail(t *testing.T) {
 	if snapshot.SourcePath != path {
 		t.Fatalf("Snapshot().SourcePath = %q, want %q", snapshot.SourcePath, path)
 	}
-	if len(snapshot.Lines) != 2 || snapshot.Lines[0] != "one" || snapshot.Lines[1] != "two" {
+	if len(snapshot.Lines) != 3 {
 		t.Fatalf("Snapshot().Lines = %#v, want warmed session lines", snapshot.Lines)
+	}
+	if !snapshot.Complete {
+		t.Fatal("Snapshot().Complete = false, want true after Codex full load")
+	}
+	if snapshot.IndexedCount != 2 {
+		t.Fatalf("Snapshot().IndexedCount = %d, want 2", snapshot.IndexedCount)
+	}
+	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Role != "user" || snapshot.Messages[0].Text != "hello" || snapshot.Messages[1].Role != "assistant" || snapshot.Messages[1].Text != "world" {
+		t.Fatalf("Snapshot().Messages = %#v, want parsed user/assistant messages", snapshot.Messages)
+	}
+}
+
+func TestSessionHistoryCacheCodexAppendUpdatesIndexAndTail(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	cache.Start(context.Background())
+	t.Cleanup(cache.Stop)
+	first, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if first.IndexedCount != 1 || len(first.Messages) != 1 || first.Messages[0].Text != "hello" {
+		t.Fatalf("first Snapshot() = %#v, want one indexed user message", first)
+	}
+	appendBody := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"world","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+	}, "\n") + "\n"
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString(appendBody); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	second, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("second Snapshot() error = %v", err)
+	}
+	if second.IndexedCount != 2 {
+		t.Fatalf("second Snapshot().IndexedCount = %d, want 2", second.IndexedCount)
+	}
+	if !second.TaskComplete {
+		t.Fatal("second Snapshot().TaskComplete = false, want true after appended task_complete")
+	}
+	if len(second.Messages) != 2 || second.Messages[1].Role != "assistant" || second.Messages[1].Text != "world" {
+		t.Fatalf("second Snapshot().Messages = %#v, want appended assistant message", second.Messages)
+	}
+	if got := second.Lines[len(second.Lines)-1]; !strings.Contains(got, `"task_complete"`) {
+		t.Fatalf("last tail line = %q, want appended task_complete", got)
 	}
 }

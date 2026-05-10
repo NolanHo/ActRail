@@ -27,6 +27,7 @@ type helperReplayScript struct {
 	Items       []iod.ReplayItemPacket
 	Done        iod.ReplayDonePacket
 	LivePackets []any
+	History     *iod.SessionHistoryResponsePacket
 }
 
 func TestHelperDiscovery(t *testing.T) {
@@ -1148,6 +1149,32 @@ func serveReplayHelperConn(conn net.Conn, manifest iod.GenerationManifest, scrip
 				return nil
 			}
 			return err
+		}
+	}
+	if script.SkipReplay && len(script.LivePackets) == 0 && script.History != nil {
+		for {
+			var raw json.RawMessage
+			if err := dec.Decode(&raw); err != nil {
+				if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
+					return nil
+				}
+				return err
+			}
+			var peek struct {
+				Kind iod.PacketKind `json:"kind"`
+			}
+			if err := json.Unmarshal(raw, &peek); err != nil {
+				return err
+			}
+			if peek.Kind != iod.PacketSessionHistoryRequest {
+				return fmt.Errorf("unexpected helper packet kind %q", peek.Kind)
+			}
+			if err := enc.Encode(*script.History); err != nil {
+				if helperConnClosed(err) {
+					return nil
+				}
+				return err
+			}
 		}
 	}
 	for _, packet := range script.LivePackets {

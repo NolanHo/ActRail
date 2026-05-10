@@ -711,10 +711,29 @@ func (p SessionHistoryRequestPacket) Validate() error {
 // SessionHistoryResponsePacket returns cached authoritative session JSONL lines.
 type SessionHistoryResponsePacket struct {
 	Envelope
-	SourcePath string   `json:"source_path,omitempty"`
-	Lines      []string `json:"lines,omitempty"`
-	Warmed     bool     `json:"warmed"`
-	Complete   bool     `json:"complete"`
+	SourcePath   string                  `json:"source_path,omitempty"`
+	Lines        []string                `json:"lines,omitempty"`
+	Messages     []SessionHistoryMessage `json:"messages,omitempty"`
+	IndexedCount int                     `json:"indexed_count,omitempty"`
+	TaskComplete bool                    `json:"task_complete,omitempty"`
+	Warmed       bool                    `json:"warmed"`
+	Complete     bool                    `json:"complete"`
+}
+
+type SessionHistoryMessage struct {
+	Seq         uint64         `json:"seq"`
+	Role        string         `json:"role,omitempty"`
+	Kind        string         `json:"kind"`
+	Type        string         `json:"type,omitempty"`
+	Text        string         `json:"text,omitempty"`
+	TS          float64        `json:"ts"`
+	EventID     string         `json:"event_id,omitempty"`
+	SourceOrder string         `json:"source_order,omitempty"`
+	Name        string         `json:"name,omitempty"`
+	Summary     string         `json:"summary,omitempty"`
+	ToolCallID  string         `json:"tool_call_id,omitempty"`
+	IsError     bool           `json:"is_error,omitempty"`
+	Details     map[string]any `json:"details,omitempty"`
 }
 
 func NewSessionHistoryResponsePacket(sessionID session.SessionID, generationID GenerationID, snapshot SessionHistorySnapshot) (SessionHistoryResponsePacket, error) {
@@ -723,11 +742,14 @@ func NewSessionHistoryResponsePacket(sessionID session.SessionID, generationID G
 		return SessionHistoryResponsePacket{}, err
 	}
 	packet := SessionHistoryResponsePacket{
-		Envelope:   env,
-		SourcePath: strings.TrimSpace(snapshot.SourcePath),
-		Lines:      append([]string(nil), snapshot.Lines...),
-		Warmed:     snapshot.Warmed,
-		Complete:   snapshot.Complete,
+		Envelope:     env,
+		SourcePath:   strings.TrimSpace(snapshot.SourcePath),
+		Lines:        append([]string(nil), snapshot.Lines...),
+		Messages:     append([]SessionHistoryMessage(nil), snapshot.Messages...),
+		IndexedCount: snapshot.IndexedCount,
+		TaskComplete: snapshot.TaskComplete,
+		Warmed:       snapshot.Warmed,
+		Complete:     snapshot.Complete,
 	}
 	if err := packet.Validate(); err != nil {
 		return SessionHistoryResponsePacket{}, err

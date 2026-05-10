@@ -552,21 +552,17 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) {
 		return record
 	}
-	sourcePath, threadID, err := s.codexSessionFileForRecord(record)
-	if err != nil || sourcePath == "" {
+	if record.runtime.helper == nil {
 		return record
 	}
-	if threadID != "" {
-		s.rememberCodexThreadBinding(record, threadID, sourcePath)
-	}
-	items, err := codexSessionMessagesFromFile(ctx, sourcePath)
-	if err != nil {
+	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	packet, err := record.runtime.helper.sessionHistory(historyCtx)
+	if err != nil || !packet.Complete || len(packet.Messages) == 0 {
 		return record
 	}
-	complete := codexSessionMessagesHaveAuthoritativeCompletion(items)
-	if !complete {
-		complete = codexSessionFileHasTaskComplete(ctx, sourcePath)
-	}
+	items := sessionMessagesFromIODHistory(packet.Messages)
+	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete
 	if !complete {
 		return record
 	}
@@ -711,46 +707,7 @@ func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRe
 	if record.identity.Backend() != session.BackendCodex {
 		return SessionMessagesResponse{}, false, nil
 	}
-	if response, ok, err := s.loadCodexIODHistory(ctx, record, req); ok {
-		return response, true, err
-	}
-	sessionID := record.identity.SessionID()
-	sourcePath, threadID, err := s.codexSessionFileForRecord(record)
-	if err != nil {
-		return SessionMessagesResponse{}, true, err
-	}
-	if sourcePath == "" {
-		return SessionMessagesResponse{}, false, nil
-	}
-	if threadID != "" {
-		s.rememberCodexThreadBinding(record, threadID, sourcePath)
-	}
-	cacheKey, ok := codexSessionFileSignature(sourcePath)
-	if !ok {
-		return SessionMessagesResponse{}, false, nil
-	}
-	if items, ok := s.messageCache.Get(sessionID, cacheKey); ok {
-		complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, sourcePath)
-		if !codexSessionFileHistoryUsable(record, items, complete) {
-			return SessionMessagesResponse{}, false, nil
-		}
-		s.reconcileCodexSessionFileCompletion(record, complete)
-		return paginateSessionMessagesForRequest(items, req), true, nil
-	}
-	items, err := codexSessionMessagesFromFile(ctx, sourcePath)
-	if err != nil {
-		return SessionMessagesResponse{}, true, err
-	}
-	if len(items) == 0 {
-		return SessionMessagesResponse{}, false, nil
-	}
-	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, sourcePath)
-	if !codexSessionFileHistoryUsable(record, items, complete) {
-		return SessionMessagesResponse{}, false, nil
-	}
-	s.reconcileCodexSessionFileCompletion(record, complete)
-	s.messageCache.Put(sessionID, cacheKey, items)
-	return paginateSessionMessagesForRequest(items, req), true, nil
+	return s.loadCodexIODHistory(ctx, record, req)
 }
 
 func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
@@ -760,30 +717,27 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	packet, err := record.runtime.helper.sessionHistory(historyCtx)
-	if err != nil || strings.TrimSpace(packet.SourcePath) == "" || len(packet.Lines) == 0 {
+	if err != nil || strings.TrimSpace(packet.SourcePath) == "" || len(packet.Messages) == 0 {
 		return SessionMessagesResponse{}, false, nil
 	}
 	sessionID := record.identity.SessionID()
 	cacheKey := codexIODHistoryCacheKey(packet)
 	if items, ok := s.messageCache.Get(sessionID, cacheKey); ok {
-		complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionLinesHaveTaskComplete(ctx, packet.Lines)
+		complete := packet.Complete && (codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete)
 		if !codexSessionFileHistoryUsable(record, items, complete) {
 			return SessionMessagesResponse{}, false, nil
 		}
 		s.reconcileCodexSessionFileCompletion(record, complete)
 		return paginateSessionMessagesForRequest(items, req), true, nil
 	}
-	items, err := codexSessionMessagesFromJSONLLines(ctx, packet.SourcePath, packet.Lines)
-	if err != nil {
-		return SessionMessagesResponse{}, false, nil
-	}
+	items := sessionMessagesFromIODHistory(packet.Messages)
 	if len(items) == 0 {
 		return SessionMessagesResponse{}, false, nil
 	}
 	if !packet.Complete {
 		return SessionMessagesResponse{}, false, nil
 	}
-	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionLinesHaveTaskComplete(ctx, packet.Lines)
+	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete
 	if !codexSessionFileHistoryUsable(record, items, complete) {
 		return SessionMessagesResponse{}, false, nil
 	}
@@ -792,13 +746,35 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	return paginateSessionMessagesForRequest(items, req), true, nil
 }
 
+func sessionMessagesFromIODHistory(messages []iod.SessionHistoryMessage) []SessionMessage {
+	items := make([]SessionMessage, 0, len(messages))
+	for _, msg := range messages {
+		items = append(items, SessionMessage{
+			Seq:         msg.Seq,
+			Role:        msg.Role,
+			Kind:        msg.Kind,
+			Type:        msg.Type,
+			Text:        msg.Text,
+			TS:          msg.TS,
+			EventID:     msg.EventID,
+			SourceOrder: msg.SourceOrder,
+			Name:        msg.Name,
+			Summary:     msg.Summary,
+			ToolCallID:  msg.ToolCallID,
+			IsError:     msg.IsError,
+			Details:     msg.Details,
+		})
+	}
+	return items
+}
+
 func codexIODHistoryCacheKey(packet iod.SessionHistoryResponsePacket) string {
 	lastLine := ""
 	if len(packet.Lines) > 0 {
 		lastLine = packet.Lines[len(packet.Lines)-1]
 	}
 	sum := sha256.Sum256([]byte(lastLine))
-	return fmt.Sprintf("codex-iod-history:%s:%t:%t:%d:%x", strings.TrimSpace(packet.SourcePath), packet.Warmed, packet.Complete, len(packet.Lines), sum[:8])
+	return fmt.Sprintf("codex-iod-history:%s:%t:%t:%d:%d:%x", strings.TrimSpace(packet.SourcePath), packet.Warmed, packet.Complete, packet.IndexedCount, len(packet.Messages), sum[:8])
 }
 
 func codexSessionFileHistoryUsable(record sessionRecord, items []SessionMessage, complete bool) bool {
