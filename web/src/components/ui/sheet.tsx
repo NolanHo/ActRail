@@ -36,7 +36,7 @@ export function Sheet({ open, children }: SheetProps) {
     return null;
   }
 
-  return <div className="fixed inset-0 z-40 bg-slate-950/40">{children}</div>;
+  return <div className="sheetBackdropLayer fixed inset-0 z-40">{children}</div>;
 }
 
 export function SheetContent({ side = "left", className, children, titleId, ariaLabel }: SheetContentProps) {

@@ -1,6 +1,6 @@
 import type { VoiceSettingsResponse } from "../../lib/types";
 
-export type ThemeMode = "light" | "dark";
+export type ThemeMode = "light" | "graphite";
 
 export const THEME_MODE_STORAGE_KEY = "actrail.themeMode";
 
@@ -47,11 +47,11 @@ export function readLocalToggleDefaultOn(key: string) {
 }
 
 export function normalizeThemeMode(value: unknown): ThemeMode {
-  return value === "light" ? "light" : "dark";
+  return value === "light" ? "light" : "graphite";
 }
 
 export function readThemeMode(): ThemeMode {
-  if (typeof window === "undefined") return "dark";
+  if (typeof window === "undefined") return "graphite";
   return normalizeThemeMode(window.localStorage.getItem(THEME_MODE_STORAGE_KEY));
 }
 
@@ -64,7 +64,7 @@ export function applyThemeMode(mode: ThemeMode) {
   if (typeof document === "undefined") return;
   const next = normalizeThemeMode(mode);
   document.documentElement.dataset.theme = next;
-  document.documentElement.style.colorScheme = next;
+  document.documentElement.style.colorScheme = next === "light" ? "light" : "dark";
 }
 
 export function getAnnouncementClientId() {

@@ -1114,5 +1114,10 @@ func normalizeSessionTitle(raw, cwd string) string {
 	if cleaned == "" {
 		return "session"
 	}
-	return filepath.Clean(cleaned)
+	cleaned = filepath.Clean(cleaned)
+	base := filepath.Base(cleaned)
+	if base == "." || base == "/" || base == `\` {
+		return cleaned
+	}
+	return base
 }

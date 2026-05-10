@@ -1,7 +1,7 @@
 :root {
-  --font-ui: "Fira Code", "LXGW WenKai Screen", "LXGW WenKai", "霞鹜文楷", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", Inter, ui-sans-serif, system-ui, "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-assistant-prose: "Fira Code", "LXGW WenKai Screen", "LXGW WenKai", "霞鹜文楷", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Serif CJK SC", "Source Han Serif SC", serif;
-  --font-code: "Fira Code", "LXGW WenKai Mono Screen", "LXGW WenKai Mono", "LXGW WenKai Screen", "LXGW WenKai", "霞鹜文楷", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-ui: "Inter", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable", "Segoe UI", "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", Arial, ui-sans-serif, system-ui, sans-serif;
+  --font-assistant-prose: "IBM Plex Sans", "LXGW WenKai Screen", "LXGW WenKai", "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-code: "JetBrains Mono", "Fira Code", "LXGW WenKai Mono Screen", "LXGW WenKai Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-family: var(--font-ui);
   line-height: 1.5;
   font-weight: 400;
@@ -10,7 +10,6 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-:root,
 :root[data-theme="light"] {
   color-scheme: light;
   background: hsl(42 30% 97%);
@@ -42,10 +41,16 @@
   --text: hsl(var(--foreground));
   --text-muted: hsl(var(--muted-foreground));
   --surface: hsl(var(--card) / 0.86);
+  --surface-elevated: hsl(var(--card));
   --surface-border: hsl(var(--border));
   --legacy-border: hsl(var(--border));
   --legacy-accent: hsl(var(--primary));
   --legacy-muted: hsl(var(--muted-foreground));
+  --legacy-text: var(--text);
+  --muted-text: var(--text-muted);
+  --danger: hsl(var(--destructive));
+  --success: hsl(142 72% 36%);
+  --warning: hsl(38 92% 50%);
   --accent-weak: hsl(var(--primary) / 0.12);
   --shadow: 0 24px 60px rgba(36, 46, 66, 0.14);
   --shadow-sm: 0 1px 2px rgba(36, 46, 66, 0.08);
@@ -85,6 +90,9 @@
   --message-card-team-border: color-mix(in srgb, #cdbdff 52%, var(--legacy-border));
   --message-card-todo-bg: color-mix(in srgb, #f3f7e8 82%, white);
   --message-card-todo-border: color-mix(in srgb, #c7d8a7 52%, var(--legacy-border));
+  --todo-card-shell: var(--message-card-todo-bg);
+  --todo-card-border: var(--message-card-todo-border);
+  --todo-card-pill-fg: hsl(84 42% 30%);
   --message-todo-item-bg: color-mix(in srgb, #fbfcf6 84%, var(--panel));
   --message-todo-item-border: color-mix(in srgb, #cdd9b4 48%, var(--legacy-border));
   --message-todo-status-bg: rgba(15, 23, 42, 0.08);
@@ -119,82 +127,92 @@
   --markdown-rule: hsl(216 18% 82%);
 }
 
+:root,
+:root[data-theme="graphite"],
 :root[data-theme="dark"] {
   color-scheme: dark;
-  background: hsl(258 23% 8%);
-  color: hsl(0 0% 75%);
+  background: hsl(218 18% 8%);
+  color: hsl(213 22% 86%);
 
-  --background: 258 23% 8%;
-  --foreground: 0 0% 75%;
-  --card: 255 21% 11%;
-  --card-foreground: 0 0% 75%;
-  --popover: 255 21% 11%;
-  --popover-foreground: 0 0% 75%;
-  --primary: 189 86% 45%;
-  --primary-foreground: 255 24% 10%;
-  --secondary: 257 18% 15%;
-  --secondary-foreground: 0 0% 75%;
-  --muted: 257 18% 15%;
-  --muted-foreground: 221 34% 71%;
-  --accent: 256 20% 17%;
-  --accent-foreground: 0 0% 75%;
-  --destructive: 340 87% 66%;
-  --destructive-foreground: 255 24% 10%;
-  --border: 255 18% 14%;
-  --input: 255 18% 14%;
-  --ring: 189 86% 45%;
-  --radius: 1rem;
+  --background: 218 18% 8%;
+  --foreground: 213 22% 86%;
+  --card: 218 16% 11%;
+  --card-foreground: 213 22% 86%;
+  --popover: 218 13% 17%;
+  --popover-foreground: 213 22% 88%;
+  --primary: 178 58% 48%;
+  --primary-foreground: 214 30% 8%;
+  --secondary: 218 13% 17%;
+  --secondary-foreground: 213 22% 86%;
+  --muted: 218 14% 14%;
+  --muted-foreground: 215 12% 64%;
+  --accent: 218 13% 18%;
+  --accent-foreground: 210 26% 90%;
+  --destructive: 355 68% 62%;
+  --destructive-foreground: 214 30% 8%;
+  --border: 216 12% 24%;
+  --input: 216 12% 24%;
+  --ring: 178 58% 48%;
+  --radius: 0.75rem;
 
   --bg: hsl(var(--background));
   --panel: hsl(var(--card));
   --text: hsl(var(--foreground));
   --text-muted: hsl(var(--muted-foreground));
-  --surface: hsl(var(--card) / 0.9);
+  --text-strong: hsl(210 28% 92%);
+  --surface: hsl(218 14% 14% / 0.94);
+  --surface-elevated: hsl(218 13% 17%);
   --surface-border: hsl(var(--border));
   --legacy-border: hsl(var(--border));
   --legacy-accent: hsl(var(--primary));
   --legacy-muted: hsl(var(--muted-foreground));
-  --accent-weak: hsl(var(--primary) / 0.1);
-  --shadow: 0 22px 56px rgba(3, 2, 8, 0.46);
-  --shadow-sm: 0 1px 2px rgba(3, 2, 8, 0.24);
-  --bubble-user: hsl(252 28% 16%);
-  --bubble-assistant: hsl(255 21% 11%);
+  --legacy-text: var(--text);
+  --muted-text: var(--text-muted);
+  --danger: hsl(var(--destructive));
+  --success: hsl(146 48% 48%);
+  --warning: hsl(38 78% 56%);
+  --accent-weak: hsl(var(--primary) / 0.12);
+  --shadow: 0 18px 44px rgba(3, 7, 12, 0.36);
+  --shadow-sm: 0 1px 2px rgba(3, 7, 12, 0.22);
+  --bubble-user: hsl(181 34% 13%);
+  --bubble-assistant: hsl(218 16% 11%);
 
   --page-background:
-    radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 38%),
-    linear-gradient(180deg, hsl(258 22% 10%), hsl(var(--background)) 44%, hsl(258 24% 6%));
+    linear-gradient(180deg, hsl(218 19% 10%), hsl(var(--background)) 42%, hsl(220 20% 7%));
   --shell-background:
-    radial-gradient(circle at top left, hsl(var(--primary) / 0.06), transparent 30%),
-    linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, #0d0b12), color-mix(in srgb, var(--bg) 98%, #09070d));
-  --chrome-border: color-mix(in srgb, var(--legacy-border) 92%, black);
-  --chrome-surface: color-mix(in srgb, var(--panel) 96%, #0d0b12);
-  --chrome-elevated: color-mix(in srgb, var(--panel) 92%, #14111b);
-  --dialog-backdrop: rgba(5, 4, 10, 0.68);
+    linear-gradient(180deg, hsl(218 17% 10%), hsl(218 18% 8%));
+  --chrome-border: hsl(216 12% 23%);
+  --chrome-surface: hsl(218 16% 11%);
+  --chrome-elevated: hsl(218 13% 17%);
+  --dialog-backdrop: rgba(3, 7, 12, 0.72);
   --field-label: color-mix(in srgb, var(--text) 78%, transparent);
-  --field-surface: rgba(25, 22, 33, 0.92);
+  --field-surface: hsl(218 14% 14%);
   --field-surface-disabled: rgba(255, 255, 255, 0.03);
-  --field-border: rgba(14, 210, 247, 0.08);
-  --field-focus: rgba(14, 210, 247, 0.12);
-  --field-focus-border: rgba(14, 210, 247, 0.34);
-  --control-surface: rgba(25, 22, 33, 0.88);
-  --control-surface-hover: rgba(31, 27, 41, 0.96);
-  --control-border: rgba(14, 210, 247, 0.12);
+  --field-border: hsl(216 12% 25%);
+  --field-focus: hsl(var(--primary) / 0.13);
+  --field-focus-border: hsl(var(--primary) / 0.48);
+  --control-surface: hsl(218 13% 16% / 0.88);
+  --control-surface-hover: hsl(218 12% 20%);
+  --control-border: hsl(216 12% 27%);
 
-  --message-card-base: color-mix(in srgb, var(--panel) 96%, #100e17);
-  --message-card-reasoning-bg: color-mix(in srgb, #211b18 86%, var(--panel));
-  --message-card-reasoning-border: color-mix(in srgb, #64523d 30%, var(--legacy-border));
-  --message-card-tool-bg: color-mix(in srgb, #121d25 88%, var(--panel));
-  --message-card-tool-border: color-mix(in srgb, #245362 28%, var(--legacy-border));
-  --message-card-tool-result-bg: color-mix(in srgb, #121d1a 88%, var(--panel));
-  --message-card-tool-result-border: color-mix(in srgb, #33564d 26%, var(--legacy-border));
-  --message-card-tool-error-bg: color-mix(in srgb, #2b131b 88%, var(--panel));
-  --message-card-tool-error-border: rgba(244, 86, 157, 0.24);
-  --message-card-team-bg: color-mix(in srgb, #1c1730 84%, var(--panel));
-  --message-card-team-border: color-mix(in srgb, #4b3b76 30%, var(--legacy-border));
-  --message-card-todo-bg: color-mix(in srgb, #141914 92%, var(--panel));
-  --message-card-todo-border: color-mix(in srgb, #33483a 20%, var(--legacy-border));
-  --message-todo-item-bg: color-mix(in srgb, #111511 90%, var(--panel));
-  --message-todo-item-border: color-mix(in srgb, #2d4032 18%, var(--legacy-border));
+  --message-card-base: hsl(218 15% 12%);
+  --message-card-reasoning-bg: color-mix(in srgb, var(--message-card-base) 94%, var(--warning));
+  --message-card-reasoning-border: color-mix(in srgb, var(--warning) 34%, var(--chrome-border));
+  --message-card-tool-bg: color-mix(in srgb, var(--message-card-base) 94%, hsl(var(--primary)));
+  --message-card-tool-border: color-mix(in srgb, hsl(var(--primary)) 34%, var(--chrome-border));
+  --message-card-tool-result-bg: color-mix(in srgb, var(--message-card-base) 94%, var(--success));
+  --message-card-tool-result-border: color-mix(in srgb, var(--success) 32%, var(--chrome-border));
+  --message-card-tool-error-bg: color-mix(in srgb, var(--message-card-base) 92%, hsl(var(--destructive)));
+  --message-card-tool-error-border: color-mix(in srgb, hsl(var(--destructive)) 42%, var(--chrome-border));
+  --message-card-team-bg: color-mix(in srgb, var(--message-card-base) 96%, hsl(218 26% 34%));
+  --message-card-team-border: color-mix(in srgb, hsl(216 28% 52%) 28%, var(--chrome-border));
+  --message-card-todo-bg: color-mix(in srgb, var(--message-card-base) 96%, var(--success));
+  --message-card-todo-border: color-mix(in srgb, var(--success) 24%, var(--chrome-border));
+  --todo-card-shell: var(--message-card-todo-bg);
+  --todo-card-border: var(--message-card-todo-border);
+  --todo-card-pill-fg: hsl(144 44% 72%);
+  --message-todo-item-bg: hsl(218 13% 15%);
+  --message-todo-item-border: hsl(216 12% 24%);
   --message-todo-status-bg: rgba(255, 255, 255, 0.045);
   --message-todo-status-fg: hsl(220 16% 74%);
   --message-todo-status-not-started-bg: rgba(148, 163, 184, 0.1);
@@ -203,28 +221,28 @@
   --message-todo-status-completed-fg: hsl(144 43% 72%);
   --message-todo-status-in-progress-bg: rgba(56, 189, 248, 0.1);
   --message-todo-status-in-progress-fg: hsl(194 62% 72%);
-  --message-card-system-bg: color-mix(in srgb, #15131d 88%, var(--panel));
-  --message-card-system-border: color-mix(in srgb, #2f2a3f 30%, var(--legacy-border));
+  --message-card-system-bg: hsl(218 13% 15%);
+  --message-card-system-border: hsl(216 12% 24%);
 
-  --markdown-heading: hsl(188 72% 46%);
-  --markdown-link: hsl(198 91% 70%);
-  --markdown-link-hover: hsl(198 91% 76%);
-  --markdown-file-link-bg: hsl(256 20% 16%);
-  --markdown-file-link-border: hsl(189 52% 34%);
-  --markdown-inline-code-bg: hsl(258 18% 15%);
-  --markdown-inline-code-border: hsl(255 16% 22%);
-  --markdown-inline-code-fg: hsl(334 82% 70%);
-  --markdown-code-bg: hsl(255 20% 12%);
-  --markdown-code-border: hsl(255 16% 18%);
-  --markdown-code-fg: hsl(0 0% 76%);
-  --markdown-blockquote-bg: hsl(254 20% 14%);
-  --markdown-blockquote-border: hsl(205 91% 64%);
-  --markdown-blockquote-fg: hsl(220 32% 80%);
-  --markdown-table-bg: hsl(255 21% 11%);
-  --markdown-table-header-bg: hsl(256 18% 14%);
-  --markdown-table-row-alt: hsl(255 18% 13%);
-  --markdown-table-border: hsl(189 54% 18%);
-  --markdown-rule: hsl(255 16% 20%);
+  --markdown-heading: hsl(207 28% 90%);
+  --markdown-link: hsl(198 72% 66%);
+  --markdown-link-hover: hsl(194 78% 74%);
+  --markdown-file-link-bg: hsl(218 13% 16%);
+  --markdown-file-link-border: hsl(178 34% 34%);
+  --markdown-inline-code-bg: hsl(218 13% 16%);
+  --markdown-inline-code-border: hsl(216 12% 26%);
+  --markdown-inline-code-fg: hsl(38 72% 70%);
+  --markdown-code-bg: hsl(218 18% 8%);
+  --markdown-code-border: hsl(216 12% 24%);
+  --markdown-code-fg: hsl(213 22% 84%);
+  --markdown-blockquote-bg: hsl(218 13% 16%);
+  --markdown-blockquote-border: hsl(var(--primary));
+  --markdown-blockquote-fg: hsl(214 17% 76%);
+  --markdown-table-bg: hsl(218 16% 11%);
+  --markdown-table-header-bg: hsl(218 13% 16%);
+  --markdown-table-row-alt: hsl(218 14% 13%);
+  --markdown-table-border: hsl(216 12% 24%);
+  --markdown-rule: hsl(216 12% 24%);
 }
 
 body {

@@ -838,6 +838,66 @@ describe("Composer", () => {
     expect(composerStore.getState().draftBySessionId?.["sess-1"] ?? "").toBe("");
   });
 
+  it("labels busy-session send and queue actions distinctly", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: true, queue_len: 2 } as any],
+      draft: "Follow up",
+    });
+    const composerRoot = getRoot();
+
+    const queueButton = composerRoot.querySelector(".composerQueueButton") as HTMLButtonElement;
+    const sendButton = composerRoot.querySelector(".sendButton") as HTMLButtonElement;
+
+    expect(queueButton.textContent).toBe("Queue next (2)");
+    expect(queueButton.title).toBe("Queue this draft after the current turn.");
+    expect(sendButton.getAttribute("aria-label")).toBe("Send now");
+    expect(sendButton.title).toBe("Send immediately to the busy session.");
+  });
+
+  it("shows send failures instead of silently swallowing them", async () => {
+    const { submit } = renderComposer({ draft: "Run smoke test" });
+    submit.mockRejectedValueOnce(new Error("runtime is busy"));
+    const composerRoot = getRoot();
+
+    const sendButton = composerRoot.querySelector(".sendButton") as HTMLButtonElement;
+
+    await act(async () => {
+      sendButton.click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(composerRoot.querySelector(".composerActionError")?.textContent).toContain("runtime is busy");
+
+    const textarea = composerRoot.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      textarea.value = "Run smoke test again";
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(composerRoot.querySelector(".composerActionError")).toBeNull();
+  });
+
+  it("shows queue failures and restores the draft", async () => {
+    vi.spyOn(api, "enqueueMessage").mockRejectedValue(new Error("queue rejected"));
+    const { composerStore } = renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
+      draft: "Queue after current turn",
+    });
+    const composerRoot = getRoot();
+
+    const queueButton = composerRoot.querySelector(".composerQueueButton") as HTMLButtonElement;
+
+    await act(async () => {
+      queueButton.click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(composerRoot.querySelector(".composerActionError")?.textContent).toContain("queue rejected");
+    expect(composerStore.getState().draftBySessionId?.["sess-1"] ?? "").toBe("Queue after current turn");
+  });
+
   it("shows a cancel-loop button for a busy session and interrupts the active loop", async () => {
     const interruptSession = vi.spyOn(api, "interruptSession").mockResolvedValue({ ok: true } as any);
     const { liveSessionStore, sessionUiStore, sessionsStore } = renderComposer({

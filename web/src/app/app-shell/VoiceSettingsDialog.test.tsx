@@ -191,13 +191,13 @@ describe("VoiceSettingsDialog", () => {
     await act(async () => {
       buttons.find((button) => button.textContent === "Display")?.click();
     });
-    const darkRadio = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="radio"]')).find((input) => !input.checked);
-    darkRadio?.click();
+    const graphiteRadio = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="radio"]')).find((input) => !input.checked);
+    graphiteRadio?.click();
 
     expect(onTestProvider).toHaveBeenCalledTimes(1);
     expect(onTriggerTestPush).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
-    expect(onChangeThemeMode).toHaveBeenCalledWith("dark");
+    expect(onChangeThemeMode).toHaveBeenCalledWith("graphite");
   });
 });

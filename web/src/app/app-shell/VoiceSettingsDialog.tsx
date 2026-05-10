@@ -260,24 +260,24 @@ export function VoiceSettingsDialog({
                     <input
                       type="radio"
                       name="theme-mode"
-                      checked={themeMode === "light"}
-                      onChange={() => onChangeThemeMode("light")}
+                      checked={themeMode === "graphite"}
+                      onChange={() => onChangeThemeMode("graphite")}
                     />
                     <span className="space-y-1">
-                      <span className="block font-medium text-foreground">Light</span>
-                      <span className="block text-muted-foreground">Paper-like surfaces with cobalt markdown accents.</span>
+                      <span className="block font-medium text-foreground">Graphite</span>
+                      <span className="block text-muted-foreground">Default dark workbench for long mixed Chinese and English reading.</span>
                     </span>
                   </label>
                   <label className="toggleOption flex cursor-pointer items-start gap-3 rounded-2xl border border-border/70 bg-background/80 px-3 py-3 text-sm">
                     <input
                       type="radio"
                       name="theme-mode"
-                      checked={themeMode === "dark"}
-                      onChange={() => onChangeThemeMode("dark")}
+                      checked={themeMode === "light"}
+                      onChange={() => onChangeThemeMode("light")}
                     />
                     <span className="space-y-1">
-                      <span className="block font-medium text-foreground">Dark</span>
-                      <span className="block text-muted-foreground">Ink surfaces with brighter markdown contrast for long sessions.</span>
+                      <span className="block font-medium text-foreground">Light</span>
+                      <span className="block text-muted-foreground">Paper-like surfaces with cobalt markdown accents.</span>
                     </span>
                   </label>
                 </div>

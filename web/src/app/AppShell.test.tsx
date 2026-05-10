@@ -464,6 +464,7 @@ describe("AppShell", () => {
 
     expect(getRoot().querySelector("[data-testid='app-shell']")).not.toBeNull();
     expect(getRoot().querySelector(".sidebarColumn.desktopSessionsRail")).not.toBeNull();
+    expect(getRoot().querySelector('[role="separator"][aria-label="Resize sessions sidebar"]')).not.toBeNull();
     expect(getRoot().querySelector(".conversationColumn")).not.toBeNull();
     expect(getRoot().querySelector("[data-testid='mobile-sessions-sheet']")).not.toBeNull();
     expect(getRoot().querySelector("[data-testid='workspace-rail']")).toBeNull();
@@ -482,6 +483,51 @@ describe("AppShell", () => {
     expect(findButtonByAriaLabel("Inbox")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt (Esc)")).not.toBeNull();
 
+  });
+
+  it("persists desktop session rail width after dragging the resize handle", async () => {
+    renderAppShell({ activeSessionId: null, diagnostics: null });
+
+    const shell = getRoot().querySelector("[data-testid='app-shell']") as HTMLElement;
+    const handle = getRoot().querySelector('[role="separator"][aria-label="Resize sessions sidebar"]') as HTMLElement;
+
+    expect(shell.style.getPropertyValue("--sidebar-w")).toBe("320px");
+
+    await act(async () => {
+      handle.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 320 }));
+      await flush();
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 380 }));
+      window.dispatchEvent(new MouseEvent("mouseup", { clientX: 380 }));
+      await flush();
+    });
+
+    expect(shell.style.getPropertyValue("--sidebar-w")).toBe("380px");
+    expect(window.localStorage.getItem("actrail.sidebarWidthPx.v1")).toBe("380");
+  });
+
+  it("supports keyboard resizing for the desktop session rail", async () => {
+    renderAppShell({ activeSessionId: null, diagnostics: null });
+
+    const shell = getRoot().querySelector("[data-testid='app-shell']") as HTMLElement;
+    const handle = getRoot().querySelector('[role="separator"][aria-label="Resize sessions sidebar"]') as HTMLElement;
+
+    await act(async () => {
+      handle.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" }));
+      await flush();
+    });
+
+    expect(shell.style.getPropertyValue("--sidebar-w")).toBe("304px");
+    expect(window.localStorage.getItem("actrail.sidebarWidthPx.v1")).toBe("304");
+
+    await act(async () => {
+      handle.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Home" }));
+      await flush();
+    });
+
+    expect(shell.style.getPropertyValue("--sidebar-w")).toBe("288px");
   });
 
   it("renders bottom navigation on narrow viewports and defaults to the sessions page without an active session", () => {
@@ -1242,8 +1288,8 @@ describe("AppShell", () => {
     });
     await flush();
     expect(getRoot().textContent).toContain("Theme");
+    expect(getRoot().textContent).toContain("Default dark workbench for long mixed Chinese and English reading.");
     expect(getRoot().textContent).toContain("Paper-like surfaces with cobalt markdown accents.");
-    expect(getRoot().textContent).toContain("Ink surfaces with brighter markdown contrast for long sessions.");
   });
 
   it("saves supervisor global model from settings", async () => {
@@ -1270,6 +1316,7 @@ describe("AppShell", () => {
   });
 
   it("persists the selected theme mode from settings", async () => {
+    localStorage.setItem("actrail.themeMode", "light");
     renderAppShell();
     await flush();
 
@@ -1286,18 +1333,18 @@ describe("AppShell", () => {
     });
     await flush();
 
-    const darkRadio = Array.from(getRoot().querySelectorAll<HTMLInputElement>('input[type="radio"]')).find(
-      (input) => input.nextElementSibling?.textContent?.includes("Dark"),
+    const graphiteRadio = Array.from(getRoot().querySelectorAll<HTMLInputElement>('input[type="radio"]')).find(
+      (input) => input.nextElementSibling?.textContent?.includes("Graphite"),
     );
-    expect(darkRadio).not.toBeUndefined();
+    expect(graphiteRadio).not.toBeUndefined();
 
     act(() => {
-      darkRadio!.click();
+      graphiteRadio!.click();
     });
     await flush();
 
-    expect(localStorage.getItem("actrail.themeMode")).toBe("dark");
-    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("actrail.themeMode")).toBe("graphite");
+    expect(document.documentElement.dataset.theme).toBe("graphite");
     expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 
@@ -2382,7 +2429,7 @@ describe("AppShell", () => {
       mountNode,
     );
 
-    expect(getRoot().querySelector(".conversationTitle")?.textContent).toContain("/root/code/ActRail");
+    expect(getRoot().querySelector(".conversationTitle")?.textContent).toContain("ActRail");
     expect(getRoot().querySelector(".conversationTitle")?.textContent).not.toContain("我准备用 preact + vite 重构web端，请帮我出个规划");
   });
 

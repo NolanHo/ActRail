@@ -99,11 +99,12 @@ const PI_EVENT_COMPACT_VARIANTS = {
 const CHAT_GROUPABLE_KINDS = new Set(["user", "assistant", "ask_user"]);
 type CompactTraceKind = "reasoning" | "tool" | "tool_result" | "todo_snapshot" | "custom_message" | "pi_event";
 interface AssistantTurnMeta {
-  operations: number;
+  tools: number;
+  ok: number;
   errors: number;
   maxToolCallSeconds: number | null;
   turnSeconds: number | null;
-  endTs: number | null;
+  finishedTs: number | null;
 }
 
 type ToolPairState = "call" | "result" | "orphan";
@@ -844,30 +845,30 @@ function surfaceBadgeVariant(kind: string): "default" | "secondary" | "outline" 
 
 function messageSurfaceTone(kind: string, isError = false): string {
   if (isError) {
-    return "border-destructive/40 bg-destructive/5";
+    return "messageToneError";
   }
 
   switch (kind) {
     case "user":
-      return "border-primary/30 bg-primary/10 text-foreground";
+      return "messageToneUser text-foreground";
     case "system":
-      return "border-cyan-300/40 bg-cyan-950/20 text-foreground";
+      return "messageToneSystem";
     case "assistant":
-      return "border-border/70 bg-card/95";
+      return "messageToneAssistant";
     case "ask_user":
-      return "border-amber-300/70 bg-amber-50/90";
+      return "messageToneAskUser";
     case "reasoning":
-      return "border-sky-200/80 bg-sky-50/80";
+      return "messageToneReasoning";
     case "tool":
-      return "border-indigo-200/80 bg-indigo-50/80";
+      return "messageToneTool";
     case "tool_result":
-      return "border-emerald-200/80 bg-emerald-50/80";
+      return "messageToneToolResult";
     case "team":
-      return "border-slate-200/80 bg-slate-50/85";
+      return "messageToneTeam";
     case "todo_snapshot":
       return "";
     default:
-      return "border-border/60 bg-muted/30";
+      return "messageToneDefault";
   }
 }
 
@@ -1251,14 +1252,51 @@ function SupervisorRunCard({ run }: { run: NonNullable<MessageEvent["supervisor_
   );
 }
 
+function pluralTurnMetric(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function assistantTurnSummaryParts(meta: AssistantTurnMeta): { summary: string; details: string } {
+  const turnLabel = `turn ${formatDuration(meta.turnSeconds)}`;
+  const finishedLabel = `finished ${meta.finishedTs !== null ? formatTurnMetaTimestamp(meta.finishedTs) : "-"}`;
+
+  if (meta.tools <= 0) {
+    return {
+      summary: turnLabel.charAt(0).toUpperCase() + turnLabel.slice(1),
+      details: meta.errors > 0 ? `${pluralTurnMetric(meta.errors, "error")} · ${finishedLabel}` : finishedLabel,
+    };
+  }
+
+  const summaryParts = [
+    `Ran ${pluralTurnMetric(meta.tools, "tool")}`,
+    `${meta.ok} ok`,
+    meta.errors > 0 ? pluralTurnMetric(meta.errors, "error") : "",
+  ].filter(Boolean);
+  const detailParts = [
+    `max tool ${formatDuration(meta.maxToolCallSeconds)}`,
+    turnLabel,
+    finishedLabel,
+  ];
+  return {
+    summary: summaryParts.join(" · "),
+    details: detailParts.join(" · "),
+  };
+}
+
 function AssistantTurnMetaCard({ meta }: { meta: AssistantTurnMeta }) {
+  const parts = assistantTurnSummaryParts(meta);
   return (
-    <div className="assistantTurnMetaCard" data-testid="assistant-turn-meta">
-      <span>operations: {meta.operations}</span>
-      <span>errors: {meta.errors}</span>
-      <span>max(tool call time): {formatDuration(meta.maxToolCallSeconds)}</span>
-      <span>turn time: {formatDuration(meta.turnSeconds)}</span>
-      <span>end time: {meta.endTs !== null ? formatTurnMetaTimestamp(meta.endTs) : "-"}</span>
+    <div
+      className={cn("machineTraceSummaryRow assistantTurnSummaryRow", meta.errors > 0 && "isError")}
+      data-testid="assistant-turn-meta"
+      title={`${parts.summary} · ${parts.details}`}
+    >
+      <span className="machineTraceSummaryStatus" aria-hidden="true" />
+      <span className="machineTraceSummaryMain">
+        <span className="machineTraceSummaryText">{parts.summary}</span>
+        <span className="machineTraceSummarySubtext">{parts.details}</span>
+      </span>
+      <span className="machineTraceSummaryMeta">Summary</span>
     </div>
   );
 }
@@ -2087,11 +2125,6 @@ function toolCallID(event: MessageEvent): string {
   return typeof details?.tool_call_id === "string" ? details.tool_call_id.trim() : "";
 }
 
-function isIntermediateOperation(event: MessageEvent): boolean {
-  const kind = eventKind(event);
-  return kind === "ask_user" || kind === "wait" || compactTraceKind(event) !== null;
-}
-
 function isTurnErrorOperation(event: MessageEvent): boolean {
   const kind = eventKind(event);
   return kind === "error" || (kind === "tool_result" && event.is_error === true);
@@ -2112,6 +2145,16 @@ function commandOutputByAssistantIndex(messages: MessageEvent[]): Set<number> {
     }
   }
   return result;
+}
+
+function localToolRunStats(segment: MessageEvent[]): Pick<AssistantTurnMeta, "tools" | "ok" | "errors"> {
+  const toolCalls = segment.filter((item) => eventKind(item) === "tool").length;
+  const toolResults = segment.filter((item) => eventKind(item) === "tool_result");
+  return {
+    tools: Math.max(toolCalls, toolResults.length),
+    ok: toolResults.filter((item) => item.is_error !== true).length,
+    errors: segment.filter(isTurnErrorOperation).length,
+  };
 }
 
 function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, AssistantTurnMeta> {
@@ -2153,12 +2196,15 @@ function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, Assistant
         }
       }
     }
+    const localStats = localToolRunStats(segment);
+    const backendSummary = backendToolActivitySummary(event);
     result.set(index, {
-      operations: segment.filter(isIntermediateOperation).length,
-      errors: segment.filter(isTurnErrorOperation).length,
-      maxToolCallSeconds,
+      tools: backendSummary?.total_tools ?? localStats.tools,
+      ok: backendSummary?.ok ?? localStats.ok,
+      errors: backendSummary?.failed ?? localStats.errors,
+      maxToolCallSeconds: backendSummary?.max_tool_call_seconds ?? maxToolCallSeconds,
       turnSeconds: assistantTs !== null && userTs !== null ? Math.max(0, assistantTs - userTs) : null,
-      endTs: assistantTs,
+      finishedTs: assistantTs,
     });
   }
   return result;
@@ -2202,33 +2248,6 @@ function backendToolActivitySummary(event: MessageEvent): BackendToolActivitySum
     running_tool_names: runningNames,
     summary_text: typeof raw.summary_text === "string" ? raw.summary_text : undefined,
     status_text: typeof raw.status_text === "string" ? raw.status_text : undefined,
-  };
-}
-
-function toolActivitySummaryFromBackend(summary: BackendToolActivitySummary): ReturnType<typeof buildToolActivitySummary> {
-  const lastActivityAgeSeconds = summary.last_activity_at ? Math.max(0, Date.now() / 1000 - summary.last_activity_at) : null;
-  return {
-    totalTools: summary.total_tools,
-    toolCalls: summary.tool_calls,
-    toolResults: summary.tool_results,
-    running: summary.running,
-    ok: summary.ok,
-    failed: summary.failed,
-    reasoning: summary.reasoning,
-    todoSnapshots: summary.todo_snapshots,
-    processUpdates: summary.process_updates,
-    systemEvents: summary.system_events,
-    startedAt: summary.started_at ?? null,
-    lastActivityAt: summary.last_activity_at ?? null,
-    elapsedSeconds: summary.elapsed_seconds ?? null,
-    lastActivityAgeSeconds,
-    maxRunningSeconds: null,
-    stalled: false,
-    runningToolNames: summary.running_tool_names ?? [],
-    visibleEvents: [],
-    hiddenEventCount: 0,
-    summaryText: summary.summary_text || (summary.total_tools > 0 ? `Ran ${summary.total_tools} ${summary.total_tools === 1 ? "tool" : "tools"}` : "Activity"),
-    statusText: summary.status_text || (summary.failed > 0 ? `${summary.failed} failed` : `${summary.operations} operations`),
   };
 }
 
@@ -2793,19 +2812,6 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
   );
 }
 
-function BackendMachineTraceSummary({ event }: { event: MessageEvent }) {
-  const summary = backendToolActivitySummary(event);
-  if (!summary) {
-    return null;
-  }
-  const activity = toolActivitySummaryFromBackend(summary);
-  return (
-    <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
-      <MachineTraceSummaryRow summary={activity} expanded={false} onToggle={() => undefined} metaLabel="Summary" />
-    </MessageSurface>
-  );
-}
-
 function TeamIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -3276,20 +3282,6 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
     const rowKey = messageRowKey(message, kind, index);
     const ts = eventTimestampSeconds(message);
-    const hiddenToolSummary = kind === "assistant" ? backendToolActivitySummary(message) : null;
-    if (hiddenToolSummary) {
-      out.push({
-        key: `machine-summary:${rowKey}`,
-        kind: "machine_trace_summary",
-        grouped: false,
-        events: [message],
-        firstTs: hiddenToolSummary.started_at ?? ts,
-        lastTs: hiddenToolSummary.last_activity_at ?? ts,
-        allowFuzzyLiveMatch: true,
-        allowLegacyFallback: false,
-        messageIndex: index,
-      });
-    }
     const prevKind = index > 0 ? eventKind(messages[index - 1]) : null;
     out.push({
       key: rowKey,
@@ -3559,8 +3551,6 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                     <div data-row-key={row.key} className={cn("messageRow flex", row.kind, row.grouped && "grouped")}>
                       {row.kind === "machine_trace"
                         ? <CompactMachineTrace events={row.events} options={markdownOptions} isBusy={isBusy && index === rows.length - 1} />
-                        : row.kind === "machine_trace_summary"
-                          ? <BackendMachineTraceSummary event={row.events[0]} />
                         : renderConversationEvent(
                           row.events[0],
                           row.kind,
