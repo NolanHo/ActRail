@@ -71,6 +71,12 @@ function resolveSessionId(frame: RealtimeEnvelope) {
   return String(rest || "").split(":")[0] || "";
 }
 
+function frameTailSeq(frame: RealtimeEnvelope) {
+  const payload = frame.payload && typeof frame.payload === "object" ? frame.payload as Record<string, unknown> : null;
+  const value = payload?.tail_seq;
+  return typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : null;
+}
+
 export function useAppShellEvents({
   activeSessionBackend,
   activeSessionHistorical,
@@ -207,6 +213,21 @@ export function useAppShellEvents({
         }
         liveSessionStoreApi.applyFrame(frame);
         waitsStoreApi.applyFrame(frame);
+        if (type === "session.state") {
+          const sessionId = resolveSessionId(frame);
+          const tailSeq = frameTailSeq(frame);
+          const latest = latestRef.current;
+          const localOffset = sessionId ? liveSessionStoreApi.getState().offsetsBySessionId[sessionId] : undefined;
+          if (
+            sessionId
+            && latest.activeSessionId === sessionId
+            && !((latest.activeSessionHistorical && latest.activeSessionBackend === "pi") || latest.activeSessionPending)
+            && tailSeq !== null
+            && tailSeq > (typeof localOffset === "number" && Number.isFinite(localOffset) ? Math.floor(localOffset) : 0)
+          ) {
+            void refreshLiveSessionSnapshot(sessionId, latest.activeSessionRuntimeId);
+          }
+        }
         return;
       }
 

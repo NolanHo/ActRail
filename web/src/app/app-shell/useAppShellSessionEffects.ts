@@ -28,6 +28,8 @@ const BUSY_SESSIONS_REFRESH_MS = 5000;
 const IDLE_SESSIONS_REFRESH_MS = 15000;
 const ACTIVE_BUSY_LIVE_REFRESH_MS = 3000;
 const ACTIVE_IDLE_LIVE_REFRESH_MS = 30000;
+const ACTIVE_REALTIME_BUSY_LIVE_REFRESH_MS = 5000;
+const ACTIVE_REALTIME_IDLE_LIVE_REFRESH_MS = 15000;
 const BACKGROUND_BUSY_LIVE_REFRESH_MS = 5000;
 const WORKSPACE_REFRESH_MS = 15000;
 const REALTIME_SESSIONS_RECOVERY_MS = 60000;
@@ -66,7 +68,9 @@ export function useAppShellSessionEffects({
   const activeSessionBusy = activeSessionLiveBusy
     || items.some((session) => session.session_id === activeSessionId && session.busy);
   const activeLiveRefreshIntervalMs = realtimeConnected
-    ? null
+    ? activeSessionBusy
+      ? ACTIVE_REALTIME_BUSY_LIVE_REFRESH_MS
+      : ACTIVE_REALTIME_IDLE_LIVE_REFRESH_MS
     : activeSessionBusy
       ? ACTIVE_BUSY_LIVE_REFRESH_MS
       : ACTIVE_IDLE_LIVE_REFRESH_MS;
