@@ -424,18 +424,18 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
 		? Math.max(0, Math.round(activeSession.queue_len))
 		: 0;
-  const queueButtonLabel = activeSessionBusy
-    ? activeQueueCount > 0 ? `Queue next (${activeQueueCount})` : "Queue next"
-    : activeQueueCount > 0 ? `Queue ${activeQueueCount}` : "Queue";
+  const activeSessionInputBlocked = activeSessionSendBlocked || activeSessionBusy;
+  const activeSessionInputBlockReason = activeSessionBusy ? "Session is busy. Add the draft to Inbox or wait until the current turn finishes." : activeSessionSendBlockReason;
+  const queueButtonLabel = activeQueueCount > 0 ? `Inbox ${activeQueueCount}` : "Inbox";
   const queueButtonTitle = supervisorEnabled
     ? supervisorBlockReason
     : activeSessionBackendUnavailable
-      ? "Queue this draft until the session backend is restarted."
+      ? "Add this draft to the ActRail Inbox until the backend is restarted."
       : activeSessionBusy
-        ? "Queue this draft after the current turn."
-        : "Queue this draft instead of sending it now.";
-  const sendButtonLabel = sending ? "Sending" : activeSessionBusy ? "Send now" : "Send";
-  const sendButtonTitle = activeSessionSendBlockReason || (activeSessionBusy ? "Send immediately to the busy session." : undefined);
+        ? "Add this draft to the ActRail Inbox until the session is idle."
+        : "Add this draft to the ActRail Inbox instead of sending it now.";
+  const sendButtonLabel = sending ? "Sending" : "Send";
+  const sendButtonTitle = activeSessionInputBlockReason || undefined;
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsCodex = activeSession?.agent_backend === "codex";
   const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
@@ -758,7 +758,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
   };
 
   const submitCurrentDraft = () => {
-    if (!activeSessionId || !draft.trim() || sending || activeSessionSendBlocked) {
+    if (!activeSessionId || !draft.trim() || sending || activeSessionInputBlocked) {
       return;
     }
 
@@ -800,7 +800,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
       })
       .catch((error) => {
         composerStoreApi.setDraft(activeSessionId, queuedText);
-        setComposerActionError(composerActionErrorMessage(error, "Failed to queue message"));
+        setComposerActionError(composerActionErrorMessage(error, "Failed to add message to inbox"));
       });
   };
 
@@ -981,7 +981,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
       >
         <CardContent className="p-3 sm:p-4 space-y-2">
           {commandMenu}
-          {activeSessionSendBlocked && activeSessionSendBlockReason ? <div className="composerModelError">{activeSessionSendBlockReason}</div> : null}
+          {activeSessionInputBlocked && activeSessionInputBlockReason ? <div className="composerModelError">{activeSessionInputBlockReason}</div> : null}
           {composerActionError ? <div className="composerActionError" role="alert">{composerActionError}</div> : null}
           <form
             className={cn("composer composerShell flex items-end gap-2 border-t-0", draft.includes("\n") && "multiline")}
@@ -1085,7 +1085,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                     variant="outline"
                     size="sm"
                     className="composerQueueButton"
-                    aria-label="Queue message"
+                    aria-label="Add message to ActRail Inbox"
                     disabled={sending || Boolean(visibleActiveWait) || supervisorEnabled || !draft.trim()}
                     title={queueButtonTitle}
                     onClick={queueCurrentDraft}
@@ -1097,7 +1097,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                   type="submit"
                   className="sendButton"
                   aria-label={sendButtonLabel}
-                  disabled={sending || activeSessionSendBlocked || !draft.trim()}
+                  disabled={sending || activeSessionInputBlocked || !draft.trim()}
                   title={sendButtonTitle}
                 >
                   <span className="buttonGlyph">➤</span>

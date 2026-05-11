@@ -94,7 +94,7 @@ describe("SessionWorkspace", () => {
     expect(root.textContent).toContain("pi-backend-1");
     expect(root.textContent).toContain("Diagnostics");
     expect(root.textContent).toContain("Status");
-    expect(root.textContent).toContain("Queue");
+    expect(root.textContent).toContain("Inbox");
     expect(root.textContent).toContain("next task");
     expect(root.textContent).toContain("src/main.tsx");
   });

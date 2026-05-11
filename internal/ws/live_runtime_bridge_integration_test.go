@@ -270,8 +270,15 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 	})
 	var queuePayload queueStatePayload
 	decodeBridgePayload(t, firstBridgeFrameOfType(t, enqueueFrames, FrameTypeQueueState), &queuePayload)
-	if len(queuePayload.Items) != 1 || queuePayload.Items[0].Text != "queued task" {
-		t.Fatalf("enqueue queue payload = %+v", queuePayload)
+	if len(queuePayload.Items) != 0 {
+		t.Fatalf("enqueue queue payload = %+v, want empty runtime queue", queuePayload)
+	}
+	inbox, err := svc.SessionInbox(context.Background(), app.SessionInboxRequest{SessionID: parsed, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(after enqueue) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].Source != "manual" || inbox.Items[0].State != "pending" || inbox.Items[0].Message != "queued task" {
+		t.Fatalf("SessionInbox(after enqueue) = %+v, want pending manual inbox item", inbox.Items)
 	}
 	waitForBridgeCondition(t, func() bool {
 		state, err := svc.SessionState(context.Background(), app.SessionStateRequest{SessionID: parsed})
@@ -356,8 +363,15 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 	if state.Busy {
 		t.Fatal("SessionState().Busy = true, want false")
 	}
-	if len(state.Queue.Items) != 1 || state.Queue.Items[0].Text != "queued task" {
-		t.Fatalf("SessionState().Queue = %+v", state.Queue)
+	if len(state.Queue.Items) != 0 {
+		t.Fatalf("SessionState().Queue = %+v, want empty runtime queue", state.Queue)
+	}
+	inbox, err = svc.SessionInbox(context.Background(), app.SessionInboxRequest{SessionID: parsed, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(final) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].Source != "manual" || inbox.Items[0].State != "pending" || inbox.Items[0].Message != "queued task" {
+		t.Fatalf("SessionInbox(final) = %+v, want retained pending manual inbox item", inbox.Items)
 	}
 	if state.ResumeCursors.Session != "8" || state.ResumeCursors.UI != "1" {
 		t.Fatalf("SessionState().ResumeCursors = %+v, want session=8 ui=1", state.ResumeCursors)

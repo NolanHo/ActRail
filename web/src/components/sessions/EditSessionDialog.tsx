@@ -108,7 +108,7 @@ export function EditSessionDialog({ open, session, sessions, onClose, onSaved }:
         <DialogHeader className="space-y-3 p-6 pb-5">
           <div className="space-y-1">
             <DialogTitle id="edit-session-dialog-title">Edit conversation</DialogTitle>
-            <p className="text-sm text-muted-foreground">Edit queue metadata for this session.</p>
+            <p className="text-sm text-muted-foreground">Edit inbox metadata for this session.</p>
           </div>
         </DialogHeader>
 

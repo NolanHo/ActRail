@@ -289,7 +289,7 @@ describe("Composer", () => {
 
     const composerRoot = getRoot();
     const textarea = composerRoot.querySelector("textarea") as HTMLTextAreaElement;
-    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Queue")) as HTMLButtonElement;
+    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Inbox")) as HTMLButtonElement;
     const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
 
     expect(textarea.disabled).toBe(false);
@@ -304,7 +304,7 @@ describe("Composer", () => {
 
     const composerRoot = getRoot();
     const textarea = composerRoot.querySelector("textarea") as HTMLTextAreaElement;
-    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Queue")) as HTMLButtonElement;
+    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Inbox")) as HTMLButtonElement;
     const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
 
     expect(composerRoot.textContent).toContain("Answer the active wait in Details before sending a normal message.");
@@ -319,7 +319,7 @@ describe("Composer", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("keeps supervisor-enabled drafts editable while disabling manual send and queue", async () => {
+  it("keeps supervisor-enabled drafts editable while disabling manual send and inbox staging", async () => {
     const { submit } = renderComposer({
       items: [{
         session_id: "sess-1",
@@ -332,7 +332,7 @@ describe("Composer", () => {
 
     const composerRoot = getRoot();
     const textarea = composerRoot.querySelector("textarea") as HTMLTextAreaElement;
-    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Queue")) as HTMLButtonElement;
+    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Inbox")) as HTMLButtonElement;
     const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
 
     expect(textarea.disabled).toBe(false);
@@ -348,14 +348,14 @@ describe("Composer", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("blocks sends but allows queueing to ended session backends", async () => {
+  it("blocks sends but allows inbox staging for ended session backends", async () => {
     const { submit } = renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, transport_state: "failed" }],
       draft: "queued draft",
     });
 
     const composerRoot = getRoot();
-    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Queue")) as HTMLButtonElement;
+    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Inbox")) as HTMLButtonElement;
     const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
 
     expect(composerRoot.textContent).toContain("Session backend failed to start");
@@ -713,7 +713,7 @@ describe("Composer", () => {
     expect(controlsRow?.querySelector(".sendButton")).not.toBeNull();
   });
 
-  it("renders compact mobile controls without duplicate metadata, queue, or attach buttons", () => {
+  it("renders compact mobile controls without duplicate metadata, inbox, or attach buttons", () => {
     renderComposer({
       compactMobile: true,
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
@@ -817,7 +817,7 @@ describe("Composer", () => {
     expect(attachButton.title).toContain("Pi");
   });
 
-  it("queues the current draft through the queue button and refreshes workspace state", async () => {
+  it("adds the current draft through the inbox button and refreshes workspace state", async () => {
     const enqueueMessage = vi.spyOn(api, "enqueueMessage").mockResolvedValue({ ok: true } as any);
     const { composerStore, sessionUiStore } = renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
@@ -838,7 +838,7 @@ describe("Composer", () => {
     expect(composerStore.getState().draftBySessionId?.["sess-1"] ?? "").toBe("");
   });
 
-  it("labels busy-session send and queue actions distinctly", () => {
+  it("labels busy-session send and inbox actions distinctly", () => {
     renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: true, queue_len: 2 } as any],
       draft: "Follow up",
@@ -848,10 +848,11 @@ describe("Composer", () => {
     const queueButton = composerRoot.querySelector(".composerQueueButton") as HTMLButtonElement;
     const sendButton = composerRoot.querySelector(".sendButton") as HTMLButtonElement;
 
-    expect(queueButton.textContent).toBe("Queue next (2)");
-    expect(queueButton.title).toBe("Queue this draft after the current turn.");
-    expect(sendButton.getAttribute("aria-label")).toBe("Send now");
-    expect(sendButton.title).toBe("Send immediately to the busy session.");
+    expect(queueButton.textContent).toBe("Inbox 2");
+    expect(queueButton.title).toBe("Add this draft to the ActRail Inbox until the session is idle.");
+    expect(sendButton.getAttribute("aria-label")).toBe("Send");
+    expect(sendButton.disabled).toBe(true);
+    expect(sendButton.title).toBe("Session is busy. Add the draft to Inbox or wait until the current turn finishes.");
   });
 
   it("shows send failures instead of silently swallowing them", async () => {
@@ -878,11 +879,11 @@ describe("Composer", () => {
     expect(composerRoot.querySelector(".composerActionError")).toBeNull();
   });
 
-  it("shows queue failures and restores the draft", async () => {
+  it("shows inbox staging failures and restores the draft", async () => {
     vi.spyOn(api, "enqueueMessage").mockRejectedValue(new Error("queue rejected"));
     const { composerStore } = renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
-      draft: "Queue after current turn",
+      draft: "Add after current turn",
     });
     const composerRoot = getRoot();
 
@@ -895,7 +896,7 @@ describe("Composer", () => {
     await flushEffects();
 
     expect(composerRoot.querySelector(".composerActionError")?.textContent).toContain("queue rejected");
-    expect(composerStore.getState().draftBySessionId?.["sess-1"] ?? "").toBe("Queue after current turn");
+    expect(composerStore.getState().draftBySessionId?.["sess-1"] ?? "").toBe("Add after current turn");
   });
 
   it("shows a cancel-loop button for a busy session and interrupts the active loop", async () => {
@@ -930,7 +931,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("does not show cancel-loop for a terminal runtime with stale live busy", () => {
@@ -941,7 +942,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("does not show cancel-loop for an ended runtime with stale live busy", () => {
@@ -952,7 +953,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("does not show cancel-loop when live runtime is terminal before the session list refreshes", () => {
@@ -964,7 +965,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("does not show cancel-loop when live runtime ended before the session list refreshes", () => {
@@ -976,7 +977,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Queue");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("shows a todo summary bar above the composer for a current pi session with todo items", () => {

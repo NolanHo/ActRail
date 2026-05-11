@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/domain/session"
 )
 
@@ -219,32 +220,24 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 		return EnqueueResponse{}, Invalid("text", "text required")
 	}
 	var response EnqueueResponse
-	shouldDispatch := false
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
 		if s.activeWaitForSession(req.SessionID) != nil {
 			return Conflict("session is waiting on user")
 		}
-		state, ok, err := s.registry.ReplaceQueue(req.SessionID, text)
-		if err != nil {
-			return err
-		}
-		if !ok {
+		if _, ok := s.registry.Lookup(req.SessionID); !ok {
 			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 		}
-		updatedRecord := record
-		updatedRecord.state = state
-		busy, _ := effectiveBusy(updatedRecord)
-		response = EnqueueResponse{Busy: busy, Queue: queueSnapshotFromState(state)}
-		shouldDispatch = !busy && transportControlError(s.sessionTransportSnapshot(record)) == nil
+		if err := s.replaceManualInboxItem(context.Background(), req.SessionID, text); err != nil {
+			return err
+		}
+		busy, _ := effectiveBusy(record)
+		response = EnqueueResponse{Busy: busy, Queue: queueSnapshotFromState(record.state)}
 		return nil
 	}); err != nil {
 		return EnqueueResponse{}, err
 	}
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
-	if shouldDispatch {
-		s.scheduleQueuedDispatch(req.SessionID)
-	}
 	return response, nil
 }
 
@@ -258,6 +251,9 @@ func (s *Stub) CancelQueue(_ context.Context, req CancelQueueRequest) (CancelQue
 		if !ok {
 			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 		}
+		if err := s.finishManualInboxMirror(context.Background(), req.SessionID, "", "cancelled", ""); err != nil {
+			return err
+		}
 		response = CancelQueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
 		return nil
 	}); err != nil {
@@ -266,6 +262,75 @@ func (s *Stub) CancelQueue(_ context.Context, req CancelQueueRequest) (CancelQue
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
 	return response, nil
+}
+
+func (s *Stub) replaceManualInboxItem(ctx context.Context, sessionID session.SessionID, text string) error {
+	if s == nil || s.schedulerStore == nil {
+		return nil
+	}
+	now := s.registry.now().UTC()
+	openItems, err := s.schedulerStore.ListInboxItems(ctx, sessionID.String(), 500)
+	if err != nil {
+		return err
+	}
+	for _, item := range openItems {
+		if item.Source != schedulerInboxSourceManual || (item.State != "pending" && item.State != "claimed") {
+			continue
+		}
+		item.Title = "Manual follow-up"
+		item.Message = strings.TrimSpace(text)
+		item.DueAt = now
+		item.State = "pending"
+		item.BlockedReason = ""
+		item.Error = ""
+		item.ClaimedAt = nil
+		item.DeliveredAt = nil
+		item.UpdatedAt = now
+		return s.schedulerStore.UpdateInboxItem(ctx, item)
+	}
+	return s.schedulerStore.InsertInboxItem(ctx, sqlitestore.InboxItemRow{
+		ItemID:    newID("inbox"),
+		SessionID: sessionID.String(),
+		Source:    schedulerInboxSourceManual,
+		SourceID:  "composer",
+		Title:     "Manual follow-up",
+		Message:   strings.TrimSpace(text),
+		DueAt:     now,
+		State:     "pending",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+}
+
+func (s *Stub) finishManualInboxMirror(ctx context.Context, sessionID session.SessionID, sourceID string, state string, deliveredMessageID string) error {
+	if s == nil || s.schedulerStore == nil {
+		return nil
+	}
+	now := s.registry.now().UTC()
+	items, err := s.schedulerStore.ListInboxItems(ctx, sessionID.String(), 500)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.Source != schedulerInboxSourceManual || (item.State != "pending" && item.State != "claimed") {
+			continue
+		}
+		if sourceID != "" && item.SourceID != sourceID {
+			continue
+		}
+		item.State = state
+		item.UpdatedAt = now
+		item.Error = ""
+		if deliveredMessageID != "" {
+			deliveredAt := now
+			item.DeliveredMessageID = deliveredMessageID
+			item.DeliveredAt = &deliveredAt
+		}
+		if err := s.schedulerStore.UpdateInboxItem(ctx, item); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptResponse, error) {

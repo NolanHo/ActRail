@@ -14,6 +14,7 @@ const (
 	defaultSchedulerIdleBeforeDeliverySeconds = 30
 	defaultSelfReminderTitle                  = "Self Reminder"
 	schedulerItemKindSelfReminder             = "self_reminder"
+	schedulerInboxSourceManual                = "manual"
 	schedulerInboxSourceSelfReminder          = "self_reminder"
 )
 
@@ -337,7 +338,11 @@ func (s *Stub) deliverReadyInboxItems(ctx context.Context, now time.Time) error 
 			return err
 		}
 		sessionID, _ := session.ParseSessionID(item.SessionID)
-		message, err := s.Send(ctx, SendRequest{SessionID: sessionID, Text: formatInboxEnvelope(item.Title, item.Source, item.Message)})
+		messageText := formatInboxEnvelope(item.Title, item.Source, item.Message)
+		if item.Source == schedulerInboxSourceManual {
+			messageText = strings.TrimSpace(item.Message)
+		}
+		message, err := s.Send(ctx, SendRequest{SessionID: sessionID, Text: messageText})
 		now = s.registry.now().UTC()
 		if err != nil {
 			item.State = "error"

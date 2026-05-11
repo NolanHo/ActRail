@@ -474,7 +474,7 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Log out");
     expect(findButtonByAriaLabel("Sessions view")).not.toBeNull();
     expect(findButtonByAriaLabel("Teams view")).not.toBeNull();
-    expect(findButtonByAriaLabel("Scheduler view")).not.toBeNull();
+    expect(findButtonByAriaLabel("Inbox view")).not.toBeNull();
     expect(getRoot().textContent).toContain("No session selected");
     expect(getRoot().querySelector(".mobileSheetTrigger")).toBeNull();
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
@@ -654,20 +654,20 @@ describe("AppShell", () => {
   });
 
 
-  it("switches to the global Scheduler view", async () => {
+  it("switches to the global Inbox view", async () => {
     const { api } = await import("../lib/api");
     renderAppShell({ diagnostics: { status: "ok" } });
     await flush();
 
     act(() => {
-      findButtonByAriaLabel("Scheduler view")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      findButtonByAriaLabel("Inbox view")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     await flush();
 
     expect(api.getScheduler).toHaveBeenCalledWith(100);
-    expect(getRoot().textContent).toContain("Scheduler");
+    expect(getRoot().textContent).toContain("Inbox");
     expect(getRoot().textContent).toContain("Idle before delivery");
-    expect(getRoot().textContent).toContain("Scheduled items");
+    expect(getRoot().textContent).toContain("Scheduled reminders");
   });
 
   it("keeps Teams data sources idle until the global Teams view is opened", async () => {
@@ -763,7 +763,7 @@ describe("AppShell", () => {
     await flush();
 
     expect(api.getSessionInbox).toHaveBeenCalledWith("sess-1", 100);
-    expect(getRoot().textContent).toContain("Pending and delivered scheduler messages");
+    expect(getRoot().textContent).toContain("Pending and delivered session inbox messages");
   });
 
   it("opens metadata details in a dialog from the toolbar", async () => {

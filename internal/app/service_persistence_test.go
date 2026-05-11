@@ -654,7 +654,7 @@ func TestPersistentStubReattachesRunningPIAgentGRPCWithoutStartingNewProcess(t *
 	}
 }
 
-func TestPersistentStubColdStartRehydratesQueuedPromptExactlyOnce(t *testing.T) {
+func TestPersistentStubColdStartRehydratesManualInboxPromptExactlyOnce(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfig())
@@ -675,10 +675,17 @@ func TestPersistentStubColdStartRehydratesQueuedPromptExactlyOnce(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
-	if len(queued.Queue.Items) != 1 {
-		t.Fatalf("len(Enqueue().Queue.Items) = %d, want 1", len(queued.Queue.Items))
+	if len(queued.Queue.Items) != 0 {
+		t.Fatalf("len(Enqueue().Queue.Items) = %d, want 0", len(queued.Queue.Items))
 	}
-	firstID := queued.Queue.Items[0].ID
+	inbox, err := svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(create) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].Message != "recover me" || inbox.Items[0].State != "pending" {
+		t.Fatalf("SessionInbox(create) = %+v, want pending manual item", inbox.Items)
+	}
+	firstID := inbox.Items[0].ItemID
 
 	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
 	if err != nil {
@@ -691,11 +698,15 @@ func TestPersistentStubColdStartRehydratesQueuedPromptExactlyOnce(t *testing.T) 
 	if state.Busy {
 		t.Fatal("SessionState(restart1).Busy = true, want false")
 	}
-	if len(state.Queue.Items) != 1 {
-		t.Fatalf("len(SessionState(restart1).Queue.Items) = %d, want 1", len(state.Queue.Items))
+	if len(state.Queue.Items) != 0 {
+		t.Fatalf("len(SessionState(restart1).Queue.Items) = %d, want 0", len(state.Queue.Items))
 	}
-	if state.Queue.Items[0].ID != firstID || state.Queue.Items[0].Text != "recover me" {
-		t.Fatalf("SessionState(restart1).Queue.Items[0] = %+v", state.Queue.Items[0])
+	inbox, err = rehydrated.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(restart1) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].ItemID != firstID || inbox.Items[0].Message != "recover me" {
+		t.Fatalf("SessionInbox(restart1) = %+v", inbox.Items)
 	}
 
 	rehydratedAgain, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(2 * time.Hour) }, RuntimeConfig{})
@@ -706,11 +717,15 @@ func TestPersistentStubColdStartRehydratesQueuedPromptExactlyOnce(t *testing.T) 
 	if err != nil {
 		t.Fatalf("SessionState(restart2) error = %v", err)
 	}
-	if len(state.Queue.Items) != 1 {
-		t.Fatalf("len(SessionState(restart2).Queue.Items) = %d, want 1", len(state.Queue.Items))
+	if len(state.Queue.Items) != 0 {
+		t.Fatalf("len(SessionState(restart2).Queue.Items) = %d, want 0", len(state.Queue.Items))
 	}
-	if state.Queue.Items[0].ID != firstID {
-		t.Fatalf("SessionState(restart2).Queue.Items[0].ID = %q, want %q", state.Queue.Items[0].ID, firstID)
+	inbox, err = rehydratedAgain.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(restart2) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].ItemID != firstID {
+		t.Fatalf("SessionInbox(restart2) = %+v, want item %q", inbox.Items, firstID)
 	}
 }
 
