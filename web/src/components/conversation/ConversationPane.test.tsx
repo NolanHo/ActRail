@@ -2237,6 +2237,48 @@ describe("ConversationPane", () => {
     expect(runningTokens[0]?.dataset.kind).toBe("tool");
   });
 
+  it("updates the live tool summary while tools are still running", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-trace-summary", busy: true }], activeSessionId: "sess-trace-summary", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const liveSessionStore = createStaticStore(
+      { offsetsBySessionId: {}, liveOffsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: { "sess-trace-summary": true }, loadingBySessionId: {} },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-trace-summary": [
+            { role: "user", text: "run checks", ts: 1_777_000_000 },
+            { type: "tool", name: "read", tool_call_id: "call-read", text: "package.json", ts: 1_777_000_010 },
+            { type: "tool_result", name: "read", tool_call_id: "call-read", text: "ok", ts: 1_777_000_015 },
+            { type: "tool", name: "bash", tool_call_id: "call-test", text: "npm test", ts: 1_777_000_020 },
+          ],
+        },
+        offsetsBySessionId: { "sess-trace-summary": 4 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} liveSessionStore={liveSessionStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const summary = root.querySelector("[data-testid='machine-trace-summary']") as HTMLButtonElement | null;
+    expect(summary?.textContent).toContain("Ran 2 tools");
+    expect(summary?.textContent).toContain("1 ok");
+    expect(summary?.textContent).toContain("1 running");
+    expect(summary?.textContent).toContain("Summary");
+    expect(summary?.classList.contains("isRunning")).toBe(true);
+  });
+
   it("does not mark long-running unresolved tool calls as stalled while the session is busy", () => {
     const ts = Date.now() / 1000 - 601;
     const sessionsStore = createStaticStore(

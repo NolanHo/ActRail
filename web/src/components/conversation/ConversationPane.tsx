@@ -2770,7 +2770,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
 
   return (
     <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
-      <MachineTraceSummaryRow summary={activity} expanded={expanded} onToggle={() => setExpanded((current) => !current)} />
+      <MachineTraceSummaryRow summary={activity} expanded={expanded} onToggle={() => setExpanded((current) => !current)} metaLabel="Summary" />
       {expanded ? (
         <div className="machineTraceStrip" data-testid="machine-trace-strip">
           {visibleEvents.map((item) => (

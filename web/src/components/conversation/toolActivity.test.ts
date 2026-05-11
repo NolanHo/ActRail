@@ -53,8 +53,10 @@ describe("buildToolActivitySummary", () => {
     expect(summary.todoSnapshots).toBe(1);
     expect(summary.systemEvents).toBe(1);
     expect(summary.runningToolNames).toEqual(["bash"]);
-    expect(summary.summaryText).toContain("Running 1/3 tools");
-    expect(summary.summaryText).toContain("2 failed");
+    expect(summary.summaryText).toContain("Ran 3 tools");
+    expect(summary.summaryText).toContain("1 ok");
+    expect(summary.summaryText).toContain("1 running");
+    expect(summary.summaryText).toContain("2 errors");
     expect(summary.statusText).toContain("running 1: bash");
   });
 
