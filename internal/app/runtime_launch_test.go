@@ -472,13 +472,13 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helperLaunchSpec(pi) error = %v", err)
 	}
-	codexSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: "/tmp/project-codex"}, "/tmp/actrail-iod", generationID, codexChild)
+	codexSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: "/tmp/project-codex", CodexThreadID: "thread-helper-contract"}, "/tmp/actrail-iod", generationID, codexChild)
 	if err != nil {
 		t.Fatalf("helperLaunchSpec(codex) error = %v", err)
 	}
 
 	assertHelperLaunchContract(t, piSpec.Command().Args(), piChild, iod.ChildIOModeStdio)
-	assertHelperLaunchContract(t, codexSpec.Command().Args(), codexChild, iod.ChildIOModeUnix)
+	assertHelperLaunchContract(t, codexSpec.Command().Args(), codexChild, iod.ChildIOModeUnix, "thread-helper-contract")
 	if !reflect.DeepEqual(piSpec.Environment().Vars(), launcherEnv.Vars()) {
 		t.Fatalf("helper environment vars = %#v, want launcher env vars %#v", piSpec.Environment().Vars(), launcherEnv.Vars())
 	}
@@ -729,7 +729,7 @@ func mustLaunchSpecForHelperContractTest(t *testing.T, path string, args []strin
 	return spec
 }
 
-func assertHelperLaunchContract(t *testing.T, got []string, childSpec process.LaunchSpec, childIOMode iod.ChildIOMode) {
+func assertHelperLaunchContract(t *testing.T, got []string, childSpec process.LaunchSpec, childIOMode iod.ChildIOMode, codexThreadID ...string) {
 	t.Helper()
 	wantPrefix := []string{
 		helperFlagSessionID, "s_helper_contract",
@@ -740,6 +740,9 @@ func assertHelperLaunchContract(t *testing.T, got []string, childSpec process.La
 	}
 	if childIOMode != "" {
 		wantPrefix = append(wantPrefix, helperFlagChildIOMode, string(childIOMode))
+	}
+	if len(codexThreadID) > 0 && codexThreadID[0] != "" {
+		wantPrefix = append(wantPrefix, helperFlagCodexThreadID, codexThreadID[0])
 	}
 	wantPrefix = append(wantPrefix,
 		helperFlagChildEnv, "ACTRAIL_ALPHA=one",

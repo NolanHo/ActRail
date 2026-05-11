@@ -56,6 +56,7 @@ type HelperOptions struct {
 	ChildIOMode        ChildIOMode
 	ProtocolVersion    int
 	SessionHistoryPath string
+	CodexThreadID      string
 	BuildDate          string
 	GitSHA             string
 	Runner             process.Runner
@@ -235,7 +236,7 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Helper{
+	helper := &Helper{
 		sessionID:        opts.SessionID,
 		generationID:     opts.GenerationID,
 		paths:            opts.Paths,
@@ -252,7 +253,11 @@ func NewHelper(opts HelperOptions) (*Helper, error) {
 		childResolved:    make(chan struct{}),
 		commands:         make(chan queuedCommand, 128),
 		onChildExitStart: opts.OnChildExitStart,
-	}, nil
+	}
+	if helper.history != nil && childIOMode == ChildIOModeUnix {
+		helper.history.threadID = strings.TrimSpace(opts.CodexThreadID)
+	}
+	return helper, nil
 }
 
 func (h *Helper) Run(ctx context.Context) error {
@@ -579,6 +584,7 @@ func (h *Helper) handleSessionHistory(hc *helperConn, request SessionHistoryRequ
 		if err != nil {
 			return h.sendError(hc, true, ErrorHelperBroken, err.Error(), nil)
 		}
+		h.persistSessionHistoryPath()
 	}
 	packet, err := NewSessionHistoryResponsePacket(h.sessionID, h.generationID, snapshot)
 	if err != nil {
@@ -874,12 +880,23 @@ func (h *Helper) observeCodexOutput(ctx context.Context, data string) {
 	if h == nil || h.childIOMode != ChildIOModeUnix || h.history == nil {
 		return
 	}
-	if path := codexSessionPathFromOutput(data); path != "" {
+	threadID, path := codexSessionFromOutput(data)
+	if threadID != "" {
+		h.history.SetCodexThreadID(ctx, threadID)
+		h.persistSessionHistoryPath()
+	}
+	if path != "" {
 		h.history.SetPath(ctx, path)
+		h.persistSessionHistoryPath()
 	}
 }
 
 func codexSessionPathFromOutput(data string) string {
+	_, path := codexSessionFromOutput(data)
+	return path
+}
+
+func codexSessionFromOutput(data string) (string, string) {
 	for _, line := range strings.Split(data, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -889,6 +906,7 @@ func codexSessionPathFromOutput(data string) string {
 			Method string `json:"method"`
 			Params struct {
 				Thread struct {
+					ID   string `json:"id"`
 					Path string `json:"path"`
 				} `json:"thread"`
 			} `json:"params"`
@@ -899,11 +917,25 @@ func codexSessionPathFromOutput(data string) string {
 		if strings.TrimSpace(packet.Method) != "thread/started" {
 			continue
 		}
-		if path := strings.TrimSpace(packet.Params.Thread.Path); path != "" {
-			return path
+		threadID := strings.TrimSpace(packet.Params.Thread.ID)
+		path := strings.TrimSpace(packet.Params.Thread.Path)
+		if threadID != "" || path != "" {
+			return threadID, path
 		}
 	}
-	return ""
+	return "", ""
+}
+
+func (h *Helper) persistSessionHistoryPath() {
+	if h == nil || h.history == nil {
+		return
+	}
+	path := h.history.currentPath()
+	if strings.TrimSpace(path) == "" || h.manifest.SessionHistoryPath == path {
+		return
+	}
+	h.manifest.SessionHistoryPath = path
+	_ = WriteGenerationManifest(h.paths.ManifestPath, h.manifest)
 }
 
 func (h *Helper) readOutput(ctx context.Context, stream string, reader io.Reader, pty bool) {

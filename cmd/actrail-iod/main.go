@@ -31,6 +31,7 @@ func main() {
 		childEnvModeRaw       = flag.String("child-env-mode", string(process.EnvModeInherit), "child environment mode: inherit or replace")
 		childIOModeRaw        = flag.String("child-io-mode", string(iod.ChildIOModePTY), "child IO mode: pty, stdio, or unix")
 		sessionHistoryPathRaw = flag.String("session-history-path", "", "Pi session JSONL path for helper history cache")
+		codexThreadIDRaw      = flag.String("codex-thread-id", "", "Codex thread id for helper-owned session history discovery")
 		protocolVersion       = flag.Int("protocol-version", iod.DefaultProtocolVersion, "helper protocol version")
 		rows                  = flag.Uint("pty-rows", 24, "initial PTY rows")
 		cols                  = flag.Uint("pty-cols", 80, "initial PTY cols")
@@ -91,6 +92,7 @@ func main() {
 		ChildIOMode:        childIOMode,
 		ProtocolVersion:    *protocolVersion,
 		SessionHistoryPath: *sessionHistoryPathRaw,
+		CodexThreadID:      *codexThreadIDRaw,
 		BuildDate:          buildDate,
 		GitSHA:             gitSHA,
 	}); err != nil {

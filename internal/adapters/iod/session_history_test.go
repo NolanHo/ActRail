@@ -60,6 +60,49 @@ func TestCodexSessionPathFromOutput(t *testing.T) {
 	if got := codexSessionPathFromOutput(output); got != "/tmp/codex/session.jsonl" {
 		t.Fatalf("codexSessionPathFromOutput() = %q, want session path", got)
 	}
+	threadID, path := codexSessionFromOutput(output)
+	if threadID != "thread-1" || path != "/tmp/codex/session.jsonl" {
+		t.Fatalf("codexSessionFromOutput() = (%q, %q), want thread/path", threadID, path)
+	}
+}
+
+func TestCodexSessionFromOutputExtractsThreadIDWithoutPath(t *testing.T) {
+	output := `{"method":"thread/started","params":{"thread":{"id":"thread-only"}}}` + "\n"
+	threadID, path := codexSessionFromOutput(output)
+	if threadID != "thread-only" || path != "" {
+		t.Fatalf("codexSessionFromOutput() = (%q, %q), want thread id without path", threadID, path)
+	}
+}
+
+func TestSessionHistoryCacheCodexDiscoversPathFromThreadID(t *testing.T) {
+	codexHome := t.TempDir()
+	root := filepath.Join(codexHome, "sessions")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	path := filepath.Join(root, "2026", "05", "11", "rollout-2026-05-11T01-02-03-"+threadID+".jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-11T01:02:03.000Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":"/tmp/codex-discovery"}}`,
+		`{"timestamp":"2026-05-11T01:02:04.000Z","type":"event_msg","payload":{"type":"user_message","message":"found by IOD"}}`,
+		`{"timestamp":"2026-05-11T01:02:05.000Z","type":"event_msg","payload":{"type":"agent_message","message":"history restored","phase":"final_answer"}}`,
+	}, "\n") + "\n"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache("", true)
+	cache.codexRoot = root
+	cache.SetCodexThreadID(context.Background(), threadID)
+	snapshot, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if snapshot.SourcePath != filepath.Clean(path) {
+		t.Fatalf("Snapshot().SourcePath = %q, want %q", snapshot.SourcePath, filepath.Clean(path))
+	}
+	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Text != "found by IOD" || snapshot.Messages[1].Text != "history restored" {
+		t.Fatalf("Snapshot().Messages = %#v, want discovered Codex messages", snapshot.Messages)
+	}
 }
 
 func TestSessionHistoryCacheSetPathWarmsTail(t *testing.T) {

@@ -32,6 +32,8 @@ type sessionHistoryCache struct {
 	mu         sync.RWMutex
 	path       string
 	codex      bool
+	codexRoot  string
+	threadID   string
 	lines      []string
 	messages   []SessionHistoryMessage
 	indexed    []sessionHistoryIndexEntry
@@ -58,7 +60,7 @@ type sessionHistoryIndexEntry struct {
 
 func newSessionHistoryCache(path string, codex bool) *sessionHistoryCache {
 	trimmed := strings.TrimSpace(path)
-	cache := &sessionHistoryCache{codex: codex}
+	cache := &sessionHistoryCache{codex: codex, codexRoot: codexSessionRoot()}
 	if trimmed != "" {
 		cache.path = filepath.Clean(trimmed)
 	}
@@ -68,6 +70,9 @@ func newSessionHistoryCache(path string, codex bool) *sessionHistoryCache {
 func (c *sessionHistoryCache) Start(ctx context.Context) {
 	if c == nil {
 		return
+	}
+	if c.codex {
+		_ = c.discoverCodexPath(ctx)
 	}
 	if strings.TrimSpace(c.currentPath()) == "" {
 		return
@@ -98,6 +103,9 @@ func (c *sessionHistoryCache) Stop() {
 func (c *sessionHistoryCache) Snapshot(ctx context.Context) (SessionHistorySnapshot, error) {
 	if c == nil {
 		return SessionHistorySnapshot{}, nil
+	}
+	if c.codex {
+		_ = c.discoverCodexPath(ctx)
 	}
 	if err := c.refreshIfChanged(ctx); err != nil {
 		return SessionHistorySnapshot{}, err
@@ -168,6 +176,24 @@ func (c *sessionHistoryCache) SetPath(ctx context.Context, path string) {
 	}()
 }
 
+func (c *sessionHistoryCache) SetCodexThreadID(ctx context.Context, threadID string) {
+	if c == nil || !c.codex {
+		return
+	}
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.threadID == threadID {
+		c.mu.Unlock()
+		return
+	}
+	c.threadID = threadID
+	c.mu.Unlock()
+	_ = c.discoverCodexPath(ctx)
+}
+
 func (c *sessionHistoryCache) currentPath() string {
 	if c == nil {
 		return ""
@@ -175,6 +201,26 @@ func (c *sessionHistoryCache) currentPath() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.path
+}
+
+func (c *sessionHistoryCache) discoverCodexPath(ctx context.Context) error {
+	if c == nil || !c.codex {
+		return nil
+	}
+	c.mu.RLock()
+	threadID := c.threadID
+	currentPath := c.path
+	root := c.codexRoot
+	c.mu.RUnlock()
+	if strings.TrimSpace(currentPath) != "" || strings.TrimSpace(threadID) == "" {
+		return nil
+	}
+	path, ok := discoverCodexSessionHistoryPath(ctx, root, threadID)
+	if !ok {
+		return nil
+	}
+	c.SetPath(ctx, path)
+	return nil
 }
 
 func (c *sessionHistoryCache) warmTail(limit int) error {
@@ -372,6 +418,89 @@ type codexHistoryLine struct {
 func readCodexHistoryFile(ctx context.Context, path string, tailLimit int) ([]string, []SessionHistoryMessage, []sessionHistoryIndexEntry, bool, string, int, int64, time.Time, error) {
 	lines, indexed, lastRelevant, lineCount, size, mod, err := readCodexHistoryRange(ctx, path, 0, 0, tailLimit, nil)
 	return lines, nil, indexed, lastRelevant == "task_complete", lastRelevant, lineCount, size, mod, err
+}
+
+func discoverCodexSessionHistoryPath(ctx context.Context, root, threadID string) (string, bool) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return "", false
+	}
+	root = strings.TrimSpace(root)
+	if root == "" {
+		root = codexSessionRoot()
+	}
+	matches, err := filepath.Glob(filepath.Join(root, "*", "*", "*", "rollout-*"+threadID+".jsonl"))
+	if err != nil || len(matches) == 0 {
+		return "", false
+	}
+	best := ""
+	var bestMod time.Time
+	for _, match := range matches {
+		if err := ctx.Err(); err != nil {
+			return "", false
+		}
+		id, ok, err := codexSessionIDFromHistoryFile(ctx, match)
+		if err != nil || !ok || id != threadID {
+			continue
+		}
+		info, err := os.Stat(match)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestMod) {
+			best = filepath.Clean(match)
+			bestMod = info.ModTime()
+		}
+	}
+	return best, best != ""
+}
+
+func codexSessionRoot() string {
+	home := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	if home == "" {
+		if userHome, err := os.UserHomeDir(); err == nil {
+			home = filepath.Join(userHome, ".codex")
+		}
+	}
+	if home == "" {
+		home = ".codex"
+	}
+	return filepath.Join(home, "sessions")
+}
+
+func codexSessionIDFromHistoryFile(ctx context.Context, path string) (string, bool, error) {
+	file, err := os.Open(strings.TrimSpace(path))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), sessionHistoryMaxLineBytes)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return "", false, err
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry codexHistoryLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return "", false, err
+		}
+		if strings.TrimSpace(entry.Type) != "session_meta" || entry.Payload == nil {
+			continue
+		}
+		id := strings.TrimSpace(historyString(entry.Payload["id"]))
+		return id, id != "", nil
+	}
+	if err := scanner.Err(); err != nil {
+		return "", false, err
+	}
+	return "", false, nil
 }
 
 func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, startLineNo int, tailLimit int, existing []sessionHistoryIndexEntry) ([]string, []sessionHistoryIndexEntry, string, int, int64, time.Time, error) {

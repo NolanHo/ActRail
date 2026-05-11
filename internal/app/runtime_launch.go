@@ -111,6 +111,7 @@ const (
 	helperFlagChildEnv           = "-child-env"
 	helperFlagChildIOMode        = "-child-io-mode"
 	helperFlagSessionHistoryPath = "-session-history-path"
+	helperFlagCodexThreadID      = "-codex-thread-id"
 )
 
 const defaultHelperReadyTimeout = 30 * time.Second
@@ -648,6 +649,11 @@ func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helpe
 	}
 	if sessionPath := strings.TrimSpace(req.SessionPath); sessionPath != "" {
 		commandArgs = append(commandArgs, helperFlagSessionHistoryPath, sessionPath)
+	}
+	if req.Backend == session.BackendCodex {
+		if threadID := strings.TrimSpace(req.CodexThreadID); threadID != "" {
+			commandArgs = append(commandArgs, helperFlagCodexThreadID, threadID)
+		}
 	}
 	for _, item := range childLaunchSpec.Environment().Vars() {
 		commandArgs = append(commandArgs, helperFlagChildEnv, item.String())
