@@ -293,6 +293,10 @@ func (s serviceStub) UpdateSupervisorProvider(ctx context.Context, req app.Updat
 	return s.base.UpdateSupervisorProvider(ctx, req)
 }
 
+func (s serviceStub) TestSupervisorProvider(ctx context.Context, req app.TestSupervisorProviderRequest) (app.TestSupervisorProviderResponse, error) {
+	return s.base.TestSupervisorProvider(ctx, req)
+}
+
 func (s serviceStub) SessionSupervisor(ctx context.Context, req app.SessionSupervisorRequest) (app.SessionSupervisorResponse, error) {
 	return s.base.SessionSupervisor(ctx, req)
 }
@@ -790,6 +794,10 @@ func (s *fixtureService) UpdateSupervisorProvider(_ context.Context, req app.Upd
 	return app.SupervisorProviderResponse{OK: true, BaseURL: req.BaseURL, Model: req.Model, APIKeyConfigured: req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "", Complete: true}, nil
 }
 
+func (s *fixtureService) TestSupervisorProvider(_ context.Context, req app.TestSupervisorProviderRequest) (app.TestSupervisorProviderResponse, error) {
+	return app.TestSupervisorProviderResponse{OK: true, Status: "provider chat completion succeeded", StatusCode: 200, BaseURL: req.BaseURL, Model: req.Model, Output: "hello"}, nil
+}
+
 func (s *fixtureService) SessionSupervisor(_ context.Context, req app.SessionSupervisorRequest) (app.SessionSupervisorResponse, error) {
 	s.supervisorReq = req
 	return app.SessionSupervisorResponse{OK: true, Supported: true, Enabled: false, Status: "idle", IdleAfterMinutes: 5, MaxConsecutiveInjections: 10, ContextFiles: []string{}}, nil
@@ -849,7 +857,9 @@ func newTestRouter(cfg config.Config, svc app.Service) http.Handler {
 
 func TestSupervisorRoutesReturnProviderAndSessionConfig(t *testing.T) {
 	svc := &fixtureService{}
-	h := newTestRouter(config.Load(), svc)
+	cfg := config.Load()
+	cfg.Auth.Password = ""
+	h := newTestRouter(cfg, svc)
 
 	providerReq := httptest.NewRequest(http.MethodGet, "/api/supervisor/provider", nil)
 	providerRes := httptest.NewRecorder()
@@ -866,6 +876,20 @@ func TestSupervisorRoutesReturnProviderAndSessionConfig(t *testing.T) {
 	}
 	if providerBody["api_key_configured"] != true || providerBody["model"] != "test-model" {
 		t.Fatalf("provider response = %v", providerBody)
+	}
+
+	testBody := strings.NewReader(`{"base_url":"https://llm.invalid/v1","model":"test-model"}`)
+	testReq := httptest.NewRequest(http.MethodPost, "/api/supervisor/provider/test", testBody)
+	testReq.Header.Set("Content-Type", "application/json")
+	testRes := httptest.NewRecorder()
+	h.ServeHTTP(testRes, testReq)
+	if testRes.Code != http.StatusOK {
+		t.Fatalf("POST provider test status = %d, want %d body=%s", testRes.Code, http.StatusOK, testRes.Body.String())
+	}
+	var testProviderBody app.TestSupervisorProviderResponse
+	decodeJSON(t, testRes, &testProviderBody)
+	if !testProviderBody.OK || testProviderBody.Output != "hello" {
+		t.Fatalf("provider test response = %+v", testProviderBody)
 	}
 
 	body := strings.NewReader(`{"enabled":true,"idle_after_minutes":2,"max_consecutive_injections":12,"goal":"finish","acceptance_criteria":"tests","context_files":["README.md"]}`)

@@ -404,7 +404,7 @@ func backendCapabilitySnapshot(backend string) BackendCapabilitySnapshot {
 			IODStdio:              false,
 			IODUnix:               true,
 			GRPC:                  false,
-			Supervisor:            false,
+			Supervisor:            true,
 			ResumeHistory:         true,
 		}
 	default:
