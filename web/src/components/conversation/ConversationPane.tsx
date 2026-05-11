@@ -35,6 +35,16 @@ const EMPTY_MESSAGES: MessageEvent[] = [];
 
 type ConversationActiveSession = Pick<SessionSummary, "session_id" | "runtime_id" | "agent_backend" | "historical" | "transport" | "busy" | "cwd">;
 
+function liveSessionErrorTitle(session: ConversationActiveSession | null): string {
+  if (session?.agent_backend === "pi" && session.transport === "pi-rpc") {
+    return "Pi RPC warning";
+  }
+  if (session?.agent_backend === "codex") {
+    return "Codex runtime warning";
+  }
+  return "Runtime warning";
+}
+
 function selectConversationActiveSession(state: { activeSessionId: string | null; items: SessionSummary[] }): ConversationActiveSession | null {
   const session = state.items.find((item) => item.session_id === state.activeSessionId) ?? null;
   if (!session) {
@@ -3530,7 +3540,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
             ) : null}
             {liveSessionError ? (
               <MessageSurface kind="event" isError>
-                {renderCardHeader("event", "Pi RPC warning")}
+                {renderCardHeader("event", liveSessionErrorTitle(activeSession))}
                 <div className="messageCardFooterText text-sm text-foreground">{liveSessionError}</div>
               </MessageSurface>
             ) : null}

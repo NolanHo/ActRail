@@ -2708,7 +2708,7 @@ describe("ConversationPane", () => {
 
   it("shows a visible warning when live pi-rpc polling fails", () => {
     const sessionsStore = createStaticStore(
-      { items: [{ session_id: "sess-rpc-error", agent_backend: "pi", busy: false }], activeSessionId: "sess-rpc-error", loading: false, newSessionDefaults: null },
+      { items: [{ session_id: "sess-rpc-error", agent_backend: "pi", transport: "pi-rpc", busy: false }], activeSessionId: "sess-rpc-error", loading: false, newSessionDefaults: null },
       { refresh: () => Promise.resolve(), select: () => undefined },
     );
     const messagesStore = createStaticStore(
@@ -2749,6 +2749,52 @@ describe("ConversationPane", () => {
 
     expect(root.textContent).toContain("Pi RPC warning");
     expect(root.textContent).toContain("broker unavailable");
+  });
+
+  it("labels codex live runtime errors as codex warnings", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-codex-error", agent_backend: "codex", busy: false }], activeSessionId: "sess-codex-error", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-codex-error": [],
+        },
+        offsetsBySessionId: { "sess-codex-error": 0 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+    const liveSessionStore = createStaticStore(
+      {
+        offsetsBySessionId: { "sess-codex-error": 0 },
+        liveOffsetsBySessionId: { "sess-codex-error": 0 },
+        requestsBySessionId: {},
+        requestVersionsBySessionId: {},
+        busyBySessionId: {},
+        loadingBySessionId: {},
+        errorBySessionId: { "sess-codex-error": "helper_exit" },
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders
+        sessionsStore={sessionsStore as any}
+        messagesStore={messagesStore as any}
+        liveSessionStore={liveSessionStore as any}
+      >
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.textContent).toContain("Codex runtime warning");
+    expect(root.textContent).not.toContain("Pi RPC warning");
+    expect(root.textContent).toContain("helper_exit");
   });
 
   it("shows a floating previous-user button only after scrolling above an earlier user message", async () => {
