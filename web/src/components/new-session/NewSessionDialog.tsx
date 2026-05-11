@@ -81,7 +81,6 @@ function buildOptimisticCreatedSession(
   };
 }
 
-const RESUME_PAGE_SIZE = 20;
 const RESUME_SCAN_BATCH_SIZE = 20;
 
 function resumeOptionLabel(item: SessionResumeCandidate) {
@@ -153,7 +152,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const [resumeSessionId, setResumeSessionId] = useState("");
   const [resumeCandidates, setResumeCandidates] = useState<SessionResumeCandidate[]>([]);
   const [resumeOffset, setResumeOffset] = useState(0);
-  const [resumeRemaining, setResumeRemaining] = useState(0);
+  const [resumeScanned, setResumeScanned] = useState(0);
   const [resumeScanRemaining, setResumeScanRemaining] = useState(0);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeTitleFilter, setResumeTitleFilter] = useState("");
@@ -256,7 +255,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeSessionId("");
     setResumeCandidates([]);
     setResumeOffset(0);
-    setResumeRemaining(0);
+    setResumeScanned(0);
     setResumeScanRemaining(0);
     setResumeLoading(false);
     setResumeTitleFilter("");
@@ -323,7 +322,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeSessionId("");
     setResumeCandidates([]);
     setResumeOffset(0);
-    setResumeRemaining(0);
+    setResumeScanned(0);
     setResumeScanRemaining(0);
     setResumeLoading(false);
     setLookupError("");
@@ -341,7 +340,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeOffset(0);
     setResumeCandidates([]);
     setResumeSessionId("");
-    setResumeRemaining(0);
+    setResumeScanned(0);
     setResumeScanRemaining(0);
     setLookupError("");
   }, [backend, cwd, open, surfaceTab]);
@@ -351,7 +350,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     if (surfaceTab !== "resume" || !supportsResumeHistory) {
       setResumeCandidates([]);
       setResumeSessionId("");
-      setResumeRemaining(0);
+      setResumeScanned(0);
       setResumeScanRemaining(0);
       setResumeLoading(false);
       setLookupError("");
@@ -361,7 +360,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     if (!rawCwd) {
       setResumeCandidates([]);
       setResumeSessionId("");
-      setResumeRemaining(0);
+      setResumeScanned(0);
       setResumeScanRemaining(0);
       setResumeLoading(false);
       setLookupError("");
@@ -382,8 +381,9 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
         if (cancelled) return;
         const page = Array.isArray(result.sessions) ? result.sessions : [];
         const scanRemaining = Math.max(0, Number(result.scan_remaining || 0));
+        const scanned = Math.max(0, Number(result.scanned || 0));
         setResumeCandidates(page);
-        setResumeRemaining(scanRemaining);
+        setResumeScanned(scanned);
         setResumeScanRemaining(scanRemaining);
         setResumeSessionId((current) => {
           if (!current) return "";
@@ -401,7 +401,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
         if (cancelled) return;
         setResumeCandidates([]);
         setResumeSessionId("");
-        setResumeRemaining(0);
+        setResumeScanned(0);
         setResumeScanRemaining(0);
         setCwdInfo({ exists: false, willCreate: false, gitRepo: false, gitRoot: "", gitBranch: "" });
         setLookupError(loadError instanceof Error ? loadError.message : "Failed to inspect working directory");
@@ -466,7 +466,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setCreateInTmux(Boolean(tmuxAvailable));
     setResumeSessionId("");
     setResumeOffset(0);
-    setResumeRemaining(0);
     setError("");
   };
 
@@ -700,14 +699,14 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   ) : (
                     <div className="focusSessionEmpty">{resumeLoading ? "Loading resumable sessions..." : "No matching backend history found for this directory."}</div>
                   )}
-                  {resumeCandidates.length || resumeOffset > 0 || resumeRemaining > 0 ? (
+                  {resumeCandidates.length || resumeOffset > 0 || resumeScanned > 0 || resumeScanRemaining > 0 ? (
                     <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                       <span>
-                        {resumeCandidates.length
-                          ? `Showing ${resumeOffset + 1}-${resumeOffset + resumeCandidates.length}`
-                          : `Showing ${resumeOffset + 1}-${resumeOffset}`}
-                        {resumeRemaining > 0 ? `, ${resumeRemaining} older` : ""}
-                        {resumeScanRemaining > 0 ? ` (${resumeScanRemaining} uninspected)` : ""}
+                        {resumeScanned > 0
+                          ? `Inspected ${resumeOffset + 1}-${resumeOffset + resumeScanned}`
+                          : `Inspected ${resumeOffset}-${resumeOffset}`}
+                        {resumeCandidates.length ? ` · ${resumeCandidates.length} shown` : " · 0 shown"}
+                        {resumeScanRemaining > 0 ? ` · ${resumeScanRemaining} older uninspected` : ""}
                       </span>
                       <div className="flex items-center gap-2">
                         <Button
@@ -715,7 +714,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                           variant="ghost"
                           className="h-8 px-2"
                           disabled={resumeLoading || resumeOffset <= 0}
-                          onClick={() => setResumeOffset((current) => Math.max(0, current - RESUME_PAGE_SIZE))}
+                          onClick={() => setResumeOffset((current) => Math.max(0, current - RESUME_SCAN_BATCH_SIZE))}
                         >
                           Newer
                         </Button>
@@ -723,8 +722,8 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                           type="button"
                           variant="ghost"
                           className="h-8 px-2"
-                          disabled={resumeLoading || resumeRemaining <= 0}
-                          onClick={() => setResumeOffset((current) => current + RESUME_PAGE_SIZE)}
+                          disabled={resumeLoading || resumeScanRemaining <= 0}
+                          onClick={() => setResumeOffset((current) => current + RESUME_SCAN_BATCH_SIZE)}
                         >
                           Older
                         </Button>

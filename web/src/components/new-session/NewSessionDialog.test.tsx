@@ -1293,8 +1293,9 @@ describe("NewSessionDialog", () => {
     expect(root.textContent).not.toContain("first prompt title");
     expect(root.textContent).toContain("recent prompt");
     expect(root.textContent).toContain(new Date(1_760_000_200 * 1000).toLocaleString());
-    expect(root.textContent).toContain("20 older");
-    expect(root.textContent).toContain("20 uninspected");
+    expect(root.textContent).toContain("Inspected 1-20");
+    expect(root.textContent).toContain("1 shown");
+    expect(root.textContent).toContain("20 older uninspected");
 
     const olderButton = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Older") as HTMLButtonElement;
     await act(async () => {
@@ -1305,7 +1306,8 @@ describe("NewSessionDialog", () => {
 
     expect(vi.mocked(api.getSessionResumeCandidates)).toHaveBeenLastCalledWith("/tmp/pi-project", "pi", { offset: 0, limit: 0, scanOffset: 20, scanLimit: 20 });
     expect(root.textContent).toContain("older-title");
-    expect(root.textContent).toContain("Showing 21-21");
+    expect(root.textContent).toContain("Inspected 21-21");
+    expect(root.textContent).toContain("1 shown");
   });
 
   it("creates a new ActRail slot from a selected resume candidate", async () => {

@@ -1074,7 +1074,7 @@ func piResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string, c
 		if entry.sessionName != "" {
 			sessionName = entry.sessionName
 		}
-		if firstUser == "" && entry.firstUser != "" {
+		if firstUser == "" && entry.firstUser != "" && !isSyntheticResumePreviewUserText(entry.firstUser) {
 			firstUser = entry.firstUser
 		}
 	}
@@ -1381,6 +1381,7 @@ func codexResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string
 		return "", "", "", false
 	}
 	defer file.Close()
+	fallbackFirstUser := ""
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), codexSessionFileMaxLineBytes)
 	for scanner.Scan() {
@@ -1400,15 +1401,21 @@ func codexResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string
 			}
 		case "event_msg":
 			if firstUser == "" && strings.TrimSpace(stringValue(entry.Payload["type"])) == "user_message" {
-				firstUser = strings.TrimSpace(firstStringValue(entry.Payload["message"], entry.Payload["text"]))
+				text := strings.TrimSpace(firstStringValue(entry.Payload["message"], entry.Payload["text"]))
+				if !isSyntheticResumePreviewUserText(text) {
+					firstUser = text
+				}
 			}
 		case "response_item":
-			if firstUser == "" &&
+			if fallbackFirstUser == "" &&
 				strings.TrimSpace(stringValue(entry.Payload["type"])) == "message" &&
 				strings.TrimSpace(stringValue(entry.Payload["role"])) == "user" {
-				firstUser = strings.TrimSpace(codexContentText(entry.Payload["content"]))
-				if firstUser == "" {
-					firstUser = strings.TrimSpace(stringValue(entry.Payload["text"]))
+				text := strings.TrimSpace(codexContentText(entry.Payload["content"]))
+				if text == "" {
+					text = strings.TrimSpace(stringValue(entry.Payload["text"]))
+				}
+				if !isSyntheticResumePreviewUserText(text) {
+					fallbackFirstUser = text
 				}
 			}
 		}
@@ -1419,7 +1426,33 @@ func codexResumeCandidateMetaFromSourcePath(sourcePath string) (sessionID string
 	if scanner.Err() != nil {
 		return "", "", "", false
 	}
+	if firstUser == "" {
+		firstUser = fallbackFirstUser
+	}
 	return sessionID, cwd, firstUser, sessionID != ""
+}
+
+func isSyntheticResumePreviewUserText(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return true
+	}
+	syntheticPrefixes := []string{
+		"# AGENTS.md instructions for ",
+		"<environment_context>",
+		"<developer instructions>",
+		"<permissions instructions>",
+		"<skills_instructions>",
+		"<plugins_instructions>",
+		"<collaboration_mode>",
+		"<turn_aborted>",
+	}
+	for _, prefix := range syntheticPrefixes {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func codexSourcePathForHistoricalSession(cwd string, sessionID session.SessionID) (string, string, bool) {

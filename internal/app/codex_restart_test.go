@@ -395,6 +395,47 @@ func TestCodexResumeCandidatesUseThreadNameUpdatedEvent(t *testing.T) {
 	}
 }
 
+func TestCodexResumeCandidatePreviewSkipsSyntheticUserContext(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	threadID := "019e1111-0000-7000-8000-000000000007"
+	path := filepath.Join(codexHome, "sessions", "2026", "05", "10", "rollout-2026-05-10T01-02-03-"+threadID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir codex session dir: %v", err)
+	}
+	body := `{"timestamp":"2026-05-10T08:00:00Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":` + quoteJSON(cwd) + `}}` + "\n" +
+		`{"timestamp":"2026-05-10T08:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /root\n\n<INSTRUCTIONS>@RTK.md</INSTRUCTIONS>"}]}}` + "\n" +
+		`{"timestamp":"2026-05-10T08:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/root</cwd>\n</environment_context>"}]}}` + "\n" +
+		`{"timestamp":"2026-05-10T08:00:03Z","type":"event_msg","payload":{"type":"user_message","message":"real prompt for resume preview"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write codex session file: %v", err)
+	}
+	if err := os.Chtimes(path, time.Unix(1760000300, 0), time.Unix(1760000300, 0)); err != nil {
+		t.Fatalf("chtimes codex session file: %v", err)
+	}
+
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	resume, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{
+		CWD:          cwd,
+		AgentBackend: "codex",
+		ScanOffset:   0,
+		ScanLimit:    1,
+	})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates() error = %v", err)
+	}
+	if len(resume.Sessions) != 1 {
+		t.Fatalf("resume sessions = %+v, want one candidate", resume.Sessions)
+	}
+	if got := resume.Sessions[0].FirstUserMessage; got != "real prompt for resume preview" {
+		t.Fatalf("FirstUserMessage = %q, want real user prompt", got)
+	}
+}
+
 func writeCodexResumeCandidateFile(t *testing.T, codexHome, threadID, cwd, prompt string, modTime time.Time) string {
 	t.Helper()
 	path := filepath.Join(codexHome, "sessions", "2026", "05", "10", "rollout-2026-05-10T01-02-03-"+threadID+".jsonl")
