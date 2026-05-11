@@ -446,6 +446,28 @@ describe("api", () => {
     });
   });
 
+  it("tests supervisor provider", async () => {
+    const payload = { ok: true, status: "provider chat completion succeeded", output: "hello" };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = { base_url: "https://llm.test/v1", model: "model-a" };
+    await expect(api.testSupervisorProvider(request)).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/supervisor/provider/test", {
+      method: "POST",
+      signal: undefined,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(request),
+    });
+  });
+
   it("cancels scheduler self-reminders", async () => {
     const payload = { ok: true, self_reminder: { item_id: "self_reminder_1", kind: "self_reminder", state: "cancelled" } };
     const fetchMock = vi.fn().mockResolvedValue({

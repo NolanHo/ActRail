@@ -18,6 +18,7 @@ interface SessionCardProps {
   onRestart?: () => void;
   restartLabel?: string;
   onHandoff?: () => void;
+  onSupervisor?: () => void;
   onDelete?: () => void;
 }
 
@@ -68,7 +69,7 @@ function sessionHealthLabel(health: SessionHealth) {
   }
 }
 
-function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" | "handoff" | "restart" | "menu" }) {
+function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" | "handoff" | "restart" | "supervisor" | "menu" }) {
   if (kind === "edit") {
     return (
       <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -115,6 +116,16 @@ function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" 
     );
   }
 
+  if (kind === "supervisor") {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <path d="M8 2.2 13 4v3.3c0 3.1-2 5.2-5 6.5-3-1.3-5-3.4-5-6.5V4Z" />
+        <path d="M5.5 8h5" />
+        <path d="M8 5.5v5" />
+      </svg>
+    );
+  }
+
   if (kind === "menu") {
     return (
       <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
@@ -151,10 +162,11 @@ function sessionCardPropsEqual(left: SessionCardProps, right: SessionCardProps) 
     && Boolean(left.onDuplicate) === Boolean(right.onDuplicate)
     && Boolean(left.onRestart) === Boolean(right.onRestart)
     && Boolean(left.onHandoff) === Boolean(right.onHandoff)
+    && Boolean(left.onSupervisor) === Boolean(right.onSupervisor)
     && Boolean(left.onDelete) === Boolean(right.onDelete);
 }
 
-function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onRestart, restartLabel, onHandoff, onDelete }: SessionCardProps) {
+function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onRestart, restartLabel, onHandoff, onSupervisor, onDelete }: SessionCardProps) {
   const title = getSessionDisplayName(session);
   const isHistorical = session.historical === true;
   const desktopActions = useDesktopSessionActions();
@@ -171,7 +183,7 @@ function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit
       ? `Supervisor on ${supervisor.consecutive_injections}/${supervisor.max_consecutive_injections}`
       : "";
   const hasInlineActions = Boolean(onToggleFocus || onEdit);
-  const hasMenuActions = Boolean(onDuplicate || onRestart || onHandoff || onDelete);
+  const hasMenuActions = Boolean(onDuplicate || onRestart || onHandoff || onSupervisor || onDelete);
   const hasActions = hasInlineActions || hasMenuActions;
   const showActions = hasActions && (active || desktopActions);
   const accessibilityParts = [
@@ -342,6 +354,17 @@ function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit
                               >
                                 <ActionIcon kind="handoff" />
                                 <span>Handoff...</span>
+                              </button>
+                            ) : null}
+                            {onSupervisor ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="sessionActionMenuItem"
+                                onClick={() => runMenuAction(onSupervisor)}
+                              >
+                                <ActionIcon kind="supervisor" />
+                                <span>Supervisor...</span>
                               </button>
                             ) : null}
                             {onDelete ? (

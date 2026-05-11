@@ -13,6 +13,7 @@ vi.mock("../../lib/api", () => ({
     listSessions: vi.fn().mockResolvedValue({ items: [{ session_id: "sess-1", alias: "Pi Work", agent_backend: "pi" }, { session_id: "sess-2", alias: "Codex Work", agent_backend: "codex" }] }),
     getSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.test/v1", model: "model-a", api_key_configured: true, complete: true }),
     saveSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.test/v1", model: "model-b", api_key_configured: true, complete: true }),
+    testSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, status: "provider chat completion succeeded", status_code: 200, output: "hello from test model" }),
     getSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0, goal: "", acceptance_criteria: "", context_files: [] }),
     saveSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: true, status: "idle", idle_after_minutes: 2, max_consecutive_injections: 3, consecutive_injections: 0, goal: "Finish", acceptance_criteria: "", context_files: [] }),
     getSupervisorRuns: vi.fn().mockResolvedValue({ ok: true, runs: [] }),
@@ -73,7 +74,7 @@ describe("SchedulerView", () => {
     vi.clearAllMocks();
   });
 
-  it("loads scheduler, sessions, provider, and supervisor runs", async () => {
+  it("loads scheduler, sessions, and provider", async () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
 
@@ -85,10 +86,6 @@ describe("SchedulerView", () => {
     expect(api.getScheduler).toHaveBeenCalledWith(100);
     expect(api.listSessions).toHaveBeenCalledWith({ limit: 100 }, undefined, false);
     expect(api.getSupervisorProvider).toHaveBeenCalled();
-    await waitForAssertion(() => {
-      expect(api.getSessionSupervisor).toHaveBeenCalledWith("sess-1");
-      expect(api.getSupervisorRuns).toHaveBeenCalledWith("sess-1", 20);
-    });
     expect(root.textContent).toContain("Create self-reminder");
     expect(root.textContent).toContain("Supervisor provider");
   });
@@ -100,9 +97,6 @@ describe("SchedulerView", () => {
     await act(async () => {
       render(<SchedulerView />, root);
       await flush();
-    });
-    await waitForAssertion(() => {
-      expect(api.getSessionSupervisor).toHaveBeenCalledWith("sess-1");
     });
     await setValue(inputByLabel(root, "Idle before delivery"), "45");
     await act(async () => {
@@ -121,7 +115,7 @@ describe("SchedulerView", () => {
     });
   });
 
-  it("saves supervisor provider, policy, and triggers a dry run", async () => {
+  it("saves and tests supervisor provider", async () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
 
@@ -129,28 +123,20 @@ describe("SchedulerView", () => {
       render(<SchedulerView />, root);
       await flush();
     });
-    await waitForAssertion(() => {
-      expect(api.getSessionSupervisor).toHaveBeenCalledWith("sess-1");
-    });
     await setValue(inputByLabel(root, "Model"), "model-b");
     await act(async () => {
       clickTestId(root, "supervisor-provider-save");
       await flush();
     });
-    await setValue(inputByLabel(root, "Goal"), "Finish");
     await act(async () => {
-      clickTestId(root, "session-supervisor-save");
-      await flush();
-    });
-    await act(async () => {
-      clickTestId(root, "session-supervisor-dry-run");
+      clickTestId(root, "supervisor-provider-test");
       await flush();
     });
 
     await waitForAssertion(() => {
       expect(api.saveSupervisorProvider).toHaveBeenCalledWith({ base_url: "https://llm.test/v1", model: "model-b" });
-      expect(api.saveSessionSupervisor).toHaveBeenCalledWith("sess-1", expect.objectContaining({ enabled: true, goal: "Finish" }));
-      expect(api.runSupervisorOnce).toHaveBeenCalledWith("sess-1", true);
+      expect(api.testSupervisorProvider).toHaveBeenCalledWith({ base_url: "https://llm.test/v1", model: "model-b" });
     });
+    expect(root.textContent).toContain("Test passed");
   });
 });

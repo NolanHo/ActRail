@@ -45,6 +45,47 @@ func TestSupervisorProviderReadDoesNotReturnAPIKey(t *testing.T) {
 	}
 }
 
+func TestSupervisorProviderTestUsesChatCompletion(t *testing.T) {
+	svc := newSupervisorTestStub(time.Unix(1760000000, 0).UTC())
+	seenAuthorization := ""
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/chat/completions" {
+			t.Fatalf("model path = %q, want /chat/completions", req.URL.Path)
+		}
+		seenAuthorization = req.Header.Get("Authorization")
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatalf("Decode model request: %v", err)
+		}
+		if body.Model != "model-a" || len(body.Messages) != 2 || !strings.Contains(body.Messages[1].Content, "hello") {
+			t.Fatalf("model request = %+v", body)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hello from test model"}}]}`))
+	}))
+	defer modelServer.Close()
+	apiKey := "secret"
+	if _, err := svc.UpdateSupervisorProvider(context.Background(), UpdateSupervisorProviderRequest{BaseURL: modelServer.URL, APIKey: &apiKey, Model: "model-a"}); err != nil {
+		t.Fatalf("UpdateSupervisorProvider() error = %v", err)
+	}
+
+	response, err := svc.TestSupervisorProvider(context.Background(), TestSupervisorProviderRequest{})
+	if err != nil {
+		t.Fatalf("TestSupervisorProvider() error = %v", err)
+	}
+	if !response.OK || response.Output != "hello from test model" || response.StatusCode != 200 {
+		t.Fatalf("TestSupervisorProvider() = %+v", response)
+	}
+	if seenAuthorization != "Bearer secret" {
+		t.Fatalf("Authorization = %q, want bearer key", seenAuthorization)
+	}
+}
+
 func TestSessionSupervisorDefaultsUseMaxConsecutiveInjectionsTen(t *testing.T) {
 	svc := newSupervisorTestStub(time.Unix(1760000000, 0).UTC())
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
@@ -60,19 +101,18 @@ func TestSessionSupervisorDefaultsUseMaxConsecutiveInjectionsTen(t *testing.T) {
 	}
 }
 
-func TestSessionSupervisorRejectsNonPIBackend(t *testing.T) {
+func TestSessionSupervisorAllowsCodexBackend(t *testing.T) {
 	svc := newSupervisorTestStub(time.Unix(1760000000, 0).UTC())
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession(codex) error = %v", err)
 	}
-	_, err = svc.SessionSupervisor(context.Background(), SessionSupervisorRequest{SessionID: mustSessionID(t, created.Session.SessionID)})
-	if err == nil {
-		t.Fatal("SessionSupervisor(codex) error = nil, want unsupported_backend")
+	response, err := svc.SessionSupervisor(context.Background(), SessionSupervisorRequest{SessionID: mustSessionID(t, created.Session.SessionID)})
+	if err != nil {
+		t.Fatalf("SessionSupervisor(codex) error = %v", err)
 	}
-	appErr, ok := err.(*Error)
-	if !ok || appErr.Code != "unsupported_backend" {
-		t.Fatalf("SessionSupervisor(codex) error = %v, want unsupported_backend", err)
+	if !response.Supported || response.IdleAfterMinutes != 5 {
+		t.Fatalf("SessionSupervisor(codex) = %+v", response)
 	}
 }
 
@@ -142,6 +182,50 @@ func TestRunSupervisorOnceAnchorsToLastStablePIAssistantEventID(t *testing.T) {
 	}
 	if len(messages.Items) != 2 || len(messages.Items[1].SupervisorRuns) != 1 || messages.Items[1].SupervisorRuns[0].RunID != run.Run.RunID {
 		t.Fatalf("annotated messages = %+v", messages.Items)
+	}
+}
+
+func TestRunSupervisorOnceAnchorsToLastStableCodexAssistantEventID(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Date(2026, 5, 8, 16, 10, 0, 0, time.UTC)
+	sessionID := mustSessionID(t, "s_codex_supervisor")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-supervisor","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"start"}}`,
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"codex answer","phase":"final_answer"}}`,
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewDetachedIdentity(sessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-supervisor",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"action\":\"stop\",\"reason\":\"assistant appears complete\"}"}}]}`))
+	}))
+	defer modelServer.Close()
+	enableSupervisorForTest(t, svc, sessionID, modelServer.URL)
+
+	run, err := svc.RunSupervisorOnce(context.Background(), SupervisorRunOnceRequest{SessionID: sessionID, DryRun: true})
+	if err != nil {
+		t.Fatalf("RunSupervisorOnce(codex) error = %v", err)
+	}
+	if !strings.HasPrefix(run.Run.AnchorAssistantEventID, "codex:event:assistant:") || run.Run.Status != supervisorRunStatusStop {
+		t.Fatalf("RunSupervisorOnce(codex) = %+v, want codex assistant anchor", run)
 	}
 }
 

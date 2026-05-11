@@ -38,6 +38,7 @@ import type {
   SessionSupervisorSnapshot,
   TeamsResponse,
   SupervisorProviderResponse,
+  SupervisorProviderTestResponse,
   SupervisorRunsResponse,
   SupervisorRunOnceResponse,
   VoiceProviderTestResponse,
@@ -427,6 +428,9 @@ export const api = {
   },
   saveSupervisorProvider(payload: { base_url: string; api_key?: string; model: string }) {
     return postJson<SupervisorProviderResponse>(`/api/supervisor/provider`, payload);
+  },
+  testSupervisorProvider(payload: { base_url?: string; api_key?: string; model?: string }) {
+    return postJson<SupervisorProviderTestResponse>(`/api/supervisor/provider/test`, payload);
   },
   getSessionSupervisor(sessionId: string) {
     return getJson<SessionSupervisorSnapshot>(`/api/sessions/${sessionId}/supervisor`);

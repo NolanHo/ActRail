@@ -124,6 +124,7 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("POST /api/settings/voice/test_provider", r.requireAuth(http.HandlerFunc(r.testVoiceProvider)))
 	mux.Handle("GET /api/supervisor/provider", r.requireAuth(http.HandlerFunc(r.supervisorProvider)))
 	mux.Handle("POST /api/supervisor/provider", r.requireAuth(http.HandlerFunc(r.updateSupervisorProvider)))
+	mux.Handle("POST /api/supervisor/provider/test", r.requireAuth(http.HandlerFunc(r.testSupervisorProvider)))
 	mux.Handle("GET /api/sessions/{session_id}/details", r.requireAuth(http.HandlerFunc(r.sessionDetails)))
 	mux.Handle("GET /api/sessions/{session_id}/messages", r.requireAuth(http.HandlerFunc(r.sessionMessages)))
 	mux.Handle("GET /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.sessionSupervisor)))
@@ -482,6 +483,24 @@ func (r Router) updateSupervisorProvider(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	payload, err := r.app.UpdateSupervisorProvider(req.Context(), app.UpdateSupervisorProviderRequest{
+		BaseURL: body.BaseURL,
+		APIKey:  body.APIKey,
+		Model:   body.Model,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) testSupervisorProvider(w http.ResponseWriter, req *http.Request) {
+	var body supervisorProviderRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	payload, err := r.app.TestSupervisorProvider(req.Context(), app.TestSupervisorProviderRequest{
 		BaseURL: body.BaseURL,
 		APIKey:  body.APIKey,
 		Model:   body.Model,

@@ -12,6 +12,7 @@ import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary } from "../../lib/types";
 import { EditSessionDialog } from "./EditSessionDialog";
 import { SessionCard } from "./SessionCard";
+import { SessionSupervisorDialog } from "./SessionSupervisorDialog";
 
 interface SessionsPaneProps {
   onNewSession?: () => void;
@@ -76,6 +77,7 @@ export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: 
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
   const [editingSession, setEditingSession] = useState<SessionSummary | null>(null);
+  const [supervisorSession, setSupervisorSession] = useState<SessionSummary | null>(null);
   const [pendingDialog, setPendingDialog] = useState<PendingSessionDialog>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -349,6 +351,14 @@ export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: 
                     setPendingDialog({ kind: "handoff", session });
                   }
                   : undefined}
+                onSupervisor={session.historical ? undefined : () => {
+                  setActionError("");
+                  void api.getSessionDetails(session.session_id)
+                    .then((details) => setSupervisorSession(details as SessionSummary))
+                    .catch((error) => {
+                      setActionError(error instanceof Error ? error.message : "Failed to load supervisor settings");
+                    });
+                }}
                 onDelete={() => {
                   setActionError("");
                   setPendingDialog({ kind: "delete", session });
@@ -389,6 +399,16 @@ export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: 
         session={editingSession}
         sessions={items}
         onClose={() => setEditingSession(null)}
+        onSaved={async () => {
+          await sessionsStoreApi.refresh();
+        }}
+      />
+
+      <SessionSupervisorDialog
+        key={supervisorSession?.session_id || "session-supervisor-dialog"}
+        open={supervisorSession != null}
+        session={supervisorSession}
+        onClose={() => setSupervisorSession(null)}
         onSaved={async () => {
           await sessionsStoreApi.refresh();
         }}
