@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTailLinesReturnsNewestLines(t *testing.T) {
@@ -93,10 +94,10 @@ func TestSessionHistoryCacheCodexDiscoversPathFromThreadID(t *testing.T) {
 	cache := newSessionHistoryCache("", true)
 	cache.codexRoot = root
 	cache.SetCodexThreadID(context.Background(), threadID)
-	snapshot, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot() error = %v", err)
-	}
+	t.Cleanup(cache.Stop)
+	snapshot := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.SourcePath == filepath.Clean(path) && len(snapshot.Messages) == 2
+	})
 	if snapshot.SourcePath != filepath.Clean(path) {
 		t.Fatalf("Snapshot().SourcePath = %q, want %q", snapshot.SourcePath, filepath.Clean(path))
 	}
@@ -118,11 +119,11 @@ func TestSessionHistoryCacheSetPathWarmsTail(t *testing.T) {
 	}
 	cache := newSessionHistoryCache("", true)
 	cache.SetPath(context.Background(), path)
+	t.Cleanup(cache.Stop)
 
-	snapshot, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot() error = %v", err)
-	}
+	snapshot := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.Complete && snapshot.IndexedCount == 2 && len(snapshot.Messages) == 2
+	})
 	if snapshot.SourcePath != path {
 		t.Fatalf("Snapshot().SourcePath = %q, want %q", snapshot.SourcePath, path)
 	}
@@ -153,10 +154,9 @@ func TestSessionHistoryCacheCodexAppendUpdatesIndexAndTail(t *testing.T) {
 	cache := newSessionHistoryCache(path, true)
 	cache.Start(context.Background())
 	t.Cleanup(cache.Stop)
-	first, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot() error = %v", err)
-	}
+	first := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.IndexedCount == 1 && len(snapshot.Messages) == 1
+	})
 	if first.IndexedCount != 1 || len(first.Messages) != 1 || first.Messages[0].Text != "hello" {
 		t.Fatalf("first Snapshot() = %#v, want one indexed user message", first)
 	}
@@ -174,10 +174,9 @@ func TestSessionHistoryCacheCodexAppendUpdatesIndexAndTail(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	second, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("second Snapshot() error = %v", err)
-	}
+	second := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.IndexedCount == 2 && snapshot.TaskComplete && len(snapshot.Messages) == 2
+	})
 	if second.IndexedCount != 2 {
 		t.Fatalf("second Snapshot().IndexedCount = %d, want 2", second.IndexedCount)
 	}
@@ -202,10 +201,10 @@ func TestSessionHistoryCacheCodexIgnoresPartialTailUntilComplete(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	cache := newSessionHistoryCache(path, true)
-	first, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot() with partial line error = %v", err)
-	}
+	first := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.IndexedCount == 1 && len(snapshot.Messages) == 1
+	})
+	t.Cleanup(cache.Stop)
 	if first.IndexedCount != 1 || len(first.Messages) != 1 || first.Messages[0].Text != "hello" {
 		t.Fatalf("Snapshot() = %#v, want only complete first line", first)
 	}
@@ -219,10 +218,9 @@ func TestSessionHistoryCacheCodexIgnoresPartialTailUntilComplete(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	second, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot() after completing partial line error = %v", err)
-	}
+	second := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.IndexedCount == 2 && len(snapshot.Messages) == 2
+	})
 	if second.IndexedCount != 2 || len(second.Messages) != 2 || second.Messages[1].Text != "world" {
 		t.Fatalf("Snapshot() = %#v, want completed assistant line indexed once", second)
 	}
@@ -238,10 +236,10 @@ func TestSessionHistoryCacheCodexIgnoresValidJSONTailUntilNewline(t *testing.T) 
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	cache := newSessionHistoryCache(path, true)
-	first, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot() error = %v", err)
-	}
+	first := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.IndexedCount == 1 && len(snapshot.Messages) == 1
+	})
+	t.Cleanup(cache.Stop)
 	if first.TaskComplete {
 		t.Fatal("Snapshot().TaskComplete = true, want false before newline-committed task_complete")
 	}
@@ -258,10 +256,9 @@ func TestSessionHistoryCacheCodexIgnoresValidJSONTailUntilNewline(t *testing.T) 
 	if err := file.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	second, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot() after newline error = %v", err)
-	}
+	second := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.TaskComplete
+	})
 	if !second.TaskComplete {
 		t.Fatal("Snapshot().TaskComplete = false, want true after newline commit")
 	}
@@ -279,14 +276,34 @@ func TestSessionHistoryCacheCodexDedupeKeepsRepeatedPrompts(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	cache := newSessionHistoryCache(path, true)
-	snapshot, err := cache.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot() error = %v", err)
-	}
+	t.Cleanup(cache.Stop)
+	snapshot := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.IndexedCount == 3 && len(snapshot.Messages) == 3
+	})
 	if snapshot.IndexedCount != 3 {
 		t.Fatalf("Snapshot().IndexedCount = %d, want two repeated prompts plus one assistant", snapshot.IndexedCount)
 	}
 	if len(snapshot.Messages) != 3 || snapshot.Messages[0].Text != "continue" || snapshot.Messages[1].Text != "continue" || snapshot.Messages[2].Text != "done" {
 		t.Fatalf("Snapshot().Messages = %#v, want repeated prompts preserved and event/response assistant collapsed", snapshot.Messages)
+	}
+}
+
+func waitForHistorySnapshot(t *testing.T, cache *sessionHistoryCache, ready func(SessionHistorySnapshot) bool) SessionHistorySnapshot {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var last SessionHistorySnapshot
+	for {
+		snapshot, err := cache.Snapshot(context.Background())
+		if err != nil {
+			t.Fatalf("Snapshot() error = %v", err)
+		}
+		last = snapshot
+		if ready(snapshot) {
+			return snapshot
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("history snapshot not ready before deadline: %#v", last)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

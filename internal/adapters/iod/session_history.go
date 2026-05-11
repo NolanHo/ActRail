@@ -17,6 +17,7 @@ import (
 
 const defaultSessionHistoryWarmLines = 3000
 const sessionHistoryMaxLineBytes = 64 << 20
+const sessionHistoryWatchInterval = 500 * time.Millisecond
 
 type SessionHistorySnapshot struct {
 	SourcePath   string
@@ -74,17 +75,7 @@ func (c *sessionHistoryCache) Start(ctx context.Context) {
 	if c.codex {
 		_ = c.discoverCodexPath(ctx)
 	}
-	if strings.TrimSpace(c.currentPath()) == "" {
-		return
-	}
-	_ = c.warmTail(defaultSessionHistoryWarmLines)
-	loadCtx, cancel := context.WithCancel(ctx)
-	c.mu.Lock()
-	c.loadCancel = cancel
-	c.mu.Unlock()
-	go func() {
-		_ = c.loadFull(loadCtx)
-	}()
+	c.ensureWatcher(ctx)
 }
 
 func (c *sessionHistoryCache) Stop() {
@@ -104,12 +95,13 @@ func (c *sessionHistoryCache) Snapshot(ctx context.Context) (SessionHistorySnaps
 	if c == nil {
 		return SessionHistorySnapshot{}, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return SessionHistorySnapshot{}, err
+	}
 	if c.codex {
 		_ = c.discoverCodexPath(ctx)
 	}
-	if err := c.refreshIfChanged(ctx); err != nil {
-		return SessionHistorySnapshot{}, err
-	}
+	c.ensureWatcher(ctx)
 	c.mu.RLock()
 	path := c.path
 	lines := append([]string(nil), c.lines...)
@@ -118,15 +110,7 @@ func (c *sessionHistoryCache) Snapshot(ctx context.Context) (SessionHistorySnaps
 	taskDone := c.taskDone
 	warmed := c.warmed
 	complete := c.complete
-	codex := c.codex
 	c.mu.RUnlock()
-	if codex && len(indexed) > 0 {
-		var err error
-		messages, err = readCodexHistoryMessagesAt(ctx, path, indexed)
-		if err != nil {
-			return SessionHistorySnapshot{}, err
-		}
-	}
 	return SessionHistorySnapshot{
 		SourcePath:   path,
 		Lines:        lines,
@@ -147,15 +131,19 @@ func (c *sessionHistoryCache) SetPath(ctx context.Context, path string) {
 		return
 	}
 	cleaned := filepath.Clean(trimmed)
+	var oldCancel context.CancelFunc
 	c.mu.Lock()
 	if c.path == cleaned {
+		hasWatcher := c.loadCancel != nil
 		c.mu.Unlock()
+		if !hasWatcher {
+			c.ensureWatcher(ctx)
+		}
 		return
 	}
 	if c.loadCancel != nil {
-		c.loadCancel()
+		oldCancel = c.loadCancel
 	}
-	loadCtx, cancel := context.WithCancel(ctx)
 	c.path = cleaned
 	c.lines = nil
 	c.messages = nil
@@ -167,13 +155,13 @@ func (c *sessionHistoryCache) SetPath(ctx context.Context, path string) {
 	c.lastSize = 0
 	c.lastMod = time.Time{}
 	c.lineCount = 0
-	c.loadCancel = cancel
+	c.loadCancel = nil
 	c.mu.Unlock()
 
-	_ = c.warmTail(defaultSessionHistoryWarmLines)
-	go func() {
-		_ = c.loadFull(loadCtx)
-	}()
+	if oldCancel != nil {
+		oldCancel()
+	}
+	c.ensureWatcher(ctx)
 }
 
 func (c *sessionHistoryCache) SetCodexThreadID(ctx context.Context, threadID string) {
@@ -186,7 +174,11 @@ func (c *sessionHistoryCache) SetCodexThreadID(ctx context.Context, threadID str
 	}
 	c.mu.Lock()
 	if c.threadID == threadID {
+		hasPath := strings.TrimSpace(c.path) != ""
 		c.mu.Unlock()
+		if !hasPath {
+			_ = c.discoverCodexPath(ctx)
+		}
 		return
 	}
 	c.threadID = threadID
@@ -221,6 +213,36 @@ func (c *sessionHistoryCache) discoverCodexPath(ctx context.Context) error {
 	}
 	c.SetPath(ctx, path)
 	return nil
+}
+
+func (c *sessionHistoryCache) ensureWatcher(ctx context.Context) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	if strings.TrimSpace(c.path) == "" || c.loadCancel != nil {
+		c.mu.Unlock()
+		return
+	}
+	loadCtx, cancel := context.WithCancel(ctx)
+	c.loadCancel = cancel
+	c.mu.Unlock()
+
+	_ = c.refreshIfChanged(loadCtx)
+	go c.watch(loadCtx)
+}
+
+func (c *sessionHistoryCache) watch(ctx context.Context) {
+	ticker := time.NewTicker(sessionHistoryWatchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = c.refreshIfChanged(ctx)
+		}
+	}
 }
 
 func (c *sessionHistoryCache) warmTail(limit int) error {
@@ -339,6 +361,7 @@ func (c *sessionHistoryCache) refreshIfChanged(ctx context.Context) error {
 	lastSize := c.lastSize
 	lastLineCount := c.lineCount
 	lastIndexed := append([]sessionHistoryIndexEntry(nil), c.indexed...)
+	lastMessages := append([]SessionHistoryMessage(nil), c.messages...)
 	lastKind := c.lastKind
 	c.mu.RUnlock()
 	if unchanged {
@@ -348,7 +371,7 @@ func (c *sessionHistoryCache) refreshIfChanged(ctx context.Context) error {
 		if !warmed || info.Size() < lastSize || info.Size() == lastSize {
 			return c.loadFull(ctx)
 		}
-		lines, indexed, nextKind, lineCount, size, mod, err := readCodexHistoryRange(ctx, path, lastSize, lastLineCount, defaultSessionHistoryWarmLines, lastIndexed)
+		lines, indexed, messages, nextKind, lineCount, size, mod, err := readCodexHistoryRange(ctx, path, lastSize, lastLineCount, defaultSessionHistoryWarmLines, lastIndexed, lastMessages)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -361,7 +384,7 @@ func (c *sessionHistoryCache) refreshIfChanged(ctx context.Context) error {
 			return nil
 		}
 		c.lines = mergeTailLines(c.lines, lines, defaultSessionHistoryWarmLines)
-		c.messages = nil
+		c.messages = messages
 		c.indexed = indexed
 		if nextKind != "" {
 			lastKind = nextKind
@@ -416,8 +439,8 @@ type codexHistoryLine struct {
 }
 
 func readCodexHistoryFile(ctx context.Context, path string, tailLimit int) ([]string, []SessionHistoryMessage, []sessionHistoryIndexEntry, bool, string, int, int64, time.Time, error) {
-	lines, indexed, lastRelevant, lineCount, size, mod, err := readCodexHistoryRange(ctx, path, 0, 0, tailLimit, nil)
-	return lines, nil, indexed, lastRelevant == "task_complete", lastRelevant, lineCount, size, mod, err
+	lines, indexed, messages, lastRelevant, lineCount, size, mod, err := readCodexHistoryRange(ctx, path, 0, 0, tailLimit, nil, nil)
+	return lines, messages, indexed, lastRelevant == "task_complete", lastRelevant, lineCount, size, mod, err
 }
 
 func discoverCodexSessionHistoryPath(ctx context.Context, root, threadID string) (string, bool) {
@@ -503,23 +526,24 @@ func codexSessionIDFromHistoryFile(ctx context.Context, path string) (string, bo
 	return "", false, nil
 }
 
-func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, startLineNo int, tailLimit int, existing []sessionHistoryIndexEntry) ([]string, []sessionHistoryIndexEntry, string, int, int64, time.Time, error) {
+func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, startLineNo int, tailLimit int, existing []sessionHistoryIndexEntry, existingMessages []SessionHistoryMessage) ([]string, []sessionHistoryIndexEntry, []SessionHistoryMessage, string, int, int64, time.Time, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, nil, "", startLineNo, 0, time.Time{}, err
+		return nil, nil, nil, "", startLineNo, 0, time.Time{}, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, nil, "", startLineNo, 0, time.Time{}, err
+		return nil, nil, nil, "", startLineNo, 0, time.Time{}, err
 	}
 	if startOffset > 0 {
 		if _, err := file.Seek(startOffset, io.SeekStart); err != nil {
-			return nil, nil, "", startLineNo, 0, time.Time{}, fmt.Errorf("seek codex session history %q: %w", path, err)
+			return nil, nil, nil, "", startLineNo, 0, time.Time{}, fmt.Errorf("seek codex session history %q: %w", path, err)
 		}
 	}
 	tail := make([]string, 0, tailLimit)
 	indexed := append([]sessionHistoryIndexEntry(nil), existing...)
+	messages := append([]SessionHistoryMessage(nil), existingMessages...)
 	lastRelevant := ""
 	lineNo := startLineNo
 	committedLineNo := startLineNo
@@ -532,10 +556,10 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 			break
 		}
 		if raw == "" && readErr != nil {
-			return nil, nil, "", startLineNo, 0, time.Time{}, fmt.Errorf("scan codex session history %q: %w", path, readErr)
+			return nil, nil, nil, "", startLineNo, 0, time.Time{}, fmt.Errorf("scan codex session history %q: %w", path, readErr)
 		}
 		if err := ctx.Err(); err != nil {
-			return nil, nil, "", startLineNo, 0, time.Time{}, err
+			return nil, nil, nil, "", startLineNo, 0, time.Time{}, err
 		}
 		lineNo++
 		if readErr == io.EOF && !strings.HasSuffix(raw, "\n") {
@@ -552,7 +576,7 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 			}
 		}
 		if err != nil {
-			return nil, nil, "", startLineNo, 0, time.Time{}, err
+			return nil, nil, nil, "", startLineNo, 0, time.Time{}, err
 		}
 		if relevant := codexHistoryRelevantKind(line); relevant != "" {
 			lastRelevant = relevant
@@ -570,6 +594,9 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 			}
 			if !duplicateCodexHistoryIndex(indexed, index) {
 				indexed = append(indexed, index)
+				if !duplicateCodexHistoryMessage(messages, message) {
+					messages = append(messages, message)
+				}
 			}
 		}
 		offset += int64(len(raw))
@@ -579,10 +606,10 @@ func readCodexHistoryRange(ctx context.Context, path string, startOffset int64, 
 			break
 		}
 		if readErr != nil {
-			return nil, nil, "", startLineNo, 0, time.Time{}, fmt.Errorf("scan codex session history %q: %w", path, readErr)
+			return nil, nil, nil, "", startLineNo, 0, time.Time{}, fmt.Errorf("scan codex session history %q: %w", path, readErr)
 		}
 	}
-	return tail, indexed, lastRelevant, committedLineNo, committedOffset, info.ModTime(), nil
+	return tail, indexed, messages, lastRelevant, committedLineNo, committedOffset, info.ModTime(), nil
 }
 
 func codexHistoryRelevantKind(raw string) string {
@@ -622,39 +649,6 @@ func codexHistorySource(raw string) string {
 		return ""
 	}
 	return strings.TrimSpace(entry.Type)
-}
-
-func readCodexHistoryMessagesAt(ctx context.Context, path string, indexed []sessionHistoryIndexEntry) ([]SessionHistoryMessage, error) {
-	if strings.TrimSpace(path) == "" || len(indexed) == 0 {
-		return nil, nil
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	messages := make([]SessionHistoryMessage, 0, len(indexed))
-	for _, entry := range indexed {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if entry.Length <= 0 || entry.Offset < 0 {
-			continue
-		}
-		buf := make([]byte, entry.Length)
-		n, err := file.ReadAt(buf, entry.Offset)
-		if err != nil && err != io.EOF {
-			return nil, fmt.Errorf("read codex session history %q line %d: %w", path, entry.LineNo, err)
-		}
-		msg, ok, err := codexHistoryMessageFromLine(string(buf[:n]), int(entry.LineNo))
-		if err != nil {
-			return nil, err
-		}
-		if ok && !duplicateCodexHistoryMessage(messages, msg) {
-			messages = append(messages, msg)
-		}
-	}
-	return messages, nil
 }
 
 func codexHistoryMessageFromLine(raw string, lineNo int) (SessionHistoryMessage, bool, error) {

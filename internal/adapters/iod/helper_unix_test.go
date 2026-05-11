@@ -24,26 +24,19 @@ func TestCleanChildExitRealPTYRace(t *testing.T) {
 	defer tc.stop()
 
 	tc.waitForChildExitStart(t, 4*time.Second)
-	waitForDialFailure(t, tc.paths.ControlSocketPath, 250*time.Millisecond)
 
 	childExit := tc.mustNextStatePacket(t, FactChildExit)
 	if childExit.Fact.Seq != nil {
 		t.Fatalf("child exit seq = %#v, want nil", childExit.Fact.Seq)
 	}
 
-	helperExit := tc.mustNextStatePacket(t, FactHelperExit)
-	if helperExit.Fact.Seq != nil {
-		t.Fatalf("helper exit seq = %#v, want nil", helperExit.Fact.Seq)
-	}
-
-	tc.mustConnClosed(t)
-	tc.stop()
+	tc.mustReattachHello(t)
 
 	replay, err := ReplayWAL(tc.paths.WALPath, tc.sessionID, tc.generationID, 2)
 	if err != nil {
 		t.Fatalf("ReplayWAL() error = %v", err)
 	}
-	wantKinds := []FactKind{FactChildExit, FactHelperExit}
+	wantKinds := []FactKind{FactChildExit}
 	if len(replay.Records) != len(wantKinds) {
 		t.Fatalf("len(replay.Records) = %d, want %d", len(replay.Records), len(wantKinds))
 	}
@@ -55,14 +48,6 @@ func TestCleanChildExitRealPTYRace(t *testing.T) {
 			t.Fatalf("replay record %d fact kind = %q, want no generation break", i, got)
 		}
 	}
-
-	if _, err := os.Stat(tc.paths.ControlSocketPath); !os.IsNotExist(err) {
-		t.Fatalf("control socket stat error = %v, want not exist", err)
-	}
-	if conn, err := net.Dial("unix", tc.paths.ControlSocketPath); err == nil {
-		_ = conn.Close()
-		t.Fatal("helper remained reattachable after real PTY child exit")
-	}
 }
 
 func TestLateCommandRejectedAfterRealPTYExit(t *testing.T) {
@@ -70,7 +55,6 @@ func TestLateCommandRejectedAfterRealPTYExit(t *testing.T) {
 	defer tc.stop()
 
 	tc.waitForChildExitStart(t, 4*time.Second)
-	waitForDialFailure(t, tc.paths.ControlSocketPath, 250*time.Millisecond)
 
 	commandID := mustCommandID(t, "cmd_late_exit")
 	rejected := tc.sendRejectedCommand(t, CommandSend, commandID, json.RawMessage(`{"text":"late"}`))
@@ -95,19 +79,12 @@ func TestLateCommandRejectedAfterRealPTYExit(t *testing.T) {
 	if childExit.Fact.Seq != nil {
 		t.Fatalf("child exit seq = %#v, want nil", childExit.Fact.Seq)
 	}
-	helperExit := tc.mustNextStatePacket(t, FactHelperExit)
-	if helperExit.Fact.Seq != nil {
-		t.Fatalf("helper exit seq = %#v, want nil", helperExit.Fact.Seq)
-	}
-
-	tc.mustConnClosed(t)
-	tc.stop()
 
 	replay, err := ReplayWAL(tc.paths.WALPath, tc.sessionID, tc.generationID, 2)
 	if err != nil {
 		t.Fatalf("ReplayWAL() error = %v", err)
 	}
-	wantKinds := []FactKind{FactCommandRejected, FactChildExit, FactHelperExit}
+	wantKinds := []FactKind{FactCommandRejected, FactChildExit}
 	if len(replay.Records) != len(wantKinds) {
 		t.Fatalf("len(replay.Records) = %d, want %d", len(replay.Records), len(wantKinds))
 	}
@@ -336,13 +313,20 @@ func (tc *realPTYHelperTestCase) mustNextStatePacket(t *testing.T, want FactKind
 	return packet
 }
 
-func (tc *realPTYHelperTestCase) mustConnClosed(t *testing.T) {
+func (tc *realPTYHelperTestCase) mustReattachHello(t *testing.T) {
 	t.Helper()
-	var packet json.RawMessage
-	if err := decodeWithin(t, tc.dec, &packet); err == nil {
-		t.Fatalf("decode after helper exit = %#v, want connection closed", packet)
-	} else if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
-		t.Fatalf("decode after helper exit error = %v, want EOF", err)
+	conn, err := net.Dial("unix", tc.paths.ControlSocketPath)
+	if err != nil {
+		t.Fatalf("net.Dial(unix) after child exit error = %v", err)
+	}
+	defer conn.Close()
+	dec := json.NewDecoder(conn)
+	var hello HelloPacket
+	if err := decodeWithin(t, dec, &hello); err != nil {
+		t.Fatalf("decode hello after child exit error = %v", err)
+	}
+	if hello.SessionID != tc.sessionID || hello.GenerationID != tc.generationID {
+		t.Fatalf("hello after child exit = %#v, want session=%q generation=%q", hello, tc.sessionID, tc.generationID)
 	}
 }
 
@@ -399,18 +383,4 @@ func iodHelperArgs(argv []string) []string {
 		}
 	}
 	return nil
-}
-
-func waitForDialFailure(t *testing.T, path string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.Dial("unix", path)
-		if err != nil {
-			return
-		}
-		_ = conn.Close()
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("control socket %q remained reattachable for %v", path, timeout)
 }

@@ -350,30 +350,17 @@ func TestCleanChildExit(t *testing.T) {
 		t.Fatalf("child exit seq = %#v, want nil", childExit.Fact.Seq)
 	}
 
-	helperExit := tc.mustStatePacket(t)
-	if helperExit.Fact.FactKind != FactHelperExit {
-		t.Fatalf("helper exit fact kind = %q, want %q", helperExit.Fact.FactKind, FactHelperExit)
-	}
-	if helperExit.Fact.Seq != nil {
-		t.Fatalf("helper exit seq = %#v, want nil", helperExit.Fact.Seq)
-	}
-
-	tc.mustConnClosed(t)
-	tc.stop()
-
-	if _, err := os.Stat(tc.paths.ControlSocketPath); !os.IsNotExist(err) {
-		t.Fatalf("control socket stat error = %v, want not exist", err)
-	}
 	if conn, err := net.Dial("unix", tc.paths.ControlSocketPath); err == nil {
 		_ = conn.Close()
-		t.Fatal("helper remained reattachable after child exit")
+	} else {
+		t.Fatalf("helper not reattachable after child exit: %v", err)
 	}
 
 	replay, err := ReplayWAL(tc.paths.WALPath, tc.sessionID, tc.generationID, 2)
 	if err != nil {
 		t.Fatalf("ReplayWAL() error = %v", err)
 	}
-	wantKinds := []FactKind{FactChildExit, FactHelperExit}
+	wantKinds := []FactKind{FactChildExit}
 	if len(replay.Records) != len(wantKinds) {
 		t.Fatalf("len(replay.Records) = %d, want %d", len(replay.Records), len(wantKinds))
 	}
@@ -384,6 +371,11 @@ func TestCleanChildExit(t *testing.T) {
 		if got := record.Header.Class.FactKind(); got == FactGenerationBreak {
 			t.Fatalf("replay record %d fact kind = %q, want no generation break", i, got)
 		}
+	}
+
+	tc.stop()
+	if _, err := os.Stat(tc.paths.ControlSocketPath); !os.IsNotExist(err) {
+		t.Fatalf("control socket stat error = %v, want not exist after helper stop", err)
 	}
 }
 

@@ -389,8 +389,6 @@ func (h *Helper) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		cancel()
-	case <-childDone:
-		cancel()
 	}
 	if err := h.shutdown(); err != nil {
 		return err
@@ -1046,9 +1044,6 @@ func rejectReason(broken, childExited bool) string {
 }
 
 func (h *Helper) sendHello(hc *helperConn) error {
-	if h.isChildExitStarted() {
-		return fmt.Errorf("child exit is underway")
-	}
 	packet, err := NewHelloPacket(h.sessionID, h.generationID, h.protocolVersion, h.proof)
 	if err != nil {
 		return err
@@ -1112,7 +1107,6 @@ func (h *Helper) closeConn(conn *helperConn) {
 
 func (h *Helper) beginChildExit() {
 	started := h.childExitStarted.CompareAndSwap(false, true)
-	h.closeListener()
 	if started && h.onChildExitStart != nil {
 		h.onChildExitStart()
 	}
