@@ -220,35 +220,24 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 		return EnqueueResponse{}, Invalid("text", "text required")
 	}
 	var response EnqueueResponse
-	shouldDispatch := false
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
 		if s.activeWaitForSession(req.SessionID) != nil {
 			return Conflict("session is waiting on user")
 		}
-		state, ok, err := s.registry.ReplaceQueue(req.SessionID, text)
-		if err != nil {
-			return err
-		}
-		if !ok {
+		if _, ok := s.registry.Lookup(req.SessionID); !ok {
 			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 		}
-		if err := s.replaceManualInboxMirror(context.Background(), req.SessionID, state, text); err != nil {
+		if err := s.replaceManualInboxItem(context.Background(), req.SessionID, text); err != nil {
 			return err
 		}
-		updatedRecord := record
-		updatedRecord.state = state
-		busy, _ := effectiveBusy(updatedRecord)
-		response = EnqueueResponse{Busy: busy, Queue: queueSnapshotFromState(state)}
-		shouldDispatch = !busy && transportControlError(s.sessionTransportSnapshot(record)) == nil
+		busy, _ := effectiveBusy(record)
+		response = EnqueueResponse{Busy: busy, Queue: queueSnapshotFromState(record.state)}
 		return nil
 	}); err != nil {
 		return EnqueueResponse{}, err
 	}
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
-	if shouldDispatch {
-		s.scheduleQueuedDispatch(req.SessionID)
-	}
 	return response, nil
 }
 
@@ -275,31 +264,17 @@ func (s *Stub) CancelQueue(_ context.Context, req CancelQueueRequest) (CancelQue
 	return response, nil
 }
 
-func (s *Stub) replaceManualInboxMirror(ctx context.Context, sessionID session.SessionID, state session.State, text string) error {
+func (s *Stub) replaceManualInboxItem(ctx context.Context, sessionID session.SessionID, text string) error {
 	if s == nil || s.schedulerStore == nil {
 		return nil
 	}
-	items := state.Queue().Items()
-	if len(items) == 0 {
-		return s.finishManualInboxMirror(ctx, sessionID, "", "cancelled", "")
-	}
-	queued := items[0]
 	now := s.registry.now().UTC()
-	sourceID := manualInboxSourceID(queued.ID())
 	openItems, err := s.schedulerStore.ListInboxItems(ctx, sessionID.String(), 500)
 	if err != nil {
 		return err
 	}
 	for _, item := range openItems {
 		if item.Source != schedulerInboxSourceManual || (item.State != "pending" && item.State != "claimed") {
-			continue
-		}
-		if item.SourceID != sourceID {
-			item.State = "replaced"
-			item.UpdatedAt = now
-			if err := s.schedulerStore.UpdateInboxItem(ctx, item); err != nil {
-				return err
-			}
 			continue
 		}
 		item.Title = "Manual follow-up"
@@ -317,7 +292,7 @@ func (s *Stub) replaceManualInboxMirror(ctx context.Context, sessionID session.S
 		ItemID:    newID("inbox"),
 		SessionID: sessionID.String(),
 		Source:    schedulerInboxSourceManual,
-		SourceID:  sourceID,
+		SourceID:  "composer",
 		Title:     "Manual follow-up",
 		Message:   strings.TrimSpace(text),
 		DueAt:     now,
@@ -356,10 +331,6 @@ func (s *Stub) finishManualInboxMirror(ctx context.Context, sessionID session.Se
 		}
 	}
 	return nil
-}
-
-func manualInboxSourceID(queueID session.QueueItemID) string {
-	return "queue:" + queueID.String()
 }
 
 func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptResponse, error) {

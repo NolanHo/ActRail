@@ -34,7 +34,6 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			return nil
 		}
 		queued := items[0]
-		manualInboxID := manualInboxSourceID(queued.ID())
 		if err := transportControlError(s.sessionTransportSnapshot(record)); err != nil {
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_send", err)
 			return nil
@@ -93,9 +92,6 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		s.messageCache.Invalidate(sessionID)
 		committed = sessionMessageFromCommitted(item)
 		queue = queueSnapshotFromState(state)
-		if err := s.finishManualInboxMirror(context.Background(), sessionID, manualInboxID, "delivered", deliveredMessageID(committed)); err != nil {
-			return err
-		}
 		activated = true
 		return nil
 	}); err != nil || !activated {

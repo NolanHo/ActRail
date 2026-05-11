@@ -848,10 +848,11 @@ describe("Composer", () => {
     const queueButton = composerRoot.querySelector(".composerQueueButton") as HTMLButtonElement;
     const sendButton = composerRoot.querySelector(".sendButton") as HTMLButtonElement;
 
-    expect(queueButton.textContent).toBe("Add to Inbox (2)");
-    expect(queueButton.title).toBe("Add this draft to the session inbox after the current turn.");
-    expect(sendButton.getAttribute("aria-label")).toBe("Send Now");
-    expect(sendButton.title).toBe("Send immediately to the busy session.");
+    expect(queueButton.textContent).toBe("Inbox 2");
+    expect(queueButton.title).toBe("Add this draft to the ActRail Inbox until the session is idle.");
+    expect(sendButton.getAttribute("aria-label")).toBe("Send");
+    expect(sendButton.disabled).toBe(true);
+    expect(sendButton.title).toBe("Session is busy. Add the draft to Inbox or wait until the current turn finishes.");
   });
 
   it("shows send failures instead of silently swallowing them", async () => {
@@ -930,7 +931,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Add to Inbox");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("does not show cancel-loop for a terminal runtime with stale live busy", () => {
@@ -941,7 +942,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Add to Inbox");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("does not show cancel-loop for an ended runtime with stale live busy", () => {
@@ -952,7 +953,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Add to Inbox");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("does not show cancel-loop when live runtime is terminal before the session list refreshes", () => {
@@ -964,7 +965,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Add to Inbox");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("does not show cancel-loop when live runtime ended before the session list refreshes", () => {
@@ -976,7 +977,7 @@ describe("Composer", () => {
     const composerRoot = getRoot();
 
     expect(composerRoot.querySelector(".composerInterruptButton")).toBeNull();
-    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Add to Inbox");
+    expect(composerRoot.querySelector(".composerQueueButton")?.textContent).toBe("Inbox");
   });
 
   it("shows a todo summary bar above the composer for a current pi session with todo items", () => {

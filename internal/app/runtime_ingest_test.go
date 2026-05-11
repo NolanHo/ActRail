@@ -1804,8 +1804,8 @@ func TestCodexInterruptDefersUntilTurnStarts(t *testing.T) {
 		return err == nil && state.Busy && state.RuntimeState == string(codexRuntimePhaseTurnStarting)
 	})
 
-	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "queued after interrupt"}); err != nil {
-		t.Fatalf("Enqueue() error = %v", err)
+	if _, _, err := svc.registry.ReplaceQueue(sessionID, "queued after interrupt"); err != nil {
+		t.Fatalf("registry.ReplaceQueue() error = %v", err)
 	}
 	interrupted, err := svc.Interrupt(context.Background(), InterruptRequest{SessionID: sessionID})
 	if err != nil {

@@ -140,7 +140,7 @@ func TestSameRuntimeHandleAllowsSameHelperGenerationReattachment(t *testing.T) {
 	}
 }
 
-func TestEnqueueAcceptsEndedSessionAndCancelClearsPersistedQueue(t *testing.T) {
+func TestEnqueueAcceptsEndedSessionAndCancelClearsManualInbox(t *testing.T) {
 	svc, sessionID, _, _ := newControlFixture(t)
 	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{State: SessionTransportStateEnded, Reason: "helper_not_running"}); err != nil || !ok {
 		t.Fatalf("SetTransport() = (_, %v, %v), want ok", ok, err)
@@ -149,8 +149,15 @@ func TestEnqueueAcceptsEndedSessionAndCancelClearsPersistedQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
-	if len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "send after restart" {
-		t.Fatalf("Enqueue().Queue = %+v, want persisted queued prompt", queued.Queue)
+	if len(queued.Queue.Items) != 0 {
+		t.Fatalf("Enqueue().Queue = %+v, want empty runtime queue", queued.Queue)
+	}
+	inbox, err := svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox() error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].Message != "send after restart" || inbox.Items[0].State != "pending" {
+		t.Fatalf("SessionInbox() = %+v, want pending manual inbox item", inbox.Items)
 	}
 	cancelled, err := svc.CancelQueue(context.Background(), CancelQueueRequest{SessionID: sessionID})
 	if err != nil {
@@ -159,12 +166,19 @@ func TestEnqueueAcceptsEndedSessionAndCancelClearsPersistedQueue(t *testing.T) {
 	if len(cancelled.Queue.Items) != 0 {
 		t.Fatalf("CancelQueue().Queue = %+v, want empty", cancelled.Queue)
 	}
+	inbox, err = svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(after cancel) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].State != "cancelled" {
+		t.Fatalf("SessionInbox(after cancel) = %+v, want cancelled manual inbox item", inbox.Items)
+	}
 }
 
 func TestDispatchQueuedPromptSkipsBrokenTransport(t *testing.T) {
 	svc, sessionID, _, pty := newControlFixture(t)
-	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "queued"}); err != nil {
-		t.Fatalf("Enqueue() error = %v", err)
+	if _, _, err := svc.registry.ReplaceQueue(sessionID, "queued"); err != nil {
+		t.Fatalf("registry.ReplaceQueue() error = %v", err)
 	}
 	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{State: SessionTransportStateBroken, Reason: "stale runtime"}); err != nil || !ok {
 		t.Fatalf("SetTransport() = (_, %v, %v), want ok", ok, err)
@@ -453,18 +467,25 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enqueue(first) error = %v", err)
 	}
-	if len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "first queued" {
-		t.Fatalf("Enqueue(first) = %+v, want first queued item", queued)
+	if len(queued.Queue.Items) != 0 {
+		t.Fatalf("Enqueue(first) = %+v, want empty runtime queue", queued)
 	}
 	queued, err = svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "replacement queued"})
 	if err != nil {
 		t.Fatalf("Enqueue(replacement) error = %v", err)
 	}
-	if len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "replacement queued" {
-		t.Fatalf("Enqueue(replacement) = %+v, want replacement queued item", queued)
+	if len(queued.Queue.Items) != 0 {
+		t.Fatalf("Enqueue(replacement) = %+v, want empty runtime queue", queued)
 	}
 	if !queued.Busy {
 		t.Fatal("Enqueue().Busy = false, want true")
+	}
+	inbox, err := svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox() error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].Message != "replacement queued" || inbox.Items[0].State != "pending" {
+		t.Fatalf("SessionInbox() = %+v, want replacement pending manual item", inbox.Items)
 	}
 
 	interrupted, err := svc.Interrupt(context.Background(), InterruptRequest{SessionID: sessionID})

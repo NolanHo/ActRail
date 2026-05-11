@@ -12,7 +12,7 @@ import (
 	"actrail/internal/domain/session"
 )
 
-func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
+func TestEnqueueAddsManualInboxItemWithoutRuntimeQueue(t *testing.T) {
 	svc, sessionID, _, pty := newControlFixture(t)
 
 	queued, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "queued prompt"})
@@ -20,10 +20,10 @@ func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
 	if queued.Busy {
-		t.Fatalf("Enqueue().Busy = %v, want false before async dispatch", queued.Busy)
+		t.Fatalf("Enqueue().Busy = %v, want false", queued.Busy)
 	}
-	if len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "queued prompt" {
-		t.Fatalf("Enqueue().Queue = %+v, want queued prompt", queued.Queue.Items)
+	if len(queued.Queue.Items) != 0 {
+		t.Fatalf("Enqueue().Queue = %+v, want empty runtime queue", queued.Queue.Items)
 	}
 	inbox, err := svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
 	if err != nil {
@@ -32,48 +32,79 @@ func TestEnqueueDispatchesWhenSessionAlreadyIdle(t *testing.T) {
 	if len(inbox.Items) != 1 || inbox.Items[0].Source != "manual" || inbox.Items[0].State != "pending" || inbox.Items[0].Message != "queued prompt" {
 		t.Fatalf("SessionInbox(after enqueue) = %+v, want one pending manual item", inbox.Items)
 	}
-
-	waitForAppCondition(t, func() bool {
-		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
-		if err != nil {
-			return false
-		}
-		return !state.Busy && len(state.Queue.Items) == 0 && len(pty.Writes()) == 1
-	})
-
-	writes := pty.Writes()
-	if len(writes) != 1 || writes[0] != "{\"type\":\"prompt\",\"message\":\"queued prompt\"}\n" {
-		t.Fatalf("pty writes after idle Enqueue() = %#v, want queued RPC prompt command", writes)
+	if writes := pty.Writes(); len(writes) != 0 {
+		t.Fatalf("pty writes after Enqueue() = %#v, want none before scheduler delivery", writes)
 	}
 	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("SessionMessages() error = %v", err)
 	}
-	if len(messages.Items) != 1 || messages.Items[0].Role != "user" || messages.Items[0].Text != "queued prompt" {
-		t.Fatalf("SessionMessages() = %+v, want one queued user message", messages)
+	if len(messages.Items) != 0 {
+		t.Fatalf("SessionMessages() = %+v, want no committed runtime message before scheduler delivery", messages)
 	}
 	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Busy || len(state.Queue.Items) != 0 || state.TailSeq != 1 {
-		t.Fatalf("SessionState() after idle dispatch = %+v, want idle empty queue tail_seq 1 before Pi reports runtime state", state)
+	if state.Busy || len(state.Queue.Items) != 0 || state.TailSeq != 0 {
+		t.Fatalf("SessionState() after Enqueue() = %+v, want idle empty queue tail_seq 0", state)
 	}
-	inbox, err = svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+}
+
+func newControlFixtureWithNow(t *testing.T, now func() time.Time) (*Stub, session.SessionID, *process.FakeHandle, *fakePTY) {
+	t.Helper()
+	t.Setenv("PI_HOME", t.TempDir())
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	pty := &fakePTY{}
+	handle.SetPTY(pty)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), now, RuntimeConfig{Runner: runner})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	return svc, sessionID, handle, pty
+}
+
+func TestSchedulerDeliversManualInboxItemAsPlainUserMessage(t *testing.T) {
+	current := time.Unix(1760000000, 0).UTC()
+	svc, sessionID, _, pty := newControlFixtureWithNow(t, func() time.Time { return current })
+
+	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "manual follow-up"}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	current = current.Add(31 * time.Second)
+	if err := svc.runSchedulerDeliverySweep(context.Background()); err != nil {
+		t.Fatalf("runSchedulerDeliverySweep() error = %v", err)
+	}
+
+	writes := pty.Writes()
+	if len(writes) != 1 || writes[0] != "{\"type\":\"prompt\",\"message\":\"manual follow-up\"}\n" {
+		t.Fatalf("pty writes after scheduler delivery = %#v, want plain manual prompt", writes)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Role != "user" || messages.Items[0].Text != "manual follow-up" {
+		t.Fatalf("SessionMessages() = %+v, want plain manual user message", messages.Items)
+	}
+	inbox, err := svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
 	if err != nil {
 		t.Fatalf("SessionInbox(after dispatch) error = %v", err)
 	}
 	if len(inbox.Items) != 1 || inbox.Items[0].State != "delivered" || inbox.Items[0].DeliveredMessageID == "" {
-		t.Fatalf("SessionInbox(after dispatch) = %+v, want delivered manual item", inbox.Items)
+		t.Fatalf("SessionInbox(after scheduler delivery) = %+v, want delivered manual item", inbox.Items)
 	}
 }
 
-func TestEnqueueReplacesManualInboxMirror(t *testing.T) {
+func TestEnqueueReplacesManualInboxItem(t *testing.T) {
 	svc, sessionID, _, _ := newControlFixture(t)
 
-	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "first prompt"}); err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
 	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "first follow-up"}); err != nil {
 		t.Fatalf("Enqueue(first) error = %v", err)
 	}
@@ -85,36 +116,14 @@ func TestEnqueueReplacesManualInboxMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionInbox() error = %v", err)
 	}
-	if len(inbox.Items) != 2 {
-		t.Fatalf("len(inbox.Items) = %d, want 2: %+v", len(inbox.Items), inbox.Items)
-	}
-	replaced := 0
-	pending := 0
-	for _, item := range inbox.Items {
-		if item.Source != "manual" {
-			t.Fatalf("manual mirror item source = %q, want manual", item.Source)
-		}
-		switch item.State {
-		case "replaced":
-			replaced++
-		case "pending":
-			pending++
-			if item.Message != "replacement follow-up" {
-				t.Fatalf("pending item message = %q, want replacement follow-up", item.Message)
-			}
-		}
-	}
-	if replaced != 1 || pending != 1 {
-		t.Fatalf("manual inbox states replaced=%d pending=%d, want 1/1: %+v", replaced, pending, inbox.Items)
+	if len(inbox.Items) != 1 || inbox.Items[0].Source != "manual" || inbox.Items[0].State != "pending" || inbox.Items[0].Message != "replacement follow-up" {
+		t.Fatalf("SessionInbox() = %+v, want one replaced pending manual item", inbox.Items)
 	}
 }
 
-func TestCancelQueueCancelsManualInboxMirror(t *testing.T) {
+func TestCancelQueueCancelsManualInboxItem(t *testing.T) {
 	svc, sessionID, _, _ := newControlFixture(t)
 
-	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "first prompt"}); err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
 	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "cancel me"}); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
@@ -179,9 +188,10 @@ func TestCancelQueueWaitsForQueuedDispatchCriticalSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSessionID() error = %v", err)
 	}
-	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "queued prompt"}); err != nil {
-		t.Fatalf("Enqueue() error = %v", err)
+	if _, _, err := svc.registry.ReplaceQueue(sessionID, "queued prompt"); err != nil {
+		t.Fatalf("registry.ReplaceQueue() error = %v", err)
 	}
+	svc.scheduleQueuedDispatch(sessionID)
 	select {
 	case <-pty.entered:
 	case <-time.After(2 * time.Second):
@@ -231,12 +241,13 @@ func TestPIRPCQueuedPromptWaitsWhileRuntimeBusy(t *testing.T) {
 	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "first prompt"}); err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
-	queued, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "second prompt"})
+	queueState, _, err := svc.registry.ReplaceQueue(sessionID, "second prompt")
 	if err != nil {
-		t.Fatalf("Enqueue() error = %v", err)
+		t.Fatalf("registry.ReplaceQueue() error = %v", err)
 	}
-	if !queued.Busy || len(queued.Queue.Items) != 1 || queued.Queue.Items[0].Text != "second prompt" {
-		t.Fatalf("Enqueue() = %+v, want queued second prompt while first send is busy", queued)
+	queued := queueSnapshotFromState(queueState)
+	if len(queued.Items) != 1 || queued.Items[0].Text != "second prompt" {
+		t.Fatalf("queued state = %+v, want queued second prompt while first send is busy", queued)
 	}
 
 	decoder := runtimeEventDecoder{backend: session.BackendPI}
