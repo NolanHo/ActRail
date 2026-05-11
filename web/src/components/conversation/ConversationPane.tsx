@@ -3166,6 +3166,45 @@ function shouldAutoFollowBottom(pane: HTMLElement): boolean {
   return paneDistanceFromBottom(pane) <= threshold;
 }
 
+interface ConversationScrollMemory {
+  top: number;
+  followBottom: boolean;
+  anchorKey: string;
+  anchorTop: number;
+}
+
+function conversationScrollAnchor(pane: HTMLElement): { key: string; top: number } | null {
+  const rows = Array.from(pane.querySelectorAll<HTMLElement>("[data-row-key]"));
+  if (!rows.length) {
+    return null;
+  }
+  const paneTop = pane.scrollTop;
+  for (const row of rows) {
+    const bottom = row.offsetTop + Math.max(0, row.offsetHeight);
+    if (bottom >= paneTop) {
+      return {
+        key: String(row.dataset.rowKey || ""),
+        top: row.offsetTop - paneTop,
+      };
+    }
+  }
+  const last = rows[rows.length - 1];
+  return {
+    key: String(last.dataset.rowKey || ""),
+    top: last.offsetTop - paneTop,
+  };
+}
+
+function rememberConversationScroll(memory: Map<string, ConversationScrollMemory>, sessionId: string, pane: HTMLElement) {
+  const anchor = conversationScrollAnchor(pane);
+  memory.set(sessionId, {
+    top: Math.max(0, pane.scrollTop),
+    followBottom: shouldAutoFollowBottom(pane),
+    anchorKey: anchor?.key || "",
+    anchorTop: anchor?.top ?? 0,
+  });
+}
+
 function scrollPaneToPosition(element: HTMLElement, top: number) {
   const nextTop = Math.max(0, top);
   if (typeof element.scrollTo === "function") {
@@ -3310,7 +3349,10 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   }, []), [allowLegacyAskUserFallback, assistantTurnMetaByIndex, commandOutputByIndex, messages]);
   const sectionRef = useRef<HTMLElement | null>(null);
   const historyAnchorRef = useRef<{ key: string; top: number } | null>(null);
-  const scrollModeRef = useRef<"bottom" | "preserve" | null>(null);
+  const scrollMemoryRef = useRef<Map<string, ConversationScrollMemory>>(new Map());
+  const restoreScrollMemoryRef = useRef<ConversationScrollMemory | null>(null);
+  const previousScrollSessionIdRef = useRef<string | null>(null);
+  const scrollModeRef = useRef<"bottom" | "preserve" | "restore" | null>(null);
   const autoFollowBottomRef = useRef(true);
   const [showPreviousUserJump, setShowPreviousUserJump] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -3338,7 +3380,6 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
   useEffect(() => {
     setAttemptedLoadOlder(false);
-    autoFollowBottomRef.current = true;
     if (!activeSessionId) {
       setSessionSwitchLoadingId(null);
       return;
@@ -3370,6 +3411,24 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   };
 
   useLayoutEffect(() => {
+    if (previousScrollSessionIdRef.current === activeSessionId) {
+      return;
+    }
+    previousScrollSessionIdRef.current = activeSessionId;
+    historyAnchorRef.current = null;
+    restoreScrollMemoryRef.current = null;
+    if (!activeSessionId) {
+      autoFollowBottomRef.current = true;
+      scrollModeRef.current = null;
+      return;
+    }
+    const saved = scrollMemoryRef.current.get(activeSessionId);
+    autoFollowBottomRef.current = saved?.followBottom ?? true;
+    scrollModeRef.current = autoFollowBottomRef.current ? "bottom" : "restore";
+    restoreScrollMemoryRef.current = saved ?? null;
+  }, [activeSessionId]);
+
+  useLayoutEffect(() => {
     const pane = sectionRef.current?.querySelector(".conversationPane") as HTMLElement | null;
     if (!pane || (!messages.length && !isBusy)) {
       setShowPreviousUserJump(false);
@@ -3388,6 +3447,27 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       historyAnchorRef.current = null;
       scrollModeRef.current = null;
       autoFollowBottomRef.current = shouldAutoFollowBottom(pane);
+      if (activeSessionId) {
+        rememberConversationScroll(scrollMemoryRef.current, activeSessionId, pane);
+      }
+      recomputeFloatingNavigation();
+      return;
+    }
+
+    if (scrollModeRef.current === "restore") {
+      const saved = restoreScrollMemoryRef.current;
+      const anchorRow = saved?.anchorKey
+        ? pane.querySelector(`[data-row-key="${saved.anchorKey}"]`) as HTMLElement | null
+        : null;
+      pane.scrollTop = anchorRow
+        ? Math.max(0, anchorRow.offsetTop - (saved?.anchorTop ?? 0))
+        : Math.max(0, saved?.top ?? 0);
+      autoFollowBottomRef.current = shouldAutoFollowBottom(pane);
+      restoreScrollMemoryRef.current = null;
+      scrollModeRef.current = null;
+      if (activeSessionId) {
+        rememberConversationScroll(scrollMemoryRef.current, activeSessionId, pane);
+      }
       recomputeFloatingNavigation();
       return;
     }
@@ -3396,11 +3476,17 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       scrollPaneToBottom(pane);
       autoFollowBottomRef.current = true;
       scrollModeRef.current = null;
+      if (activeSessionId) {
+        rememberConversationScroll(scrollMemoryRef.current, activeSessionId, pane);
+      }
       recomputeFloatingNavigation();
       return;
     }
 
     scrollModeRef.current = null;
+    if (activeSessionId) {
+      rememberConversationScroll(scrollMemoryRef.current, activeSessionId, pane);
+    }
     recomputeFloatingNavigation();
   }, [messages.length, latestMessageScrollKey, activeSessionId, isBusy]);
 
@@ -3412,6 +3498,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
     const onScroll = () => {
       autoFollowBottomRef.current = shouldAutoFollowBottom(pane);
+      rememberConversationScroll(scrollMemoryRef.current, activeSessionId, pane);
       if (pane.scrollTop <= 12 && !olderLoading && (hasOlder || olderCursor > 0)) {
         void handleLoadOlder();
       }
@@ -3474,8 +3561,15 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
   const handleScrollToBottom = () => {
     const pane = sectionRef.current?.querySelector(".conversationPane") as HTMLElement | null;
-    if (!pane) return;
+    if (!pane || !activeSessionId) return;
     autoFollowBottomRef.current = true;
+    const anchor = conversationScrollAnchor(pane);
+    scrollMemoryRef.current.set(activeSessionId, {
+      top: Math.max(0, pane.scrollHeight),
+      followBottom: true,
+      anchorKey: anchor?.key || "",
+      anchorTop: anchor?.top ?? 0,
+    });
     scrollPaneToPosition(pane, pane.scrollHeight);
   };
 

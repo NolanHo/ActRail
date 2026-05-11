@@ -3181,6 +3181,214 @@ describe("ConversationPane", () => {
     }
   });
 
+  it("returns to the latest content for a session that was left at the bottom", async () => {
+    const sessionsStore = createMutableStore(
+      {
+        items: [{ session_id: "sess-follow", agent_backend: "pi" }, { session_id: "sess-other", agent_backend: "pi" }],
+        activeSessionId: "sess-follow",
+        loading: false,
+        newSessionDefaults: null,
+      },
+      (_getState, _setState) => ({ refresh: () => Promise.resolve(), select: () => undefined }),
+    );
+    const messagesStore = createMutableStore(
+      {
+        bySessionId: {
+          "sess-follow": [
+            { role: "user", text: "Question" },
+            { role: "assistant", text: "Answer" },
+          ],
+          "sess-other": [{ role: "assistant", text: "Other" }],
+        },
+        offsetsBySessionId: { "sess-follow": 2, "sess-other": 1 },
+        loading: false,
+      },
+      (_getState, _setState) => ({ loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() }),
+    );
+
+    const scrollTo = vi.fn(function(this: HTMLElement, options: ScrollToOptions) {
+      this.scrollTop = Number(options.top || 0);
+    });
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as any;
+    const scrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const clientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        if (!this.classList?.contains("conversationPane")) return scrollHeightDescriptor?.get?.call(this) ?? 0;
+        const active = (sessionsStore as any).getState().activeSessionId;
+        return active === "sess-follow" ? ((messagesStore as any).getState().bySessionId["sess-follow"].length >= 3 ? 700 : 500) : 360;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("conversationPane") ? 200 : (clientHeightDescriptor?.get?.call(this) ?? 0);
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const firstPane = root.querySelector(".conversationPane") as HTMLDivElement;
+    firstPane.scrollTop = 300;
+    await act(async () => {
+      firstPane.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      (sessionsStore as any).setState({ ...(sessionsStore as any).getState(), activeSessionId: "sess-other" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    scrollTo.mockClear();
+
+    await act(async () => {
+      (messagesStore as any).setState({
+        ...(messagesStore as any).getState(),
+        bySessionId: {
+          ...(messagesStore as any).getState().bySessionId,
+          "sess-follow": [
+            { role: "user", text: "Question" },
+            { role: "assistant", text: "Answer" },
+            { role: "assistant", text: "New while away" },
+          ],
+        },
+        offsetsBySessionId: { "sess-follow": 3, "sess-other": 1 },
+      });
+      (sessionsStore as any).setState({ ...(sessionsStore as any).getState(), activeSessionId: "sess-follow" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 700 });
+
+    HTMLElement.prototype.scrollTo = originalScrollTo;
+    if (scrollHeightDescriptor) {
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeightDescriptor);
+    }
+    if (clientHeightDescriptor) {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeightDescriptor);
+    }
+  });
+
+  it("restores the historical scroll position for a session that was left away from the bottom", async () => {
+    const sessionsStore = createMutableStore(
+      {
+        items: [{ session_id: "sess-history", agent_backend: "pi" }, { session_id: "sess-other", agent_backend: "pi" }],
+        activeSessionId: "sess-history",
+        loading: false,
+        newSessionDefaults: null,
+      },
+      (_getState, _setState) => ({ refresh: () => Promise.resolve(), select: () => undefined }),
+    );
+    const messagesStore = createMutableStore(
+      {
+        bySessionId: {
+          "sess-history": [
+            { role: "user", text: "Old question" },
+            { role: "assistant", text: "Old answer" },
+          ],
+          "sess-other": [{ role: "assistant", text: "Other" }],
+        },
+        offsetsBySessionId: { "sess-history": 2, "sess-other": 1 },
+        loading: false,
+      },
+      (_getState, _setState) => ({ loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() }),
+    );
+
+    const scrollTo = vi.fn(function(this: HTMLElement, options: ScrollToOptions) {
+      this.scrollTop = Number(options.top || 0);
+    });
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as any;
+    const scrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const clientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        if (!this.classList?.contains("conversationPane")) return scrollHeightDescriptor?.get?.call(this) ?? 0;
+        const active = (sessionsStore as any).getState().activeSessionId;
+        return active === "sess-history" ? 1000 : 360;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("conversationPane") ? 200 : (clientHeightDescriptor?.get?.call(this) ?? 0);
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const firstPane = root.querySelector(".conversationPane") as HTMLDivElement;
+    firstPane.scrollTop = 240;
+    await act(async () => {
+      firstPane.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      (sessionsStore as any).setState({ ...(sessionsStore as any).getState(), activeSessionId: "sess-other" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    scrollTo.mockClear();
+
+    await act(async () => {
+      (messagesStore as any).setState({
+        ...(messagesStore as any).getState(),
+        bySessionId: {
+          ...(messagesStore as any).getState().bySessionId,
+          "sess-history": [
+            { role: "user", text: "Old question" },
+            { role: "assistant", text: "Old answer" },
+            { role: "assistant", text: "New while away" },
+          ],
+        },
+        offsetsBySessionId: { "sess-history": 3, "sess-other": 1 },
+      });
+      (sessionsStore as any).setState({ ...(sessionsStore as any).getState(), activeSessionId: "sess-history" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const restoredPane = root.querySelector(".conversationPane") as HTMLDivElement;
+    expect(scrollTo).not.toHaveBeenCalledWith({ top: 1000 });
+    expect(restoredPane.scrollTop).toBe(240);
+
+    HTMLElement.prototype.scrollTo = originalScrollTo;
+    if (scrollHeightDescriptor) {
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeightDescriptor);
+    }
+    if (clientHeightDescriptor) {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeightDescriptor);
+    }
+  });
+
   it("shows both floating buttons together and scrolls to the bottom when requested", async () => {
     const sessionsStore = createStaticStore(
       { items: [{ session_id: "sess-both", agent_backend: "pi" }], activeSessionId: "sess-both", loading: false, newSessionDefaults: null },
