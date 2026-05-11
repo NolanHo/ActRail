@@ -12,6 +12,8 @@ import type {
 import { INITIAL_HISTORY_PAGE_SIZE } from "../messages/history";
 import type { MessagesStore } from "../messages/store";
 
+const EMPTY_INITIAL_HISTORY_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
+
 export interface LiveSessionState {
   offsetsBySessionId: Record<string, number>;
   liveOffsetsBySessionId: Record<string, number>;
@@ -286,6 +288,8 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
   const queuedPollRuntimeBySessionId: Record<string, string | null | undefined> = {};
   const streamingTextBySessionId = new Map<string, Map<string, string>>();
   const streamingFlushTimersByStream = new Map<string, number>();
+  const emptyInitialHistoryRetryTimersBySessionId: Record<string, number | undefined> = {};
+  const emptyInitialHistoryRetryCountsBySessionId: Record<string, number> = {};
   let bufferAssistantOutput = false;
 
   const hasActiveAssistantOutput = (sessionId: string) => Boolean(
@@ -297,6 +301,35 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     for (const listener of listeners) {
       listener();
     }
+  };
+
+  const clearEmptyInitialHistoryRetry = (sessionId: string) => {
+    const timer = emptyInitialHistoryRetryTimersBySessionId[sessionId];
+    if (timer !== undefined && typeof window !== "undefined") {
+      window.clearTimeout(timer);
+    }
+    delete emptyInitialHistoryRetryTimersBySessionId[sessionId];
+    delete emptyInitialHistoryRetryCountsBySessionId[sessionId];
+  };
+
+  const scheduleEmptyInitialHistoryRetry = (sessionId: string, runtimeId?: string | null) => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    if (emptyInitialHistoryRetryTimersBySessionId[sessionId] !== undefined) {
+      return true;
+    }
+    const attempt = emptyInitialHistoryRetryCountsBySessionId[sessionId] ?? 0;
+    if (attempt >= EMPTY_INITIAL_HISTORY_RETRY_DELAYS_MS.length) {
+      return false;
+    }
+    const delay = EMPTY_INITIAL_HISTORY_RETRY_DELAYS_MS[attempt];
+    emptyInitialHistoryRetryCountsBySessionId[sessionId] = attempt + 1;
+    emptyInitialHistoryRetryTimersBySessionId[sessionId] = window.setTimeout(() => {
+      delete emptyInitialHistoryRetryTimersBySessionId[sessionId];
+      void runLoad(sessionId, true, runtimeId).catch(() => undefined);
+    }, delay);
+    return true;
   };
 
   const applyStatePayload = (
@@ -397,15 +430,22 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     messagePayload: Awaited<ReturnType<typeof api.listMessages>>,
     statePayload: LiveSessionResponse,
     replace: boolean,
+    loaded = true,
   ) => {
     const normalizedMessages = normalizeMessageSnapshot(messagePayload);
-    messagesStore.applySnapshot(sessionId, normalizeSnapshotEvents(messagePayload, statePayload, bufferAssistantOutput), {
+    const snapshotEvents = normalizeSnapshotEvents(messagePayload, statePayload, bufferAssistantOutput);
+    messagesStore.applySnapshot(sessionId, snapshotEvents, {
       offset: normalizedMessages.offset,
       hasOlder: normalizedMessages.hasOlder,
       nextBefore: normalizedMessages.nextBefore,
       replace,
+      loaded,
     });
     applyStatePayload(sessionId, statePayload, normalizedMessages.offset);
+    if (snapshotEvents.length > 0) {
+      clearEmptyInitialHistoryRetry(sessionId);
+    }
+    return snapshotEvents.length;
   };
 
   const stateProbeNeedsMessages = (sessionId: string, statePayload: LiveSessionResponse) => {
@@ -474,7 +514,11 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             : api.listMessages(sessionId, replace, undefined, undefined, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true),
           loadState(),
         ]);
-        applySnapshot(sessionId, messagePayload, statePayload, replace);
+        const loaded = !replace || normalizeSnapshotEvents(messagePayload, statePayload, bufferAssistantOutput).length > 0 || !scheduleEmptyInitialHistoryRetry(sessionId, runtimeId);
+        applySnapshot(sessionId, messagePayload, statePayload, replace, loaded);
+        if (replace && loaded) {
+          clearEmptyInitialHistoryRetry(sessionId);
+        }
       } catch (error) {
         const message = liveSessionErrorMessage(error);
         state = {
@@ -505,6 +549,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       offset: state.offsetsBySessionId[sessionId],
       hasOlder: state.offsetsBySessionId[sessionId] !== undefined ? state.offsetsBySessionId[sessionId] > 0 : undefined,
     });
+    clearEmptyInitialHistoryRetry(sessionId);
   };
   const appendStreamingAssistantEvent = (sessionId: string, turnId: string, frame: RealtimeEnvelope, payload: Record<string, unknown>, text: string) => {
     appendRealtimeEvent(sessionId, {

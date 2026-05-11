@@ -61,6 +61,7 @@ type Service interface {
 	HandoffSession(context.Context, HandoffSessionRequest) (HandoffSessionResponse, error)
 	SupervisorProvider(context.Context, SupervisorProviderRequest) (SupervisorProviderResponse, error)
 	UpdateSupervisorProvider(context.Context, UpdateSupervisorProviderRequest) (SupervisorProviderResponse, error)
+	TestSupervisorProvider(context.Context, TestSupervisorProviderRequest) (TestSupervisorProviderResponse, error)
 	SessionSupervisor(context.Context, SessionSupervisorRequest) (SessionSupervisorResponse, error)
 	UpdateSessionSupervisor(context.Context, UpdateSessionSupervisorRequest) (SessionSupervisorResponse, error)
 	SupervisorRuns(context.Context, SupervisorRunsRequest) (SupervisorRunsResponse, error)
@@ -803,7 +804,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 	threadID, _ := record.identity.ThreadID()
 	transport := s.sessionTransportSnapshot(record)
 	var supervisor *SessionSupervisorResponse
-	if record.identity.Backend() == session.BackendPI {
+	if supervisorBackendSupported(record.identity.Backend()) {
 		if config, err := s.sessionSupervisorConfig(context.Background(), record.identity.SessionID()); err == nil {
 			response := sessionSupervisorResponse(config)
 			supervisor = &response

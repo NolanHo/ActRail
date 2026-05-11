@@ -2823,6 +2823,26 @@ button.conversationStatusChip {
   margin-top: 0.12rem;
 }
 
+.filePreviewMarkdown {
+  font-family: var(--font-assistant-prose);
+  font-size: 0.93rem;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+.filePreviewMarkdown p {
+  margin-bottom: 0.34rem;
+}
+
+.filePreviewMarkdown ul,
+.filePreviewMarkdown ol {
+  margin: 0.28rem 0 0.48rem;
+}
+
+.filePreviewMarkdown li + li {
+  margin-top: 0.12rem;
+}
+
 .messageBody p:last-child {
   margin-bottom: 0;
 }

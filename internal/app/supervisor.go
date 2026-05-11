@@ -68,6 +68,21 @@ type UpdateSupervisorProviderRequest struct {
 	Model   string
 }
 
+type TestSupervisorProviderRequest struct {
+	BaseURL string
+	APIKey  *string
+	Model   string
+}
+
+type TestSupervisorProviderResponse struct {
+	OK         bool   `json:"ok"`
+	Status     string `json:"status"`
+	StatusCode int    `json:"status_code,omitempty"`
+	BaseURL    string `json:"base_url"`
+	Model      string `json:"model"`
+	Output     string `json:"output,omitempty"`
+}
+
 type SessionSupervisorRequest struct {
 	SessionID session.SessionID
 }
@@ -305,13 +320,66 @@ func (s *Stub) UpdateSupervisorProvider(ctx context.Context, req UpdateSuperviso
 	return supervisorProviderResponse(next), nil
 }
 
+func (s *Stub) TestSupervisorProvider(ctx context.Context, req TestSupervisorProviderRequest) (TestSupervisorProviderResponse, error) {
+	current, ok, err := s.supervisorStore.LookupSupervisorProviderSettings(ctx)
+	if err != nil {
+		return TestSupervisorProviderResponse{}, err
+	}
+	if !ok {
+		current = sqlitestore.SupervisorProviderSettingsRow{}
+	}
+	provider := sqlitestore.SupervisorProviderSettingsRow{
+		BaseURL: strings.TrimSpace(req.BaseURL),
+		APIKey:  current.APIKey,
+		Model:   strings.TrimSpace(req.Model),
+	}
+	if provider.BaseURL == "" {
+		provider.BaseURL = strings.TrimSpace(current.BaseURL)
+	}
+	if provider.Model == "" {
+		provider.Model = strings.TrimSpace(current.Model)
+	}
+	if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
+		provider.APIKey = strings.TrimSpace(*req.APIKey)
+	}
+	if strings.TrimSpace(provider.BaseURL) == "" {
+		return TestSupervisorProviderResponse{}, Invalid("base_url", "base_url required")
+	}
+	if strings.TrimSpace(provider.Model) == "" {
+		return TestSupervisorProviderResponse{}, Invalid("model", "model required")
+	}
+	if strings.TrimSpace(provider.APIKey) == "" {
+		return TestSupervisorProviderResponse{}, Invalid("api_key", "api_key required")
+	}
+	messages := []supervisorChatMessage{
+		{Role: "system", Content: "You are a provider connectivity test. Return a short plain response."},
+		{Role: "user", Content: "Say hello from ActRail Supervisor provider test."},
+	}
+	content, _, statusCode, err := supervisorChatCompletion(ctx, provider, messages, 20*time.Second)
+	if err != nil {
+		return TestSupervisorProviderResponse{}, err
+	}
+	return TestSupervisorProviderResponse{
+		OK:         true,
+		Status:     "provider chat completion succeeded",
+		StatusCode: statusCode,
+		BaseURL:    strings.TrimSpace(provider.BaseURL),
+		Model:      strings.TrimSpace(provider.Model),
+		Output:     content,
+	}, nil
+}
+
+func supervisorBackendSupported(backend session.Backend) bool {
+	return backend == session.BackendPI || backend == session.BackendCodex
+}
+
 func (s *Stub) SessionSupervisor(ctx context.Context, req SessionSupervisorRequest) (SessionSupervisorResponse, error) {
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
 		return SessionSupervisorResponse{}, err
 	}
-	if record.identity.Backend() != session.BackendPI {
-		return SessionSupervisorResponse{}, UnsupportedBackend("supervisor mode is only supported for pi sessions")
+	if !supervisorBackendSupported(record.identity.Backend()) {
+		return SessionSupervisorResponse{}, UnsupportedBackend("supervisor mode is only supported for pi and codex sessions")
 	}
 	config, err := s.sessionSupervisorConfig(ctx, record.identity.SessionID())
 	if err != nil {
@@ -325,8 +393,8 @@ func (s *Stub) UpdateSessionSupervisor(ctx context.Context, req UpdateSessionSup
 	if err != nil {
 		return SessionSupervisorResponse{}, err
 	}
-	if record.identity.Backend() != session.BackendPI {
-		return SessionSupervisorResponse{}, UnsupportedBackend("supervisor mode is only supported for pi sessions")
+	if !supervisorBackendSupported(record.identity.Backend()) {
+		return SessionSupervisorResponse{}, UnsupportedBackend("supervisor mode is only supported for pi and codex sessions")
 	}
 	s.deferredInputMu.Lock()
 	defer s.deferredInputMu.Unlock()
@@ -479,8 +547,8 @@ func (s *Stub) RunSupervisorOnce(ctx context.Context, req SupervisorRunOnceReque
 	if err != nil {
 		return SupervisorRunOnceResponse{}, err
 	}
-	if record.identity.Backend() != session.BackendPI {
-		return SupervisorRunOnceResponse{}, UnsupportedBackend("supervisor mode is only supported for pi sessions")
+	if !supervisorBackendSupported(record.identity.Backend()) {
+		return SupervisorRunOnceResponse{}, UnsupportedBackend("supervisor mode is only supported for pi and codex sessions")
 	}
 	config, err := s.sessionSupervisorConfig(ctx, record.identity.SessionID())
 	if err != nil {
@@ -616,8 +684,8 @@ func (s *Stub) commitSupervisorInjection(ctx context.Context, sessionID session.
 
 func (s *Stub) supervisorCommitPrecondition(ctx context.Context, record sessionRecord, anchor SessionMessage, config sqlitestore.SessionSupervisorConfigRow) error {
 	sessionID := record.identity.SessionID()
-	if record.identity.Backend() != session.BackendPI {
-		return supervisorSkip(supervisorRunStatusSkippedBlocked, "supervisor mode is only supported for pi sessions")
+	if !supervisorBackendSupported(record.identity.Backend()) {
+		return supervisorSkip(supervisorRunStatusSkippedBlocked, "supervisor mode is only supported for pi and codex sessions")
 	}
 	if !config.Enabled {
 		return supervisorSkip(supervisorRunStatusSkippedBlocked, "supervisor mode is disabled")
@@ -675,7 +743,7 @@ func supervisorSkip(status string, reason string) error {
 	return supervisorCommitSkip{status: status, reason: strings.TrimSpace(reason)}
 }
 
-func (s *Stub) lastStablePIAssistantAnchor(ctx context.Context, record sessionRecord) (SessionMessage, error) {
+func (s *Stub) lastStableAssistantAnchor(ctx context.Context, record sessionRecord) (SessionMessage, error) {
 	response, err := s.SessionMessages(ctx, SessionMessagesRequest{SessionID: record.identity.SessionID(), Limit: 200})
 	if err != nil {
 		return SessionMessage{}, err
@@ -685,8 +753,8 @@ func (s *Stub) lastStablePIAssistantAnchor(ctx context.Context, record sessionRe
 		if item.Role != "assistant" || strings.TrimSpace(item.Text) == "" {
 			continue
 		}
-		if !strings.HasPrefix(item.EventID, "pi:message:") {
-			return SessionMessage{}, Invalid("anchor_assistant_event_id", "last stable assistant message has no pi:message event id")
+		if strings.TrimSpace(item.EventID) == "" {
+			return SessionMessage{}, Invalid("anchor_assistant_event_id", "last stable assistant message has no event id")
 		}
 		return item, nil
 	}
@@ -751,8 +819,8 @@ func (s *Stub) supervisorMessagesAndAnchor(ctx context.Context, record sessionRe
 		if item.Role != "assistant" || strings.TrimSpace(item.Text) == "" {
 			continue
 		}
-		if !strings.HasPrefix(item.EventID, "pi:message:") {
-			return nil, SessionMessage{}, Invalid("anchor_assistant_event_id", "last stable assistant message has no pi:message event id")
+		if strings.TrimSpace(item.EventID) == "" {
+			return nil, SessionMessage{}, Invalid("anchor_assistant_event_id", "last stable assistant message has no event id")
 		}
 		return response.Items, item, nil
 	}
@@ -835,24 +903,39 @@ func readSupervisorContextFiles(cwd string, paths []string) ([]supervisorSnapsho
 	return files, nil
 }
 
+type supervisorChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 func evaluateSupervisorModel(ctx context.Context, provider sqlitestore.SupervisorProviderSettingsRow, snapshot supervisorSnapshot) (supervisorDecision, string, error) {
+	messages := []supervisorChatMessage{
+		{Role: "system", Content: supervisorSystemPrompt},
+		{Role: "user", Content: supervisorSnapshotPrompt(snapshot)},
+	}
+	raw, resBody, _, err := supervisorChatCompletion(ctx, provider, messages, 60*time.Second)
+	if err != nil {
+		return supervisorDecision{}, resBody, err
+	}
+	decision, err := parseSupervisorDecision(raw)
+	return decision, raw, err
+}
+
+func supervisorChatCompletion(ctx context.Context, provider sqlitestore.SupervisorProviderSettingsRow, messages []supervisorChatMessage, timeout time.Duration) (string, string, int, error) {
 	body, err := json.Marshal(map[string]any{
-		"model": strings.TrimSpace(provider.Model),
-		"messages": []map[string]string{
-			{"role": "system", "content": supervisorSystemPrompt},
-			{"role": "user", "content": supervisorSnapshotPrompt(snapshot)},
-		},
+		"model":       strings.TrimSpace(provider.Model),
+		"messages":    messages,
 		"temperature": 0,
 	})
 	if err != nil {
-		return supervisorDecision{}, "", err
+		return "", "", 0, err
 	}
 	url := strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/") + "/chat/completions"
-	requestCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return supervisorDecision{}, "", err
+		return "", "", 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if key := strings.TrimSpace(provider.APIKey); key != "" {
@@ -860,15 +943,15 @@ func evaluateSupervisorModel(ctx context.Context, provider sqlitestore.Superviso
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return supervisorDecision{}, "", err
+		return "", "", 0, err
 	}
 	defer res.Body.Close()
 	resBody, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
-		return supervisorDecision{}, "", err
+		return "", "", res.StatusCode, err
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return supervisorDecision{}, string(resBody), fmt.Errorf("supervisor model http %d", res.StatusCode)
+		return "", string(resBody), res.StatusCode, fmt.Errorf("supervisor model http %d", res.StatusCode)
 	}
 	var parsed struct {
 		Choices []struct {
@@ -878,14 +961,13 @@ func evaluateSupervisorModel(ctx context.Context, provider sqlitestore.Superviso
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(resBody, &parsed); err != nil {
-		return supervisorDecision{}, string(resBody), fmt.Errorf("parse supervisor model response: %w", err)
+		return "", string(resBody), res.StatusCode, fmt.Errorf("parse supervisor model response: %w", err)
 	}
 	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
-		return supervisorDecision{}, string(resBody), fmt.Errorf("supervisor model returned no content")
+		return "", string(resBody), res.StatusCode, fmt.Errorf("supervisor model returned no content")
 	}
 	raw := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	decision, err := parseSupervisorDecision(raw)
-	return decision, raw, err
+	return raw, string(resBody), res.StatusCode, nil
 }
 
 func supervisorSnapshotPrompt(snapshot supervisorSnapshot) string {
@@ -935,7 +1017,7 @@ func (s *Stub) RunSupervisorScheduler(ctx context.Context) {
 
 func (s *Stub) runSupervisorSweep(ctx context.Context) {
 	for _, record := range s.registry.List() {
-		if record.identity.Backend() != session.BackendPI {
+		if !supervisorBackendSupported(record.identity.Backend()) {
 			continue
 		}
 		config, err := s.sessionSupervisorConfig(ctx, record.identity.SessionID())

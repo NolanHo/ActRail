@@ -285,8 +285,8 @@ describe("FileViewerDialog", () => {
       previewButton?.click();
     });
     await settle(6);
-    expect(root.querySelector(".filePreview article h1")?.textContent).toBe("Hello");
-    expect(root.querySelector(".filePreview article")?.textContent).toContain("Body");
+    expect(root.querySelector(".filePreview .messageBody h1")?.textContent).toBe("Hello");
+    expect(root.querySelector(".filePreview .messageBody")?.textContent).toContain("Body");
   });
 
   it("opens explicit file references in file mode and preserves the requested line", async () => {

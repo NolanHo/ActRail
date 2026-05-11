@@ -169,6 +169,15 @@ export interface SupervisorProviderResponse {
   complete: boolean;
 }
 
+export interface SupervisorProviderTestResponse {
+  ok?: boolean;
+  status?: string;
+  status_code?: number;
+  base_url?: string;
+  model?: string;
+  output?: string;
+}
+
 export interface SchedulerSettings {
   idle_before_delivery_seconds: number;
   updated_ts?: number;

@@ -14,7 +14,10 @@ vi.mock("../../lib/api", () => ({
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
     getSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.invalid/v1", model: "model-a", api_key_configured: true, complete: true }),
     saveSupervisorProvider: vi.fn().mockResolvedValue({ ok: true, base_url: "https://llm.invalid/v1", model: "model-a", api_key_configured: true, complete: true }),
+    getSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0, goal: "", acceptance_criteria: "", context_files: ["README.md"] }),
     saveSessionSupervisor: vi.fn().mockResolvedValue({ ok: true, supported: true, enabled: false, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0 }),
+    getSupervisorRuns: vi.fn().mockResolvedValue({ ok: true, runs: [] }),
+    runSupervisorOnce: vi.fn().mockResolvedValue({ ok: true, run: { run_id: "supervisor_1", anchor_assistant_event_id: "codex:event:assistant:1", status: "stop", reason: "complete" } }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     setSessionFocus: vi.fn().mockResolvedValue({ ok: true, focused: true }),
     getSessionDetails: vi.fn().mockResolvedValue({ session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi", priority_offset: 0 }),
@@ -673,6 +676,47 @@ describe("SessionsPane", () => {
     });
     expect(api.saveSupervisorProvider).not.toHaveBeenCalled();
     expect(api.saveSessionSupervisor).not.toHaveBeenCalled();
+    expect(sessionsStore.refresh).toHaveBeenCalled();
+  });
+
+  it("opens session supervisor dialog from session actions", async () => {
+    vi.mocked(api.getSessionDetails).mockResolvedValue({
+      session_id: "sess-1",
+      alias: "Codex work",
+      agent_backend: "codex",
+      supervisor: { supported: true, enabled: true, status: "idle", idle_after_minutes: 5, max_consecutive_injections: 10, consecutive_injections: 0, context_files: [] },
+    } as any);
+
+    const sessionsStore = renderSessionsPane({
+      items: [
+        { session_id: "sess-1", alias: "Codex work", agent_backend: "codex" },
+      ],
+      activeSessionId: "sess-1",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: [],
+      cwdGroups: {},
+      tmuxAvailable: false,
+    });
+
+    await openSessionMenu();
+    const supervisorItem = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || [])
+      .find((button) => button.textContent?.includes("Supervisor"));
+    expect(supervisorItem).toBeDefined();
+    await click(supervisorItem!);
+    await flush();
+
+    expect(api.getSessionDetails).toHaveBeenCalledWith("sess-1");
+    expect(api.getSessionSupervisor).toHaveBeenCalledWith("sess-1");
+    expect(api.getSupervisorRuns).toHaveBeenCalledWith("sess-1", 20);
+    expect(root?.textContent).toContain("Session supervisor");
+
+    const saveButton = root?.querySelector<HTMLButtonElement>('[data-testid="session-supervisor-save"]');
+    expect(saveButton).not.toBeNull();
+    await click(saveButton!);
+    await flush();
+
+    expect(api.saveSessionSupervisor).toHaveBeenCalledWith("sess-1", expect.objectContaining({ enabled: true }));
     expect(sessionsStore.refresh).toHaveBeenCalled();
   });
 

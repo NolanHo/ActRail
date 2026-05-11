@@ -47,7 +47,7 @@ export interface MessagesStore {
   getState(): MessagesState;
   subscribe(listener: () => void): () => void;
   applyLive(sessionId: string, events: MessageEvent[], options: { replace: boolean; offset?: number; hasOlder?: boolean; nextBefore?: number }): void;
-  applySnapshot(sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number; replace?: boolean }): void;
+  applySnapshot(sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number; replace?: boolean; loaded?: boolean }): void;
   loadInitial(sessionId: string): Promise<void>;
   poll(sessionId: string): Promise<void>;
   loadOlder(sessionId: string, limit?: number): Promise<void>;
@@ -442,7 +442,7 @@ export function createMessagesStore(): MessagesStore {
     }
   };
 
-  const applySnapshot = (sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number; replace?: boolean }) => {
+  const applySnapshot = (sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number; replace?: boolean; loaded?: boolean }) => {
     const priorEvents = state.bySessionId[sessionId] ?? [];
     const nextLoadingBySessionId = {
       ...state.loadingBySessionId,
@@ -469,7 +469,7 @@ export function createMessagesStore(): MessagesStore {
       loadingBySessionId: nextLoadingBySessionId,
       loadedBySessionId: {
         ...state.loadedBySessionId,
-        [sessionId]: true,
+        [sessionId]: options.loaded === false ? state.loadedBySessionId[sessionId] === true : true,
       },
       loading: recomputeLoading(nextLoadingBySessionId),
     };

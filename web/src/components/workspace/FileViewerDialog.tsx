@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { api } from "../../lib/api";
 import type { GitFileVersion, GitFileVersionsResponse, SessionFileListEntry, SessionFileReadResponse, WorkspaceHistoryItem, WorkspaceResponse } from "../../lib/types";
+import { MarkdownContent } from "../markdown/MarkdownContent";
 import { MonacoWorkspace } from "./MonacoWorkspace";
 import { normalizeRememberedLine, preferredFileSelectionForSession, rememberFileSelection } from "./fileSelectionState";
 
@@ -241,21 +242,30 @@ function isMarkdownFile(path: string) {
   return /\.(md|markdown)$/i.test(path.trim());
 }
 
-function renderMarkdownPreview(value: string) {
-  const normalized = value.replace(/\r\n?/g, "\n");
-  const blocks = normalized.split(/\n\n+/).filter(Boolean);
+function parentPath(path: string) {
+  const normalized = path.trim().replace(/\\/g, "/");
+  if (!normalized) {
+    return "";
+  }
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : "";
+}
 
-  return (
-    <article className="space-y-4 text-sm leading-7 text-foreground">
-      {blocks.map((block, index) => {
-        const heading = block.match(/^#\s+(.+)$/m);
-        if (heading) {
-          return <h1 key={index} className="text-xl font-semibold">{heading[1]}</h1>;
-        }
-        return <p key={index}>{block.replace(/^#\s+.+$/m, "").trim()}</p>;
-      })}
-    </article>
-  );
+function handleMarkdownPreviewClick(event: MouseEvent, onOpenLocalFile: (path: string, line?: number | null) => void) {
+  const target = event.target instanceof Element ? event.target : null;
+  const link = target?.closest("a[data-file-path]") as HTMLAnchorElement | null;
+  if (!link) {
+    return;
+  }
+
+  const path = String(link.getAttribute("data-file-path") || "").trim();
+  if (!path) {
+    return;
+  }
+
+  event.preventDefault();
+  const line = Number.parseInt(String(link.getAttribute("data-file-line") || "").trim(), 10);
+  onOpenLocalFile(path, Number.isFinite(line) && line > 0 ? line : null);
 }
 
 function shouldUseCompactFileViewer() {
@@ -737,6 +747,7 @@ export function FileViewerDialog({
   const normalizedPath = normalizePath(path, { rootPath: workspaceRootPath, canonicalRootPath: canonicalWorkspaceRootPath });
   const canPreview = isMarkdownFile(normalizedPath);
   const activeLine = normalizeRememberedLine(line);
+  const previewCwd = parentPath(normalizedPath);
 
   const loadDirectory = (dirPath: string) => {
     if (!sessionId) {
@@ -900,7 +911,33 @@ export function FileViewerDialog({
             ) : null}
             {!loading && !error && viewMode === "preview" && canPreview && payload?.kind !== "image" ? (
               <ScrollArea className="fileViewerSurface filePreview rounded-2xl border border-border/60 bg-background/70 p-4" data-testid="file-preview-view">
-                {renderMarkdownPreview(payload?.text || "")}
+                <div
+                  className="messageBody filePreviewMarkdown"
+                  onClick={(event) => handleMarkdownPreviewClick(event as MouseEvent, (nextPath, nextLine) => {
+                    setPath(nextPath);
+                    setLine(nextLine ?? null);
+                    setViewMode(isMarkdownFile(nextPath) ? "preview" : "file");
+                    if (compactLayout) {
+                      setShowBrowser(false);
+                    }
+                  })}
+                >
+                  <MarkdownContent
+                    value={payload?.text || ""}
+                    options={{
+                      sessionId: sessionId ?? undefined,
+                      cwd: previewCwd,
+                      onOpenLocalFile: (nextPath, nextLine) => {
+                        setPath(nextPath);
+                        setLine(nextLine ?? null);
+                        setViewMode(isMarkdownFile(nextPath) ? "preview" : "file");
+                        if (compactLayout) {
+                          setShowBrowser(false);
+                        }
+                      },
+                    }}
+                  />
+                </div>
               </ScrollArea>
             ) : null}
             {!loading && !error && viewMode === "file" && payload?.kind !== "image" ? (

@@ -201,6 +201,20 @@ export function SchedulerView() {
     }
   };
 
+  const testProvider = async () => {
+    setProviderStatus("Testing provider...");
+    try {
+      const response = await api.testSupervisorProvider({
+        base_url: providerBaseUrl,
+        model: providerModel,
+        ...(providerApiKey.trim() ? { api_key: providerApiKey.trim() } : {}),
+      });
+      setProviderStatus(response.output ? `Test passed: ${response.output}` : "Test passed");
+    } catch (error) {
+      setProviderStatus(error instanceof Error ? error.message : "Unable to test provider");
+    }
+  };
+
   const saveSessionSupervisor = async () => {
     if (!selectedSupervisorSessionId) {
       setSupervisorStatus("Select a session");
@@ -324,7 +338,10 @@ export function SchedulerView() {
               <span className="fieldLabel">Model</span>
               <Input value={providerModel} onInput={(event) => setProviderModel(event.currentTarget.value)} />
             </label>
-            <Button type="button" data-testid="supervisor-provider-save" onClick={() => void saveProvider()}>Save</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" data-testid="supervisor-provider-save" onClick={() => void saveProvider()}>Save</Button>
+              <Button type="button" data-testid="supervisor-provider-test" variant="outline" onClick={() => void testProvider()}>Test hello</Button>
+            </div>
           </div>
           <label className="fieldBlock">
             <span className="fieldLabel">API key</span>
