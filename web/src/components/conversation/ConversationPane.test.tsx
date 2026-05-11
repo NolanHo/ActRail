@@ -1579,12 +1579,74 @@ describe("ConversationPane", () => {
 
     const summary = root.querySelector('[data-testid="assistant-turn-meta"]');
     expect(summary?.textContent).toContain("Ran 1 tool");
-    expect(summary?.textContent).toContain("0 ok");
-    expect(summary?.textContent).toContain("1 error");
-    expect(summary?.textContent).toContain("finished");
+    expect(summary?.textContent).toContain("1 failed");
     expect(root.querySelector("[data-row-key^='machine-summary:']")).toBeNull();
     expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(0);
     expect(root.querySelector('[data-testid="message-surface"][data-kind="assistant"]')?.textContent).toContain("finished");
+  });
+
+  it("renders live tool activity summaries when raw tool events are hidden", () => {
+    const now = Date.now() / 1000;
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-live-summary", busy: true }], activeSessionId: "sess-live-summary", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const liveSessionStore = createStaticStore(
+      { offsetsBySessionId: {}, liveOffsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: { "sess-live-summary": true }, loadingBySessionId: {} },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-live-summary": [
+            { role: "user", text: "run tests", ts: 1_777_000_000, seq: 1 },
+            {
+              kind: "tool_activity_summary",
+              type: "tool_activity_summary",
+              summary: "Running 1/2 tools · 1 ok · 15s",
+              ts: now - 2,
+              seq: 4,
+              event_id: "tool-activity-summary:1",
+              details: {
+                tool_activity_summary: {
+                  operations: 3,
+                  total_tools: 2,
+                  tool_calls: 2,
+                  tool_results: 1,
+                  running: 1,
+                  ok: 1,
+                  failed: 0,
+                  started_at: now - 17,
+                  last_activity_at: now - 2,
+                  elapsed_seconds: 15,
+                  running_tool_names: ["bash"],
+                  summary_text: "Running 1/2 tools · 1 ok · 15s",
+                  status_text: "running: bash",
+                },
+              },
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-live-summary": 4 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} liveSessionStore={liveSessionStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const summary = root.querySelector('[data-testid="machine-trace-summary"]') as HTMLButtonElement | null;
+    expect(summary?.textContent).toContain("Running 1/2 tools");
+    expect(summary?.textContent).toContain("Running: bash");
+    expect(summary?.classList.contains("isRunning")).toBe(true);
+    expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(0);
   });
 
   it("groups consecutive assistant messages and avoids showing role labels as body text", () => {

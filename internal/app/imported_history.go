@@ -310,7 +310,79 @@ func filterSessionMessagesForRequest(items []SessionMessage, req SessionMessages
 		}
 		visible = append(visible, item)
 	}
+	visible = appendOpenToolActivitySummaries(visible, items)
 	return annotateHiddenToolActivitySummaries(visible, items)
+}
+
+func appendOpenToolActivitySummaries(visible []SessionMessage, all []SessionMessage) []SessionMessage {
+	summary, ok := openToolActivitySummary(all)
+	if !ok {
+		return visible
+	}
+	return append(visible, summary)
+}
+
+func openToolActivitySummary(items []SessionMessage) (SessionMessage, bool) {
+	var userSeq uint64
+	var lastSeq uint64
+	var lastTS float64
+	hasHiddenToolEvent := false
+	segment := make([]SessionMessage, 0)
+	for _, item := range items {
+		kind := sessionMessageDisplayKind(item)
+		if item.Role == "user" {
+			userSeq = item.Seq
+			segment = segment[:0]
+			hasHiddenToolEvent = false
+			lastSeq = item.Seq
+			lastTS = item.TS
+			continue
+		}
+		if item.Role == "assistant" {
+			userSeq = 0
+			segment = segment[:0]
+			hasHiddenToolEvent = false
+			lastSeq = item.Seq
+			lastTS = item.TS
+			continue
+		}
+		if userSeq == 0 {
+			continue
+		}
+		if item.Seq > lastSeq {
+			lastSeq = item.Seq
+		}
+		if item.TS > 0 {
+			lastTS = item.TS
+		}
+		if sessionMessageIsToolEvent(item) {
+			hasHiddenToolEvent = true
+		}
+		if sessionMessageIsActivityEvent(item, kind) {
+			segment = append(segment, item)
+		}
+	}
+	if userSeq == 0 || !hasHiddenToolEvent || len(segment) == 0 || lastSeq == 0 {
+		return SessionMessage{}, false
+	}
+	summary, ok := buildHiddenToolActivitySummary(segment, 0)
+	if !ok {
+		return SessionMessage{}, false
+	}
+	details := map[string]any{
+		toolActivitySummaryDetailsKey: summary,
+		"active_turn_start_seq":       userSeq,
+	}
+	return SessionMessage{
+		Seq:         lastSeq,
+		Kind:        "tool_activity_summary",
+		Type:        "tool_activity_summary",
+		TS:          lastTS,
+		EventID:     fmt.Sprintf("tool-activity-summary:%d", userSeq),
+		Summary:     summary.SummaryText,
+		Details:     details,
+		SourceOrder: fmt.Sprintf("tool-activity-summary:%d:%d", userSeq, lastSeq),
+	}, true
 }
 
 func sessionMessageIsToolEvent(item SessionMessage) bool {

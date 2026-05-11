@@ -35,6 +35,27 @@ export interface ToolActivitySummary {
   statusText: string;
 }
 
+export interface BackendToolActivitySummary {
+  operations?: number;
+  total_tools?: number;
+  tool_calls?: number;
+  tool_results?: number;
+  running?: number;
+  ok?: number;
+  failed?: number;
+  reasoning?: number;
+  todo_snapshots?: number;
+  process_updates?: number;
+  system_events?: number;
+  started_at?: number;
+  last_activity_at?: number;
+  elapsed_seconds?: number;
+  max_tool_call_seconds?: number;
+  running_tool_names?: string[];
+  summary_text?: string;
+  status_text?: string;
+}
+
 export interface ToolActivityOptions {
   nowSeconds?: number;
   isBusy?: boolean;
@@ -100,6 +121,78 @@ function fallbackCallID(index: number): string {
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function finiteNumber(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function toolActivitySummaryFromBackend(raw: BackendToolActivitySummary, nowSeconds = Date.now() / 1000, isBusy = false): ToolActivitySummary {
+  const totalTools = finiteNumber(raw.total_tools);
+  const running = finiteNumber(raw.running);
+  const ok = finiteNumber(raw.ok);
+  const failed = finiteNumber(raw.failed);
+  const reasoning = finiteNumber(raw.reasoning);
+  const todoSnapshots = finiteNumber(raw.todo_snapshots);
+  const processUpdates = finiteNumber(raw.process_updates);
+  const systemEvents = finiteNumber(raw.system_events);
+  const startedAt = finiteNumber(raw.started_at) || null;
+  const lastActivityAt = finiteNumber(raw.last_activity_at) || null;
+  const elapsedSeconds = finiteNumber(raw.elapsed_seconds) || (startedAt === null ? null : Math.max(0, (lastActivityAt ?? nowSeconds) - startedAt));
+  const lastActivityAgeSeconds = lastActivityAt === null ? null : Math.max(0, nowSeconds - lastActivityAt);
+  const runningToolNames = Array.isArray(raw.running_tool_names) ? uniqueFirst(raw.running_tool_names, 3) : [];
+  const stalled = Boolean(isBusy && running > 0 && lastActivityAgeSeconds !== null && lastActivityAgeSeconds >= DEFAULT_STALE_AFTER_SECONDS);
+
+  const parts: string[] = [];
+  if (typeof raw.summary_text === "string" && raw.summary_text.trim()) {
+    parts.push(raw.summary_text.trim());
+  } else if (totalTools > 0) {
+    parts.push(running > 0 ? `Running ${running}/${totalTools} ${totalTools === 1 ? "tool" : "tools"}` : `Ran ${pluralize(totalTools, "tool")}`);
+    if (ok) parts.push(`${ok} ok`);
+    if (failed) parts.push(`${failed} failed`);
+    if (elapsedSeconds !== null) parts.push(formatCompactDuration(elapsedSeconds));
+  } else {
+    parts.push("Activity");
+  }
+  if (stalled && lastActivityAgeSeconds !== null) {
+    parts.push(`no output ${formatCompactDuration(lastActivityAgeSeconds)}`);
+  } else if (lastActivityAgeSeconds !== null && isBusy) {
+    parts.push(`last ${formatCompactDuration(lastActivityAgeSeconds)} ago`);
+  }
+
+  const statusText = typeof raw.status_text === "string" && raw.status_text.trim()
+    ? raw.status_text.trim()
+    : running > 0
+      ? `running ${running}${runningToolNames.length ? `: ${runningToolNames.join(", ")}` : ""}`
+      : failed > 0
+        ? `${failed} failed`
+        : totalTools > 0
+          ? `${ok} completed`
+          : "complete";
+
+  return {
+    totalTools,
+    toolCalls: finiteNumber(raw.tool_calls),
+    toolResults: finiteNumber(raw.tool_results),
+    running,
+    ok,
+    failed,
+    reasoning,
+    todoSnapshots,
+    processUpdates,
+    systemEvents,
+    startedAt,
+    lastActivityAt,
+    elapsedSeconds,
+    lastActivityAgeSeconds,
+    maxRunningSeconds: null,
+    stalled,
+    runningToolNames,
+    visibleEvents: [],
+    hiddenEventCount: 0,
+    summaryText: parts.join(" · "),
+    statusText,
+  };
 }
 
 function eventPriority(event: MessageEvent, kind: MachineTraceKind, index: number, runningIndexes: Set<number>, piEventVariant?: string | null): number {

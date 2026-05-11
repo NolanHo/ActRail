@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
 import { TraceView } from "./TraceView";
-import { buildToolActivitySummary, type MachineTraceKind, type ToolActivityEvent } from "./toolActivity";
+import { buildToolActivitySummary, toolActivitySummaryFromBackend, type BackendToolActivitySummary, type MachineTraceKind, type ToolActivityEvent, type ToolActivitySummary } from "./toolActivity";
 import { WaitCard } from "../waits/WaitCard";
 import {
   shallowEqual,
@@ -98,7 +98,7 @@ const MAIN_TIMELINE_KINDS = new Set([
 ]);
 
 const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
-const COMPACT_EVENT_KINDS = new Set(["event", "pi_event"]);
+const COMPACT_EVENT_KINDS = new Set(["event", "pi_event", "tool_activity_summary"]);
 const PI_EVENT_COMPACT_VARIANTS = {
   turn_terminal: "turn_terminal",
   empty_output: "empty_output",
@@ -115,6 +115,9 @@ interface AssistantTurnMeta {
   maxToolCallSeconds: number | null;
   turnSeconds: number | null;
   finishedTs: number | null;
+  summaryText?: string;
+  statusText?: string;
+  running?: number;
 }
 
 type ToolPairState = "call" | "result" | "orphan";
@@ -124,26 +127,6 @@ interface ToolTracePairInfo {
   state: ToolPairState;
 }
 
-interface BackendToolActivitySummary {
-  operations: number;
-  total_tools: number;
-  tool_calls: number;
-  tool_results: number;
-  running: number;
-  ok: number;
-  failed: number;
-  reasoning: number;
-  todo_snapshots: number;
-  process_updates: number;
-  system_events: number;
-  started_at?: number;
-  last_activity_at?: number;
-  elapsed_seconds?: number;
-  max_tool_call_seconds?: number;
-  running_tool_names?: string[];
-  summary_text?: string;
-  status_text?: string;
-}
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
 const MACHINE_TRACE_VISIBLE_LIMIT = 12;
@@ -788,6 +771,9 @@ function isCodexSubagentMessage(event: MessageEvent): boolean {
 }
 
 function piEventCompactVariant(event: MessageEvent): (typeof PI_EVENT_COMPACT_VARIANTS)[keyof typeof PI_EVENT_COMPACT_VARIANTS] | null {
+  if (eventKind(event) === "tool_activity_summary") {
+    return null;
+  }
   if (eventKind(event) !== "pi_event") {
     return null;
   }
@@ -1267,6 +1253,12 @@ function pluralTurnMetric(count: number, singular: string, plural = `${singular}
 }
 
 function assistantTurnSummaryParts(meta: AssistantTurnMeta): { summary: string; details: string } {
+  if (meta.summaryText) {
+    return {
+      summary: meta.summaryText,
+      details: meta.statusText || (meta.running && meta.running > 0 ? `running ${meta.running}` : `finished ${meta.finishedTs !== null ? formatTurnMetaTimestamp(meta.finishedTs) : "-"}`),
+    };
+  }
   const turnLabel = `turn ${formatDuration(meta.turnSeconds)}`;
   const finishedLabel = `finished ${meta.finishedTs !== null ? formatTurnMetaTimestamp(meta.finishedTs) : "-"}`;
 
@@ -1664,6 +1656,10 @@ function machineTraceTitle(event: MessageEvent, kind: CompactTraceKind) {
     return firstNonEmptyText(event.text, event.summary, event.custom_type, "Process update");
   }
   if (kind === "pi_event") {
+    if (eventKind(event) === "tool_activity_summary") {
+      const summary = backendToolActivitySummary(event);
+      return summary?.summary_text || firstNonEmptyText(event.summary, "Tool activity");
+    }
     const compaction = compactionDetails(event);
     if (compaction) {
       const phase = typeof compaction.phase === "string" ? compaction.phase : "";
@@ -1694,6 +1690,10 @@ function machineTraceSummary(event: MessageEvent, kind: CompactTraceKind) {
     return compactSingleLine(firstNonEmptyText(event.summary, event.text, event.custom_type), 90);
   }
   if (kind === "pi_event") {
+    if (eventKind(event) === "tool_activity_summary") {
+      const summary = backendToolActivitySummary(event);
+      return compactSingleLine(summary?.status_text || event.summary || "Tool activity", 90);
+    }
     const compaction = compactionDetails(event);
     if (compaction) {
       const reason = typeof compaction.reason === "string" ? compaction.reason : "";
@@ -2215,6 +2215,9 @@ function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, Assistant
       maxToolCallSeconds: backendSummary?.max_tool_call_seconds ?? maxToolCallSeconds,
       turnSeconds: assistantTs !== null && userTs !== null ? Math.max(0, assistantTs - userTs) : null,
       finishedTs: assistantTs,
+      summaryText: backendSummary?.summary_text,
+      statusText: backendSummary?.status_text,
+      running: backendSummary?.running,
     });
   }
   return result;
@@ -2259,6 +2262,19 @@ function backendToolActivitySummary(event: MessageEvent): BackendToolActivitySum
     summary_text: typeof raw.summary_text === "string" ? raw.summary_text : undefined,
     status_text: typeof raw.status_text === "string" ? raw.status_text : undefined,
   };
+}
+
+function backendToolActivityForTrace(events: MessageEvent[]): BackendToolActivitySummary | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (eventKind(event) === "tool_activity_summary") {
+      const summary = backendToolActivitySummary(event);
+      if (summary) {
+        return summary;
+      }
+    }
+  }
+  return null;
 }
 
 function buildToolTracePairs(events: MessageEvent[]): Map<number, ToolTracePairInfo> {
@@ -2490,6 +2506,24 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
   }
 
   if (kind === "pi_event") {
+    if (eventKind(event) === "tool_activity_summary") {
+      const summary = backendToolActivitySummary(event);
+      return (
+        <div className="machineTraceDetailBody space-y-3">
+          {renderCardHeader("pi_event", "Tool activity", summary?.summary_text || event.summary || undefined, event.ts)}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Tools</span>
+              <strong>{summary?.total_tools ?? 0}</strong>
+            </div>
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Status</span>
+              <strong>{summary?.status_text || "complete"}</strong>
+            </div>
+          </div>
+        </div>
+      );
+    }
     const compaction = compactionDetails(event);
     const body = firstNonEmptyText(event.text, detailsSummary(event.details));
     const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
@@ -2596,7 +2630,7 @@ function MachineTraceSummaryRow({
   onToggle,
   metaLabel,
 }: {
-  summary: ReturnType<typeof buildToolActivitySummary>;
+  summary: ToolActivitySummary;
   expanded: boolean;
   onToggle: () => void;
   metaLabel?: string;
@@ -2720,17 +2754,26 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [hydratedByKey, setHydratedByKey] = useState<Record<string, MessageEvent>>({});
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() / 1000);
-  const activity = useMemo(() => buildToolActivitySummary(traceEvents, {
-    nowSeconds,
-    isBusy,
-    visibleLimit: MACHINE_TRACE_VISIBLE_LIMIT,
-    kindForEvent: machineTraceKindForActivity,
-    eventKey: (event, kind, index) => eventStableIdentity(event, kind, index),
-    eventTimestampSeconds,
-    toolCallID,
-    toolName: normalizedToolName,
-    piEventVariant: piEventCompactVariant,
-  }), [isBusy, nowSeconds, traceEvents]);
+  const activity = useMemo(() => {
+    const backendSummary = backendToolActivityForTrace(traceEvents);
+    if (backendSummary && !traceEvents.some((event) => {
+      const kind = eventKind(event);
+      return kind === "tool" || kind === "tool_result";
+    })) {
+      return toolActivitySummaryFromBackend(backendSummary, nowSeconds, isBusy);
+    }
+    return buildToolActivitySummary(traceEvents, {
+      nowSeconds,
+      isBusy,
+      visibleLimit: MACHINE_TRACE_VISIBLE_LIMIT,
+      kindForEvent: machineTraceKindForActivity,
+      eventKey: (event, kind, index) => eventStableIdentity(event, kind, index),
+      eventTimestampSeconds,
+      toolCallID,
+      toolName: normalizedToolName,
+      piEventVariant: piEventCompactVariant,
+    });
+  }, [isBusy, nowSeconds, traceEvents]);
   const visibleEvents = expanded ? activity.visibleEvents : [];
   const selectedEvent = selectedKey == null
     ? null

@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+func testUint64Ptr(value uint64) *uint64 {
+	return &value
+}
+
 func TestPISessionSourcePathsUseStrictBackendSessionID(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "pi-home")
 	t.Setenv("PI_HOME", root)
@@ -123,6 +127,34 @@ func TestSessionMessagesFiltersToolEventsByDefaultBeforePagination(t *testing.T)
 	}
 	if _, ok := withTools.Items[3].Details[toolActivitySummaryDetailsKey]; ok {
 		t.Fatalf("assistant details = %+v, want no synthetic summary when raw tools are requested", withTools.Items[3].Details)
+	}
+}
+
+func TestSessionMessagesAddsOpenToolActivitySummaryWhenToolsHidden(t *testing.T) {
+	items := []SessionMessage{
+		{Seq: 1, Role: "user", Kind: "message", Text: "latest prompt", TS: 10},
+		{Seq: 2, Kind: "tool", Type: "tool", Text: "running tool", Name: "bash", ToolCallID: "call-run", TS: 12},
+	}
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{AfterSeq: testUint64Ptr(1)})
+	if len(response.Items) != 1 {
+		t.Fatalf("len(response.Items) = %d, want one compact activity event", len(response.Items))
+	}
+	item := response.Items[0]
+	if item.Kind != "tool_activity_summary" || item.Seq != 2 {
+		t.Fatalf("summary item = %+v, want compact activity at raw tail seq", item)
+	}
+	summary, ok := item.Details[toolActivitySummaryDetailsKey].(sessionToolActivitySummary)
+	if !ok {
+		t.Fatalf("summary details = %+v, want tool activity summary", item.Details)
+	}
+	if summary.Running != 1 || summary.TotalTools != 1 || summary.SummaryText != "Running 1/1 tool" {
+		t.Fatalf("tool activity summary = %+v, want running tool", summary)
+	}
+
+	withTools := paginateSessionMessagesForRequest(items, SessionMessagesRequest{AfterSeq: testUint64Ptr(1), IncludeToolEvents: true})
+	if len(withTools.Items) != 1 || withTools.Items[0].Kind != "tool" {
+		t.Fatalf("with tools = %+v, want raw tool only", withTools.Items)
 	}
 }
 
