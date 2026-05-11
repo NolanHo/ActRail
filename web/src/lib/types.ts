@@ -513,6 +513,7 @@ export interface SessionResumeCandidatesResponse {
   scanned?: number;
   scan_remaining?: number;
   scan_complete?: boolean;
+  scan_indexed?: boolean;
   sessions: SessionResumeCandidate[];
 }
 

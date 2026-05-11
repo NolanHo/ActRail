@@ -1310,6 +1310,65 @@ describe("NewSessionDialog", () => {
     expect(root.textContent).toContain("1 shown");
   });
 
+  it("labels indexed Codex resume pages as showing candidates", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
+      exists: true,
+      will_create: false,
+      git_repo: false,
+      offset: 0,
+      limit: 0,
+      remaining: 0,
+      scan_offset: 0,
+      scanned: 20,
+      scan_remaining: 654,
+      scan_complete: false,
+      scan_indexed: true,
+      sessions: [{ session_id: "history:codex:thread-1", title: "Codex Indexed Session", first_user_message: "resume prompt", updated_ts: 1_760_000_200 }],
+    } as any);
+
+    const sessionsStore = createSessionsStore({
+      items: [],
+      activeSessionId: null,
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/tmp/codex-project"],
+      tmuxAvailable: true,
+      newSessionDefaults: {
+        default_backend: "codex",
+        backends: {
+          codex: { provider_choice: "chatgpt" },
+        },
+        backend_capabilities: {
+          codex: { resume_history: true },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    const resumeTab = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Resume") as HTMLButtonElement;
+    await act(async () => {
+      resumeTab.click();
+    });
+    await wait(220);
+    await flush();
+
+    expect(root.textContent).toContain("Codex Indexed Session");
+    expect(root.textContent).toContain("Showing 1-20");
+    expect(root.textContent).toContain("1 shown");
+    expect(root.textContent).toContain("654 older");
+    expect(root.textContent).not.toContain("older uninspected");
+  });
+
   it("creates a new ActRail slot from a selected resume candidate", async () => {
     const { api } = await import("../../lib/api");
     vi.mocked(api.createSession).mockResolvedValue({ session_id: "resumed-pi", backend: "pi", ok: true } as any);

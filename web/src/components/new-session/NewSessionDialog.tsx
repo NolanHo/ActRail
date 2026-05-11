@@ -95,6 +95,14 @@ function resumeUpdatedLabel(item: SessionResumeCandidate) {
   return `Modified ${new Date(ts * 1000).toLocaleString()}`;
 }
 
+function resumePageStatusLabel(offset: number, scanned: number, shown: number, remaining: number, indexed: boolean) {
+  const start = scanned > 0 ? offset + 1 : offset;
+  const end = scanned > 0 ? offset + scanned : offset;
+  const prefix = indexed ? "Showing" : "Inspected";
+  const suffix = indexed ? "older" : "older uninspected";
+  return `${prefix} ${start}-${end} · ${shown} shown${remaining > 0 ? ` · ${remaining} ${suffix}` : ""}`;
+}
+
 function SelectField(props: JSX.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
@@ -154,6 +162,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const [resumeOffset, setResumeOffset] = useState(0);
   const [resumeScanned, setResumeScanned] = useState(0);
   const [resumeScanRemaining, setResumeScanRemaining] = useState(0);
+  const [resumeScanIndexed, setResumeScanIndexed] = useState(false);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeTitleFilter, setResumeTitleFilter] = useState("");
   const [refreshingPiModels, setRefreshingPiModels] = useState(false);
@@ -257,6 +266,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeOffset(0);
     setResumeScanned(0);
     setResumeScanRemaining(0);
+    setResumeScanIndexed(false);
     setResumeLoading(false);
     setResumeTitleFilter("");
     setRefreshingPiModels(false);
@@ -324,6 +334,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeOffset(0);
     setResumeScanned(0);
     setResumeScanRemaining(0);
+    setResumeScanIndexed(false);
     setResumeLoading(false);
     setLookupError("");
   }, [surfaceTab, supportsResumeHistory]);
@@ -342,6 +353,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeSessionId("");
     setResumeScanned(0);
     setResumeScanRemaining(0);
+    setResumeScanIndexed(false);
     setLookupError("");
   }, [backend, cwd, open, surfaceTab]);
 
@@ -352,6 +364,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       setResumeSessionId("");
       setResumeScanned(0);
       setResumeScanRemaining(0);
+      setResumeScanIndexed(false);
       setResumeLoading(false);
       setLookupError("");
       return;
@@ -362,6 +375,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       setResumeSessionId("");
       setResumeScanned(0);
       setResumeScanRemaining(0);
+      setResumeScanIndexed(false);
       setResumeLoading(false);
       setLookupError("");
       setCwdInfo({ exists: false, willCreate: false, gitRepo: false, gitRoot: "", gitBranch: "" });
@@ -385,6 +399,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
         setResumeCandidates(page);
         setResumeScanned(scanned);
         setResumeScanRemaining(scanRemaining);
+        setResumeScanIndexed(!!result.scan_indexed);
         setResumeSessionId((current) => {
           if (!current) return "";
           return page.some((item) => item.session_id === current) ? current : "";
@@ -403,6 +418,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
         setResumeSessionId("");
         setResumeScanned(0);
         setResumeScanRemaining(0);
+        setResumeScanIndexed(false);
         setCwdInfo({ exists: false, willCreate: false, gitRepo: false, gitRoot: "", gitBranch: "" });
         setLookupError(loadError instanceof Error ? loadError.message : "Failed to inspect working directory");
       } finally {
@@ -702,11 +718,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   {resumeCandidates.length || resumeOffset > 0 || resumeScanned > 0 || resumeScanRemaining > 0 ? (
                     <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                       <span>
-                        {resumeScanned > 0
-                          ? `Inspected ${resumeOffset + 1}-${resumeOffset + resumeScanned}`
-                          : `Inspected ${resumeOffset}-${resumeOffset}`}
-                        {resumeCandidates.length ? ` · ${resumeCandidates.length} shown` : " · 0 shown"}
-                        {resumeScanRemaining > 0 ? ` · ${resumeScanRemaining} older uninspected` : ""}
+                        {resumePageStatusLabel(resumeOffset, resumeScanned, resumeCandidates.length, resumeScanRemaining, resumeScanIndexed)}
                       </span>
                       <div className="flex items-center gap-2">
                         <Button

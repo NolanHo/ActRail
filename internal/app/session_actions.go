@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	stdErrors "errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +56,7 @@ type SessionResumeCandidatesResponse struct {
 	Scanned       int                      `json:"scanned,omitempty"`
 	ScanRemaining int                      `json:"scan_remaining,omitempty"`
 	ScanComplete  bool                     `json:"scan_complete,omitempty"`
+	ScanIndexed   bool                     `json:"scan_indexed,omitempty"`
 	Sessions      []SessionResumeCandidate `json:"sessions"`
 }
 
@@ -206,7 +209,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 			seen[candidate.SessionID] = struct{}{}
 		}
 	}
-	scanOffset, scanLimit, scanned, scanRemaining, scanComplete := 0, 0, 0, 0, true
+	scanOffset, scanLimit, scanned, scanRemaining, scanComplete, scanIndexed := 0, 0, 0, 0, true, false
 	if backend == "" || backend == session.BackendPI.String() {
 		scannedCandidates := s.scanPIResumeCandidates(cwd, req.ScanOffset, req.ScanLimit)
 		scanOffset = scannedCandidates.Offset
@@ -214,6 +217,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		scanned = scannedCandidates.Scanned
 		scanRemaining = scannedCandidates.Remaining
 		scanComplete = scannedCandidates.Complete
+		scanIndexed = scannedCandidates.Indexed
 		for _, candidate := range scannedCandidates.Sessions {
 			if _, ok := seen[candidate.SessionID]; ok {
 				continue
@@ -229,6 +233,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		scanned = scannedCandidates.Scanned
 		scanRemaining = scannedCandidates.Remaining
 		scanComplete = scannedCandidates.Complete
+		scanIndexed = scannedCandidates.Indexed
 		for _, candidate := range scannedCandidates.Sessions {
 			if _, ok := seen[candidate.SessionID]; ok {
 				continue
@@ -257,6 +262,7 @@ func (s *Stub) SessionResumeCandidates(_ context.Context, req SessionResumeCandi
 		Scanned:       scanned,
 		ScanRemaining: scanRemaining,
 		ScanComplete:  scanComplete,
+		ScanIndexed:   scanIndexed,
 		Sessions:      append([]SessionResumeCandidate(nil), resumeItems[start:end]...),
 	}
 	return payload, nil
@@ -932,6 +938,7 @@ type piResumeCandidateScan struct {
 	Scanned   int
 	Remaining int
 	Complete  bool
+	Indexed   bool
 }
 
 func (s *Stub) scanPIResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
@@ -1140,6 +1147,9 @@ func truncateResumeTitle(value string) string {
 }
 
 func (s *Stub) scanCodexResumeCandidates(cwd string, offset, limit int) piResumeCandidateScan {
+	if indexed := s.scanCodexResumeCandidatesFromStateDB(cwd, offset, limit); indexed != nil {
+		return *indexed
+	}
 	paths := listCodexResumeSourcePaths()
 	start, end := paginate(len(paths), offset, limit)
 	type pendingName struct {
@@ -1196,6 +1206,202 @@ func (s *Stub) scanCodexResumeCandidates(cwd string, offset, limit int) piResume
 		Remaining: len(paths) - end,
 		Complete:  end >= len(paths),
 	}
+}
+
+type codexStateThreadRow struct {
+	ID               string
+	RolloutPath      string
+	CWD              string
+	Title            string
+	FirstUserMessage string
+	GitBranch        string
+	UpdatedAt        time.Time
+}
+
+func (s *Stub) scanCodexResumeCandidatesFromStateDB(cwd string, offset, limit int) *piResumeCandidateScan {
+	dbPath, ok := latestCodexStateDBPath()
+	if !ok {
+		return nil
+	}
+	rows, total, err := listCodexStateThreads(cwd, dbPath, offset, limit)
+	if err != nil {
+		return nil
+	}
+	candidates := make([]SessionResumeCandidate, 0, len(rows))
+	for _, row := range rows {
+		candidate, ok := codexResumeCandidateFromStateThread(row)
+		if !ok {
+			continue
+		}
+		candidate, _ = s.decorateCodexResumeCandidate(candidate, row.RolloutPath)
+		candidates = append(candidates, candidate)
+	}
+	remaining := total - (offset + limit)
+	if limit <= 0 {
+		remaining = 0
+	} else if remaining < 0 {
+		remaining = 0
+	}
+	return &piResumeCandidateScan{
+		Sessions:  append([]SessionResumeCandidate(nil), candidates...),
+		Offset:    offset,
+		Limit:     limit,
+		Scanned:   len(rows),
+		Remaining: remaining,
+		Complete:  offset+len(rows) >= total,
+		Indexed:   true,
+	}
+}
+
+func codexResumeCandidateFromStateThread(row codexStateThreadRow) (SessionResumeCandidate, bool) {
+	backendSessionID := strings.TrimSpace(row.ID)
+	durableID, err := session.NewDurableID(backendSessionID)
+	if err != nil {
+		return SessionResumeCandidate{}, false
+	}
+	sessionID, err := session.NewHistoricalSessionID(session.BackendCodex, durableID)
+	if err != nil {
+		return SessionResumeCandidate{}, false
+	}
+	firstUser := strings.TrimSpace(row.FirstUserMessage)
+	if isSyntheticResumePreviewUserText(firstUser) {
+		firstUser = ""
+	}
+	if firstUser == "" && strings.TrimSpace(row.RolloutPath) != "" {
+		_, _, parsedFirstUser, ok := codexResumeCandidateMetaFromSourcePath(row.RolloutPath)
+		if ok {
+			firstUser = parsedFirstUser
+		}
+	}
+	title := strings.TrimSpace(row.Title)
+	if title == "" {
+		title = truncateResumeTitle(firstUser)
+	}
+	if title == "" {
+		title = backendSessionID
+	}
+	return SessionResumeCandidate{
+		SessionID:        sessionID.String(),
+		Title:            title,
+		Alias:            title,
+		DisplayName:      title,
+		CWD:              normalizeSessionCWD(row.CWD),
+		FirstUserMessage: firstUser,
+		UpdatedTS:        timestampSeconds(row.UpdatedAt),
+		GitBranch:        strings.TrimSpace(row.GitBranch),
+	}, true
+}
+
+func listCodexStateThreads(cwd, dbPath string, offset, limit int) ([]codexStateThreadRow, int, error) {
+	cwd = normalizeSessionCWD(cwd)
+	if cwd == "" {
+		return nil, 0, fmt.Errorf("cwd required")
+	}
+	db, err := sql.Open("sqlite", codexStateDBDSN(dbPath))
+	if err != nil {
+		return nil, 0, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var total int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM threads WHERE archived = 0 AND cwd = ?`,
+		cwd,
+	).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	query := `SELECT id, rollout_path, cwd, title, first_user_message, git_branch,
+			COALESCE(updated_at_ms, updated_at * 1000, created_at_ms, created_at * 1000, 0) AS updated_ms
+		FROM threads
+		WHERE archived = 0 AND cwd = ?
+		ORDER BY updated_ms DESC, id DESC`
+	args := []any{cwd}
+	if limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	} else {
+		query += ` LIMIT -1 OFFSET ?`
+		args = append(args, offset)
+	}
+	result, err := db.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer result.Close()
+	rows := make([]codexStateThreadRow, 0)
+	for result.Next() {
+		var row codexStateThreadRow
+		var updatedMS int64
+		var rolloutPath, title, firstUserMessage, gitBranch sql.NullString
+		if err := result.Scan(&row.ID, &rolloutPath, &row.CWD, &title, &firstUserMessage, &gitBranch, &updatedMS); err != nil {
+			return nil, 0, err
+		}
+		row.RolloutPath = strings.TrimSpace(rolloutPath.String)
+		row.Title = strings.TrimSpace(title.String)
+		row.FirstUserMessage = strings.TrimSpace(firstUserMessage.String)
+		row.GitBranch = strings.TrimSpace(gitBranch.String)
+		row.RolloutPath = strings.TrimSpace(row.RolloutPath)
+		if row.RolloutPath != "" {
+			row.RolloutPath = filepath.Clean(row.RolloutPath)
+		}
+		row.UpdatedAt = time.UnixMilli(updatedMS).UTC()
+		rows = append(rows, row)
+	}
+	if err := result.Err(); err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+func codexStateDBDSN(path string) string {
+	abs, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil {
+		abs = strings.TrimSpace(path)
+	}
+	return fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(1000)", abs)
+}
+
+func latestCodexStateDBPath() (string, bool) {
+	home := filepath.Dir(codexSessionRoot())
+	matches, err := filepath.Glob(filepath.Join(home, "state_*.sqlite"))
+	if err != nil || len(matches) == 0 {
+		return "", false
+	}
+	best := ""
+	bestVersion := -1
+	var bestMod time.Time
+	for _, match := range matches {
+		info, err := os.Stat(match)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		version := codexStateDBVersion(match)
+		if best == "" || version > bestVersion || (version == bestVersion && info.ModTime().After(bestMod)) {
+			best = filepath.Clean(match)
+			bestVersion = version
+			bestMod = info.ModTime()
+		}
+	}
+	return best, best != ""
+}
+
+func codexStateDBVersion(path string) int {
+	base := filepath.Base(path)
+	if !strings.HasPrefix(base, "state_") || !strings.HasSuffix(base, ".sqlite") {
+		return -1
+	}
+	raw := strings.TrimSuffix(strings.TrimPrefix(base, "state_"), ".sqlite")
+	version, err := strconv.Atoi(raw)
+	if err != nil {
+		return -1
+	}
+	return version
 }
 
 func (s *Stub) decorateCodexResumeCandidate(candidate SessionResumeCandidate, sourcePath string) (SessionResumeCandidate, bool) {

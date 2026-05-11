@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
+
+	_ "modernc.org/sqlite"
 )
 
 type codexTestRuntimeIO struct {
@@ -270,6 +273,85 @@ func TestCodexResumeCandidatesScanOnlyRequestedBatch(t *testing.T) {
 	}
 }
 
+func TestCodexResumeCandidatesUseCodexStateDBIndex(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	otherCWD := filepath.Join(t.TempDir(), "other")
+	if err := os.MkdirAll(otherCWD, 0o755); err != nil {
+		t.Fatalf("mkdir other cwd: %v", err)
+	}
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
+		{
+			ID:               "019e1111-0000-7000-8000-000000000101",
+			CWD:              cwd,
+			Title:            "Newest indexed title",
+			FirstUserMessage: "newest indexed prompt",
+			UpdatedMS:        1760000300000,
+		},
+		{
+			ID:               "019e1111-0000-7000-8000-000000000102",
+			CWD:              cwd,
+			Title:            "Middle indexed title",
+			FirstUserMessage: "middle indexed prompt",
+			UpdatedMS:        1760000200000,
+		},
+		{
+			ID:               "019e1111-0000-7000-8000-000000000103",
+			CWD:              cwd,
+			Title:            "Oldest indexed title",
+			FirstUserMessage: "oldest indexed prompt",
+			UpdatedMS:        1760000100000,
+		},
+		{
+			ID:               "019e1111-0000-7000-8000-000000000104",
+			CWD:              otherCWD,
+			Title:            "Other cwd title",
+			FirstUserMessage: "other cwd prompt",
+			UpdatedMS:        1760000400000,
+		},
+	})
+
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	first, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{
+		CWD:          cwd,
+		AgentBackend: "codex",
+		ScanOffset:   0,
+		ScanLimit:    2,
+	})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates(first) error = %v", err)
+	}
+	if first.Scanned != 2 || first.ScanRemaining != 1 || first.ScanComplete {
+		t.Fatalf("first scan metadata = scanned:%d remaining:%d complete:%v, want 2/1/false", first.Scanned, first.ScanRemaining, first.ScanComplete)
+	}
+	if got := resumeSessionIDs(first.Sessions); strings.Join(got, ",") != "history:codex:019e1111-0000-7000-8000-000000000101,history:codex:019e1111-0000-7000-8000-000000000102" {
+		t.Fatalf("first sessions = %+v, want newest two cwd-indexed sessions", first.Sessions)
+	}
+	if first.Sessions[0].Title != "Newest indexed title" || first.Sessions[0].FirstUserMessage != "newest indexed prompt" {
+		t.Fatalf("first candidate = %+v, want Codex state DB metadata", first.Sessions[0])
+	}
+
+	second, err := svc.SessionResumeCandidates(context.Background(), SessionResumeCandidatesRequest{
+		CWD:          cwd,
+		AgentBackend: "codex",
+		ScanOffset:   2,
+		ScanLimit:    2,
+	})
+	if err != nil {
+		t.Fatalf("SessionResumeCandidates(second) error = %v", err)
+	}
+	if second.Scanned != 1 || second.ScanRemaining != 0 || !second.ScanComplete {
+		t.Fatalf("second scan metadata = scanned:%d remaining:%d complete:%v, want 1/0/true", second.Scanned, second.ScanRemaining, second.ScanComplete)
+	}
+	if got := resumeSessionIDs(second.Sessions); strings.Join(got, ",") != "history:codex:019e1111-0000-7000-8000-000000000103" {
+		t.Fatalf("second sessions = %+v, want oldest cwd-indexed session", second.Sessions)
+	}
+}
+
 func TestCodexResumeCandidatesUseActRailRename(t *testing.T) {
 	cwd := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
@@ -434,6 +516,73 @@ func TestCodexResumeCandidatePreviewSkipsSyntheticUserContext(t *testing.T) {
 	if got := resume.Sessions[0].FirstUserMessage; got != "real prompt for resume preview" {
 		t.Fatalf("FirstUserMessage = %q, want real user prompt", got)
 	}
+}
+
+type codexStateDBTestThread struct {
+	ID               string
+	CWD              string
+	Title            string
+	FirstUserMessage string
+	UpdatedMS        int64
+}
+
+func writeCodexStateDB(t *testing.T, codexHome string, rows []codexStateDBTestThread) {
+	t.Helper()
+	path := filepath.Join(codexHome, "state_6.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open codex state db: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE threads (
+		id TEXT PRIMARY KEY,
+		rollout_path TEXT NOT NULL,
+		created_at INTEGER NOT NULL DEFAULT 0,
+		updated_at INTEGER NOT NULL DEFAULT 0,
+		source TEXT NOT NULL DEFAULT '',
+		model_provider TEXT NOT NULL DEFAULT '',
+		cwd TEXT NOT NULL,
+		title TEXT NOT NULL DEFAULT '',
+		sandbox_policy TEXT NOT NULL DEFAULT '',
+		approval_mode TEXT NOT NULL DEFAULT '',
+		tokens_used INTEGER NOT NULL DEFAULT 0,
+		has_user_event INTEGER NOT NULL DEFAULT 0,
+		archived INTEGER NOT NULL DEFAULT 0,
+		archived_at INTEGER,
+		git_sha TEXT,
+		git_branch TEXT,
+		cli_version TEXT NOT NULL DEFAULT '',
+		first_user_message TEXT NOT NULL DEFAULT '',
+		model TEXT,
+		reasoning_effort TEXT,
+		created_at_ms INTEGER,
+		updated_at_ms INTEGER
+	)`); err != nil {
+		t.Fatalf("create codex state threads table: %v", err)
+	}
+	for _, row := range rows {
+		if _, err := db.Exec(`INSERT INTO threads (
+			id, rollout_path, cwd, title, first_user_message, updated_at_ms, created_at_ms, archived
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+			row.ID,
+			filepath.Join(codexHome, "sessions", "2026", "05", "10", "rollout-2026-05-10T01-02-03-"+row.ID+".jsonl"),
+			row.CWD,
+			row.Title,
+			row.FirstUserMessage,
+			row.UpdatedMS,
+			row.UpdatedMS,
+		); err != nil {
+			t.Fatalf("insert codex state thread: %v", err)
+		}
+	}
+}
+
+func resumeSessionIDs(items []SessionResumeCandidate) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.SessionID)
+	}
+	return ids
 }
 
 func writeCodexResumeCandidateFile(t *testing.T, codexHome, threadID, cwd, prompt string, modTime time.Time) string {
