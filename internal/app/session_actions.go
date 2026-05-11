@@ -532,7 +532,7 @@ func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (R
 			return Unsupported("historical sessions cannot be restarted")
 		}
 		var err error
-		updated, previousRuntimeID, err = s.replaceSessionRuntime(ctx, req.SessionID, record, restartSessionUsesPIAgentGRPC(record))
+		updated, previousRuntimeID, err = s.replaceSessionRuntime(ctx, req.SessionID, record, restartSessionUsesPIAgentGRPC(record), true)
 		return err
 	}); err != nil {
 		return RestartSessionResponse{}, err
@@ -569,7 +569,7 @@ func (s *Stub) switchSessionIODMode(ctx context.Context, record sessionRecord, m
 	if record.identity.Backend() != session.BackendPI {
 		return sessionRecord{}, Unsupported("iod mode is only available for pi backend")
 	}
-	updated, _, err := s.replaceSessionRuntime(ctx, record.identity.SessionID(), record, mode == "grpc")
+	updated, _, err := s.replaceSessionRuntime(ctx, record.identity.SessionID(), record, mode == "grpc", true)
 	return updated, err
 }
 
@@ -577,7 +577,7 @@ func restartSessionUsesPIAgentGRPC(record sessionRecord) bool {
 	return record.identity.Backend() == session.BackendPI
 }
 
-func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.SessionID, record sessionRecord, usePIAgentGRPC bool) (sessionRecord, session.RuntimeID, error) {
+func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.SessionID, record sessionRecord, usePIAgentGRPC bool, forceNewIOD bool) (sessionRecord, session.RuntimeID, error) {
 	identity, _, ok, err := s.registry.ReserveRestartIdentity(routeID)
 	if err != nil {
 		return sessionRecord{}, "", err
@@ -620,6 +620,7 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		SessionPath:     sourcePath,
 		CodexThreadID:   codexThreadID,
 		PIAgentGRPC:     usePIAgentGRPC,
+		ForceNewIOD:     forceNewIOD,
 	})
 	if sourcePath != "" && sourcePath == strings.TrimSpace(record.importedSourcePath) {
 		sourcePath = ""
@@ -628,15 +629,22 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		_ = newRuntime.CleanupHelperArtifacts()
 		return sessionRecord{}, "", err
 	}
+	releaseNewRuntime := func() {
+		newRuntime.ReleaseAttachedHelperRollback()
+	}
 	previousBinding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID())
 	if err != nil {
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
+	nextBinding, err := newRuntime.CurrentHelperBinding(identity.SessionID())
+	if err != nil {
+		releaseNewRuntime()
+		return sessionRecord{}, "", err
+	}
+	reusedHelper := helperBindingSameGeneration(previousBinding, nextBinding)
 	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), newRuntime); err != nil {
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
 	restoreBinding := func() {
@@ -652,34 +660,41 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	}
 	if err := s.setRuntimeAgentRunning(routeID, false); err != nil {
 		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
 	updated, ok, err := s.registry.SwapRuntime(routeID, identity, newRuntime, sourcePath)
 	if err != nil {
 		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", err
 	}
 	if !ok {
 		restoreBinding()
-		_ = newRuntime.Kill(context.Background())
-		_ = newRuntime.CleanupHelperArtifacts()
+		releaseNewRuntime()
 		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
 	}
-	s.shutdownPreviousHelperGeneration(identity.SessionID(), previousBinding)
+	if !reusedHelper {
+		s.shutdownPreviousHelperGeneration(identity.SessionID(), previousBinding)
+	}
 	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
 	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), newRuntime)
 	s.startCodexThreadBootstrap(updated.identity.SessionID(), newRuntime)
-	_ = record.runtime.Kill(context.Background())
-	if record.runtime.helper != nil && s.helpers != nil {
-		s.helpers.Remove(record.identity.SessionID())
+	if reusedHelper {
+		record.runtime.CloseHelperStream()
+	} else {
+		_ = record.runtime.Kill(context.Background())
+		if record.runtime.helper != nil && s.helpers != nil {
+			s.helpers.Remove(record.identity.SessionID())
+		}
+		_ = record.runtime.CleanupHelperArtifacts()
 	}
-	_ = record.runtime.CleanupHelperArtifacts()
 	previousRuntimeID, _ := record.identity.RuntimeID()
 	return updated, previousRuntimeID, nil
+}
+
+func helperBindingSameGeneration(left, right *RuntimeHelperBinding) bool {
+	return left != nil && right != nil && left.GenerationID != "" && left.GenerationID == right.GenerationID
 }
 
 func (s *Stub) shutdownPreviousHelperGeneration(sessionID session.SessionID, binding *RuntimeHelperBinding) {

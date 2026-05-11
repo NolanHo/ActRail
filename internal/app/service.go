@@ -575,13 +575,6 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 						resumeBackendSessionID = strings.TrimSpace(threadID)
 					}
 				}
-				if resumeBackendSessionID == "" && resumeSourcePath != "" {
-					if threadID, ok, err := codexSessionIDFromFile(ctx, resumeSourcePath); err != nil {
-						return CreateSessionResponse{}, err
-					} else if ok {
-						resumeBackendSessionID = threadID
-					}
-				}
 				if resumeBackendSessionID == "" {
 					return CreateSessionResponse{}, NotFound(fmt.Sprintf("codex session %q has no thread id to resume", parsed))
 				}
@@ -632,11 +625,10 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}
 	bindingSaved := false
 	rollbackRuntime := func() {
-		_ = runtime.Kill(context.Background())
+		runtime.ReleaseAttachedHelperRollback()
 		if bindingSaved {
 			_ = s.helperBindings.Delete(identity.SessionID())
 		}
-		_ = runtime.CleanupHelperArtifacts()
 	}
 	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), runtime); err != nil {
 		rollbackRuntime()
@@ -695,7 +687,7 @@ func (s *Stub) createSessionResponseForExistingCodexOwner(ctx context.Context, o
 	record := owner
 	transport := sessionTransportSnapshot(owner)
 	if transport.ResetRequired || transport.State == SessionTransportStateBroken {
-		updated, _, err := s.replaceSessionRuntime(ctx, owner.identity.SessionID(), owner, false)
+		updated, _, err := s.replaceSessionRuntime(ctx, owner.identity.SessionID(), owner, false, false)
 		if err != nil {
 			return CreateSessionResponse{}, err
 		}

@@ -2197,6 +2197,10 @@ func TestCreateSessionMapsCodexToolReasoningUsageAndErrors(t *testing.T) {
 	if messages.Items[3].Type != "reasoning" || messages.Items[3].Text != "Inspecting runtime schema" {
 		t.Fatalf("reasoning message = %+v", messages.Items[3])
 	}
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.TurnTiming != nil && state.TurnTiming.LastEventTS != nil && *state.TurnTiming.LastEventTS == 1760000002
+	})
 	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)

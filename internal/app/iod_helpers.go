@@ -405,13 +405,22 @@ func (s *Stub) reattachHelper(ctx context.Context, backend session.Backend, bind
 	updatedBinding := binding
 	replayFailed := false
 	replayReason := helperFenceReason("")
+	if backend == session.BackendCodex {
+		// Codex history is session-file backed; helper WAL replay is only a PI recovery path.
+		return attachedHelper{
+			Binding:      updatedBinding,
+			ManifestPath: discovered.Path,
+			Manifest:     discovered.Manifest,
+			Hello:        hello,
+			Client:       client,
+			ReplayFailed: false,
+			ReplayReason: "",
+		}, updatedBinding, "", nil
+	}
 	if s != nil {
 		replayAfterOffset := binding.LastReplayOffset
 		if record, ok := s.registry.Lookup(binding.SessionID); ok {
 			replayAfterOffset = helperReplayAfterOffset(record, binding)
-			if backend == session.BackendCodex && strings.TrimSpace(record.importedBackendSessionID) != "" {
-				replayAfterOffset = binding.LastReplayOffset
-			}
 		}
 		replayState := newHelperReplayState(replayAfterOffset, func(packet iod.ReplayItemPacket) error {
 			record, ok := s.registry.Lookup(binding.SessionID)

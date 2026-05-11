@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,9 +24,11 @@ import (
 
 type helperReplayScript struct {
 	AfterOffset iod.WALOffset
+	SkipReplay  bool
 	Items       []iod.ReplayItemPacket
 	Done        iod.ReplayDonePacket
 	LivePackets []any
+	History     *iod.SessionHistoryResponsePacket
 }
 
 func TestHelperDiscovery(t *testing.T) {
@@ -191,7 +194,7 @@ func TestServerReattach(t *testing.T) {
 	}
 }
 
-func TestServerReattachProjectsCodexReplayAndLiveOutput(t *testing.T) {
+func TestCodexReattachSkipsReplayAndProjectsLiveOutput(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	generationID := mustHelperGenerationID(t, "g_codex_reattach")
@@ -206,20 +209,14 @@ func TestServerReattachProjectsCodexReplayAndLiveOutput(t *testing.T) {
 	sessionID := mustSessionID(t, created.Session.SessionID)
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
-	replayItem := mustReplayOutputPacket(t, sessionID, generationID, 1, 3,
-		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-reattach-1\"}}}\n"+
-			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turn\":{\"id\":\"turn-codex-reattach-1\",\"status\":\"inProgress\",\"error\":null}}}\n"+
-			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turnId\":\"turn-codex-reattach-1\",\"itemId\":\"item-codex-reattach-1\",\"delta\":\"Replay and live Codex \"}}\n")
 	livePacket := mustStateOutputPacket(t, sessionID, generationID, 4,
 		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-reattach-1\"}}}\n"+
 			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turn\":{\"id\":\"turn-codex-reattach-1\",\"status\":\"inProgress\",\"error\":null}}}\n"+
-			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turnId\":\"turn-codex-reattach-1\",\"itemId\":\"item-codex-reattach-1\",\"delta\":\"projection works.\"}}\n"+
+			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turnId\":\"turn-codex-reattach-1\",\"itemId\":\"item-codex-reattach-1\",\"delta\":\"Live Codex projection works.\"}}\n"+
 			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turnId\":\"turn-codex-reattach-1\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-reattach-1\",\"text\":\"Replay and live Codex projection works.\"}}}\n"+
 			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turn\":{\"id\":\"turn-codex-reattach-1\",\"status\":\"completed\",\"error\":null}}}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Items:       []iod.ReplayItemPacket{replayItem},
-		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 1),
+		SkipReplay:  true,
 		LivePackets: []any{livePacket},
 	})
 	defer cleanup()
@@ -235,8 +232,8 @@ func TestServerReattachProjectsCodexReplayAndLiveOutput(t *testing.T) {
 	if attachment.Binding.GenerationID != generationID {
 		t.Fatalf("attachment generation id = %q, want %q", attachment.Binding.GenerationID, generationID)
 	}
-	if attachment.Binding.LastReplayOffset != 1 {
-		t.Fatalf("attachment last replay offset = %d, want 1", attachment.Binding.LastReplayOffset)
+	if attachment.Binding.LastReplayOffset != 5 {
+		t.Fatalf("attachment last replay offset = %d, want preserved cursor 5", attachment.Binding.LastReplayOffset)
 	}
 	waitForAppCondition(t, func() bool {
 		messages, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
@@ -278,8 +275,358 @@ func TestServerReattachProjectsCodexReplayAndLiveOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helperBindings.Load() error = %v", err)
 	}
-	if bindings[sessionID].GenerationID != generationID || bindings[sessionID].LastReplayOffset != 1 {
-		t.Fatalf("saved binding = %+v, want generation %q offset 1", bindings[sessionID], generationID)
+	if bindings[sessionID].GenerationID != generationID || bindings[sessionID].LastReplayOffset != 5 {
+		t.Fatalf("saved binding = %+v, want generation %q preserved offset 5", bindings[sessionID], generationID)
+	}
+}
+
+func TestRuntimeLauncherAttachesExistingIODBeforeStartingNewHelper(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attach_existing_iod")
+	generationID := mustHelperGenerationID(t, "g_attach_existing")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			t.Fatal("resolveIODHelperBinPath called; existing IOD should be attached before launching")
+			return "", nil
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return &RuntimeHelperBinding{GenerationID: generationID}, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if runtime.helper == nil {
+		t.Fatal("runtime.helper = nil, want attached existing IOD helper")
+	}
+	binding, err := runtime.CurrentHelperBinding(sessionID)
+	if err != nil {
+		t.Fatalf("CurrentHelperBinding() error = %v", err)
+	}
+	if binding == nil || binding.GenerationID != generationID {
+		t.Fatalf("binding = %+v, want generation %q", binding, generationID)
+	}
+	if runtime.handle != nil {
+		t.Fatalf("runtime.handle = %+v, want nil for attached existing IOD", runtime.handle)
+	}
+}
+
+func TestRuntimeLauncherForceNewIODSkipsExistingAttach(t *testing.T) {
+	sessionID := mustSessionID(t, "s_force_new_iod")
+	generationID := mustHelperGenerationID(t, "g_force_new_existing")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	wantErr := errors.New("new helper requested")
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			return "", wantErr
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return &RuntimeHelperBinding{GenerationID: generationID}, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir(), ForceNewIOD: true})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Launch() error = %v, want forced new helper path error", err)
+	}
+	if runtime.helper != nil {
+		t.Fatalf("runtime.helper = %+v, want no existing attachment when ForceNewIOD is true", runtime.helper)
+	}
+}
+
+func TestRuntimeLauncherDoesNotAttachStaleIODWhenCurrentBindingFails(t *testing.T) {
+	sessionID := mustSessionID(t, "s_no_stale_attach")
+	currentGeneration := mustHelperGenerationID(t, "g_current_attach")
+	staleGeneration := mustHelperGenerationID(t, "g_stale_attach")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	currentManifestPath := iodclient.GenerationManifestPath(root, sessionID, currentGeneration)
+	_ = writeHelperManifest(t, currentManifestPath, sessionID, currentGeneration, 1760000007)
+	staleManifestPath := iodclient.GenerationManifestPath(root, sessionID, staleGeneration)
+	staleManifest := writeHelperManifest(t, staleManifestPath, sessionID, staleGeneration, 1760000006)
+	cleanup := startReplayHelper(t, staleManifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	wantErr := errors.New("new helper requested instead of stale attach")
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			return "", wantErr
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return &RuntimeHelperBinding{GenerationID: currentGeneration}, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir()})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Launch() error = %v, want new-helper path error after current attach fails", err)
+	}
+	if runtime.helper != nil {
+		t.Fatalf("runtime.helper = %+v, want no stale existing attachment", runtime.helper)
+	}
+}
+
+func TestAttachedExistingIODRollbackReleaseDoesNotShutdownOrCleanupHelper(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attach_rollback")
+	generationID := mustHelperGenerationID(t, "g_attach_rollback")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	history := iod.SessionHistorySnapshot{
+		SourcePath:   "/tmp/codex/session.jsonl",
+		Messages:     []iod.SessionHistoryMessage{{Seq: 1, Role: "user", Kind: "message", Text: "still alive"}},
+		IndexedCount: 1,
+		Warmed:       true,
+		Complete:     true,
+	}
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, history)
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true, History: &packet})
+	defer cleanup()
+	launcher := processRuntimeLauncher{}
+	runtime, err := launcher.attachIODManifest(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex}, iodclient.DiscoveredManifest{Path: manifestPath, Manifest: manifest})
+	if err != nil {
+		t.Fatalf("attachIODManifest() error = %v", err)
+	}
+	if !runtime.attachedExistingIOD {
+		t.Fatal("runtime.attachedExistingIOD = false, want true")
+	}
+	runtime.ReleaseAttachedHelperRollback()
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("Stat(%q) after attached rollback cleanup error = %v", manifestPath, err)
+	}
+	client, hello, err := launcher.attachHelper(context.Background(), manifest)
+	if err != nil {
+		t.Fatalf("attachHelper() after rollback error = %v", err)
+	}
+	defer client.Close()
+	if hello.GenerationID != generationID {
+		t.Fatalf("hello generation = %q, want %q", hello.GenerationID, generationID)
+	}
+	req, err := iod.NewSessionHistoryRequestPacket(sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewSessionHistoryRequestPacket() error = %v", err)
+	}
+	response, err := client.SessionHistory(context.Background(), req)
+	if err != nil {
+		t.Fatalf("SessionHistory() after rollback error = %v", err)
+	}
+	if len(response.Messages) != 1 || response.Messages[0].Text != "still alive" {
+		t.Fatalf("SessionHistory() = %+v, want live helper history after rollback", response)
+	}
+}
+
+func TestAttachedExistingIODOwnerKillShutsDownAndCleansArtifacts(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attach_owner_kill")
+	generationID := mustHelperGenerationID(t, "g_attach_owner_kill")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	_ = writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetWaitResult(process.ExitStatus{Code: 0}, nil)
+	runtime := sessionRuntime{
+		helper:              &runtimeIODHelper{handle: handle, runtimeDir: filepath.Dir(manifestPath)},
+		attachedExistingIOD: true,
+	}
+	if err := runtime.Kill(context.Background()); err != nil {
+		t.Fatalf("Kill(attached owner) error = %v", err)
+	}
+	if handle.InterruptCalls() == 0 {
+		t.Fatal("Kill(attached owner) did not interrupt helper handle")
+	}
+	if err := runtime.CleanupHelperArtifacts(); err != nil {
+		t.Fatalf("CleanupHelperArtifacts(attached owner) error = %v", err)
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(%q) after owner cleanup error = %v, want not exist", manifestPath, err)
+	}
+}
+
+func TestPIDOnlyIODShutdownWaitsForProcessExit(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("sleep start error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		default:
+		}
+	})
+	sessionID := mustSessionID(t, "s_pid_shutdown")
+	generationID := mustHelperGenerationID(t, "g_pid_shutdown")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, cmd.Process.Pid, 1760000007)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	helper := &runtimeIODHelper{manifest: manifest, sessionID: sessionID, generationID: generationID, helperPID: cmd.Process.Pid}
+	if err := helper.shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown(pid-only) error = %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(helperStopTimeout + time.Second):
+		t.Fatal("pid-only helper process still running after shutdown")
+	}
+}
+
+func TestPIDOnlyIODShutdownSkipsUnverifiedProcess(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("sleep start error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		default:
+		}
+	})
+	sessionID := mustSessionID(t, "s_pid_skip")
+	generationID := mustHelperGenerationID(t, "g_pid_skip")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, cmd.Process.Pid, 1760000007)
+	helper := &runtimeIODHelper{manifest: manifest, sessionID: sessionID, generationID: generationID, helperPID: cmd.Process.Pid}
+	if err := helper.shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown(unverified pid-only) error = %v", err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("unverified pid-only shutdown exited process unexpectedly: %v", err)
+	default:
+	}
+}
+
+func TestPIDOnlyIODShutdownRejectsHelloProofMismatch(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("sleep start error = %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		default:
+		}
+	})
+	sessionID := mustSessionID(t, "s_pid_mismatch")
+	generationID := mustHelperGenerationID(t, "g_pid_mismatch")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, cmd.Process.Pid, 1760000007)
+	forged := manifest
+	forged.HelperPID = os.Getpid()
+	cleanup := startReplayHelper(t, forged, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	helper := &runtimeIODHelper{manifest: manifest, sessionID: sessionID, generationID: generationID, helperPID: cmd.Process.Pid}
+	if err := helper.shutdown(context.Background()); err == nil {
+		t.Fatal("shutdown(proof mismatch) error = nil, want proof mismatch")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("proof mismatch shutdown exited process unexpectedly: %v", err)
+	default:
+	}
+}
+
+func TestRuntimeIODHelperFromAttachmentPreservesMetadata(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attach_metadata")
+	generationID := mustHelperGenerationID(t, "g_attach_metadata")
+	proof, err := iod.NewHelloProof(123, nil, "/tmp/metadata.wal", "/tmp/metadata.sock", 1760000006)
+	if err != nil {
+		t.Fatalf("NewHelloProof() error = %v", err)
+	}
+	hello, err := iod.NewHelloPacket(sessionID, generationID, 1, proof)
+	if err != nil {
+		t.Fatalf("NewHelloPacket() error = %v", err)
+	}
+	hello.IODBuildDate = "2026-05-10"
+	hello.IODGitSHA = "abc123"
+	helper := runtimeIODHelperFromAttachment(attachedHelper{
+		Binding: helperGenerationBinding{
+			SessionID:    sessionID,
+			GenerationID: generationID,
+		},
+		ManifestPath: "/tmp/metadata/generation-manifest.json",
+		Hello:        hello,
+	}, nil)
+	summary := helper.iodSummary()
+	if summary == nil || summary.BuildDate != "2026-05-10" || summary.GitSHA != "abc123" || summary.StartTS != 1760000006 {
+		t.Fatalf("iodSummary() = %+v, want restored hello metadata", summary)
+	}
+}
+
+func TestSessionHistoryRejectsHelloProofMismatch(t *testing.T) {
+	sessionID := mustSessionID(t, "s_history_proof")
+	generationID := mustHelperGenerationID(t, "g_history_proof")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath:   "/tmp/codex/session.jsonl",
+		Messages:     []iod.SessionHistoryMessage{{Seq: 1, Role: "assistant", Kind: "message", Text: "forged"}},
+		IndexedCount: 1,
+		Warmed:       true,
+		Complete:     true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	forged := manifest
+	forged.HelperPID = manifest.HelperPID + 1
+	cleanup := startReplayHelper(t, forged, helperReplayScript{SkipReplay: true, History: &packet})
+	defer cleanup()
+	helper := &runtimeIODHelper{
+		manifest:     manifest,
+		sessionID:    sessionID,
+		generationID: generationID,
+	}
+	if _, err := helper.sessionHistory(context.Background()); err == nil {
+		t.Fatal("sessionHistory() error = nil, want hello proof mismatch")
 	}
 }
 
@@ -354,20 +701,19 @@ func TestCodexReattachIgnoresProjectionError(t *testing.T) {
 	sessionID := mustSessionID(t, created.Session.SessionID)
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000007)
-	replayPartial := mustReplayOutputPacket(t, sessionID, generationID, 1, 3,
+	livePartial := mustStateOutputPacket(t, sessionID, generationID, 1,
 		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-projection-error\"}}}\n"+
 			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turn\":{\"id\":\"turn-codex-projection-error\",\"status\":\"inProgress\",\"error\":null}}}\n"+
 			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"itemId\":\"item-codex-projection-error\",\"delta\":\"Recovered \"}}\n")
-	replayToolDuringPartial := mustReplayOutputPacket(t, sessionID, generationID, 2, 4,
+	liveToolDuringPartial := mustStateOutputPacket(t, sessionID, generationID, 2,
 		"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"item\":{\"type\":\"commandExecution\",\"id\":\"tool-codex-projection-error\",\"command\":\"echo stale\",\"aggregatedOutput\":\"stale tool result\",\"status\":\"completed\"}}}\n")
-	replayFinal := mustReplayOutputPacket(t, sessionID, generationID, 3, 5,
+	liveFinal := mustStateOutputPacket(t, sessionID, generationID, 3,
 		"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"itemId\":\"item-codex-projection-error\",\"delta\":\"after projection error.\"}}\n"+
 			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-projection-error\",\"text\":\"Recovered after projection error.\"}}}\n"+
 			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turn\":{\"id\":\"turn-codex-projection-error\",\"status\":\"completed\",\"error\":null}}}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Items:       []iod.ReplayItemPacket{replayPartial, replayToolDuringPartial, replayFinal},
-		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 3),
+		SkipReplay:  true,
+		LivePackets: []any{livePartial, liveToolDuringPartial, liveFinal},
 	})
 	defer cleanup()
 
@@ -379,8 +725,8 @@ func TestCodexReattachIgnoresProjectionError(t *testing.T) {
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
 	}
-	if attachment.Binding.LastReplayOffset != 3 {
-		t.Fatalf("attachment last replay offset = %d, want 3", attachment.Binding.LastReplayOffset)
+	if attachment.Binding.LastReplayOffset != 5 {
+		t.Fatalf("attachment last replay offset = %d, want preserved cursor 5", attachment.Binding.LastReplayOffset)
 	}
 	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
@@ -396,7 +742,7 @@ func TestCodexReattachIgnoresProjectionError(t *testing.T) {
 		return err == nil && len(messages.Items) == 1
 	})
 	if len(messages.Items) != 1 || messages.Items[0].Text != "Recovered after projection error." {
-		t.Fatalf("SessionMessages().Items = %#v, want replay to continue through projection error", messages.Items)
+		t.Fatalf("SessionMessages().Items = %#v, want live attach to continue through projection error", messages.Items)
 	}
 }
 
@@ -428,8 +774,7 @@ func TestCodexLiveHelperIgnoresProjectionError(t *testing.T) {
 			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turnId\":\"turn-codex-live-projection-error\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-live-projection-error\",\"text\":\"Recovered after live projection error.\"}}}\n"+
 			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turn\":{\"id\":\"turn-codex-live-projection-error\",\"status\":\"completed\",\"error\":null}}}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 0),
+		SkipReplay:  true,
 		LivePackets: []any{livePartial, liveToolDuringPartial, liveFinal},
 	})
 	defer cleanup()
@@ -516,16 +861,15 @@ func TestReattachRebuildsEmptyTranscript(t *testing.T) {
 	sessionID := mustSessionID(t, created.Session.SessionID)
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000009)
-	replayFinal := mustReplayOutputPacket(t, sessionID, generationID, 1, 5,
+	liveFinal := mustStateOutputPacket(t, sessionID, generationID, 1,
 		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-rebuild-empty\"}}}\n"+
 			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-rebuild-empty\",\"turn\":{\"id\":\"turn-rebuild-empty\",\"status\":\"inProgress\",\"error\":null}}}\n"+
 			"{\"method\":\"item/agentMessage/delta\",\"params\":{\"threadId\":\"thread-rebuild-empty\",\"turnId\":\"turn-rebuild-empty\",\"itemId\":\"item-rebuild-empty\",\"delta\":\"Rebuilt from saved cursor.\"}}\n"+
 			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-rebuild-empty\",\"turnId\":\"turn-rebuild-empty\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-rebuild-empty\",\"text\":\"Rebuilt from saved cursor.\"}}}\n"+
 			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-rebuild-empty\",\"turn\":{\"id\":\"turn-rebuild-empty\",\"status\":\"completed\",\"error\":null}}}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Items:       []iod.ReplayItemPacket{replayFinal},
-		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 1),
+		SkipReplay:  true,
+		LivePackets: []any{liveFinal},
 	})
 	defer cleanup()
 
@@ -537,8 +881,8 @@ func TestReattachRebuildsEmptyTranscript(t *testing.T) {
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
 	}
-	if attachment.Binding.LastReplayOffset != 1 {
-		t.Fatalf("attachment last replay offset = %d, want 1", attachment.Binding.LastReplayOffset)
+	if attachment.Binding.LastReplayOffset != 8 {
+		t.Fatalf("attachment last replay offset = %d, want preserved cursor 8", attachment.Binding.LastReplayOffset)
 	}
 	var messages SessionMessagesResponse
 	waitForTestCondition(t, func() bool {
@@ -547,7 +891,7 @@ func TestReattachRebuildsEmptyTranscript(t *testing.T) {
 		return err == nil && len(messages.Items) == 1
 	})
 	if len(messages.Items) != 1 || messages.Items[0].Text != "Rebuilt from saved cursor." {
-		t.Fatalf("SessionMessages().Items = %#v, want transcript rebuilt from WAL", messages.Items)
+		t.Fatalf("SessionMessages().Items = %#v, want transcript rebuilt from live attach", messages.Items)
 	}
 }
 
@@ -716,9 +1060,7 @@ func TestCodexReattachToleratesReplayGap(t *testing.T) {
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Items:       []iod.ReplayItemPacket{mustReplayItemPacket(t, sessionID, generationID, 7, 5)},
-		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 7),
+		SkipReplay: true,
 	})
 	defer cleanup()
 
@@ -730,11 +1072,11 @@ func TestCodexReattachToleratesReplayGap(t *testing.T) {
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
 	}
-	if !attachment.ReplayFailed || attachment.ReplayReason != helperFenceReplayGap {
-		t.Fatalf("attachment replay = failed:%v reason:%q, want replay gap marker", attachment.ReplayFailed, attachment.ReplayReason)
+	if attachment.ReplayFailed || attachment.ReplayReason != "" {
+		t.Fatalf("attachment replay = failed:%v reason:%q, want codex replay skipped", attachment.ReplayFailed, attachment.ReplayReason)
 	}
 	if hasFenceReason(rehydrated.helpers.Fenced(), generationID, helperFenceReplayGap) {
-		t.Fatalf("fenced helpers = %+v, want codex replay gap attached not fenced", rehydrated.helpers.Fenced())
+		t.Fatalf("fenced helpers = %+v, want no codex replay gap fence", rehydrated.helpers.Fenced())
 	}
 	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
@@ -743,8 +1085,8 @@ func TestCodexReattachToleratesReplayGap(t *testing.T) {
 	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
 	}
-	if !strings.Contains(state.Transport.Reason, "codex_replay_failed:replay_gap") {
-		t.Fatalf("SessionState().Transport.Reason = %q, want codex replay marker", state.Transport.Reason)
+	if state.Transport.Reason != "" {
+		t.Fatalf("SessionState().Transport.Reason = %q, want clean attached transport", state.Transport.Reason)
 	}
 	bindings, err := rehydrated.helperBindings.Load()
 	if err != nil {
@@ -779,8 +1121,7 @@ func TestCodexReattachUsesSavedReplayCursorWhenSourceBindingExists(t *testing.T)
 	}
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 5,
-		Done:        mustReplayDonePacket(t, sessionID, generationID, 5, 5),
+		SkipReplay: true,
 	})
 	defer cleanup()
 
@@ -820,9 +1161,7 @@ func TestCodexReattachToleratesReplayFailure(t *testing.T) {
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Items:       []iod.ReplayItemPacket{mustReplayItemPacket(t, sessionID, generationID, 1, 5)},
-		Done:        mustReplayDonePacketWithCorruptTail(t, sessionID, generationID, 0, 1),
+		SkipReplay: true,
 	})
 	defer cleanup()
 
@@ -834,11 +1173,11 @@ func TestCodexReattachToleratesReplayFailure(t *testing.T) {
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
 	}
-	if !attachment.ReplayFailed || attachment.ReplayReason != helperFenceReplayCorruptTail {
-		t.Fatalf("attachment replay = failed:%v reason:%q, want corrupt-tail marker", attachment.ReplayFailed, attachment.ReplayReason)
+	if attachment.ReplayFailed || attachment.ReplayReason != "" {
+		t.Fatalf("attachment replay = failed:%v reason:%q, want codex replay skipped", attachment.ReplayFailed, attachment.ReplayReason)
 	}
 	if hasFenceReason(rehydrated.helpers.Fenced(), generationID, helperFenceReplayCorruptTail) {
-		t.Fatalf("fenced helpers = %+v, want codex replay failure attached not fenced", rehydrated.helpers.Fenced())
+		t.Fatalf("fenced helpers = %+v, want no codex replay failure fence", rehydrated.helpers.Fenced())
 	}
 	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
@@ -847,8 +1186,8 @@ func TestCodexReattachToleratesReplayFailure(t *testing.T) {
 	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
 	}
-	if !strings.Contains(state.Transport.Reason, "codex_replay_failed:replay_corrupt_tail") {
-		t.Fatalf("SessionState().Transport.Reason = %q, want codex replay marker", state.Transport.Reason)
+	if state.Transport.Reason != "" {
+		t.Fatalf("SessionState().Transport.Reason = %q, want clean attached transport", state.Transport.Reason)
 	}
 	bindings, err := rehydrated.helperBindings.Load()
 	if err != nil {
@@ -894,8 +1233,13 @@ func hasFenceReason(fences []helperFence, generationID iod.GenerationID, reason 
 
 func writeHelperManifest(t *testing.T, manifestPath string, sessionID session.SessionID, generationID iod.GenerationID, startUnix int64) iod.GenerationManifest {
 	t.Helper()
-	childPID := os.Getpid()
-	proof, err := iod.NewHelloProof(os.Getpid(), &childPID, filepath.Join(filepath.Dir(manifestPath), "transport.wal"), filepath.Join(filepath.Dir(manifestPath), "io"), float64(startUnix))
+	return writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, os.Getpid(), startUnix)
+}
+
+func writeHelperManifestWithPID(t *testing.T, manifestPath string, sessionID session.SessionID, generationID iod.GenerationID, helperPID int, startUnix int64) iod.GenerationManifest {
+	t.Helper()
+	childPID := helperPID
+	proof, err := iod.NewHelloProof(helperPID, &childPID, filepath.Join(filepath.Dir(manifestPath), "transport.wal"), filepath.Join(filepath.Dir(manifestPath), "io"), float64(startUnix))
 	if err != nil {
 		t.Fatalf("NewHelloProof() error = %v", err)
 	}
@@ -1094,32 +1438,60 @@ func serveReplayHelperConn(conn net.Conn, manifest iod.GenerationManifest, scrip
 	if err := enc.Encode(hello); err != nil {
 		return err
 	}
-	var replayReq iod.ReplayRequestPacket
-	if err := dec.Decode(&replayReq); err != nil {
-		if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
-			return nil
+	if !script.SkipReplay {
+		var replayReq iod.ReplayRequestPacket
+		if err := dec.Decode(&replayReq); err != nil {
+			if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
+				return nil
+			}
+			return err
 		}
-		return err
-	}
-	if replayReq.SessionID != manifest.SessionID || replayReq.GenerationID != manifest.GenerationID {
-		return fmt.Errorf("replay request = %q/%q, want %q/%q", replayReq.SessionID, replayReq.GenerationID, manifest.SessionID, manifest.GenerationID)
-	}
-	if replayReq.AfterOffset != script.AfterOffset {
-		return fmt.Errorf("replay after offset = %d, want %d", replayReq.AfterOffset, script.AfterOffset)
-	}
-	for _, packet := range script.Items {
-		if err := enc.Encode(packet); err != nil {
+		if replayReq.SessionID != manifest.SessionID || replayReq.GenerationID != manifest.GenerationID {
+			return fmt.Errorf("replay request = %q/%q, want %q/%q", replayReq.SessionID, replayReq.GenerationID, manifest.SessionID, manifest.GenerationID)
+		}
+		if replayReq.AfterOffset != script.AfterOffset {
+			return fmt.Errorf("replay after offset = %d, want %d", replayReq.AfterOffset, script.AfterOffset)
+		}
+		for _, packet := range script.Items {
+			if err := enc.Encode(packet); err != nil {
+				if helperConnClosed(err) {
+					return nil
+				}
+				return err
+			}
+		}
+		if err := enc.Encode(script.Done); err != nil {
 			if helperConnClosed(err) {
 				return nil
 			}
 			return err
 		}
 	}
-	if err := enc.Encode(script.Done); err != nil {
-		if helperConnClosed(err) {
-			return nil
+	if script.SkipReplay && len(script.LivePackets) == 0 && script.History != nil {
+		for {
+			var raw json.RawMessage
+			if err := dec.Decode(&raw); err != nil {
+				if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
+					return nil
+				}
+				return err
+			}
+			var peek struct {
+				Kind iod.PacketKind `json:"kind"`
+			}
+			if err := json.Unmarshal(raw, &peek); err != nil {
+				return err
+			}
+			if peek.Kind != iod.PacketSessionHistoryRequest {
+				return fmt.Errorf("unexpected helper packet kind %q", peek.Kind)
+			}
+			if err := enc.Encode(*script.History); err != nil {
+				if helperConnClosed(err) {
+					return nil
+				}
+				return err
+			}
 		}
-		return err
 	}
 	for _, packet := range script.LivePackets {
 		if err := enc.Encode(packet); err != nil {

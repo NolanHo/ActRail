@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"actrail/internal/adapters/process"
+	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/iodclient"
+	"actrail/internal/config"
 	"actrail/internal/domain/session"
 )
 
@@ -47,6 +49,7 @@ func TestSessionMessagesLoadsCodexHistoryFromSessionFile(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 
 	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10})
 	if err != nil {
@@ -66,6 +69,91 @@ func TestSessionMessagesLoadsCodexHistoryFromSessionFile(t *testing.T) {
 	if messages.Items[3].Details["phase"] != "commentary" || messages.Items[4].Details["phase"] != "final_answer" {
 		t.Fatalf("assistant phases = (%v, %v), want commentary/final_answer", messages.Items[3].Details, messages.Items[4].Details)
 	}
+}
+
+func TestCodexSessionMessagesFromJSONLLines(t *testing.T) {
+	lines := []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"iod user"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"iod final","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+	}
+
+	items, err := codexSessionMessagesFromJSONLLines(context.Background(), "/tmp/session.jsonl", lines)
+	if err != nil {
+		t.Fatalf("codexSessionMessagesFromJSONLLines() error = %v", err)
+	}
+	got := messageRolesAndText(items)
+	want := []string{"user:iod user", "assistant:iod final"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	if !codexSessionLinesHaveTaskComplete(context.Background(), lines) {
+		t.Fatal("codexSessionLinesHaveTaskComplete() = false, want true")
+	}
+}
+
+func attachCodexHistoryIODHelperFromFile(t *testing.T, svc *Stub, cfg config.Config, sessionID session.SessionID, sourcePath string) {
+	t.Helper()
+	_ = cfg
+	raw, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", sourcePath, err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	appItems, err := codexSessionMessagesFromJSONLLines(context.Background(), sourcePath, lines)
+	if err != nil {
+		t.Fatalf("codexSessionMessagesFromJSONLLines() error = %v", err)
+	}
+	messages := make([]iod.SessionHistoryMessage, 0, len(appItems))
+	for _, item := range appItems {
+		messages = append(messages, iod.SessionHistoryMessage{
+			Seq:         item.Seq,
+			Role:        item.Role,
+			Kind:        item.Kind,
+			Type:        item.Type,
+			Text:        item.Text,
+			TS:          item.TS,
+			EventID:     item.EventID,
+			SourceOrder: item.SourceOrder,
+			Name:        item.Name,
+			Summary:     item.Summary,
+			ToolCallID:  item.ToolCallID,
+			IsError:     item.IsError,
+			Details:     item.Details,
+		})
+	}
+	generationID := mustHelperGenerationID(t, "g_"+sessionID.String()+"_history")
+	runtimeRoot := filepath.Join("/tmp", fmt.Sprintf("arhist-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(runtimeRoot) })
+	manifestPath := filepath.Join(runtimeRoot, "manifest.json")
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath:   sourcePath,
+		Lines:        lines,
+		Messages:     messages,
+		IndexedCount: len(messages),
+		TaskComplete: codexSessionLinesHaveTaskComplete(context.Background(), lines),
+		Warmed:       true,
+		Complete:     true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true, History: &packet})
+	t.Cleanup(cleanup)
+	hello, err := iod.NewHelloPacket(sessionID, generationID, 1, manifest.HelloProof)
+	if err != nil {
+		t.Fatalf("NewHelloPacket() error = %v", err)
+	}
+	svc.helpers.replaceAll(map[session.SessionID]attachedHelper{
+		sessionID: {
+			Binding:  helperGenerationBinding{SessionID: sessionID, GenerationID: generationID},
+			Manifest: manifest,
+			Hello:    hello,
+			Client:   &iodclient.Client{},
+		},
+	}, nil)
 }
 
 func TestSessionMessagesCodexHistoryUsesSourceLineSeqForIncrementalResume(t *testing.T) {
@@ -103,6 +191,7 @@ func TestSessionMessagesCodexHistoryUsesSourceLineSeqForIncrementalResume(t *tes
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 
 	afterSeq := uint64(258)
 	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, AfterSeq: &afterSeq, Limit: 10})
@@ -150,6 +239,7 @@ func TestSessionMessagesCodexHistorySummarizesHiddenToolActivity(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 
 	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10})
 	if err != nil {
@@ -292,6 +382,7 @@ func TestSessionMessagesCodexFinalAnswerClearsPersistedBusyState(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
 		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
 	}
@@ -343,6 +434,7 @@ func TestSessionMessagesCodexFinalAnswerOverridesLocalTranscript(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 	if _, err := svc.AppendSessionMessage(sessionID, "assistant", "message", "stale local transcript"); err != nil {
 		t.Fatalf("AppendSessionMessage() error = %v", err)
 	}
@@ -399,6 +491,7 @@ func TestSessionStateCodexFinalAnswerClearsRuntimeAgentRunning(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}
@@ -437,7 +530,6 @@ func TestSessionStateCodexTaskCompleteClearsRuntimeAgentRunning(t *testing.T) {
 	}
 	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
 	runtimeState.setActiveTurnID("turn-codex-task-complete")
-	handle := process.NewFakeHandle(process.LaunchSpec{})
 	if _, err := svc.registry.Create(sessionCreateSpec{
 		Identity:         &identity,
 		Backend:          session.BackendCodex,
@@ -445,11 +537,12 @@ func TestSessionStateCodexTaskCompleteClearsRuntimeAgentRunning(t *testing.T) {
 		BackendSessionID: threadID,
 		SourcePath:       sourcePath,
 		SourceConfidence: sourceConfidenceExact,
-		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: runtimeState, handle: handle},
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: runtimeState},
 		Transport:        SessionTransportSnapshot{State: SessionTransportStateAttached, Reason: "codex_replay_failed:replay_failed"},
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
 		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
 	}
@@ -475,6 +568,102 @@ func TestSessionStateCodexTaskCompleteClearsRuntimeAgentRunning(t *testing.T) {
 	}
 }
 
+func TestSessionStateCodexTaskCompleteWithoutMessagesClearsRuntimeAgentRunning(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_task_complete_only")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-task-complete-only","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-codex-task-complete-only","last_agent_message":null,"completed_at":1760000350}}`,
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_task_complete_only", "t_task_complete_only", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	runtimeState.setActiveTurnID("turn-codex-task-complete-only")
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-task-complete-only",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: runtimeState},
+		Transport:        SessionTransportSnapshot{State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	if _, err := svc.AppendAssistantDelta(sessionID, "turn-codex-task-complete-only", "stale partial"); err != nil {
+		t.Fatalf("AppendAssistantDelta() error = %v", err)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) || state.PartialAssistantTurn != nil {
+		t.Fatalf("SessionState() = busy:%v runtime:%q partial:%+v, want idle with no partial after task_complete-only", state.Busy, state.RuntimeState, state.PartialAssistantTurn)
+	}
+}
+
+func TestSessionMessagesCodexIODHistoryLooksUpToolByID(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_iod_tool_lookup")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-tool-lookup","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"call-iod-tool","arguments":"{\"cmd\":\"date\"}"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-iod-tool","output":"ok"}}`,
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_tool_lookup", "t_tool_lookup", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-tool-lookup",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	response, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, ToolCallID: "call-iod-tool", IncludeToolEvents: true})
+	if err != nil {
+		t.Fatalf("SessionMessages(tool_call_id) error = %v", err)
+	}
+	if len(response.Items) != 1 || response.Items[0].ToolCallID != "call-iod-tool" || response.Items[0].Kind != "tool" {
+		t.Fatalf("SessionMessages(tool_call_id) = %+v, want IOD tool call detail", response)
+	}
+	response, err = svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, EventID: "codex:item:tool-result:000003", IncludeToolEvents: true})
+	if err != nil {
+		t.Fatalf("SessionMessages(event_id) error = %v", err)
+	}
+	if len(response.Items) != 1 || response.Items[0].Kind != "tool_result" || response.Items[0].Text != "ok" {
+		t.Fatalf("SessionMessages(event_id) = %+v, want IOD tool result detail", response)
+	}
+}
+
 func TestSessionStateCodexFinalAnswerDoesNotClearNewerUserTurn(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
@@ -497,7 +686,6 @@ func TestSessionStateCodexFinalAnswerDoesNotClearNewerUserTurn(t *testing.T) {
 	}
 	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
 	runtimeState.setActiveTurnID("turn-codex-newer-user")
-	handle := process.NewFakeHandle(process.LaunchSpec{})
 	if _, err := svc.registry.Create(sessionCreateSpec{
 		Identity:         &identity,
 		Backend:          session.BackendCodex,
@@ -505,11 +693,12 @@ func TestSessionStateCodexFinalAnswerDoesNotClearNewerUserTurn(t *testing.T) {
 		BackendSessionID: threadID,
 		SourcePath:       sourcePath,
 		SourceConfidence: sourceConfidenceExact,
-		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: runtimeState, handle: handle},
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: runtimeState},
 		Transport:        SessionTransportSnapshot{State: SessionTransportStateAttached, Reason: "codex_thread"},
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
 		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
 	}
@@ -560,6 +749,7 @@ func TestSessionStateCodexFinalAnswerMirrorsLiveCommits(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}
@@ -624,6 +814,7 @@ func TestSessionStateCodexFinalAnswerDoesNotBlockOnLiveCommitPublish(t *testing.
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
 	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}

@@ -1,9 +1,11 @@
 package iod
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,5 +50,200 @@ func TestTailLinesHandlesFileWithoutTrailingNewline(t *testing.T) {
 	}
 	if len(lines) != 2 || lines[0] != "b" || lines[1] != "c" {
 		t.Fatalf("tailLines() = %#v, want b,c", lines)
+	}
+}
+
+func TestCodexSessionPathFromOutput(t *testing.T) {
+	output := `{"method":"turn/started","params":{"turn":{"id":"turn-1"}}}` + "\n" +
+		`{"method":"thread/started","params":{"thread":{"id":"thread-1","path":"/tmp/codex/session.jsonl"}}}` + "\n"
+
+	if got := codexSessionPathFromOutput(output); got != "/tmp/codex/session.jsonl" {
+		t.Fatalf("codexSessionPathFromOutput() = %q, want session path", got)
+	}
+}
+
+func TestSessionHistoryCacheSetPathWarmsTail(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"world","phase":"final_answer"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache("", true)
+	cache.SetPath(context.Background(), path)
+
+	snapshot, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if snapshot.SourcePath != path {
+		t.Fatalf("Snapshot().SourcePath = %q, want %q", snapshot.SourcePath, path)
+	}
+	if len(snapshot.Lines) != 3 {
+		t.Fatalf("Snapshot().Lines = %#v, want warmed session lines", snapshot.Lines)
+	}
+	if !snapshot.Complete {
+		t.Fatal("Snapshot().Complete = false, want true after Codex full load")
+	}
+	if snapshot.IndexedCount != 2 {
+		t.Fatalf("Snapshot().IndexedCount = %d, want 2", snapshot.IndexedCount)
+	}
+	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Role != "user" || snapshot.Messages[0].Text != "hello" || snapshot.Messages[1].Role != "assistant" || snapshot.Messages[1].Text != "world" {
+		t.Fatalf("Snapshot().Messages = %#v, want parsed user/assistant messages", snapshot.Messages)
+	}
+}
+
+func TestSessionHistoryCacheCodexAppendUpdatesIndexAndTail(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	cache.Start(context.Background())
+	t.Cleanup(cache.Stop)
+	first, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if first.IndexedCount != 1 || len(first.Messages) != 1 || first.Messages[0].Text != "hello" {
+		t.Fatalf("first Snapshot() = %#v, want one indexed user message", first)
+	}
+	appendBody := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"world","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+	}, "\n") + "\n"
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString(appendBody); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	second, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("second Snapshot() error = %v", err)
+	}
+	if second.IndexedCount != 2 {
+		t.Fatalf("second Snapshot().IndexedCount = %d, want 2", second.IndexedCount)
+	}
+	if !second.TaskComplete {
+		t.Fatal("second Snapshot().TaskComplete = false, want true after appended task_complete")
+	}
+	if len(second.Messages) != 2 || second.Messages[1].Role != "assistant" || second.Messages[1].Text != "world" {
+		t.Fatalf("second Snapshot().Messages = %#v, want appended assistant message", second.Messages)
+	}
+	if got := second.Lines[len(second.Lines)-1]; !strings.Contains(got, `"task_complete"`) {
+		t.Fatalf("last tail line = %q, want appended task_complete", got)
+	}
+}
+
+func TestSessionHistoryCacheCodexIgnoresPartialTailUntilComplete(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"wor`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	first, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() with partial line error = %v", err)
+	}
+	if first.IndexedCount != 1 || len(first.Messages) != 1 || first.Messages[0].Text != "hello" {
+		t.Fatalf("Snapshot() = %#v, want only complete first line", first)
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString(`ld","phase":"final_answer"}}` + "\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	second, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() after completing partial line error = %v", err)
+	}
+	if second.IndexedCount != 2 || len(second.Messages) != 2 || second.Messages[1].Text != "world" {
+		t.Fatalf("Snapshot() = %#v, want completed assistant line indexed once", second)
+	}
+}
+
+func TestSessionHistoryCacheCodexIgnoresValidJSONTailUntilNewline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	first, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if first.TaskComplete {
+		t.Fatal("Snapshot().TaskComplete = true, want false before newline-committed task_complete")
+	}
+	if first.IndexedCount != 1 || len(first.Messages) != 1 || first.Messages[0].Text != "hello" {
+		t.Fatalf("Snapshot() = %#v, want only newline-committed first message", first)
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString("\n"); err != nil {
+		t.Fatalf("WriteString(newline) error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	second, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() after newline error = %v", err)
+	}
+	if !second.TaskComplete {
+		t.Fatal("Snapshot().TaskComplete = false, want true after newline commit")
+	}
+}
+
+func TestSessionHistoryCacheCodexDedupeKeepsRepeatedPrompts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := strings.Join([]string{
+		`{"type":"event_msg","payload":{"type":"user_message","message":"continue"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"continue"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"done","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}],"phase":"final_answer"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	snapshot, err := cache.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if snapshot.IndexedCount != 3 {
+		t.Fatalf("Snapshot().IndexedCount = %d, want two repeated prompts plus one assistant", snapshot.IndexedCount)
+	}
+	if len(snapshot.Messages) != 3 || snapshot.Messages[0].Text != "continue" || snapshot.Messages[1].Text != "continue" || snapshot.Messages[2].Text != "done" {
+		t.Fatalf("Snapshot().Messages = %#v, want repeated prompts preserved and event/response assistant collapsed", snapshot.Messages)
 	}
 }
