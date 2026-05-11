@@ -14,6 +14,7 @@ const (
 	defaultSchedulerIdleBeforeDeliverySeconds = 30
 	defaultSelfReminderTitle                  = "Self Reminder"
 	schedulerItemKindSelfReminder             = "self_reminder"
+	schedulerInboxSourceManual                = "manual"
 	schedulerInboxSourceSelfReminder          = "self_reminder"
 )
 

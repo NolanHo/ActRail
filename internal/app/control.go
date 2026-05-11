@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/domain/session"
 )
 
@@ -231,6 +232,9 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 		if !ok {
 			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 		}
+		if err := s.replaceManualInboxMirror(context.Background(), req.SessionID, state, text); err != nil {
+			return err
+		}
 		updatedRecord := record
 		updatedRecord.state = state
 		busy, _ := effectiveBusy(updatedRecord)
@@ -258,6 +262,9 @@ func (s *Stub) CancelQueue(_ context.Context, req CancelQueueRequest) (CancelQue
 		if !ok {
 			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 		}
+		if err := s.finishManualInboxMirror(context.Background(), req.SessionID, "", "cancelled", ""); err != nil {
+			return err
+		}
 		response = CancelQueueResponse{Busy: state.Busy(), Queue: queueSnapshotFromState(state)}
 		return nil
 	}); err != nil {
@@ -266,6 +273,93 @@ func (s *Stub) CancelQueue(_ context.Context, req CancelQueueRequest) (CancelQue
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
 	return response, nil
+}
+
+func (s *Stub) replaceManualInboxMirror(ctx context.Context, sessionID session.SessionID, state session.State, text string) error {
+	if s == nil || s.schedulerStore == nil {
+		return nil
+	}
+	items := state.Queue().Items()
+	if len(items) == 0 {
+		return s.finishManualInboxMirror(ctx, sessionID, "", "cancelled", "")
+	}
+	queued := items[0]
+	now := s.registry.now().UTC()
+	sourceID := manualInboxSourceID(queued.ID())
+	openItems, err := s.schedulerStore.ListInboxItems(ctx, sessionID.String(), 500)
+	if err != nil {
+		return err
+	}
+	for _, item := range openItems {
+		if item.Source != schedulerInboxSourceManual || (item.State != "pending" && item.State != "claimed") {
+			continue
+		}
+		if item.SourceID != sourceID {
+			item.State = "replaced"
+			item.UpdatedAt = now
+			if err := s.schedulerStore.UpdateInboxItem(ctx, item); err != nil {
+				return err
+			}
+			continue
+		}
+		item.Title = "Manual follow-up"
+		item.Message = strings.TrimSpace(text)
+		item.DueAt = now
+		item.State = "pending"
+		item.BlockedReason = ""
+		item.Error = ""
+		item.ClaimedAt = nil
+		item.DeliveredAt = nil
+		item.UpdatedAt = now
+		return s.schedulerStore.UpdateInboxItem(ctx, item)
+	}
+	return s.schedulerStore.InsertInboxItem(ctx, sqlitestore.InboxItemRow{
+		ItemID:    newID("inbox"),
+		SessionID: sessionID.String(),
+		Source:    schedulerInboxSourceManual,
+		SourceID:  sourceID,
+		Title:     "Manual follow-up",
+		Message:   strings.TrimSpace(text),
+		DueAt:     now,
+		State:     "pending",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+}
+
+func (s *Stub) finishManualInboxMirror(ctx context.Context, sessionID session.SessionID, sourceID string, state string, deliveredMessageID string) error {
+	if s == nil || s.schedulerStore == nil {
+		return nil
+	}
+	now := s.registry.now().UTC()
+	items, err := s.schedulerStore.ListInboxItems(ctx, sessionID.String(), 500)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.Source != schedulerInboxSourceManual || (item.State != "pending" && item.State != "claimed") {
+			continue
+		}
+		if sourceID != "" && item.SourceID != sourceID {
+			continue
+		}
+		item.State = state
+		item.UpdatedAt = now
+		item.Error = ""
+		if deliveredMessageID != "" {
+			deliveredAt := now
+			item.DeliveredMessageID = deliveredMessageID
+			item.DeliveredAt = &deliveredAt
+		}
+		if err := s.schedulerStore.UpdateInboxItem(ctx, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func manualInboxSourceID(queueID session.QueueItemID) string {
+	return "queue:" + queueID.String()
 }
 
 func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptResponse, error) {
