@@ -495,8 +495,15 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	if interrupted.Busy {
 		t.Fatalf("Interrupt() = %+v, want busy false", interrupted)
 	}
-	if len(interrupted.Queue.Items) != 1 || interrupted.Queue.Items[0].Text != "replacement queued" {
-		t.Fatalf("Interrupt().Queue = %+v, want retained queued item", interrupted.Queue.Items)
+	if len(interrupted.Queue.Items) != 0 {
+		t.Fatalf("Interrupt().Queue = %+v, want empty runtime queue", interrupted.Queue.Items)
+	}
+	inbox, err = svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(after interrupt) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].Message != "replacement queued" || inbox.Items[0].State != "pending" {
+		t.Fatalf("SessionInbox(after interrupt) = %+v, want retained pending manual item", inbox.Items)
 	}
 	if handle.InterruptCalls() != 0 {
 		t.Fatalf("handle.InterruptCalls() = %d, want 0 when Pi RPC uses abort command", handle.InterruptCalls())
@@ -511,8 +518,15 @@ func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	if state.Busy {
 		t.Fatal("SessionState().Busy after Interrupt() = true, want false")
 	}
-	if len(state.Queue.Items) != 1 || state.Queue.Items[0].Text != "replacement queued" {
-		t.Fatalf("SessionState().Queue after Interrupt() = %+v, want retained queue", state.Queue.Items)
+	if len(state.Queue.Items) != 0 {
+		t.Fatalf("SessionState().Queue after Interrupt() = %+v, want empty runtime queue", state.Queue.Items)
+	}
+	inbox, err = svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(after state check) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].Message != "replacement queued" || inbox.Items[0].State != "pending" {
+		t.Fatalf("SessionInbox(after state check) = %+v, want retained pending manual item", inbox.Items)
 	}
 
 	if err := svc.SetSessionUIRequest(sessionID, SessionUIRequestSnapshot{RequestID: "ask_1", Kind: "ask_user", Prompt: "Choose one option"}); err != nil {
