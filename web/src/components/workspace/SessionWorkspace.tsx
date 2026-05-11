@@ -129,7 +129,7 @@ function formatDiagnosticLabel(key: string): string {
     case "cwd":
       return "Working directory";
     case "queue_len":
-      return "Queue";
+      return "Inbox";
     case "display_name":
       return "Display name";
     case "agent_backend":
@@ -356,7 +356,7 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
               <CardTitle className="text-base">{panelLabel}</CardTitle>
-              <p className="text-sm text-muted-foreground">Session, runtime, queue, request, and diagnostic metadata.</p>
+              <p className="text-sm text-muted-foreground">Session, runtime, inbox, request, and diagnostic metadata.</p>
             </div>
             <Badge variant={loading ? "default" : hasWorkspaceData ? "secondary" : "outline"}>
               {loading ? "Refreshing" : hasWorkspaceData ? "Live context" : "Quiet"}
@@ -376,12 +376,12 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
 
               <BackendCapabilitiesPanel backend={activeBackend} capabilities={activeBackendCapabilities} />
 
-              <WorkspaceSection title="Queue" badge={queueItems.length ? `${queueItems.length}` : undefined}>
+              <WorkspaceSection title="Inbox" badge={queueItems.length ? `${queueItems.length}` : undefined}>
                 {queueItems.length ? (
                   <ul className="workspaceCollection space-y-2 text-sm text-foreground">
                     {queueItems.map((item) => <li key={item.id} className="rounded-xl border border-border/60 bg-card/60 px-3 py-2">{item.text}</li>)}
                   </ul>
-                ) : <p className="text-sm text-muted-foreground">No queued prompts.</p>}
+                ) : <p className="text-sm text-muted-foreground">No inbox prompts.</p>}
               </WorkspaceSection>
 
               <WorkspaceSection title="UI Requests" badge={requests.length ? `${requests.length}` : undefined}>

@@ -46,7 +46,7 @@ export function SchedulerView() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedReminderSessionId, setSelectedReminderSessionId] = useState("");
   const [selectedSupervisorSessionId, setSelectedSupervisorSessionId] = useState("");
-  const [status, setStatus] = useState("Loading scheduler...");
+  const [status, setStatus] = useState("Loading inbox...");
   const [schedulerStatus, setSchedulerStatus] = useState("");
   const [settingsDraft, setSettingsDraft] = useState("30");
   const [reminderTitle, setReminderTitle] = useState("Self Reminder");
@@ -100,12 +100,12 @@ export function SchedulerView() {
   }, []);
 
   const loadAll = useCallback(async () => {
-    setStatus("Loading scheduler...");
+    setStatus("Loading inbox...");
     try {
       await Promise.all([loadScheduler(), loadSessions(), loadProvider()]);
       setStatus("");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Unable to load scheduler");
+      setStatus(error instanceof Error ? error.message : "Unable to load inbox");
     }
   }, [loadProvider, loadScheduler, loadSessions]);
 
@@ -154,7 +154,7 @@ export function SchedulerView() {
       await loadScheduler();
       setSchedulerStatus("Saved");
     } catch (error) {
-      setSchedulerStatus(error instanceof Error ? error.message : "Unable to save scheduler settings");
+      setSchedulerStatus(error instanceof Error ? error.message : "Unable to save delivery settings");
     }
   };
 
@@ -240,12 +240,12 @@ export function SchedulerView() {
   };
 
   return (
-    <section className="teamsThreadView" aria-label="Scheduler view">
+    <section className="teamsThreadView" aria-label="Inbox view">
       <header className="teamsThreadHeader">
         <div>
           <p className="sectionEyebrow">Global view</p>
-          <h2>Scheduler</h2>
-          <p>Self-reminders, supervisor preset activity, and inbox delivery state across sessions.</p>
+          <h2>Inbox</h2>
+          <p>Manual follow-ups, self-reminders, supervisor activity, and delivery state across sessions.</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => void loadAll()}>Refresh</Button>
       </header>
@@ -253,7 +253,7 @@ export function SchedulerView() {
         <section className="workspaceCard space-y-4 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3>Scheduler controls</h3>
+              <h3>Delivery controls</h3>
               <p className="text-sm text-muted-foreground">Delivery waits until a session has been idle for this many seconds.</p>
             </div>
             <dl className="workspaceMetaGrid min-w-44">
@@ -277,7 +277,7 @@ export function SchedulerView() {
         <section className="workspaceCard space-y-4 p-4">
           <div>
             <h3>Create self-reminder</h3>
-            <p className="text-sm text-muted-foreground">Self-reminders are staged into inbox at due time and delivered when the session is idle.</p>
+            <p className="text-sm text-muted-foreground">Self-reminders enter the session inbox at due time and deliver when the session is idle.</p>
           </div>
           <div className="fieldGrid threeCol">
             <label className="fieldBlock">
@@ -388,7 +388,7 @@ export function SchedulerView() {
         </section>
 
         <section className="workspaceCard">
-          <h3>Scheduled items</h3>
+          <h3>Scheduled reminders</h3>
           {snapshot.items.length ? (
             <div className="workspaceTableWrap">
               <table className="workspaceTable">
@@ -410,7 +410,7 @@ export function SchedulerView() {
         </section>
 
         <section className="workspaceCard">
-          <h3>Inbox timeline</h3>
+          <h3>Inbox</h3>
           {snapshot.inbox.length ? (
             <div className="workspaceTableWrap">
               <table className="workspaceTable">

@@ -49,7 +49,7 @@ export function InboxDialog({ open, sessionId, onClose }: InboxDialogProps) {
           <div className="flex items-start justify-between gap-3">
             <div>
               <DialogTitle id="inbox-dialog-title">Inbox</DialogTitle>
-              <p className="text-sm text-muted-foreground">Pending and delivered scheduler messages for the active session.</p>
+              <p className="text-sm text-muted-foreground">Pending and delivered session inbox messages.</p>
             </div>
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
           </div>

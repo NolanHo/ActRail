@@ -180,7 +180,7 @@ function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit
     isHistorical ? "historical" : session.busy ? "busy" : "idle",
     !isHistorical ? healthLabel : null,
     !isHistorical && session.focused ? "focused" : null,
-    !isHistorical && session.queue_len ? `${session.queue_len} queued` : null,
+    !isHistorical && session.queue_len ? `${session.queue_len} inbox pending` : null,
   ].filter(Boolean);
   const accessibilityLabel = accessibilityParts.join(", ");
   const stopActionClick = (event: MouseEvent) => {

@@ -425,16 +425,16 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
 		? Math.max(0, Math.round(activeSession.queue_len))
 		: 0;
   const queueButtonLabel = activeSessionBusy
-    ? activeQueueCount > 0 ? `Queue next (${activeQueueCount})` : "Queue next"
-    : activeQueueCount > 0 ? `Queue ${activeQueueCount}` : "Queue";
+    ? activeQueueCount > 0 ? `Add to Inbox (${activeQueueCount})` : "Add to Inbox"
+    : activeQueueCount > 0 ? `Inbox ${activeQueueCount}` : "Add to Inbox";
   const queueButtonTitle = supervisorEnabled
     ? supervisorBlockReason
     : activeSessionBackendUnavailable
-      ? "Queue this draft until the session backend is restarted."
+      ? "Add this draft to the session inbox until the backend is restarted."
       : activeSessionBusy
-        ? "Queue this draft after the current turn."
-        : "Queue this draft instead of sending it now.";
-  const sendButtonLabel = sending ? "Sending" : activeSessionBusy ? "Send now" : "Send";
+        ? "Add this draft to the session inbox after the current turn."
+        : "Add this draft to the session inbox instead of sending it now.";
+  const sendButtonLabel = sending ? "Sending" : activeSessionBusy ? "Send Now" : "Send";
   const sendButtonTitle = activeSessionSendBlockReason || (activeSessionBusy ? "Send immediately to the busy session." : undefined);
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsCodex = activeSession?.agent_backend === "codex";
@@ -800,7 +800,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
       })
       .catch((error) => {
         composerStoreApi.setDraft(activeSessionId, queuedText);
-        setComposerActionError(composerActionErrorMessage(error, "Failed to queue message"));
+        setComposerActionError(composerActionErrorMessage(error, "Failed to add message to inbox"));
       });
   };
 
@@ -1085,7 +1085,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
                     variant="outline"
                     size="sm"
                     className="composerQueueButton"
-                    aria-label="Queue message"
+                    aria-label="Add message to inbox"
                     disabled={sending || Boolean(visibleActiveWait) || supervisorEnabled || !draft.trim()}
                     title={queueButtonTitle}
                     onClick={queueCurrentDraft}

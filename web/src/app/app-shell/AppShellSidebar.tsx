@@ -98,8 +98,8 @@ export function GlobalNavRail({
           type="button"
           variant={activeView === "scheduler" ? "default" : "outline"}
           className="globalNavButton"
-          aria-label="Scheduler view"
-          title="Scheduler"
+          aria-label="Inbox view"
+          title="Inbox"
           onClick={() => onViewChange("scheduler")}
         >
           <GlobalSchedulerIcon />
@@ -130,7 +130,7 @@ export function AppShellSidebar({
 }: AppShellSidebarProps) {
   return (
     <>
-      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "ask_user" ? <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Runtime waits</p><h2>AskUser</h2></div></header><p className="text-sm text-muted-foreground">Answer blocking runtime questions without leaving the global context.</p></div> : activeView === "teams" ? <TeamsRail selectedActorId={activeTeamId} data={teamsData} onSelect={onTeamSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Scheduler</h2></div></header><p className="text-sm text-muted-foreground">Manage self-reminders, supervisor preset activity, and inbox delivery.</p></div>}
+      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "ask_user" ? <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Runtime waits</p><h2>AskUser</h2></div></header><p className="text-sm text-muted-foreground">Answer blocking runtime questions without leaving the global context.</p></div> : activeView === "teams" ? <TeamsRail selectedActorId={activeTeamId} data={teamsData} onSelect={onTeamSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Inbox</h2></div></header><p className="text-sm text-muted-foreground">Manage session inbox delivery, self-reminders, and supervisor activity.</p></div>}
       <footer className="sidebarFooter">
         <Button type="button" variant="outline" className="footerAction"><span className="buttonGlyph">?</span><span>Help</span></Button>
         <Button type="button" variant="outline" className="footerAction" onClick={onOpenSettings}><span className="buttonGlyph">ST</span><span>Settings</span></Button>

@@ -161,9 +161,9 @@ function EmptyDetailsWorkspace() {
         <p>No diagnostics available.</p>
       </section>
       <section className="workspaceSection">
-        <h3>Queue</h3>
+        <h3>Inbox</h3>
         <ul className="workspaceList">
-          <li>No queued items</li>
+          <li>No inbox items</li>
         </ul>
       </section>
       <section className="workspaceSection">
@@ -426,7 +426,7 @@ export function AppShell() {
       items.push({ label: "Supervisor", value, tone: supervisor.status === "limit_reached" ? "error" : "attention" });
     }
     if (activeQueueCount > 0) {
-      items.push({ label: "Queue", value: String(activeQueueCount), tone: "attention" });
+      items.push({ label: "Inbox", value: String(activeQueueCount), tone: "attention" });
     }
     if (visibleActiveWait) {
       items.push({ label: "Wait", value: "user input", tone: "attention" });

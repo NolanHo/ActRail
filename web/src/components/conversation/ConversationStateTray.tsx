@@ -83,15 +83,15 @@ export function ConversationStateTray() {
   };
 
   return (
-    <section className="conversationStateTray" data-testid="conversation-state-tray" aria-label="Queued instructions">
+    <section className="conversationStateTray" data-testid="conversation-state-tray" aria-label="Inbox instructions">
       <div className="conversationQueueTray">
         <div className="conversationQueueTrayHeader">
           <div>
-            <h2>Queue</h2>
-            <p>{queueCount} queued instruction{queueCount === 1 ? "" : "s"}</p>
+            <h2>Inbox</h2>
+            <p>{queueCount} inbox instruction{queueCount === 1 ? "" : "s"}</p>
           </div>
           <Button type="button" variant="outline" size="sm" disabled={cancelling} onClick={() => { void cancelQueue(); }}>
-            {cancelling ? "Cancelling..." : "Cancel queued sends"}
+            {cancelling ? "Removing..." : "Remove from Inbox"}
           </Button>
         </div>
         {queueItems.length ? (
@@ -102,7 +102,7 @@ export function ConversationStateTray() {
             {queueItems.length > 3 ? <li className="conversationQueueTrayMore">{queueItems.length - 3} more</li> : null}
           </ol>
         ) : (
-          <p className="conversationQueueTrayFallback">Queued instructions are waiting for a controllable runtime.</p>
+          <p className="conversationQueueTrayFallback">Inbox instructions are waiting for a controllable runtime.</p>
         )}
       </div>
     </section>
