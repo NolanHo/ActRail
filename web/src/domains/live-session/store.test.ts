@@ -263,6 +263,37 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().errorBySessionId.s1).toBe("");
   });
 
+  it("retries an empty initial snapshot until history appears", async () => {
+    vi.useFakeTimers();
+    vi.mocked(api.listMessages)
+      .mockResolvedValueOnce({ items: [], tail_seq: 0 } as never)
+      .mockResolvedValueOnce({ items: [{ seq: 1, role: "user", text: "hello" }], tail_seq: 1 } as never);
+    vi.mocked(api.getSessionState).mockResolvedValue({
+      busy: false,
+      tail_seq: 0,
+      resume_cursors: { session: "0", ui: "0" },
+    } as never);
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    await liveStore.loadInitial("s1");
+
+    expect(api.listMessages).toHaveBeenCalledTimes(1);
+    expect(messagesStore.getState().loadedBySessionId.s1).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(api.listMessages).toHaveBeenCalledTimes(2);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { seq: 1, role: "user", text: "hello" },
+    ]);
+    expect(messagesStore.getState().loadedBySessionId.s1).toBe(true);
+    expect(liveStore.getState().offsetsBySessionId.s1).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(api.listMessages).toHaveBeenCalledTimes(2);
+  });
+
   it("loads broken transport snapshots into live session error state", async () => {
     vi.mocked(api.listMessages).mockResolvedValue({ items: [], tail_seq: 0 } as never);
     vi.mocked(api.getSessionState).mockResolvedValue({
