@@ -643,8 +643,9 @@ func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helpe
 		helperFlagChildEnvMode, string(childLaunchSpec.Environment().Mode()),
 	}
 	if req.Backend == session.BackendPI {
-		// Deprecated compatibility transport. New helper health/ensure and
-		// command state-machine work should use IOD's Unix socket channel.
+		// Legacy compatibility path: helper-backed Pi still delivers commands
+		// over child stdin. New command state-machine and health/ensure work
+		// should target Pi gRPC UDS or another ackable request/response channel.
 		commandArgs = append(commandArgs, helperFlagChildIOMode, string(iod.ChildIOModeStdio))
 	} else if req.Backend == session.BackendCodex {
 		commandArgs = append(commandArgs, helperFlagChildIOMode, string(iod.ChildIOModeUnix))

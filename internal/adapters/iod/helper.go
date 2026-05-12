@@ -28,9 +28,9 @@ const DefaultProtocolVersion = 1
 type ChildIOMode string
 
 const (
-	// PTY and stdio are legacy child command transports. New ensure, health,
-	// and state-machine work should use the Unix socket transport instead of
-	// prompt/stdin probing.
+	// PTY and stdio are legacy compatibility transports. New command
+	// health/ensure semantics should target ChildIOModeUnix or another
+	// request/response channel with explicit command acknowledgements.
 	ChildIOModePTY   ChildIOMode = "pty"
 	ChildIOModeStdio ChildIOMode = "stdio"
 	ChildIOModeUnix  ChildIOMode = "unix"
@@ -760,8 +760,9 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 	}
 	var writer io.Writer
 	if h.childIOMode == ChildIOModeStdio {
-		// Deprecated compatibility path: health/ensure must not infer liveness
-		// by writing to stdin.
+		// Deprecated command path: stdin has no independent health channel and
+		// can couple command writes to a busy child. Keep only for legacy Pi
+		// compatibility while new state-machine work targets UDS-backed modes.
 		writer = h.handle.Stdin()
 	} else if h.childIOMode == ChildIOModeUnix {
 		if h.childWS == nil {
@@ -773,6 +774,8 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 		}
 		return h.childWS.WriteMessage(websocket.TextMessage, data)
 	} else {
+		// Deprecated command path: PTY is an interactive compatibility fallback,
+		// not a health-checkable command transport for new session semantics.
 		writer = h.handle.PTY()
 	}
 	if writer == nil {
