@@ -48,6 +48,8 @@ export interface MessagesStore {
   subscribe(listener: () => void): () => void;
   applyLive(sessionId: string, events: MessageEvent[], options: { replace: boolean; offset?: number; hasOlder?: boolean; nextBefore?: number }): void;
   applySnapshot(sessionId: string, events: MessageEvent[], options: { offset?: number; hasOlder?: boolean; nextBefore?: number; replace?: boolean; loaded?: boolean }): void;
+  clearStreamingAssistant(sessionId: string): void;
+  hasStreamingAssistant(sessionId: string): boolean;
   loadInitial(sessionId: string): Promise<void>;
   poll(sessionId: string): Promise<void>;
   loadOlder(sessionId: string, limit?: number): Promise<void>;
@@ -511,6 +513,25 @@ export function createMessagesStore(): MessagesStore {
     emit();
   };
 
+  const clearStreamingAssistant = (sessionId: string) => {
+    const priorEvents = state.bySessionId[sessionId] ?? [];
+    const nextEvents = priorEvents.filter((event) => !isStreamingAssistantEvent(event));
+    if (nextEvents.length === priorEvents.length) {
+      return;
+    }
+    state = {
+      ...state,
+      bySessionId: {
+        ...state.bySessionId,
+        [sessionId]: nextEvents,
+      },
+    };
+    emit();
+  };
+
+  const hasStreamingAssistant = (sessionId: string) =>
+    (state.bySessionId[sessionId] ?? []).some((event) => isStreamingAssistantEvent(event));
+
   return {
     getState: () => state,
     subscribe(listener: () => void) {
@@ -527,6 +548,8 @@ export function createMessagesStore(): MessagesStore {
     },
     applyLive,
     applySnapshot,
+    clearStreamingAssistant,
+    hasStreamingAssistant,
     loadOlder(sessionId: string, limit?: number) {
       return loadOlder(sessionId, limit);
     },

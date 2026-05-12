@@ -406,6 +406,162 @@ describe("createLiveSessionStore", () => {
     }
   });
 
+  it("keeps assistant deltas when backend busy state is not known yet", async () => {
+    vi.useFakeTimers();
+    try {
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
+
+      liveStore.applyFrame({
+        type: "message.generating",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-unknown", role: "assistant", active: true },
+      });
+      liveStore.applyFrame({
+        id: "frame-unknown-1",
+        ts: 1000,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-unknown", role: "assistant", delta: "hel" },
+      });
+      liveStore.applyFrame({
+        id: "frame-unknown-2",
+        ts: 1001,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-unknown", role: "assistant", delta: "lo" },
+      });
+
+      expect(liveStore.getState().busyBySessionId.s1).toBeUndefined();
+      expect(liveStore.getState().generatingBySessionId.s1).not.toBe(true);
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(120);
+
+      expect(liveStore.getState().busyBySessionId.s1).toBeUndefined();
+      expect(liveStore.getState().generatingBySessionId.s1).not.toBe(true);
+      expect(messagesStore.getState().bySessionId.s1).toEqual([
+        {
+          event_id: "frame-unknown-1",
+          role: "assistant",
+          streaming: true,
+          completed: false,
+          stream_id: "turn-unknown",
+          turn_id: "turn-unknown",
+          text: "hello",
+          ts: 1000,
+        },
+      ]);
+
+      liveStore.applyFrame({
+        type: "session.state",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 4, busy: true, runtime_state: "running" },
+      });
+
+      expect(liveStore.getState().busyBySessionId.s1).toBe(true);
+      expect(liveStore.getState().generatingBySessionId.s1).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes unknown-state streaming deltas when backend later reports idle", async () => {
+    vi.useFakeTimers();
+    try {
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
+
+      liveStore.applyFrame({
+        id: "frame-phantom",
+        ts: 1000,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-phantom", role: "assistant", delta: "phantom" },
+      });
+      await vi.advanceTimersByTimeAsync(120);
+
+      expect(messagesStore.getState().bySessionId.s1).toHaveLength(1);
+
+      liveStore.applyFrame({
+        type: "session.state",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 2, busy: false, runtime_state: "idle" },
+      });
+
+      expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+      expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes unknown-state streaming deltas when a state snapshot later reports idle", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(api.getSessionState).mockResolvedValue({
+        busy: false,
+        runtime_state: "idle",
+        tail_seq: 0,
+        resume_cursors: { session: "2", ui: "0" },
+      } as never);
+      vi.mocked(api.listMessages).mockResolvedValue({ items: [], tail_seq: 0 } as never);
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
+
+      liveStore.applyFrame({
+        id: "frame-snapshot-phantom",
+        ts: 1000,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-snapshot-phantom", role: "assistant", delta: "phantom" },
+      });
+      await vi.advanceTimersByTimeAsync(120);
+
+      expect(messagesStore.getState().bySessionId.s1).toHaveLength(1);
+
+      await liveStore.poll("s1");
+
+      expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+      expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps flushed streaming deltas when backend later confirms busy", async () => {
+    vi.useFakeTimers();
+    try {
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
+
+      liveStore.applyFrame({
+        id: "frame-confirm-busy",
+        ts: 1000,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-confirm-busy", role: "assistant", delta: "partial" },
+      });
+      await vi.advanceTimersByTimeAsync(120);
+
+      expect(messagesStore.getState().bySessionId.s1).toHaveLength(1);
+
+      liveStore.applyFrame({
+        type: "session.state",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 2, busy: true, runtime_state: "running" },
+      });
+
+      expect(liveStore.getState().busyBySessionId.s1).toBe(true);
+      expect(liveStore.getState().generatingBySessionId.s1).toBe(true);
+      expect(messagesStore.getState().bySessionId.s1).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores stale main stream frames by stream cursor", () => {
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
