@@ -279,7 +279,7 @@ func (h *execHandle) Signal(sig os.Signal) error {
 	if proc == nil {
 		return fmt.Errorf("process %d is not available", h.pid)
 	}
-	if err := proc.Signal(sig); err != nil {
+	if err := signalProcess(proc, h.spec, sig); err != nil {
 		return fmt.Errorf("signal %d with %v: %w", h.pid, sig, err)
 	}
 	return nil
@@ -296,7 +296,7 @@ func (h *execHandle) Kill() error {
 	if proc == nil {
 		return fmt.Errorf("process %d is not available", h.pid)
 	}
-	if err := proc.Kill(); err != nil {
+	if err := killProcess(proc, h.spec); err != nil {
 		return fmt.Errorf("kill %d: %w", h.pid, err)
 	}
 	return nil
@@ -328,6 +328,7 @@ func (h *execHandle) Wait(ctx context.Context) (ExitStatus, error) {
 
 func (h *execHandle) await(cmd *exec.Cmd) {
 	err := cmd.Wait()
+	cleanupProcess(cmd.Process, h.spec)
 	result := waitResult{status: ExitStatus{errCode(err, cmd.ProcessState), signalName(cmd.ProcessState)}, err: nil}
 	if err != nil {
 		var exitErr *exec.ExitError

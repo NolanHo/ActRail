@@ -181,11 +181,10 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 	if !verified {
 		return nil
 	}
-	proc, err := os.FindProcess(h.helperPID)
-	if err != nil {
+	if _, err := os.FindProcess(h.helperPID); err != nil {
 		return fmt.Errorf("find iod helper pid %d: %w", h.helperPID, err)
 	}
-	if err := proc.Signal(os.Interrupt); err != nil {
+	if err := signalHelperPID(h.helperPID, syscall.SIGINT); err != nil {
 		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
 			return nil
 		}
@@ -195,11 +194,12 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 	defer ticker.Stop()
 	for {
 		if !processPIDAlive(h.helperPID) {
+			cleanupHelperProcessGroup(h.helperPID)
 			return nil
 		}
 		select {
 		case <-shutdownCtx.Done():
-			if err := proc.Signal(os.Kill); err != nil {
+			if err := signalHelperPID(h.helperPID, syscall.SIGKILL); err != nil {
 				if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
 					return nil
 				}
@@ -208,6 +208,25 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 		}
+	}
+}
+
+func signalHelperPID(pid int, sig syscall.Signal) error {
+	if pid <= 0 {
+		return os.ErrProcessDone
+	}
+	if err := syscall.Kill(-pid, sig); err == nil || !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return syscall.Kill(pid, sig)
+}
+
+func cleanupHelperProcessGroup(pid int) {
+	if pid <= 0 {
+		return
+	}
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return
 	}
 }
 

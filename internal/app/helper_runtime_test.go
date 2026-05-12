@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -498,6 +500,54 @@ func TestPIDOnlyIODShutdownWaitsForProcessExit(t *testing.T) {
 	}
 }
 
+func TestPIDOnlyIODShutdownTerminatesDetachedProcessGroup(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	cmd := exec.Command("sh", "-c", "sleep 30 & echo $! > \"$1\"; wait", "sh", pidFile)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("detached shell start error = %v", err)
+	}
+	childPID := waitForAppPIDFile(t, pidFile)
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Process.Kill()
+		}
+		select {
+		case <-done:
+		default:
+		}
+	})
+	sessionID := mustSessionID(t, "s_pid_group_shutdown")
+	generationID := mustHelperGenerationID(t, "g_pid_group_shutdown")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, cmd.Process.Pid, 1760000007)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	helper := &runtimeIODHelper{manifest: manifest, sessionID: sessionID, generationID: generationID, helperPID: cmd.Process.Pid}
+	if err := helper.shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown(pid-only process group) error = %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(helperStopTimeout + time.Second):
+		t.Fatal("pid-only helper process group leader still running after shutdown")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for appProcessRunning(childPID) && time.Now().Before(deadline) {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if appProcessRunning(childPID) {
+		t.Fatalf("pid-only helper process group child pid %d is still running after shutdown", childPID)
+	}
+}
+
 func TestPIDOnlyIODShutdownSkipsUnverifiedProcess(t *testing.T) {
 	cmd := exec.Command("sleep", "30")
 	if err := cmd.Start(); err != nil {
@@ -531,6 +581,40 @@ func TestPIDOnlyIODShutdownSkipsUnverifiedProcess(t *testing.T) {
 		t.Fatalf("unverified pid-only shutdown exited process unexpectedly: %v", err)
 	default:
 	}
+}
+
+func waitForAppPIDFile(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+			if parseErr != nil {
+				t.Fatalf("parse pid file %q: %v", path, parseErr)
+			}
+			return pid
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pid file %q was not written: %v", path, err)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func appProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) < 3 {
+		return false
+	}
+	return fields[2] != "Z"
 }
 
 func TestPIDOnlyIODShutdownRejectsHelloProofMismatch(t *testing.T) {
