@@ -294,7 +294,8 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
 
   const hasActiveAssistantOutput = (sessionId: string) => Boolean(
     state.generatingBySessionId[sessionId]
-    || (streamingTextBySessionId.get(sessionId)?.size ?? 0) > 0,
+    || (streamingTextBySessionId.get(sessionId)?.size ?? 0) > 0
+    || messagesStore.hasStreamingAssistant(sessionId),
   );
 
   const emit = () => {
@@ -347,6 +348,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     if (!generating) {
       clearStreamingFlushTimer(sessionId);
       streamingTextBySessionId.delete(sessionId);
+      messagesStore.clearStreamingAssistant(sessionId);
     }
     state = {
       ...state,
@@ -638,6 +640,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         if (!generating) {
           clearStreamingFlushTimer(sessionId);
           streamingTextBySessionId.delete(sessionId);
+          messagesStore.clearStreamingAssistant(sessionId);
         }
         state = {
           ...state,
@@ -671,9 +674,11 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
 
       if (type === "message.delta") {
-        if (state.busyBySessionId[sessionId] !== true) {
+        const backendBusy = state.busyBySessionId[sessionId];
+        if (backendBusy === false) {
           clearStreamingFlushTimer(sessionId);
           streamingTextBySessionId.delete(sessionId);
+          messagesStore.clearStreamingAssistant(sessionId);
           state = {
             ...state,
             streamCursorsBySessionId: {
@@ -702,10 +707,12 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.streamCursorsBySessionId,
             [sessionId]: nextCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq),
           },
-          generatingBySessionId: {
-            ...state.generatingBySessionId,
-            [sessionId]: true,
-          },
+          generatingBySessionId: backendBusy === true
+            ? {
+                ...state.generatingBySessionId,
+                [sessionId]: true,
+              }
+            : state.generatingBySessionId,
         };
         emit();
         return;
