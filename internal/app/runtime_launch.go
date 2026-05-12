@@ -643,6 +643,8 @@ func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helpe
 		helperFlagChildEnvMode, string(childLaunchSpec.Environment().Mode()),
 	}
 	if req.Backend == session.BackendPI {
+		// Deprecated compatibility transport. New helper health/ensure and
+		// command state-machine work should use IOD's Unix socket channel.
 		commandArgs = append(commandArgs, helperFlagChildIOMode, string(iod.ChildIOModeStdio))
 	} else if req.Backend == session.BackendCodex {
 		commandArgs = append(commandArgs, helperFlagChildIOMode, string(iod.ChildIOModeUnix))

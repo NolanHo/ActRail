@@ -671,6 +671,19 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
 
       if (type === "message.delta") {
+        if (state.busyBySessionId[sessionId] !== true) {
+          clearStreamingFlushTimer(sessionId);
+          streamingTextBySessionId.delete(sessionId);
+          state = {
+            ...state,
+            streamCursorsBySessionId: {
+              ...state.streamCursorsBySessionId,
+              [sessionId]: nextCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq),
+            },
+          };
+          emit();
+          return;
+        }
         const turnId = typeof payload?.turn_id === "string" && payload.turn_id.trim()
           ? payload.turn_id.trim()
           : String(frame.id || `stream_${Date.now()}`);
@@ -688,10 +701,6 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           streamCursorsBySessionId: {
             ...state.streamCursorsBySessionId,
             [sessionId]: nextCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq),
-          },
-          busyBySessionId: {
-            ...state.busyBySessionId,
-            [sessionId]: true,
           },
           generatingBySessionId: {
             ...state.generatingBySessionId,
@@ -712,14 +721,12 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.streamCursorsBySessionId,
             [sessionId]: nextCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq),
           },
-          busyBySessionId: {
-            ...state.busyBySessionId,
-            [sessionId]: active ? true : state.busyBySessionId[sessionId] === true,
-          },
-          generatingBySessionId: {
-            ...state.generatingBySessionId,
-            [sessionId]: assistantGeneration ? active : state.generatingBySessionId[sessionId] === true,
-          },
+          generatingBySessionId: assistantGeneration && state.busyBySessionId[sessionId] === true
+            ? {
+                ...state.generatingBySessionId,
+                [sessionId]: active,
+              }
+            : state.generatingBySessionId,
         };
         emit();
         return;

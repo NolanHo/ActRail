@@ -637,6 +637,170 @@ func TestHelperGenerationBreak(t *testing.T) {
 	}
 }
 
+func TestHealthRequestReturnsShallowFactsWithoutTouchingChildPromptChannel(t *testing.T) {
+	tc := newHelperTestCase(t)
+	defer tc.stop()
+
+	request := map[string]any{
+		"session_id":    tc.sessionID.String(),
+		"generation_id": tc.generationID.String(),
+		"kind":          "iod.health.request",
+	}
+	if err := tc.enc.Encode(request); err != nil {
+		t.Fatalf("encode health request error = %v", err)
+	}
+
+	raw, err := decodeRawWithin(t, tc.dec)
+	if err != nil {
+		t.Fatalf("decode health response error = %v", err)
+	}
+	if got := tc.pty.Written(); got != "" {
+		t.Fatalf("child prompt channel writes after health request = %q, want none", got)
+	}
+
+	var response struct {
+		Kind              string `json:"kind"`
+		SessionID         string `json:"session_id"`
+		GenerationID      string `json:"generation_id"`
+		HelperPID         int    `json:"helper_pid"`
+		ChildPID          int    `json:"child_pid"`
+		ChildIOMode       string `json:"child_io_mode"`
+		LegacyTransport   bool   `json:"legacy_transport"`
+		Deprecated        bool   `json:"deprecated"`
+		EnsureSupported   bool   `json:"ensure_supported"`
+		PromptProbe       bool   `json:"prompt_probe"`
+		ControlSocketPath string `json:"control_socket_path"`
+		WALPath           string `json:"wal_path"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("json.Unmarshal(health response) error = %v; raw=%s", err, raw)
+	}
+	if response.Kind != "iod.health.response" {
+		t.Fatalf("health response kind = %q, want iod.health.response; raw=%s", response.Kind, raw)
+	}
+	if response.SessionID != tc.sessionID.String() || response.GenerationID != tc.generationID.String() {
+		t.Fatalf("health identity = (%q, %q), want (%q, %q)", response.SessionID, response.GenerationID, tc.sessionID, tc.generationID)
+	}
+	if response.HelperPID <= 0 || response.ChildPID != tc.handle.PID() {
+		t.Fatalf("health pids = helper:%d child:%d, want helper>0 child=%d", response.HelperPID, response.ChildPID, tc.handle.PID())
+	}
+	if response.ChildIOMode != string(ChildIOModePTY) {
+		t.Fatalf("health child_io_mode = %q, want %q", response.ChildIOMode, ChildIOModePTY)
+	}
+	if !response.LegacyTransport || !response.Deprecated || response.EnsureSupported || response.PromptProbe {
+		t.Fatalf("health legacy semantics = legacy:%t deprecated:%t ensure:%t prompt_probe:%t, want legacy deprecated without ensure or prompt probe", response.LegacyTransport, response.Deprecated, response.EnsureSupported, response.PromptProbe)
+	}
+	if response.ControlSocketPath != tc.paths.ControlSocketPath || response.WALPath != tc.paths.WALPath {
+		t.Fatalf("health paths = (%q, %q), want (%q, %q)", response.ControlSocketPath, response.WALPath, tc.paths.ControlSocketPath, tc.paths.WALPath)
+	}
+}
+
+func TestStdioHealthMarksLegacyDeprecatedWithoutBreakingCompatibility(t *testing.T) {
+	sessionID := mustSessionID(t, "s_stdio_health")
+	generationID := mustGenerationID(t, "g_stdio_health")
+	root, err := os.MkdirTemp("", "iod-stdio-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	defer os.RemoveAll(root)
+	paths, err := NewGenerationPaths(root, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	handle := newTestHandle(4322, nil)
+	stdio := newTestStdio()
+	handle.stdin = stdio.stdin
+	handle.stdout = stdio.stdout
+	handle.stderr = stdio.stderr
+	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
+		handle.spec = spec
+		return handle
+	}}
+	command, err := process.NewCommand("/bin/test-child", "--stdio")
+	if err != nil {
+		t.Fatalf("process.NewCommand() error = %v", err)
+	}
+	env, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("process.InheritEnv() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunHelper(ctx, HelperOptions{
+			SessionID:       sessionID,
+			GenerationID:    generationID,
+			Paths:           paths,
+			Command:         command,
+			CWD:             mustAbsDir(t, paths.RuntimeDir),
+			Environment:     env,
+			ChildIOMode:     ChildIOModeStdio,
+			ProtocolVersion: 1,
+			Runner:          runner,
+			Now:             func() time.Time { return time.Unix(1760000000, 0).UTC() },
+		})
+	}()
+	waitForSocket(t, paths.ControlSocketPath)
+	conn, err := net.Dial("unix", paths.ControlSocketPath)
+	if err != nil {
+		cancel()
+		t.Fatalf("net.Dial(unix) error = %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = conn.Close()
+		stdio.close()
+		select {
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Fatalf("helper returned error = %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("helper stop timed out")
+		}
+	}()
+	dec := json.NewDecoder(conn)
+	enc := json.NewEncoder(conn)
+	var hello HelloPacket
+	if err := decodeWithin(t, dec, &hello); err != nil {
+		t.Fatalf("decode hello error = %v", err)
+	}
+	request := map[string]any{
+		"session_id":    sessionID.String(),
+		"generation_id": generationID.String(),
+		"kind":          "iod.health.request",
+	}
+	if err := enc.Encode(request); err != nil {
+		t.Fatalf("encode health request error = %v", err)
+	}
+	raw, err := decodeRawWithin(t, dec)
+	if err != nil {
+		t.Fatalf("decode health response error = %v", err)
+	}
+	if got := stdio.Written(); got != "" {
+		t.Fatalf("child stdin writes after health request = %q, want none", got)
+	}
+	var response struct {
+		Kind            string `json:"kind"`
+		ChildIOMode     string `json:"child_io_mode"`
+		LegacyTransport bool   `json:"legacy_transport"`
+		Deprecated      bool   `json:"deprecated"`
+		EnsureSupported bool   `json:"ensure_supported"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("json.Unmarshal(health response) error = %v; raw=%s", err, raw)
+	}
+	if response.Kind != "iod.health.response" {
+		t.Fatalf("health response kind = %q, want iod.health.response; raw=%s", response.Kind, raw)
+	}
+	if response.ChildIOMode != string(ChildIOModeStdio) {
+		t.Fatalf("health child_io_mode = %q, want %q", response.ChildIOMode, ChildIOModeStdio)
+	}
+	if !response.LegacyTransport || !response.Deprecated || response.EnsureSupported {
+		t.Fatalf("health stdio semantics = legacy:%t deprecated:%t ensure:%t, want deprecated legacy without new ensure support", response.LegacyTransport, response.Deprecated, response.EnsureSupported)
+	}
+}
+
 type helperTestCase struct {
 	t                 *testing.T
 	sessionID         session.SessionID
@@ -985,6 +1149,9 @@ type testHandle struct {
 	pid     int
 	spec    process.LaunchSpec
 	pty     process.PTY
+	stdin   io.WriteCloser
+	stdout  io.ReadCloser
+	stderr  io.ReadCloser
 	waitCh  chan struct{}
 	wait    process.ExitStatus
 	waitErr error
@@ -997,9 +1164,9 @@ func newTestHandle(pid int, pty process.PTY) *testHandle {
 func (h *testHandle) PID() int                 { return h.pid }
 func (h *testHandle) Spec() process.LaunchSpec { return h.spec }
 func (h *testHandle) Logs() process.LogPaths   { return process.LogPaths{} }
-func (h *testHandle) Stdin() io.WriteCloser    { return nil }
-func (h *testHandle) Stdout() io.ReadCloser    { return nil }
-func (h *testHandle) Stderr() io.ReadCloser    { return nil }
+func (h *testHandle) Stdin() io.WriteCloser    { return h.stdin }
+func (h *testHandle) Stdout() io.ReadCloser    { return h.stdout }
+func (h *testHandle) Stderr() io.ReadCloser    { return h.stderr }
 func (h *testHandle) PTY() process.PTY         { return h.pty }
 func (h *testHandle) Signal(os.Signal) error   { return nil }
 func (h *testHandle) Interrupt() error         { return nil }
@@ -1014,6 +1181,65 @@ func (h *testHandle) Wait(ctx context.Context) (process.ExitStatus, error) {
 		defer h.mu.Unlock()
 		return h.wait, h.waitErr
 	}
+}
+
+type testStdio struct {
+	stdinReader  *io.PipeReader
+	stdin        *recordingWriteCloser
+	stdout       *io.PipeReader
+	stdoutWriter *io.PipeWriter
+	stderr       *io.PipeReader
+	stderrWriter *io.PipeWriter
+}
+
+func newTestStdio() *testStdio {
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	stderrReader, stderrWriter := io.Pipe()
+	return &testStdio{
+		stdinReader:  stdinReader,
+		stdin:        &recordingWriteCloser{writer: stdinWriter},
+		stdout:       stdoutReader,
+		stdoutWriter: stdoutWriter,
+		stderr:       stderrReader,
+		stderrWriter: stderrWriter,
+	}
+}
+
+func (s *testStdio) Written() string {
+	return s.stdin.Written()
+}
+
+func (s *testStdio) close() {
+	_ = s.stdin.Close()
+	_ = s.stdinReader.Close()
+	_ = s.stdout.Close()
+	_ = s.stdoutWriter.Close()
+	_ = s.stderr.Close()
+	_ = s.stderrWriter.Close()
+}
+
+type recordingWriteCloser struct {
+	writer *io.PipeWriter
+	mu     sync.Mutex
+	writes bytes.Buffer
+}
+
+func (w *recordingWriteCloser) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	_, _ = w.writes.Write(data)
+	w.mu.Unlock()
+	return len(data), nil
+}
+
+func (w *recordingWriteCloser) Close() error {
+	return w.writer.Close()
+}
+
+func (w *recordingWriteCloser) Written() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writes.String()
 }
 
 func (h *testHandle) SetWaitResult(status process.ExitStatus, err error) {
