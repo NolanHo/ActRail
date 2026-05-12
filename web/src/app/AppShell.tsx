@@ -370,15 +370,14 @@ export function AppShell() {
     ? listedRuntimeState
     : liveRuntimeState || listedRuntimeState;
   const activeSessionTerminalRuntime = activeRuntimeState === "failed" || activeRuntimeState === "ended";
-  const activeSessionGenerating = Boolean(activeSessionId && !activeSessionTerminalRuntime && liveActiveSessionState.generating === true);
   const activeSessionHasLiveBusy = Boolean(activeSessionId && liveActiveSessionState.hasBusy);
   const activeSessionLiveBusy = Boolean(activeSessionId && !activeSessionTerminalRuntime && liveActiveSessionState.busy === true);
   const visibleActiveWait = activeWait ?? activeSession?.active_wait ?? null;
   const activeSessionBusy = Boolean(
     !activeSessionTerminalRuntime
-    && (activeSessionGenerating
-      || (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true)),
+    && (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true),
   );
+  const activeSessionGenerating = Boolean(activeSessionBusy && liveActiveSessionState.generating === true);
   const activeTitle = activeSession
     ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
     : "No session selected";

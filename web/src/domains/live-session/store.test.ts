@@ -13,6 +13,7 @@ vi.mock("../../lib/api", () => ({
 describe("createLiveSessionStore", () => {
   afterEach(() => {
     vi.resetAllMocks();
+    vi.useRealTimers();
   });
 
   it("loads canonical state snapshots into pending ui state, partial turns, and resume cursors", async () => {
@@ -321,14 +322,19 @@ describe("createLiveSessionStore", () => {
     liveStore.setBufferAssistantOutput(true);
 
     liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, busy: true },
+    });
+    liveStore.applyFrame({
       type: "message.generating",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", active: true },
+      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", active: true },
     });
     liveStore.applyFrame({
       type: "message.delta",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", delta: "partial" },
+      payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-1", role: "assistant", delta: "partial" },
     });
 
     expect(liveStore.getState().busyBySessionId.s1).toBe(true);
@@ -340,7 +346,7 @@ describe("createLiveSessionStore", () => {
       stream: "session:s1",
       payload: {
         session_id: "s1",
-        stream_seq: 3,
+        stream_seq: 4,
         turn_id: "turn-1",
         message: { seq: 1, role: "assistant", text: "final" },
       },
@@ -358,18 +364,23 @@ describe("createLiveSessionStore", () => {
       const liveStore = createLiveSessionStore(messagesStore);
 
       liveStore.applyFrame({
+        type: "session.state",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, busy: true },
+      });
+      liveStore.applyFrame({
         id: "frame-1",
         ts: 1000,
         type: "message.delta",
         stream: "session:s1",
-        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", delta: "hel" },
+        payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", delta: "hel" },
       });
       liveStore.applyFrame({
         id: "frame-2",
         ts: 1001,
         type: "message.delta",
         stream: "session:s1",
-        payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", delta: "lo" },
+        payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-1", role: "assistant", delta: "lo" },
       });
 
       expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
@@ -425,19 +436,24 @@ describe("createLiveSessionStore", () => {
     const liveStore = createLiveSessionStore(messagesStore);
 
     liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, busy: true },
+    });
+    liveStore.applyFrame({
       type: "message.delta",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", delta: "partial" },
+      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", delta: "partial" },
     });
     liveStore.applyFrame({
       type: "message.commit",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", message: { seq: 1, type: "tool", text: "bash" } },
+      payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-1", message: { seq: 1, type: "tool", text: "bash" } },
     });
     liveStore.applyFrame({
       type: "message.generating",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-1", role: "", active: false },
+      payload: { session_id: "s1", stream_seq: 4, turn_id: "turn-1", role: "", active: false },
     });
 
     expect(liveStore.getState().generatingBySessionId.s1).toBe(true);
@@ -445,7 +461,7 @@ describe("createLiveSessionStore", () => {
     liveStore.applyFrame({
       type: "message.commit",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 4, turn_id: "turn-1", message: { seq: 2, role: "assistant", text: "final" } },
+      payload: { session_id: "s1", stream_seq: 5, turn_id: "turn-1", message: { seq: 2, role: "assistant", text: "final" } },
     });
 
     expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
@@ -456,14 +472,19 @@ describe("createLiveSessionStore", () => {
     const liveStore = createLiveSessionStore(messagesStore);
 
     liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, busy: true },
+    });
+    liveStore.applyFrame({
       type: "message.delta",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-1", role: "assistant", delta: "partial" },
+      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", delta: "partial" },
     });
     liveStore.applyFrame({
       type: "message.commit",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", message: { seq: 1, role: "assistant", text: "checking", details: { phase: "commentary" } } },
+      payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-1", message: { seq: 1, role: "assistant", text: "checking", details: { phase: "commentary" } } },
     });
 
     expect(liveStore.getState().generatingBySessionId.s1).toBe(true);
@@ -474,7 +495,7 @@ describe("createLiveSessionStore", () => {
     liveStore.applyFrame({
       type: "message.commit",
       stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 3, turn_id: "turn-1", message: { seq: 2, role: "assistant", text: "done", details: { phase: "final_answer" } } },
+      payload: { session_id: "s1", stream_seq: 4, turn_id: "turn-1", message: { seq: 2, role: "assistant", text: "done", details: { phase: "final_answer" } } },
     });
 
     expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
@@ -498,6 +519,46 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().busyBySessionId.s1).toBe(false);
     expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
     expect(liveStore.getState().runtimeStateBySessionId.s1).toBe("idle");
+  });
+
+  it("does not become busy or append streaming output from assistant delta or generating frames after backend state reports idle", async () => {
+    vi.useFakeTimers();
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 10, busy: false, runtime_state: "idle" },
+    });
+    liveStore.applyFrame({
+      type: "message.delta",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 11, turn_id: "turn-stale", role: "assistant", delta: "late" },
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    liveStore.applyFrame({
+      type: "message.generating",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 12, turn_id: "turn-stale", role: "assistant", active: true },
+    });
+
+    expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+    expect(liveStore.getState().runtimeStateBySessionId.s1).toBe("idle");
+    expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+
+    liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 13, busy: true, runtime_state: "running" },
+    });
+
+    expect(liveStore.getState().busyBySessionId.s1).toBe(true);
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+    expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+
+    vi.useRealTimers();
   });
 
   it("applies generation broken and transport reset frames", () => {

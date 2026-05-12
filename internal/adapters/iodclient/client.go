@@ -110,6 +110,34 @@ func (c *Client) Command(ctx context.Context, packet iod.CommandPacket) (Command
 	}
 }
 
+func (c *Client) Health(ctx context.Context, request iod.HealthRequestPacket) (iod.HealthResponsePacket, error) {
+	if err := request.Validate(); err != nil {
+		return iod.HealthResponsePacket{}, err
+	}
+	if err := c.writePacket(ctx, request); err != nil {
+		return iod.HealthResponsePacket{}, err
+	}
+	for {
+		packet, err := c.readPacket(ctx)
+		if err != nil {
+			return iod.HealthResponsePacket{}, err
+		}
+		switch v := packet.(type) {
+		case iod.StatePacket, iod.GenerationBreakPacket:
+			continue
+		case iod.HealthResponsePacket:
+			if v.SessionID != request.SessionID || v.GenerationID != request.GenerationID {
+				return iod.HealthResponsePacket{}, fmt.Errorf("health response does not match %q/%q", request.SessionID, request.GenerationID)
+			}
+			return v, nil
+		case iod.ErrorPacket:
+			return iod.HealthResponsePacket{}, HelperError{Packet: v}
+		default:
+			return iod.HealthResponsePacket{}, fmt.Errorf("unexpected health response %T", packet)
+		}
+	}
+}
+
 func (c *Client) SessionHistory(ctx context.Context, request iod.SessionHistoryRequestPacket) (iod.SessionHistoryResponsePacket, error) {
 	if err := request.Validate(); err != nil {
 		return iod.SessionHistoryResponsePacket{}, err
@@ -265,6 +293,12 @@ func decodePacket(raw json.RawMessage) (any, error) {
 	case iod.PacketHello:
 		var packet iod.HelloPacket
 		return packet, decodeInto(raw, &packet)
+	case iod.PacketHealthRequest:
+		var packet iod.HealthRequestPacket
+		return packet, decodeInto(raw, &packet)
+	case iod.PacketHealthResponse:
+		var packet iod.HealthResponsePacket
+		return packet, decodeInto(raw, &packet)
 	case iod.PacketState:
 		var packet iod.StatePacket
 		return packet, decodeInto(raw, &packet)
@@ -319,6 +353,10 @@ func decodeInto(raw json.RawMessage, dst interface{ Validate() error }) error {
 func validatePacket(packet any) error {
 	switch v := packet.(type) {
 	case iod.CommandPacket:
+		return v.Validate()
+	case iod.HealthRequestPacket:
+		return v.Validate()
+	case iod.HealthResponsePacket:
 		return v.Validate()
 	case iod.ReplayRequestPacket:
 		return v.Validate()

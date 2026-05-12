@@ -28,6 +28,9 @@ const DefaultProtocolVersion = 1
 type ChildIOMode string
 
 const (
+	// PTY and stdio are legacy child command transports. New ensure, health,
+	// and state-machine work should use the Unix socket transport instead of
+	// prompt/stdin probing.
 	ChildIOModePTY   ChildIOMode = "pty"
 	ChildIOModeStdio ChildIOMode = "stdio"
 	ChildIOModeUnix  ChildIOMode = "unix"
@@ -548,6 +551,12 @@ func (h *Helper) dispatch(hc *helperConn, raw json.RawMessage) error {
 		return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
 	}
 	switch env.Kind {
+	case PacketHealthRequest:
+		var request HealthRequestPacket
+		if err := json.Unmarshal(raw, &request); err != nil {
+			return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
+		}
+		return h.handleHealth(hc, request)
 	case PacketReplayRequest:
 		var request ReplayRequestPacket
 		if err := json.Unmarshal(raw, &request); err != nil {
@@ -569,6 +578,35 @@ func (h *Helper) dispatch(hc *helperConn, raw json.RawMessage) error {
 	default:
 		return h.sendError(hc, true, ErrorUnsupportedCommandKind, fmt.Sprintf("packet kind %q is not supported by helper", env.Kind), nil)
 	}
+}
+
+func (h *Helper) handleHealth(hc *helperConn, request HealthRequestPacket) error {
+	if err := request.Validate(); err != nil {
+		return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
+	}
+	childPID := 0
+	if h.proof.ChildPID != nil {
+		childPID = *h.proof.ChildPID
+	} else if h.handle != nil {
+		childPID = h.handle.PID()
+	}
+	legacy := h.childIOMode == ChildIOModeStdio || h.childIOMode == ChildIOModePTY
+	response, err := NewHealthResponsePacket(h.sessionID, h.generationID, HealthResponsePacket{
+		OK:                h.handle != nil && !h.isBroken() && !h.isChildExitStarted() && !h.isChildExited(),
+		HelperPID:         h.proof.HelperPID,
+		ChildPID:          childPID,
+		ChildIOMode:       string(h.childIOMode),
+		LegacyTransport:   legacy,
+		Deprecated:        legacy,
+		EnsureSupported:   h.childIOMode == ChildIOModeUnix,
+		PromptProbe:       false,
+		ControlSocketPath: h.proof.ControlSocketPath,
+		WALPath:           h.proof.WALPath,
+	})
+	if err != nil {
+		return err
+	}
+	return h.writePacket(hc, response)
 }
 
 func (h *Helper) handleSessionHistory(hc *helperConn, request SessionHistoryRequestPacket) error {
@@ -722,6 +760,8 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 	}
 	var writer io.Writer
 	if h.childIOMode == ChildIOModeStdio {
+		// Deprecated compatibility path: health/ensure must not infer liveness
+		// by writing to stdin.
 		writer = h.handle.Stdin()
 	} else if h.childIOMode == ChildIOModeUnix {
 		if h.childWS == nil {

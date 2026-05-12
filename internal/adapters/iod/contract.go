@@ -69,6 +69,8 @@ type PacketKind string
 
 const (
 	PacketHello                   PacketKind = "iod.hello"
+	PacketHealthRequest           PacketKind = "iod.health.request"
+	PacketHealthResponse          PacketKind = "iod.health.response"
 	PacketState                   PacketKind = "iod.state"
 	PacketCommandSend             PacketKind = "iod.command.send"
 	PacketCommandEnqueue          PacketKind = "iod.command.enqueue"
@@ -96,6 +98,8 @@ func ParsePacketKind(raw string) (PacketKind, error) {
 func (k PacketKind) Validate() error {
 	switch k {
 	case PacketHello,
+		PacketHealthRequest,
+		PacketHealthResponse,
 		PacketState,
 		PacketCommandSend,
 		PacketCommandEnqueue,
@@ -380,6 +384,89 @@ func (p HelloPacket) Validate() error {
 		return fmt.Errorf("protocol version must be greater than zero")
 	}
 	return p.HelloProof.Validate()
+}
+
+// HealthRequestPacket asks the helper for shallow local transport facts.
+// It must not touch child prompt/stdout/stderr channels.
+type HealthRequestPacket struct {
+	Envelope
+}
+
+func NewHealthRequestPacket(sessionID session.SessionID, generationID GenerationID) (HealthRequestPacket, error) {
+	env, err := NewEnvelope(sessionID, generationID, PacketHealthRequest)
+	if err != nil {
+		return HealthRequestPacket{}, err
+	}
+	packet := HealthRequestPacket{Envelope: env}
+	if err := packet.Validate(); err != nil {
+		return HealthRequestPacket{}, err
+	}
+	return packet, nil
+}
+
+func (p HealthRequestPacket) Validate() error {
+	if err := p.Envelope.Validate(); err != nil {
+		return err
+	}
+	if p.Kind != PacketHealthRequest {
+		return fmt.Errorf("health request kind = %q, want %q", p.Kind, PacketHealthRequest)
+	}
+	return nil
+}
+
+// HealthResponsePacket reports shallow helper-owned liveness facts.
+// Deprecated/legacy transport flags describe whether the child command channel
+// is suitable for new request/response health and command-state-machine work.
+type HealthResponsePacket struct {
+	Envelope
+	OK                bool   `json:"ok"`
+	HelperPID         int    `json:"helper_pid"`
+	ChildPID          int    `json:"child_pid,omitempty"`
+	ChildIOMode       string `json:"child_io_mode"`
+	LegacyTransport   bool   `json:"legacy_transport"`
+	Deprecated        bool   `json:"deprecated"`
+	EnsureSupported   bool   `json:"ensure_supported"`
+	PromptProbe       bool   `json:"prompt_probe"`
+	ControlSocketPath string `json:"control_socket_path"`
+	WALPath           string `json:"wal_path"`
+}
+
+func NewHealthResponsePacket(sessionID session.SessionID, generationID GenerationID, response HealthResponsePacket) (HealthResponsePacket, error) {
+	env, err := NewEnvelope(sessionID, generationID, PacketHealthResponse)
+	if err != nil {
+		return HealthResponsePacket{}, err
+	}
+	packet := response
+	packet.Envelope = env
+	if err := packet.Validate(); err != nil {
+		return HealthResponsePacket{}, err
+	}
+	return packet, nil
+}
+
+func (p HealthResponsePacket) Validate() error {
+	if err := p.Envelope.Validate(); err != nil {
+		return err
+	}
+	if p.Kind != PacketHealthResponse {
+		return fmt.Errorf("health response kind = %q, want %q", p.Kind, PacketHealthResponse)
+	}
+	if p.HelperPID <= 0 {
+		return fmt.Errorf("helper pid must be greater than zero")
+	}
+	if strings.TrimSpace(p.ChildIOMode) == "" {
+		return fmt.Errorf("child io mode is required")
+	}
+	if strings.TrimSpace(p.ControlSocketPath) == "" {
+		return fmt.Errorf("control socket path is required")
+	}
+	if strings.TrimSpace(p.WALPath) == "" {
+		return fmt.Errorf("wal path is required")
+	}
+	if p.PromptProbe {
+		return fmt.Errorf("health response must not report prompt probe")
+	}
+	return nil
 }
 
 // HelperFact is one helper-owned fact shared by live iod.state and replay items.
