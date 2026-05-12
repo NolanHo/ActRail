@@ -578,6 +578,11 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       streamingFlushTimersByStream.delete(key);
     }
   };
+  const clearStreamingArtifacts = (sessionId: string) => {
+    clearStreamingFlushTimer(sessionId);
+    streamingTextBySessionId.delete(sessionId);
+    messagesStore.clearStreamingAssistant(sessionId);
+  };
   const scheduleStreamingFlush = (sessionId: string, turnId: string, frame: RealtimeEnvelope, payload: Record<string, unknown>, text: string) => {
     if (typeof window === "undefined") {
       appendStreamingAssistantEvent(sessionId, turnId, frame, payload, text);
@@ -638,9 +643,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         const busy = transportBusyValue(payload, payload?.busy === true);
         const generating = busy && hasActiveAssistantOutput(sessionId);
         if (!generating) {
-          clearStreamingFlushTimer(sessionId);
-          streamingTextBySessionId.delete(sessionId);
-          messagesStore.clearStreamingAssistant(sessionId);
+          clearStreamingArtifacts(sessionId);
         }
         state = {
           ...state,
@@ -676,9 +679,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       if (type === "message.delta") {
         const backendBusy = state.busyBySessionId[sessionId];
         if (backendBusy === false) {
-          clearStreamingFlushTimer(sessionId);
-          streamingTextBySessionId.delete(sessionId);
-          messagesStore.clearStreamingAssistant(sessionId);
+          clearStreamingArtifacts(sessionId);
           state = {
             ...state,
             streamCursorsBySessionId: {
@@ -824,6 +825,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
 
       if (type === "session.generation.broken") {
+        clearStreamingArtifacts(sessionId);
         state = {
           ...state,
           streamCursorsBySessionId: {
@@ -854,6 +856,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
 
       if (type === "transport.reset_required") {
+        clearStreamingArtifacts(sessionId);
         state = {
           ...state,
           errorBySessionId: {
@@ -887,8 +890,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
     },
     resetSession(sessionId: string) {
-      clearStreamingFlushTimer(sessionId);
-      streamingTextBySessionId.delete(sessionId);
+      clearStreamingArtifacts(sessionId);
       state = {
         ...state,
         streamCursorsBySessionId: {
