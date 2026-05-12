@@ -679,42 +679,129 @@ describe("createLiveSessionStore", () => {
 
   it("does not become busy or append streaming output from assistant delta or generating frames after backend state reports idle", async () => {
     vi.useFakeTimers();
-    const messagesStore = createMessagesStore();
-    const liveStore = createLiveSessionStore(messagesStore);
+    try {
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
 
-    liveStore.applyFrame({
-      type: "session.state",
-      stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 10, busy: false, runtime_state: "idle" },
-    });
-    liveStore.applyFrame({
-      type: "message.delta",
-      stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 11, turn_id: "turn-stale", role: "assistant", delta: "late" },
-    });
-    await vi.advanceTimersByTimeAsync(200);
-    liveStore.applyFrame({
-      type: "message.generating",
-      stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 12, turn_id: "turn-stale", role: "assistant", active: true },
-    });
+      liveStore.applyFrame({
+        type: "session.state",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 10, busy: false, runtime_state: "idle" },
+      });
+      liveStore.applyFrame({
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 11, turn_id: "turn-stale", role: "assistant", delta: "late" },
+      });
+      await vi.advanceTimersByTimeAsync(200);
+      liveStore.applyFrame({
+        type: "message.generating",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 12, turn_id: "turn-stale", role: "assistant", active: true },
+      });
 
-    expect(liveStore.getState().busyBySessionId.s1).toBe(false);
-    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
-    expect(liveStore.getState().runtimeStateBySessionId.s1).toBe("idle");
-    expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+      expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+      expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+      expect(liveStore.getState().runtimeStateBySessionId.s1).toBe("idle");
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
 
-    liveStore.applyFrame({
-      type: "session.state",
-      stream: "session:s1",
-      payload: { session_id: "s1", stream_seq: 13, busy: true, runtime_state: "running" },
-    });
+      liveStore.applyFrame({
+        type: "session.state",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 13, busy: true, runtime_state: "running" },
+      });
 
-    expect(liveStore.getState().busyBySessionId.s1).toBe(true);
-    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
-    expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+      expect(liveStore.getState().busyBySessionId.s1).toBe(true);
+      expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    vi.useRealTimers();
+  it("clears pending streaming deltas when generation breaks before flush", async () => {
+    vi.useFakeTimers();
+    try {
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
+
+      liveStore.applyFrame({
+        id: "frame-broken-pending",
+        ts: 1000,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-broken", role: "assistant", delta: "phantom" },
+      });
+      liveStore.applyFrame({
+        type: "session.generation.broken",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 2, generation_id: "g-1", reason: "write_failed" },
+      });
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+      expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+      expect(liveStore.getState().errorBySessionId.s1).toBe("write_failed");
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears flushed streaming deltas when transport reset is required", async () => {
+    vi.useFakeTimers();
+    try {
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
+
+      liveStore.applyFrame({
+        id: "frame-reset-flushed",
+        ts: 1000,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-reset", role: "assistant", delta: "phantom" },
+      });
+      await vi.advanceTimersByTimeAsync(120);
+
+      expect(messagesStore.getState().bySessionId.s1).toHaveLength(1);
+
+      liveStore.applyFrame({
+        type: "transport.reset_required",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 2, reason: "attach_lost" },
+      });
+
+      expect(liveStore.getState().busyBySessionId.s1).toBe(false);
+      expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resetSession clears flushed streaming deltas", async () => {
+    vi.useFakeTimers();
+    try {
+      const messagesStore = createMessagesStore();
+      const liveStore = createLiveSessionStore(messagesStore);
+
+      liveStore.applyFrame({
+        id: "frame-reset-session",
+        ts: 1000,
+        type: "message.delta",
+        stream: "session:s1",
+        payload: { session_id: "s1", stream_seq: 1, turn_id: "turn-reset-session", role: "assistant", delta: "phantom" },
+      });
+      await vi.advanceTimersByTimeAsync(120);
+
+      expect(messagesStore.getState().bySessionId.s1).toHaveLength(1);
+
+      liveStore.resetSession("s1");
+
+      expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("applies generation broken and transport reset frames", () => {
