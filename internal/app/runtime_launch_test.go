@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -573,6 +574,101 @@ func TestNewRuntimeLauncherResolvesIODRuntimeRootToAbsolutePath(t *testing.T) {
 	}
 	if processLauncher.iodRuntimeRoot != want {
 		t.Fatalf("iod runtime root = %q, want %q", processLauncher.iodRuntimeRoot, want)
+	}
+}
+
+func TestDefaultRuntimeGenerationIDUsesStableCurrentSlot(t *testing.T) {
+	sessionID := mustSessionID(t, "s_stable_generation")
+	first, err := defaultRuntimeGenerationID(sessionID)
+	if err != nil {
+		t.Fatalf("defaultRuntimeGenerationID(first) error = %v", err)
+	}
+	second, err := defaultRuntimeGenerationID(sessionID)
+	if err != nil {
+		t.Fatalf("defaultRuntimeGenerationID(second) error = %v", err)
+	}
+	if first.String() != defaultHelperGeneration || second != first {
+		t.Fatalf("default generation ids = (%q, %q), want stable %q", first, second, defaultHelperGeneration)
+	}
+}
+
+func TestRuntimeLauncherCleansStableGenerationArtifactsBeforeStartingNewHelper(t *testing.T) {
+	sessionID := mustSessionID(t, "s_clean_stable_generation")
+	runtimeRoot := t.TempDir()
+	generationID, err := defaultRuntimeGenerationID(sessionID)
+	if err != nil {
+		t.Fatalf("defaultRuntimeGenerationID() error = %v", err)
+	}
+	paths, err := iod.NewGenerationPaths(runtimeRoot, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	staleFile := filepath.Join(paths.RuntimeDir, "stale.sock")
+	if err := os.MkdirAll(paths.RuntimeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", paths.RuntimeDir, err)
+	}
+	if err := os.WriteFile(staleFile, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", staleFile, err)
+	}
+	startErr := errors.New("stop before helper start")
+	launcher := newRuntimeLauncher(RuntimeConfig{
+		IODRuntimeRoot:          runtimeRoot,
+		UseIODHelper:            true,
+		Runner:                  &process.FakeRunner{StartErr: startErr},
+		ResolveIODHelperBinPath: func() (string, error) { return "/tmp/actrail-iod", nil },
+		ResolveBinPath:          func(session.Backend) (string, error) { return "/tmp/codex", nil },
+	})
+
+	_, err = launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir()})
+	if !errors.Is(err, startErr) {
+		t.Fatalf("Launch() error = %v, want %v", err, startErr)
+	}
+	if _, err := os.Stat(staleFile); !os.IsNotExist(err) {
+		t.Fatalf("Stat(%q) error = %v, want stale stable-generation artifact removed", staleFile, err)
+	}
+}
+
+func TestRuntimeLauncherShutsDownStaleStableGenerationManifestBeforeReuse(t *testing.T) {
+	sessionID := mustSessionID(t, "s_shutdown_stable_generation")
+	runtimeRoot := filepath.Join("/tmp", fmt.Sprintf("arslot-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(runtimeRoot) })
+	generationID, err := defaultRuntimeGenerationID(sessionID)
+	if err != nil {
+		t.Fatalf("defaultRuntimeGenerationID() error = %v", err)
+	}
+	paths, err := iod.NewGenerationPaths(runtimeRoot, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	if err := os.MkdirAll(paths.RuntimeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", paths.RuntimeDir, err)
+	}
+	proof, err := iod.NewHelloProof(999999, nil, paths.WALPath, paths.ControlSocketPath, 1760000006)
+	if err != nil {
+		t.Fatalf("NewHelloProof() error = %v", err)
+	}
+	manifest, err := iod.NewGenerationManifest(sessionID, generationID, proof)
+	if err != nil {
+		t.Fatalf("NewGenerationManifest() error = %v", err)
+	}
+	if err := iod.WriteGenerationManifest(paths.ManifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", paths.ManifestPath, err)
+	}
+	startErr := errors.New("stop before helper start")
+	launcher := newRuntimeLauncher(RuntimeConfig{
+		IODRuntimeRoot:          runtimeRoot,
+		UseIODHelper:            true,
+		Runner:                  &process.FakeRunner{StartErr: startErr},
+		ResolveIODHelperBinPath: func() (string, error) { return "/tmp/actrail-iod", nil },
+		ResolveBinPath:          func(session.Backend) (string, error) { return "/tmp/codex", nil },
+	})
+
+	_, err = launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir(), ForceNewIOD: true})
+	if !errors.Is(err, startErr) {
+		t.Fatalf("Launch() error = %v, want %v", err, startErr)
+	}
+	if _, err := os.Stat(paths.ManifestPath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(%q) error = %v, want stale stable-generation manifest removed", paths.ManifestPath, err)
 	}
 }
 

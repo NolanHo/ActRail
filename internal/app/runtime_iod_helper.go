@@ -273,6 +273,29 @@ func shutdownIODManifest(ctx context.Context, manifest iod.GenerationManifest) e
 	return helper.shutdown(ctx)
 }
 
+func shutdownRuntimeGenerationFromManifest(ctx context.Context, manifestPath string, sessionID session.SessionID, generationID iod.GenerationID) error {
+	trimmed := strings.TrimSpace(manifestPath)
+	if trimmed == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(trimmed)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read helper manifest %q before stable generation reuse: %w", trimmed, err)
+	}
+	var manifest iod.GenerationManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return fmt.Errorf("decode helper manifest %q before stable generation reuse: %w", trimmed, err)
+	}
+	if manifest.SessionID != sessionID || manifest.GenerationID != generationID {
+		return nil
+	}
+	_ = shutdownIODManifest(ctx, manifest)
+	return nil
+}
+
 func removeRuntimeGenerationArtifacts(runtimeDir string) error {
 	trimmed := strings.TrimSpace(runtimeDir)
 	if trimmed == "" {

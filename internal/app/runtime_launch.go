@@ -102,6 +102,7 @@ const (
 	runtimeProtocolCodexRPC runtimeProtocol = "codex_rpc"
 
 	helperReadyPollInterval = 25 * time.Millisecond
+	defaultHelperGeneration = "g_current"
 
 	helperFlagSessionID          = "-session-id"
 	helperFlagGenerationID       = "-generation-id"
@@ -297,7 +298,7 @@ func defaultRuntimeGenerationID(sessionID session.SessionID) (iod.GenerationID, 
 	if err := sessionID.Validate(); err != nil {
 		return "", err
 	}
-	return iod.NewGenerationID(fmt.Sprintf("g_%d", time.Now().UTC().UnixNano()))
+	return iod.NewGenerationID(defaultHelperGeneration)
 }
 
 func runtimeProtocolForBackend(backend session.Backend) runtimeProtocol {
@@ -477,6 +478,12 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	}
 	paths, err := iod.NewGenerationPaths(runtimeRoot, req.SessionID, generationID)
 	if err != nil {
+		return sessionRuntime{}, err
+	}
+	if err := shutdownRuntimeGenerationFromManifest(ctx, paths.ManifestPath, req.SessionID, generationID); err != nil {
+		return sessionRuntime{}, err
+	}
+	if err := removeRuntimeGenerationArtifacts(paths.RuntimeDir); err != nil {
 		return sessionRuntime{}, err
 	}
 	childLaunchSpec, err := l.childLaunchSpecForGeneration(req, &paths)
