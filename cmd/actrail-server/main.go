@@ -77,6 +77,7 @@ func main() {
 	go service.RunSupervisorScheduler(ctx)
 	go service.RunSchedulerDeliverySweep(ctx)
 	go service.RunWaitTimeoutSweep(ctx)
+	go service.RunSessionStateHeartbeat(ctx)
 	go func() {
 		if err := service.RestoreSurvivingRuntimes(ctx); err != nil {
 			logger.Error("actrail runtime restore failed", zap.Error(err))

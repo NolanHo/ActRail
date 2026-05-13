@@ -147,6 +147,67 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	}
 }
 
+func TestStubEmitAllSessionStatesPublishesCurrentSnapshots(t *testing.T) {
+	cfg := config.Load()
+	now := time.Unix(1760000000, 0).UTC()
+	svc := newStub(cfg, func() time.Time { return now })
+	sink := &captureRuntimeSink{}
+	svc.SetRuntimeEventSink(sink)
+
+	first, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/repo/a"})
+	if err != nil {
+		t.Fatalf("CreateSession(first) error = %v", err)
+	}
+	second, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/repo/b"})
+	if err != nil {
+		t.Fatalf("CreateSession(second) error = %v", err)
+	}
+	firstID, err := session.ParseSessionID(first.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID(first) error = %v", err)
+	}
+	secondID, err := session.ParseSessionID(second.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID(second) error = %v", err)
+	}
+	if _, err := svc.AppendSessionMessage(firstID, "user", "message", "work on this"); err != nil {
+		t.Fatalf("AppendSessionMessage(first) error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(firstID, true); err != nil || !ok {
+		t.Fatalf("SetBusy(first) = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
+
+	before := sink.snapshot()
+	emitted := svc.EmitAllSessionStates()
+	if emitted != 2 {
+		t.Fatalf("EmitAllSessionStates() = %d, want 2", emitted)
+	}
+	after := sink.snapshot()
+	fresh := after.states[len(before.states):]
+	if len(fresh) != 2 {
+		t.Fatalf("fresh session state events = %d, want 2", len(fresh))
+	}
+
+	byID := map[session.SessionID]SessionStateEvent{}
+	for _, event := range fresh {
+		byID[event.SessionID] = event
+	}
+	firstEvent, ok := byID[firstID]
+	if !ok {
+		t.Fatalf("missing heartbeat state for %s", firstID)
+	}
+	if !firstEvent.Busy || firstEvent.BusyReason != "state_busy" || firstEvent.QueueLen != 0 || firstEvent.TailSeq != 1 {
+		t.Fatalf("first heartbeat event = %+v, want busy state with tail 1", firstEvent)
+	}
+	secondEvent, ok := byID[secondID]
+	if !ok {
+		t.Fatalf("missing heartbeat state for %s", secondID)
+	}
+	if secondEvent.Busy || secondEvent.TailSeq != 0 {
+		t.Fatalf("second heartbeat event = %+v, want idle state with tail 0", secondEvent)
+	}
+}
+
 func TestStubListSessionsUsesAttachedHelperForTransportSnapshot(t *testing.T) {
 	cfg := config.Load()
 	svc := newStub(cfg, time.Now)

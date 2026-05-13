@@ -1,10 +1,14 @@
 package app
 
 import (
+	"context"
 	"strconv"
+	"time"
 
 	"actrail/internal/domain/session"
 )
+
+const sessionStateHeartbeatInterval = 30 * time.Minute
 
 // RuntimeEventSink publishes live session mutations onto external transports.
 type RuntimeEventSink interface {
@@ -110,18 +114,63 @@ func (s *Stub) emitSessionState(sessionID session.SessionID) {
 	if !ok {
 		return
 	}
+	s.emitSessionStateRecord(record)
+}
+
+func (s *Stub) emitSessionStateRecord(record sessionRecord) {
+	if s == nil || s.sink == nil {
+		return
+	}
+	record.runtime = s.runtimeForRecord(record)
 	busy, busyReason := effectiveBusy(record)
 	runtimeState, runtimeStateReason := runtimeStateFields(record)
+	tailSeq := record.transcript.TailSeq().Uint64()
+	if record.identity.Backend() == session.BackendCodex {
+		if mirrored := s.codexLiveMirroredTail(record.identity.SessionID()); mirrored > tailSeq {
+			tailSeq = mirrored
+		}
+	}
 	s.sink.PublishSessionState(SessionStateEvent{
-		SessionID:          sessionID,
+		SessionID:          record.identity.SessionID(),
 		Busy:               busy,
 		BusyReason:         busyReason,
 		RuntimeState:       runtimeState,
 		RuntimeStateReason: runtimeStateReason,
 		QueueLen:           record.state.Queue().Len(),
-		TailSeq:            record.transcript.TailSeq().Uint64(),
-		Transport:          sessionTransportSnapshot(record),
+		TailSeq:            tailSeq,
+		Transport:          s.sessionTransportSnapshot(record),
 	})
+}
+
+func (s *Stub) EmitAllSessionStates() int {
+	if s == nil || s.sink == nil {
+		return 0
+	}
+	records := s.registry.ListAll()
+	for _, record := range records {
+		s.emitSessionStateRecord(record)
+	}
+	return len(records)
+}
+
+func (s *Stub) RunSessionStateHeartbeat(ctx context.Context) {
+	s.RunSessionStateHeartbeatEvery(ctx, sessionStateHeartbeatInterval)
+}
+
+func (s *Stub) RunSessionStateHeartbeatEvery(ctx context.Context, interval time.Duration) {
+	if s == nil || interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.EmitAllSessionStates()
+		}
+	}
 }
 
 func (s *Stub) emitQueueState(sessionID session.SessionID, queue SessionQueueSnapshot) {
