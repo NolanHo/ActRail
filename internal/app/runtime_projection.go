@@ -60,6 +60,7 @@ func mergeRuntimeProjection(dst, src runtimeProjection) runtimeProjection {
 	}
 	if strings.TrimSpace(src.codexTurnID) != "" {
 		dst.codexTurnID = strings.TrimSpace(src.codexTurnID)
+		dst.clearCodexTurn = false
 	}
 	if src.clearCodexTurn {
 		dst.clearCodexTurn = true

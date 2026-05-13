@@ -39,6 +39,9 @@ func mergeTurnTiming(current, next *SessionTurnTimingSnapshot) *SessionTurnTimin
 	merged := copyTurnTiming(current)
 	if next.StartedTS > 0 {
 		merged.StartedTS = next.StartedTS
+		if merged.LastEventTS != nil && *merged.LastEventTS < next.StartedTS {
+			merged.LastEventTS = nil
+		}
 	}
 	if next.LastEventTS != nil {
 		merged.LastEventTS = copyFloat64Ptr(next.LastEventTS)

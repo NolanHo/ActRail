@@ -675,6 +675,62 @@ func TestSessionStateCodexTaskCompleteWithoutMessagesClearsRuntimeAgentRunning(t
 	}
 }
 
+func TestSessionStateCodexTaskStartedAfterTaskCompleteKeepsRunning(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_task_started_keeps_running")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-task-started","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-codex-old","started_at":1760000282,"model_context_window":228000}}`,
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-codex-old","last_agent_message":null,"completed_at":1760000350}}`,
+		`{"timestamp":"2026-05-08T16:00:10.297Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-codex-new","started_at":1760000410,"model_context_window":228000}}`,
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_task_started", "t_task_started", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	runtimeState.setActiveTurnID("turn-codex-old")
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-task-started",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: runtimeState},
+		Transport:        SessionTransportSnapshot{State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseRunning) {
+		t.Fatalf("SessionState() = busy:%v runtime:%q, want running after newer task_started", state.Busy, state.RuntimeState)
+	}
+	if state.TurnTiming == nil || state.TurnTiming.StartedTS != 1760000410 || state.TurnTiming.LastEventTS != nil {
+		t.Fatalf("SessionState().TurnTiming = %+v, want newer start with no stale last event", state.TurnTiming)
+	}
+	if state.ContextUsage == nil || state.ContextUsage.TotalTokens == nil || *state.ContextUsage.TotalTokens != 228000 {
+		t.Fatalf("SessionState().ContextUsage = %+v, want context window from task_started", state.ContextUsage)
+	}
+}
+
 func TestSessionMessagesCodexIODHistoryLooksUpToolByID(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

@@ -80,7 +80,7 @@ func TestDecodeAppServerLineToolReasoningUsageAndError(t *testing.T) {
 		t.Fatalf("reasoning thread id = %q, want thread-codex-2", reasoningProjection.Events[0].ThreadID)
 	}
 
-	usageProjection, ok := DecodeAppServerLine([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-codex-2","turnId":"turn-codex-2","tokenUsage":{"total":{"totalTokens":2048,"inputTokens":1024,"cachedInputTokens":0,"outputTokens":512,"reasoningOutputTokens":512},"modelContextWindow":8192}}}`))
+	usageProjection, ok := DecodeAppServerLine([]byte(`{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-codex-2","turnId":"turn-codex-2","tokenUsage":{"total":{"totalTokens":999999,"inputTokens":999999,"cachedInputTokens":0,"outputTokens":0,"reasoningOutputTokens":0},"last":{"totalTokens":2048,"inputTokens":1024,"cachedInputTokens":0,"outputTokens":512,"reasoningOutputTokens":512},"modelContextWindow":8192}}}`))
 	if !ok {
 		t.Fatal("DecodeAppServerLine(usage) ok = false")
 	}
@@ -207,5 +207,43 @@ func TestDecodeAppServerLineSessionTaskCompleteClearsBusy(t *testing.T) {
 	}
 	if !projection.ClearTurn || projection.Busy == nil || *projection.Busy {
 		t.Fatalf("projection busy/clear = (%v, %v), want false/true", projection.Busy, projection.ClearTurn)
+	}
+	if projection.Timing == nil || projection.Timing.LastEventTS == nil || *projection.Timing.LastEventTS != 1778401378 {
+		t.Fatalf("projection timing = %+v, want task complete timestamp", projection.Timing)
+	}
+	if len(projection.Events) != 1 || projection.Events[0].Boundary == nil || projection.Events[0].Boundary.Kind != runtimeevent.BoundaryKindTurnCompleted {
+		t.Fatalf("projection events = %+v, want turn completed boundary", projection.Events)
+	}
+}
+
+func TestDecodeAppServerLineSessionTaskStartedSetsBusy(t *testing.T) {
+	projection, ok := DecodeAppServerLine([]byte(`{"timestamp":"2026-05-13T12:24:17.609Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-codex-task-started","started_at":1778675057,"model_context_window":228000}}`))
+	if !ok {
+		t.Fatal("DecodeAppServerLine(task_started) ok = false")
+	}
+	if projection.TurnID != "turn-codex-task-started" {
+		t.Fatalf("projection.TurnID = %q, want task_started turn id", projection.TurnID)
+	}
+	if projection.Busy == nil || !*projection.Busy || projection.ClearTurn {
+		t.Fatalf("projection busy/clear = (%v, %v), want true/false", projection.Busy, projection.ClearTurn)
+	}
+	if projection.Timing == nil || projection.Timing.StartedTS != 1778675057 {
+		t.Fatalf("projection timing = %+v, want task start timestamp", projection.Timing)
+	}
+	if projection.Usage == nil || projection.Usage.TotalTokens == nil || *projection.Usage.TotalTokens != 228000 {
+		t.Fatalf("projection usage = %+v, want context window", projection.Usage)
+	}
+	if len(projection.Events) != 1 || projection.Events[0].Boundary == nil || projection.Events[0].Boundary.Kind != runtimeevent.BoundaryKindTurnStarted {
+		t.Fatalf("projection events = %+v, want turn started boundary", projection.Events)
+	}
+}
+
+func TestDecodeAppServerLineSessionTokenCountUsesLastUsage(t *testing.T) {
+	projection, ok := DecodeAppServerLine([]byte(`{"timestamp":"2026-05-13T12:14:12.222Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":13931136,"output_tokens":51483,"reasoning_output_tokens":12666,"total_tokens":13982619},"last_token_usage":{"input_tokens":208538,"output_tokens":452,"reasoning_output_tokens":52,"total_tokens":208990},"model_context_window":228000}}}`))
+	if !ok {
+		t.Fatal("DecodeAppServerLine(token_count) ok = false")
+	}
+	if projection.Usage == nil || projection.Usage.UsedTokens == nil || *projection.Usage.UsedTokens != 208990 || projection.Usage.TotalTokens == nil || *projection.Usage.TotalTokens != 228000 || projection.Usage.PercentUsed == nil || *projection.Usage.PercentUsed != 92 {
+		t.Fatalf("projection usage = %+v, want last token usage 208990/228000/92", projection.Usage)
 	}
 }

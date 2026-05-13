@@ -624,7 +624,7 @@ func codexHistoryRelevantKind(raw string) string {
 	switch strings.TrimSpace(entry.Type) {
 	case "event_msg":
 		switch strings.TrimSpace(historyString(entry.Payload["type"])) {
-		case "user_message", "agent_message", "task_complete":
+		case "user_message", "agent_message", "task_started", "task_complete":
 			return strings.TrimSpace(historyString(entry.Payload["type"]))
 		}
 	case "response_item":

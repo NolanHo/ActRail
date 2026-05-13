@@ -15,6 +15,7 @@ import (
 
 	"actrail/internal/adapters/iod"
 	sqlitestore "actrail/internal/adapters/sqlite"
+	"actrail/internal/domain/codex"
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
@@ -654,7 +655,12 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	}
 	items := sessionMessagesFromIODHistory(packet.Messages)
 	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete
+	_ = s.reconcileCodexSessionFileRuntimeProjection(record.identity.SessionID(), packet.Lines)
 	if !complete {
+		if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
+			updated.runtime = s.runtimeForRecord(updated)
+			return updated
+		}
 		return record
 	}
 	if len(items) > 0 {
@@ -673,6 +679,25 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	}
 	updated.runtime = s.runtimeForRecord(updated)
 	return updated
+}
+
+func (s *Stub) reconcileCodexSessionFileRuntimeProjection(sessionID session.SessionID, lines []string) error {
+	if s == nil || len(lines) == 0 {
+		return nil
+	}
+	var projection runtimeProjection
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		decoded, ok := codex.DecodeAppServerLine([]byte(line))
+		if !ok {
+			continue
+		}
+		projection = mergeRuntimeProjection(projection, runtimeProjectionFromCodex(decoded))
+	}
+	return s.applyRuntimeProjection(sessionID, projection)
 }
 
 func (s *Stub) emitCodexSessionFileLiveCommits(sessionID session.SessionID, items []SessionMessage) {
@@ -930,7 +955,7 @@ func codexSessionFileHasTaskComplete(ctx context.Context, sourcePath string) boo
 		switch strings.TrimSpace(entry.Type) {
 		case "event_msg":
 			switch strings.TrimSpace(stringValue(entry.Payload["type"])) {
-			case "user_message", "agent_message", "task_complete":
+			case "user_message", "agent_message", "task_started", "task_complete":
 				lastRelevant = strings.TrimSpace(stringValue(entry.Payload["type"]))
 			}
 		case "response_item":
@@ -965,7 +990,7 @@ func codexSessionLinesHaveTaskComplete(ctx context.Context, lines []string) bool
 		switch strings.TrimSpace(entry.Type) {
 		case "event_msg":
 			switch strings.TrimSpace(stringValue(entry.Payload["type"])) {
-			case "user_message", "agent_message", "task_complete":
+			case "user_message", "agent_message", "task_started", "task_complete":
 				lastRelevant = strings.TrimSpace(stringValue(entry.Payload["type"]))
 			}
 		case "response_item":

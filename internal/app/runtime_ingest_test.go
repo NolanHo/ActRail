@@ -2278,7 +2278,7 @@ func TestCreateSessionMapsCodexToolReasoningUsageAndErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.ContextUsage == nil || state.ContextUsage.UsedTokens == nil || *state.ContextUsage.UsedTokens != 2048 || state.ContextUsage.TotalTokens == nil || *state.ContextUsage.TotalTokens != 8192 || state.ContextUsage.PercentUsed == nil || *state.ContextUsage.PercentUsed != 25 {
+	if state.ContextUsage == nil || state.ContextUsage.UsedTokens == nil || *state.ContextUsage.UsedTokens != 128 || state.ContextUsage.TotalTokens == nil || *state.ContextUsage.TotalTokens != 8192 || state.ContextUsage.PercentUsed == nil || *state.ContextUsage.PercentUsed != 2 {
 		t.Fatalf("SessionState().ContextUsage = %+v", state.ContextUsage)
 	}
 	if state.TurnTiming == nil || state.TurnTiming.StartedTS != 1760000001 || state.TurnTiming.LastEventTS == nil || *state.TurnTiming.LastEventTS != 1760000002 {

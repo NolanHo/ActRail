@@ -294,15 +294,76 @@ func decodeSessionEventMessage(raw json.RawMessage) (Projection, bool) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return Projection{}, true
 	}
-	if strings.TrimSpace(stringValue(payload["type"])) != "task_complete" {
+	switch strings.TrimSpace(stringValue(payload["type"])) {
+	case "task_started":
+		turnID := strings.TrimSpace(firstStringValue(payload["turn_id"], payload["turnId"]))
+		startedAt := numericValue(payload["started_at"])
+		if startedAt <= 0 {
+			startedAt = numericValue(payload["startedAt"])
+		}
+		contextWindow := intValueFromAny(payload["model_context_window"])
+		if contextWindow <= 0 {
+			contextWindow = intValueFromAny(payload["modelContextWindow"])
+		}
+		busy := true
+		projection := Projection{
+			TurnID: turnID,
+			Busy:   &busy,
+			Events: []runtimeevent.Event{{
+				Kind:    runtimeevent.EventKindBoundary,
+				RawType: "task_started",
+				TurnID:  turnID,
+				Boundary: &runtimeevent.Boundary{
+					Kind:   runtimeevent.BoundaryKindTurnStarted,
+					Reason: "task_started",
+				},
+			}},
+		}
+		if startedAt > 0 {
+			projection.Timing = &TurnTiming{StartedTS: normalizeTimestampSeconds(startedAt)}
+			projection.Events[0].Timestamp = projection.Timing.StartedTS
+		}
+		if contextWindow > 0 {
+			projection.Usage = &ContextUsage{TotalTokens: &contextWindow}
+		}
+		return projection, true
+	case "task_complete":
+		turnID := strings.TrimSpace(firstStringValue(payload["turn_id"], payload["turnId"]))
+		busy := false
+		projection := Projection{
+			TurnID:    turnID,
+			ClearTurn: true,
+			Busy:      &busy,
+			Events: []runtimeevent.Event{{
+				Kind:    runtimeevent.EventKindBoundary,
+				RawType: "task_complete",
+				TurnID:  turnID,
+				Boundary: &runtimeevent.Boundary{
+					Kind:       runtimeevent.BoundaryKindTurnCompleted,
+					CommitLike: true,
+					Reason:     "task_complete",
+				},
+			}},
+		}
+		if completedAt := numericValue(payload["completed_at"]); completedAt > 0 {
+			value := normalizeTimestampSeconds(completedAt)
+			projection.Timing = &TurnTiming{LastEventTS: &value}
+			projection.Events[0].Timestamp = value
+		} else if completedAt := numericValue(payload["completedAt"]); completedAt > 0 {
+			value := normalizeTimestampSeconds(completedAt)
+			projection.Timing = &TurnTiming{LastEventTS: &value}
+			projection.Events[0].Timestamp = value
+		}
+		return projection, true
+	case "token_count":
+		usage := contextUsageFromSessionEvent(payload)
+		if usage == nil {
+			return Projection{}, true
+		}
+		return Projection{Usage: usage}, true
+	default:
 		return Projection{}, true
 	}
-	turnID := strings.TrimSpace(stringValue(payload["turn_id"]))
-	if turnID == "" {
-		turnID = strings.TrimSpace(stringValue(payload["turnId"]))
-	}
-	busy := false
-	return Projection{TurnID: turnID, ClearTurn: true, Busy: &busy}, true
 }
 
 func alreadyInitializedError(raw json.RawMessage) bool {
@@ -645,15 +706,58 @@ func contextUsage(raw json.RawMessage) *ContextUsage {
 	if tokenUsage == nil {
 		return nil
 	}
-	total, _ := tokenUsage["total"].(map[string]any)
-	used := intValueFromAny(total["totalTokens"])
+	last, _ := tokenUsage["last"].(map[string]any)
+	used := tokenUsageTotal(last)
 	if used <= 0 {
-		used = intValueFromAny(total["inputTokens"]) + intValueFromAny(total["outputTokens"]) + intValueFromAny(total["reasoningOutputTokens"])
+		total, _ := tokenUsage["total"].(map[string]any)
+		used = tokenUsageTotal(total)
 	}
 	contextWindow := intValueFromAny(tokenUsage["modelContextWindow"])
 	if used <= 0 && contextWindow <= 0 {
 		return nil
 	}
+	return buildContextUsage(used, contextWindow)
+}
+
+func contextUsageFromSessionEvent(payload map[string]any) *ContextUsage {
+	info, _ := payload["info"].(map[string]any)
+	if info == nil {
+		info = payload
+	}
+	last, _ := info["last_token_usage"].(map[string]any)
+	used := tokenUsageTotal(last)
+	if used <= 0 {
+		total, _ := info["total_token_usage"].(map[string]any)
+		used = tokenUsageTotal(total)
+	}
+	contextWindow := intValueFromAny(info["model_context_window"])
+	if contextWindow <= 0 {
+		contextWindow = intValueFromAny(info["modelContextWindow"])
+	}
+	if used <= 0 && contextWindow <= 0 {
+		return nil
+	}
+	return buildContextUsage(used, contextWindow)
+}
+
+func tokenUsageTotal(usage map[string]any) int {
+	if usage == nil {
+		return 0
+	}
+	used := intValueFromAny(usage["totalTokens"])
+	if used <= 0 {
+		used = intValueFromAny(usage["total_tokens"])
+	}
+	if used <= 0 {
+		used = intValueFromAny(usage["inputTokens"]) + intValueFromAny(usage["outputTokens"]) + intValueFromAny(usage["reasoningOutputTokens"])
+	}
+	if used <= 0 {
+		used = intValueFromAny(usage["input_tokens"]) + intValueFromAny(usage["output_tokens"]) + intValueFromAny(usage["reasoning_output_tokens"])
+	}
+	return used
+}
+
+func buildContextUsage(used, contextWindow int) *ContextUsage {
 	usage := &ContextUsage{}
 	if used > 0 {
 		usage.UsedTokens = &used
@@ -846,6 +950,15 @@ func turnInProgress(status any) bool {
 func stringValue(value any) string {
 	if s, ok := value.(string); ok {
 		return s
+	}
+	return ""
+}
+
+func firstStringValue(values ...any) string {
+	for _, value := range values {
+		if text := stringValue(value); text != "" {
+			return text
+		}
 	}
 	return ""
 }
