@@ -322,6 +322,91 @@ func TestRuntimeLauncherAttachesExistingIODBeforeStartingNewHelper(t *testing.T)
 	}
 }
 
+func TestRuntimeLauncherAttachesExistingCodexIODWithoutCurrentBinding(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attach_existing_unbound_iod")
+	generationID := mustHelperGenerationID(t, "g_attach_existing_unbound")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			t.Fatal("resolveIODHelperBinPath called; unbound existing Codex IOD should be attached by session id")
+			return "", nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if runtime.helper == nil || runtime.helper.generationID != generationID {
+		t.Fatalf("runtime.helper = %+v, want attached generation %q", runtime.helper, generationID)
+	}
+	binding, err := runtime.CurrentHelperBinding(sessionID)
+	if err != nil {
+		t.Fatalf("CurrentHelperBinding() error = %v", err)
+	}
+	if binding == nil || binding.GenerationID != generationID {
+		t.Fatalf("binding = %+v, want generation %q", binding, generationID)
+	}
+}
+
+func TestPersistentStubAdoptsUnboundCodexIODOnRestart(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	cfg.Storage.DataDir = filepath.Join("/tmp", fmt.Sprintf("ar-adopt-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(cfg.Storage.DataDir) })
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	cwd := t.TempDir()
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: cwd})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_codex_unbound_adopt")
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	attachment, ok := rehydrated.helpers.Attachment(sessionID)
+	if !ok {
+		t.Fatalf("helper attachment for %q not found", sessionID)
+	}
+	if attachment.Binding.GenerationID != generationID {
+		t.Fatalf("attachment generation id = %q, want %q", attachment.Binding.GenerationID, generationID)
+	}
+	if hasFenceReason(rehydrated.helpers.Fenced(), generationID, helperFenceCurrentGenerationUnbound) {
+		t.Fatalf("fenced helpers = %+v, want unbound Codex helper adopted", rehydrated.helpers.Fenced())
+	}
+	bindings, err := rehydrated.helperBindings.Load()
+	if err != nil {
+		t.Fatalf("helperBindings.Load() error = %v", err)
+	}
+	if bindings[sessionID].GenerationID != generationID {
+		t.Fatalf("saved binding = %+v, want adopted generation %q", bindings[sessionID], generationID)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.GenerationID != generationID.String() {
+		t.Fatalf("SessionState().Transport = %+v, want attached generation %q", state.Transport, generationID)
+	}
+}
+
 func TestRuntimeLauncherForceNewIODSkipsExistingAttach(t *testing.T) {
 	sessionID := mustSessionID(t, "s_force_new_iod")
 	generationID := mustHelperGenerationID(t, "g_force_new_existing")
@@ -351,8 +436,8 @@ func TestRuntimeLauncherForceNewIODSkipsExistingAttach(t *testing.T) {
 	}
 }
 
-func TestRuntimeLauncherDoesNotAttachStaleIODWhenCurrentBindingFails(t *testing.T) {
-	sessionID := mustSessionID(t, "s_no_stale_attach")
+func TestRuntimeLauncherFallsBackToSameSessionCodexIODWhenCurrentBindingFails(t *testing.T) {
+	sessionID := mustSessionID(t, "s_fallback_same_session_attach")
 	currentGeneration := mustHelperGenerationID(t, "g_current_attach")
 	staleGeneration := mustHelperGenerationID(t, "g_stale_attach")
 	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
@@ -363,23 +448,23 @@ func TestRuntimeLauncherDoesNotAttachStaleIODWhenCurrentBindingFails(t *testing.
 	staleManifest := writeHelperManifest(t, staleManifestPath, sessionID, staleGeneration, 1760000006)
 	cleanup := startReplayHelper(t, staleManifest, helperReplayScript{SkipReplay: true})
 	defer cleanup()
-	wantErr := errors.New("new helper requested instead of stale attach")
 	launcher := processRuntimeLauncher{
 		iodRuntimeRoot: root,
 		useIODHelper:   true,
 		resolveIODHelperBinPath: func() (string, error) {
-			return "", wantErr
+			t.Fatal("resolveIODHelperBinPath called; same-session Codex IOD fallback should attach before launching")
+			return "", nil
 		},
 		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
 			return &RuntimeHelperBinding{GenerationID: currentGeneration}, nil
 		},
 	}
 	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir()})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("Launch() error = %v, want new-helper path error after current attach fails", err)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
 	}
-	if runtime.helper != nil {
-		t.Fatalf("runtime.helper = %+v, want no stale existing attachment", runtime.helper)
+	if runtime.helper == nil || runtime.helper.generationID != staleGeneration {
+		t.Fatalf("runtime.helper = %+v, want fallback generation %q", runtime.helper, staleGeneration)
 	}
 }
 

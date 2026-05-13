@@ -149,5 +149,10 @@ func (idx ManifestIndex) Candidates(sessionID session.SessionID, preferred *iod.
 			out = append(out, item)
 		}
 	}
+	for _, item := range items {
+		if item.Manifest.GenerationID != preferredID {
+			out = append(out, item)
+		}
+	}
 	return out
 }

@@ -264,16 +264,32 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 			}
 			continue
 		}
-		binding, ok := bindings[sessionID]
+		record, ok := s.registry.Lookup(sessionID)
 		if !ok {
-			for _, item := range discovered {
-				fenced = append(fenced, helperFenceFrom(item, helperFenceCurrentGenerationUnbound))
-			}
-			continue
+			return fmt.Errorf("session %q not found while reattaching helper", sessionID)
+		}
+		binding, hasBinding := bindings[sessionID]
+		var preferred *iod.GenerationID
+		if hasBinding {
+			generationID := binding.GenerationID
+			preferred = &generationID
 		}
 		bound := false
-		for _, item := range discovered {
-			if item.Manifest.GenerationID != binding.GenerationID {
+		selectedGeneration := iod.GenerationID("")
+		fenceStart := len(fenced)
+		for _, item := range iodclient.NewManifestIndex(discovered).Candidates(sessionID, preferred) {
+			candidateBinding := binding
+			if !hasBinding || item.Manifest.GenerationID != binding.GenerationID {
+				candidateBinding = helperGenerationBinding{
+					SessionID:    sessionID,
+					GenerationID: item.Manifest.GenerationID,
+				}
+			}
+			if record.identity.Backend() != session.BackendCodex && !hasBinding {
+				fenced = append(fenced, helperFenceFrom(item, helperFenceCurrentGenerationUnbound))
+				continue
+			}
+			if record.identity.Backend() != session.BackendCodex && hasBinding && item.Manifest.GenerationID != binding.GenerationID {
 				fenced = append(fenced, helperFenceFrom(item, helperFenceGenerationNotCurrent))
 				continue
 			}
@@ -281,23 +297,31 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 				fenced = append(fenced, helperFenceFrom(item, helperFenceDuplicateHelper))
 				continue
 			}
-			record, ok := s.registry.Lookup(sessionID)
-			if !ok {
-				return fmt.Errorf("session %q not found while reattaching helper", sessionID)
-			}
-			attachment, updatedBinding, reason, err := s.reattachHelper(ctx, record.identity.Backend(), binding, item)
+			attachment, updatedBinding, reason, err := s.reattachHelper(ctx, record.identity.Backend(), candidateBinding, item)
 			if err != nil {
 				fenced = append(fenced, helperFenceFrom(item, reason))
 				continue
 			}
 			attachments[sessionID] = attachment
 			bound = true
-			if updatedBinding.LastReplayOffset != binding.LastReplayOffset {
+			selectedGeneration = updatedBinding.GenerationID
+			if !hasBinding || updatedBinding.GenerationID != binding.GenerationID || updatedBinding.LastReplayOffset != binding.LastReplayOffset {
 				if err := s.helperBindings.Save(updatedBinding); err != nil {
 					_ = attachment.Client.Close()
 					return err
 				}
 				bindings[sessionID] = updatedBinding
+				binding = updatedBinding
+				hasBinding = true
+			}
+		}
+		if bound {
+			for idx := fenceStart; idx < len(fenced); idx++ {
+				if fenced[idx].GenerationID == selectedGeneration {
+					fenced[idx].Reason = helperFenceDuplicateHelper
+				} else if record.identity.Backend() == session.BackendCodex {
+					fenced[idx].Reason = helperFenceGenerationNotCurrent
+				}
 			}
 		}
 	}
