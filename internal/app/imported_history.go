@@ -304,8 +304,11 @@ func filterSessionMessagesForRequest(items []SessionMessage, req SessionMessages
 		return items
 	}
 	visible := make([]SessionMessage, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		if sessionMessageIsToolEvent(item) {
+			if sessionMessageIsUnansweredFailedToolResult(item) && !sessionMessagesHaveLaterAssistant(items, i) {
+				visible = append(visible, item)
+			}
 			continue
 		}
 		visible = append(visible, item)
@@ -319,7 +322,23 @@ func appendOpenToolActivitySummaries(visible []SessionMessage, all []SessionMess
 	if !ok {
 		return visible
 	}
+	if len(visible) > 0 && visible[len(visible)-1].Seq >= summary.Seq {
+		return visible
+	}
 	return append(visible, summary)
+}
+
+func sessionMessageIsUnansweredFailedToolResult(item SessionMessage) bool {
+	return item.IsError && (item.Kind == "tool_result" || item.Type == "tool_result")
+}
+
+func sessionMessagesHaveLaterAssistant(items []SessionMessage, index int) bool {
+	for i := index + 1; i < len(items); i++ {
+		if items[i].Role == "assistant" {
+			return true
+		}
+	}
+	return false
 }
 
 func openToolActivitySummary(items []SessionMessage) (SessionMessage, bool) {
@@ -808,9 +827,6 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	if len(items) == 0 {
 		return SessionMessagesResponse{}, false, nil
 	}
-	if !packet.Complete {
-		return SessionMessagesResponse{}, false, nil
-	}
 	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete
 	if !codexSessionFileHistoryUsable(record, items, complete) {
 		return SessionMessagesResponse{}, false, nil
@@ -861,7 +877,7 @@ func codexSessionFileHistoryUsable(record sessionRecord, items []SessionMessage,
 	if _, ok := record.transcript.PartialAssistantTurn(); ok {
 		return false
 	}
-	if record.state.Busy() || record.runtimeAgentRunning {
+	if record.state.Busy() {
 		return false
 	}
 	return record.transcript.Len() == 0 || len(items) > 0

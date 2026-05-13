@@ -12,6 +12,7 @@ import (
 )
 
 const codexCapacityRetryMaxAttempts = 3
+const codexCapacityRetryPrompt = "继续"
 
 var codexCapacityRetryDelays = []time.Duration{
 	2 * time.Second,
@@ -153,51 +154,15 @@ func (s *Stub) runCodexCapacityRetryAfter(sessionID session.SessionID, prompt st
 	if !s.claimCodexCapacityRetry(sessionID, prompt, revision) {
 		return
 	}
-	var (
-		runtime               sessionRuntime
-		watchCodexTurnStart   bool
-		codexTurnWatchRuntime sessionRuntime
-	)
-	err := s.withSessionInputLock(sessionID, func(record sessionRecord) error {
-		record.runtime = s.runtimeForRecord(record)
+	_, err := s.sendWithOptions(context.Background(), SendRequest{SessionID: sessionID, Text: codexCapacityRetryPrompt}, false, func(record sessionRecord) error {
 		if record.identity.Backend() != session.BackendCodex || record.runtime.protocol != runtimeProtocolCodexRPC {
-			return nil
+			return Conflict("codex capacity retry requires a Codex RPC runtime")
 		}
 		if !s.codexCapacityRetryPromptStillCurrent(sessionID, prompt) {
-			return nil
-		}
-		if err := transportControlError(s.sessionTransportSnapshot(record)); err != nil {
-			return err
-		}
-		if err := s.prepareRuntimeSend(context.Background(), sessionID, record.runtime); err != nil {
-			return err
-		}
-		current, err := s.lookupSession(sessionID)
-		if err != nil {
-			return err
-		}
-		current.runtime = s.runtimeForRecord(current)
-		if !sameRuntimeHandle(record.runtime, current.runtime) {
 			return errRuntimeChanged
 		}
-		runtime = current.runtime
-		s.trackCodexOutboundPrompt(sessionID, prompt)
-		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseSending, "codex_capacity_retry_sending", "capacity_retry_send")
-		if err := runtime.SendPromptWithStaleCheck(context.Background(), prompt, func() bool {
-			current, err := s.lookupSession(sessionID)
-			if err == nil {
-				current.runtime = s.runtimeForRecord(current)
-			}
-			return err != nil || !sameRuntimeHandle(runtime, current.runtime) || !s.codexCapacityRetryPromptStillCurrent(sessionID, prompt)
-		}); err != nil {
-			s.clearCodexOutboundPrompt(sessionID, prompt)
-			return err
-		}
-		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseTurnStarting, "codex_capacity_retry_turn_starting", "capacity_retry_turn_starting")
-		codexTurnWatchRuntime = runtime
-		watchCodexTurnStart = true
 		return nil
-	})
+	}, false)
 	if err != nil {
 		if errors.Is(err, errRuntimeChanged) {
 			_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_capacity_retry", err)
@@ -207,11 +172,7 @@ func (s *Stub) runCodexCapacityRetryAfter(sessionID session.SessionID, prompt st
 		_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_capacity_retry", err)
 		return
 	}
-	if watchCodexTurnStart {
-		s.emitSessionState(sessionID)
-		s.startCodexTurnStartWatch(sessionID, codexTurnWatchRuntime)
-		_ = attempt
-	}
+	_ = attempt
 }
 
 func (s *Stub) claimCodexCapacityRetry(sessionID session.SessionID, prompt string, revision uint64) bool {

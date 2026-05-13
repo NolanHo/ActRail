@@ -95,6 +95,11 @@ func TestCodexSessionMessagesFromJSONLLines(t *testing.T) {
 
 func attachCodexHistoryIODHelperFromFile(t *testing.T, svc *Stub, cfg config.Config, sessionID session.SessionID, sourcePath string) {
 	t.Helper()
+	attachCodexHistoryIODHelperFromFileWithComplete(t, svc, cfg, sessionID, sourcePath, true)
+}
+
+func attachCodexHistoryIODHelperFromFileWithComplete(t *testing.T, svc *Stub, cfg config.Config, sessionID session.SessionID, sourcePath string, complete bool) {
+	t.Helper()
 	_ = cfg
 	raw, err := os.ReadFile(sourcePath)
 	if err != nil {
@@ -135,7 +140,7 @@ func attachCodexHistoryIODHelperFromFile(t *testing.T, svc *Stub, cfg config.Con
 		IndexedCount: len(messages),
 		TaskComplete: codexSessionLinesHaveTaskComplete(context.Background(), lines),
 		Warmed:       true,
-		Complete:     true,
+		Complete:     complete,
 	})
 	if err != nil {
 		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
@@ -264,6 +269,58 @@ func TestSessionMessagesCodexHistorySummarizesHiddenToolActivity(t *testing.T) {
 	}
 	if len(withTools.Items) != 4 || withTools.Items[1].Type != "tool" || withTools.Items[2].Type != "tool_result" || !withTools.Items[2].IsError {
 		t.Fatalf("with tools = %+v, want raw codex tool call/result", withTools.Items)
+	}
+}
+
+func TestSessionMessagesCodexIODHistoryShowsIncompleteFailedToolOutput(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_incomplete_error_history")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-incomplete","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"run failing task"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"pytest\"}","call_id":"call-pytest"}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-pytest","output":"ImportError: cannot import name 'AsyncEngineArgs' from 'vllm'\nProcess exited with code 1\n"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewDetachedIdentity(sessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-incomplete",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	attachCodexHistoryIODHelperFromFileWithComplete(t, svc, cfg, sessionID, sourcePath, false)
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10, IncludeToolEvents: true})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 3 {
+		t.Fatalf("messages = %+v, want user, tool, failed tool_result from incomplete history", messages.Items)
+	}
+	if messages.Items[2].Kind != "tool_result" || !messages.Items[2].IsError || !strings.Contains(messages.Items[2].Text, "ImportError: cannot import name 'AsyncEngineArgs'") {
+		t.Fatalf("failed tool result = %+v, want visible import error", messages.Items[2])
+	}
+
+	visible, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionMessages(default) error = %v", err)
+	}
+	if len(visible.Items) != 2 || visible.Items[1].Kind != "tool_result" || !visible.Items[1].IsError {
+		t.Fatalf("SessionMessages(default) = %+v, want visible failed tool result without summary fallback", visible.Items)
 	}
 }
 

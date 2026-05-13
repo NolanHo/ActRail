@@ -2121,7 +2121,7 @@ func TestCodexNotInitializedRetriesExplicitlyRejectedPromptWithoutDuplicateUserM
 	_ = stdoutW.Close()
 }
 
-func TestCodexCapacityErrorRetriesPromptWithoutDuplicateUserMessage(t *testing.T) {
+func TestCodexCapacityErrorRetriesWithVisibleContinueMessage(t *testing.T) {
 	originalDelay := codexCapacityRetryDelayForAttempt
 	codexCapacityRetryDelayForAttempt = func(int) time.Duration { return time.Millisecond }
 	t.Cleanup(func() { codexCapacityRetryDelayForAttempt = originalDelay })
@@ -2161,21 +2161,26 @@ func TestCodexCapacityErrorRetriesPromptWithoutDuplicateUserMessage(t *testing.T
 	waitForAppCondition(t, func() bool {
 		writes := pty.Writes()
 		return countRuntimeWritesContaining(writes, `"method":"turn/start"`) == 2 &&
-			countRuntimeWritesContaining(writes, `retry after capacity`) == 2
+			countRuntimeWritesContaining(writes, `retry after capacity`) == 1 &&
+			countRuntimeWritesContaining(writes, codexCapacityRetryPrompt) == 1
 	})
-	_, _ = stdoutW.Write([]byte(`{"method":"item/completed","params":{"threadId":"thread-codex-capacity","turnId":"turn-codex-capacity-2","item":{"type":"userMessage","id":"user-capacity-2","text":"retry after capacity"}}}` + "\n"))
+	_, _ = stdoutW.Write([]byte(`{"method":"item/completed","params":{"threadId":"thread-codex-capacity","turnId":"turn-codex-capacity-2","item":{"type":"userMessage","id":"user-capacity-2","text":"继续"}}}` + "\n"))
 	time.Sleep(50 * time.Millisecond)
 
 	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
 	if err != nil {
 		t.Fatalf("SessionMessages() error = %v", err)
 	}
-	userCount := 0
+	originalUserCount := 0
+	continueUserCount := 0
 	retryDiagnostic := false
 	errorSeen := false
 	for _, item := range messages.Items {
 		if item.Role == "user" && item.Text == "retry after capacity" {
-			userCount++
+			originalUserCount++
+		}
+		if item.Role == "user" && item.Text == codexCapacityRetryPrompt {
+			continueUserCount++
 		}
 		if item.Type == "pi_event" && strings.Contains(item.Text, "Codex model is at capacity; retrying request") {
 			retryDiagnostic = true
@@ -2184,8 +2189,8 @@ func TestCodexCapacityErrorRetriesPromptWithoutDuplicateUserMessage(t *testing.T
 			errorSeen = true
 		}
 	}
-	if userCount != 1 {
-		t.Fatalf("user message count = %d in %+v, want exactly one", userCount, messages.Items)
+	if originalUserCount != 1 || continueUserCount != 1 {
+		t.Fatalf("user counts = original:%d continue:%d in %+v, want both visible once", originalUserCount, continueUserCount, messages.Items)
 	}
 	if !retryDiagnostic || !errorSeen {
 		t.Fatalf("messages = %+v, want capacity error and retry diagnostic", messages.Items)

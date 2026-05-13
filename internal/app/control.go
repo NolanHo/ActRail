@@ -95,10 +95,14 @@ func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) 
 type sendLockedPrecondition func(sessionRecord) error
 
 func (s *Stub) send(ctx context.Context, req SendRequest, followUp bool) (SendResponse, error) {
-	return s.sendWithPrecondition(ctx, req, followUp, nil)
+	return s.sendWithOptions(ctx, req, followUp, nil, true)
 }
 
 func (s *Stub) sendWithPrecondition(ctx context.Context, req SendRequest, followUp bool, precondition sendLockedPrecondition) (SendResponse, error) {
+	return s.sendWithOptions(ctx, req, followUp, precondition, true)
+}
+
+func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bool, precondition sendLockedPrecondition, trackCapacityRetry bool) (SendResponse, error) {
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
 		return SendResponse{}, Invalid("text", "text required")
@@ -149,7 +153,9 @@ func (s *Stub) sendWithPrecondition(ctx context.Context, req SendRequest, follow
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			s.trackCodexOutboundPrompt(req.SessionID, text)
-			s.trackCodexCapacityRetryPrompt(req.SessionID, text)
+			if trackCapacityRetry {
+				s.trackCodexCapacityRetryPrompt(req.SessionID, text)
+			}
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			_ = s.transitionCodexRuntime(req.SessionID, codexRuntimePhaseSending, "codex_sending", "send")
