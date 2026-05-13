@@ -149,6 +149,7 @@ func (s *Stub) sendWithPrecondition(ctx context.Context, req SendRequest, follow
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			s.trackCodexOutboundPrompt(req.SessionID, text)
+			s.trackCodexCapacityRetryPrompt(req.SessionID, text)
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			_ = s.transitionCodexRuntime(req.SessionID, codexRuntimePhaseSending, "codex_sending", "send")

@@ -2080,12 +2080,8 @@ func TestCodexNotInitializedRetriesExplicitlyRejectedPromptWithoutDuplicateUserM
 		"\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
 		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-retry\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
 	waitForAppCondition(t, func() bool {
-		record, ok := svc.registry.Lookup(sessionID)
-		if !ok || record.runtime.codex == nil {
-			return false
-		}
-		_, threadID, _ := record.runtime.codex.snapshot()
-		return threadID == "thread-codex-retry"
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.RuntimeState == string(codexRuntimePhaseIdle)
 	})
 
 	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "retry exactly once"}); err != nil {
@@ -2121,6 +2117,78 @@ func TestCodexNotInitializedRetriesExplicitlyRejectedPromptWithoutDuplicateUserM
 	}
 	if len(messages.Items) != 1 || messages.Items[0].Role != "user" || messages.Items[0].Text != "retry exactly once" {
 		t.Fatalf("SessionMessages() = %+v, want one committed user message", messages.Items)
+	}
+	_ = stdoutW.Close()
+}
+
+func TestCodexCapacityErrorRetriesPromptWithoutDuplicateUserMessage(t *testing.T) {
+	originalDelay := codexCapacityRetryDelayForAttempt
+	codexCapacityRetryDelayForAttempt = func(int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { codexCapacityRetryDelayForAttempt = originalDelay })
+
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	pty := &recordingPTY{reader: stdoutR}
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetPTY(pty)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	_, _ = stdoutW.Write([]byte("{" +
+		"\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}" + "\n" +
+		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-capacity\",\"status\":{\"type\":\"idle\"}}}}" + "\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && state.RuntimeState == string(codexRuntimePhaseIdle)
+	})
+
+	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "retry after capacity"}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		return countRuntimeWritesContaining(pty.Writes(), `"method":"turn/start"`) == 1
+	})
+	_, _ = stdoutW.Write([]byte(`{"method":"turn/started","params":{"threadId":"thread-codex-capacity","turn":{"id":"turn-codex-capacity-1","status":"inProgress","error":null}}}` + "\n"))
+	waitForAppCondition(t, func() bool {
+		return svc.codexOutboundPromptText(sessionID) == ""
+	})
+	_, _ = stdoutW.Write([]byte(`{"method":"turn/completed","params":{"threadId":"thread-codex-capacity","turn":{"id":"turn-codex-capacity-1","status":"failed","error":{"message":"Selected model is at capacity. Please try a different model."}}}}` + "\n"))
+	waitForAppCondition(t, func() bool {
+		writes := pty.Writes()
+		return countRuntimeWritesContaining(writes, `"method":"turn/start"`) == 2 &&
+			countRuntimeWritesContaining(writes, `retry after capacity`) == 2
+	})
+	_, _ = stdoutW.Write([]byte(`{"method":"item/completed","params":{"threadId":"thread-codex-capacity","turnId":"turn-codex-capacity-2","item":{"type":"userMessage","id":"user-capacity-2","text":"retry after capacity"}}}` + "\n"))
+	time.Sleep(50 * time.Millisecond)
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	userCount := 0
+	retryDiagnostic := false
+	errorSeen := false
+	for _, item := range messages.Items {
+		if item.Role == "user" && item.Text == "retry after capacity" {
+			userCount++
+		}
+		if item.Type == "pi_event" && strings.Contains(item.Text, "Codex model is at capacity; retrying request") {
+			retryDiagnostic = true
+		}
+		if item.Type == "error" && strings.Contains(item.Text, "Selected model is at capacity") {
+			errorSeen = true
+		}
+	}
+	if userCount != 1 {
+		t.Fatalf("user message count = %d in %+v, want exactly one", userCount, messages.Items)
+	}
+	if !retryDiagnostic || !errorSeen {
+		t.Fatalf("messages = %+v, want capacity error and retry diagnostic", messages.Items)
 	}
 	_ = stdoutW.Close()
 }

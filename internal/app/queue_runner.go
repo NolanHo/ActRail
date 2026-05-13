@@ -54,6 +54,7 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		runtime := current.runtime
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			s.trackCodexOutboundPrompt(sessionID, queued.Text())
+			s.trackCodexCapacityRetryPrompt(sessionID, queued.Text())
 			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseSending, "codex_queued_sending", "queued_send")
 		}
 		if err := runtime.SendPromptWithStaleCheck(context.Background(), queued.Text(), func() bool {

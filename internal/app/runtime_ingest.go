@@ -101,6 +101,8 @@ func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.
 }
 
 func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection runtimeProjection) error {
+	codexCapacityError := runtimeProjectionHasCodexCapacityError(projection)
+	codexCapacityReason := codexCapacityErrorMessage(projection)
 	if len(projection.events) > 0 {
 		if err := s.applyPIEvents(sessionID, projection.events); err != nil {
 			return err
@@ -117,12 +119,18 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 		s.noteCodexThreadID(sessionID, projection.codexThreadID, projection.codexSessionPath)
 	}
 	codexMainProjection := s.codexThreadIDInMainThread(sessionID, projection.codexThreadID)
+	if codexMainProjection && codexCapacityError {
+		s.scheduleCodexCapacityRetry(sessionID, codexCapacityReason)
+	}
 	if codexMainProjection && !projection.clearCodexTurn && strings.TrimSpace(projection.codexTurnID) != "" {
 		s.noteCodexTurnID(sessionID, projection.codexTurnID)
 		s.flushCodexPendingInterrupt(sessionID)
 	}
 	if codexMainProjection && projection.clearCodexTurn {
 		s.clearCodexTurnID(sessionID, projection.codexTurnID)
+		if !codexCapacityError {
+			s.clearCodexCapacityRetryPromptForSession(sessionID)
+		}
 	}
 	if codexMainProjection && (strings.TrimSpace(projection.model) != "" || strings.TrimSpace(projection.provider) != "" || projection.contextUsage != nil || projection.turnTiming != nil) {
 		if record, ok, err := s.registry.UpdateRuntimeMetadata(sessionID, projection.model, projection.provider, projection.contextUsage, projection.turnTiming); err == nil && ok {

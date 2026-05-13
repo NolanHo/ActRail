@@ -184,6 +184,17 @@ func TestDecodeAppServerLineTurnTimingAndCompletion(t *testing.T) {
 	if len(completed.Events) != 1 || completed.Events[0].Boundary == nil || !completed.Events[0].Boundary.CommitLike {
 		t.Fatalf("completed events = %+v, want commit-like boundary", completed.Events)
 	}
+
+	failed, ok := DecodeAppServerLine([]byte(`{"method":"turn/completed","params":{"threadId":"thread-codex-2","turn":{"id":"turn-codex-2","status":"failed","error":{"message":"Selected model is at capacity. Please try a different model."}}}}`))
+	if !ok {
+		t.Fatal("DecodeAppServerLine(failed turn) ok = false")
+	}
+	if len(failed.Events) != 2 || failed.Events[0].Error == nil || failed.Events[0].Error.Message != "Selected model is at capacity. Please try a different model." {
+		t.Fatalf("failed events = %+v, want capacity error before boundary", failed.Events)
+	}
+	if !failed.ClearTurn || failed.Busy == nil || *failed.Busy {
+		t.Fatalf("failed busy/clear = (%v, %v), want false/true", failed.Busy, failed.ClearTurn)
+	}
 }
 
 func TestDecodeAppServerLineSessionTaskCompleteClearsBusy(t *testing.T) {

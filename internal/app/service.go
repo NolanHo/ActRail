@@ -101,6 +101,8 @@ type Stub struct {
 	runtimeAgentRunning map[session.SessionID]bool
 	codexOutboundMu     sync.Mutex
 	codexOutboundPrompt map[session.SessionID]string
+	codexRetryMu        sync.Mutex
+	codexCapacityRetry  map[session.SessionID]codexCapacityRetryState
 	piRPCStateMu        sync.Mutex
 	piRPCStates         map[session.SessionID]piRPCStateCache
 	piResumePaths       piResumePathCache
@@ -157,6 +159,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		teams:               newTeamRegistry(now),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		codexOutboundPrompt: map[session.SessionID]string{},
+		codexCapacityRetry:  map[session.SessionID]codexCapacityRetryState{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
 		piResumePaths:       piResumePathCache{},
 		piModels:            piModelCache{},
