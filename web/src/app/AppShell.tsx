@@ -392,6 +392,37 @@ export function AppShell() {
       return [];
     }
     const items: ConversationStatusItem[] = [];
+    if (activeSession.reset_required === true || activeSession.transport_state === "broken") {
+      items.push({ label: "Runtime", value: "broken", tone: "error" });
+    } else if (activeSession.transport_state === "failed") {
+      items.push({ label: "Runtime", value: "failed", tone: "error" });
+    } else if (activeSession.transport_state === "ended") {
+      items.push({ label: "Runtime", value: "ended", tone: "error" });
+    } else if (activeSession.transport_state === "silent" || activeSession.transport_state === "stalled") {
+      items.push({ label: "Runtime", value: activeSession.transport_state, tone: "error" });
+    } else if (activeRuntimeState === "failed" || activeRuntimeState === "ended") {
+      items.push({ label: "Runtime", value: activeRuntimeState, tone: "error" });
+    } else if (activeSessionGenerating) {
+      items.push({ label: "Runtime", value: "generating", tone: "busy" });
+    } else if (activeSessionBusy) {
+      items.push({ label: "Runtime", value: activeRuntimeState || "busy", tone: "busy" });
+    } else if (activeSession.pending_startup === true) {
+      items.push({ label: "Runtime", value: "starting", tone: "attention" });
+    } else {
+      items.push({ label: "Runtime", value: activeRuntimeState || "idle", tone: "success" });
+    }
+    const transportState = typeof activeSession.transport_state === "string" ? activeSession.transport_state.trim() : "";
+    if (transportState) {
+      const transportTone: ConversationStatusItem["tone"] = activeSession.reset_required === true || ["broken", "failed", "ended", "silent", "stalled"].includes(transportState)
+        ? "error"
+        : transportState === "starting"
+          ? "attention"
+          : "default";
+      items.push({ label: "Transport", value: transportState, tone: transportTone });
+    }
+    if (activeContextUsageLabel) {
+      items.push({ label: "Context", value: activeContextUsageLabel });
+    }
     if (activeSession.agent_backend) {
       const mode = typeof activeSession.iod?.mode === "string" ? activeSession.iod.mode.trim() : "";
       const backend = mode ? `${activeSession.agent_backend}/${mode}` : activeSession.agent_backend;
@@ -402,9 +433,6 @@ export function AppShell() {
     }
     if (activeReasoningEffort) {
       items.push({ label: "Effort", value: activeReasoningEffort, actionLabel: "Change reasoning effort", onActivate: () => setRuntimeSettingsOpen(true) });
-    }
-    if (activeContextUsageLabel) {
-      items.push({ label: "Context", value: activeContextUsageLabel });
     }
     if (activeSession.iod) {
       const mode = typeof activeSession.iod.mode === "string" ? activeSession.iod.mode.trim() : "";
@@ -429,25 +457,6 @@ export function AppShell() {
     }
     if (visibleActiveWait) {
       items.push({ label: "Wait", value: "user input", tone: "attention" });
-    }
-    if (activeSession.reset_required === true || activeSession.transport_state === "broken") {
-      items.push({ label: "Runtime", value: "broken", tone: "error" });
-    } else if (activeSession.transport_state === "failed") {
-      items.push({ label: "Runtime", value: "failed", tone: "error" });
-    } else if (activeSession.transport_state === "ended") {
-      items.push({ label: "Runtime", value: "ended", tone: "error" });
-    } else if (activeSession.transport_state === "silent" || activeSession.transport_state === "stalled") {
-      items.push({ label: "Runtime", value: activeSession.transport_state, tone: "error" });
-    } else if (activeSession.pending_startup === true) {
-      items.push({ label: "Runtime", value: "starting", tone: "attention" });
-    } else if (activeRuntimeState === "failed" || activeRuntimeState === "ended") {
-      items.push({ label: "Runtime", value: activeRuntimeState, tone: "error" });
-    } else if (activeSessionGenerating) {
-      items.push({ label: "Runtime", value: "generating", tone: "busy" });
-    } else if (activeSessionBusy) {
-      items.push({ label: "Runtime", value: activeRuntimeState || "busy", tone: "busy" });
-    } else {
-      items.push({ label: "Runtime", value: "idle", tone: "success" });
     }
     return items;
   }, [activeContextUsageLabel, activeModel, activeQueueCount, activeReasoningEffort, activeRuntimeState, activeSession, activeSessionBusy, activeSessionGenerating, visibleActiveWait]);
@@ -819,6 +828,7 @@ export function AppShell() {
             announcementEnabled={announcementEnabled}
             announcementLabel={announcementLabel}
             canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
+            statusItems={conversationStatusItems}
             notificationLabel={notificationLabel}
             notificationsEnabled={notificationsEnabled}
             onInterrupt={() => {

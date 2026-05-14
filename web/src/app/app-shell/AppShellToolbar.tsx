@@ -11,6 +11,45 @@ export interface ConversationStatusItem {
   onActivate?: () => void;
 }
 
+export function SessionStatusStrip({ items, className }: { items: ConversationStatusItem[]; className?: string }) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className={cn("conversationStatusStrip", className)} aria-label="Session status">
+      {items.map((item) => {
+        const className = cn(
+          "conversationStatusChip",
+          item.onActivate && "actionable",
+          item.tone && item.tone !== "default" && item.tone,
+        );
+        const content = (
+          <>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </>
+        );
+        return item.onActivate ? (
+          <button
+            key={`${item.label}:${item.value}`}
+            type="button"
+            className={className}
+            aria-label={item.actionLabel || item.label}
+            title={item.actionLabel || item.label}
+            onClick={item.onActivate}
+          >
+            {content}
+          </button>
+        ) : (
+          <span key={`${item.label}:${item.value}`} className={className}>
+            {content}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 interface AppShellToolbarProps {
   activeSessionId: string | null;
   activeTitle: string;
@@ -79,113 +118,189 @@ export function AppShellToolbar({
     setMobileToolsOpen(false);
   };
 
-  const renderConversationActionButtons = (mobileMenu = false) => (
-    <>
-      {mobileMenu && showMobileSessionsTrigger ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="conversationMenuItem"
-          aria-label="Sessions"
-          title="Sessions"
-          onClick={() => {
-            closeMobileToolsMenu();
-            onOpenSessions();
-          }}
-        >
-          <SessionsIcon />
-          <span>Sessions</span>
-        </Button>
-      ) : null}
-      <Button
-        type="button"
-        variant={mobileMenu ? "ghost" : "outline"}
-        size={mobileMenu ? "sm" : "icon"}
-        className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Metadata"
-        title="Metadata"
-        disabled={!activeSessionId}
-        onClick={() => {
-          closeMobileToolsMenu();
-          onOpenWorkspace();
-        }}
-      >
-        <MetadataIcon />
-        {mobileMenu ? <span>Metadata</span> : null}
-      </Button>
-      <Button
-        type="button"
-        variant={mobileMenu ? "ghost" : "outline"}
-        size={mobileMenu ? "sm" : "icon"}
-        className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Files"
-        title="Files"
-        disabled={!activeSessionId}
-        onClick={() => {
-          closeMobileToolsMenu();
-          onOpenFiles();
-        }}
-      >
-        <FileIcon />
-        {mobileMenu ? <span>Files</span> : null}
-      </Button>
-      {canProbeRuntime ? (
-        <Button
-          type="button"
-          variant={mobileMenu ? "ghost" : "outline"}
-          size="sm"
-          className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-          aria-label="Probe runtime state"
-          title="Probe runtime state"
-          disabled={probingRuntime}
-          onClick={() => {
-            closeMobileToolsMenu();
-            onProbeRuntime?.();
-          }}
-        >
-          <ProbeIcon />
-          {mobileMenu ? <span>{probingRuntime ? "Probing" : "Probe"}</span> : null}
-        </Button>
-      ) : null}
-      {showInterruptAction ? (
-        <Button
-          type="button"
-          variant={mobileMenu ? "ghost" : "outline"}
-          size={mobileMenu ? "sm" : "icon"}
-          className={cn(
-            mobileMenu ? "conversationMenuItem conversationMenuItemDanger" : "toolbarButton conversationToolButton conversationToolButtonDanger",
-          )}
-          aria-label="Interrupt (Esc)"
-          title="Interrupt (Esc)"
-          disabled={!canInterrupt}
-          onClick={() => {
-            closeMobileToolsMenu();
-            onInterrupt();
-          }}
-        >
-          <StopIcon />
-          {mobileMenu ? <span>Interrupt</span> : null}
-        </Button>
-      ) : null}
-      <Button
-        type="button"
-        variant={mobileMenu ? "ghost" : "outline"}
-        size={mobileMenu ? "sm" : "icon"}
-        className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
-        aria-label="Inbox"
-        title="Inbox"
-        disabled={!activeSessionId}
-        onClick={() => {
-          closeMobileToolsMenu();
-          onOpenInbox();
-        }}
-      >
-        <InboxIcon />
-        {mobileMenu ? <span>Inbox</span> : null}
-      </Button>
-    </>
-  );
+  const renderConversationActionButtons = (mobileMenu = false) => {
+    if (mobileMenu) {
+      return (
+        <>
+          {showMobileSessionsTrigger ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="conversationMenuItem"
+              aria-label="Sessions"
+              title="Sessions"
+              onClick={() => {
+                closeMobileToolsMenu();
+                onOpenSessions();
+              }}
+            >
+              <SessionsIcon />
+              <span>Sessions</span>
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="conversationMenuItem"
+            aria-label="Metadata"
+            title="Metadata"
+            disabled={!activeSessionId}
+            onClick={() => {
+              closeMobileToolsMenu();
+              onOpenWorkspace();
+            }}
+          >
+            <MetadataIcon />
+            <span>Metadata</span>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="conversationMenuItem"
+            aria-label="Files"
+            title="Files"
+            disabled={!activeSessionId}
+            onClick={() => {
+              closeMobileToolsMenu();
+              onOpenFiles();
+            }}
+          >
+            <FileIcon />
+            <span>Files</span>
+          </Button>
+          {canProbeRuntime ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="conversationMenuItem"
+              aria-label="Probe runtime state"
+              title="Probe runtime state"
+              disabled={probingRuntime}
+              onClick={() => {
+                closeMobileToolsMenu();
+                onProbeRuntime?.();
+              }}
+            >
+              <ProbeIcon />
+              <span>{probingRuntime ? "Probing" : "Probe"}</span>
+            </Button>
+          ) : null}
+          {showInterruptAction ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="conversationMenuItem conversationMenuItemDanger"
+              aria-label="Interrupt (Esc)"
+              title="Interrupt (Esc)"
+              disabled={!canInterrupt}
+              onClick={() => {
+                closeMobileToolsMenu();
+                onInterrupt();
+              }}
+            >
+              <StopIcon />
+              <span>Interrupt</span>
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="conversationMenuItem"
+            aria-label="Inbox"
+            title="Inbox"
+            disabled={!activeSessionId}
+            onClick={() => {
+              closeMobileToolsMenu();
+              onOpenInbox();
+            }}
+          >
+            <InboxIcon />
+            <span>Inbox</span>
+          </Button>
+        </>
+      );
+    }
+    return (
+      <>
+        <div className="conversationToolCluster" aria-label="Session inspection tools">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="toolbarButton conversationToolButton"
+            aria-label="Metadata"
+            title="Metadata"
+            disabled={!activeSessionId}
+            onClick={onOpenWorkspace}
+          >
+            <MetadataIcon />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="toolbarButton conversationToolButton"
+            aria-label="Files"
+            title="Files"
+            disabled={!activeSessionId}
+            onClick={onOpenFiles}
+          >
+            <FileIcon />
+          </Button>
+        </div>
+        <div className="conversationToolCluster" aria-label="Runtime controls">
+          {canProbeRuntime ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="toolbarButton conversationToolButton"
+              aria-label="Probe runtime state"
+              title="Probe runtime state"
+              disabled={probingRuntime}
+              onClick={() => onProbeRuntime?.()}
+            >
+              <ProbeIcon />
+            </Button>
+          ) : null}
+          {showInterruptAction ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="toolbarButton conversationToolButton conversationToolButtonDanger"
+              aria-label="Interrupt (Esc)"
+              title="Interrupt (Esc)"
+              disabled={!canInterrupt}
+              onClick={onInterrupt}
+            >
+              <StopIcon />
+            </Button>
+          ) : null}
+        </div>
+        <div className="conversationToolCluster" aria-label="Session workflow">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="toolbarButton conversationToolButton"
+            aria-label="Inbox"
+            title="Inbox"
+            disabled={!activeSessionId}
+            onClick={onOpenInbox}
+          >
+            <InboxIcon />
+          </Button>
+        </div>
+      </>
+    );
+  };
 
   return (
     <div className="conversationToolbar">
@@ -209,39 +324,7 @@ export function AppShellToolbar({
         ) : null}
         <div className="conversationIdentityBlock">
           <div className="conversationTitle">{activeSessionId ? activeTitle : "No session selected"}</div>
-          {activeSessionId && statusItems.length ? (
-            <div className="conversationStatusStrip" aria-label="Session status">
-              {statusItems.map((item) => {
-                const className = cn(
-                  "conversationStatusChip",
-                  item.onActivate && "actionable",
-                  item.tone && item.tone !== "default" && item.tone,
-                );
-                const content = (
-                  <>
-                    <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                  </>
-                );
-                return item.onActivate ? (
-                  <button
-                    key={`${item.label}:${item.value}`}
-                    type="button"
-                    className={className}
-                    aria-label={item.actionLabel || item.label}
-                    title={item.actionLabel || item.label}
-                    onClick={item.onActivate}
-                  >
-                    {content}
-                  </button>
-                ) : (
-                  <span key={`${item.label}:${item.value}`} className={className}>
-                    {content}
-                  </span>
-                );
-              })}
-            </div>
-          ) : null}
+          {activeSessionId ? <SessionStatusStrip items={statusItems} /> : null}
         </div>
       </div>
       <div className="conversationToolbarGroup conversationToolbarGroupActions">

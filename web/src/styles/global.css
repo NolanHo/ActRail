@@ -597,6 +597,7 @@ select {
 
 .mobileChatHeading {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .mobileSectionEyebrow {
@@ -763,6 +764,38 @@ select {
   flex: 0 1 auto;
   justify-content: flex-end;
   flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.conversationToolCluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  padding: 0.18rem;
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 52%, transparent);
+  border-radius: 0.88rem;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+.conversationToolCluster .conversationToolButton {
+  border-color: transparent;
+  background: transparent;
+}
+
+.conversationToolCluster .conversationToolButton:hover,
+.conversationToolCluster .conversationToolButton:focus-visible {
+  border-color: color-mix(in srgb, var(--legacy-border) 52%, transparent);
+  background: color-mix(in srgb, var(--accent) 82%, transparent);
+}
+
+.conversationToolCluster .conversationToolButtonDanger {
+  color: color-mix(in srgb, #ef4444 82%, var(--text));
+}
+
+.conversationToolCluster .conversationToolButtonDanger:hover,
+.conversationToolCluster .conversationToolButtonDanger:focus-visible {
+  border-color: color-mix(in srgb, #ef4444 42%, transparent);
+  background: color-mix(in srgb, #ef4444 10%, transparent);
 }
 
 .todoViewerDialog {
@@ -884,6 +917,18 @@ button.conversationStatusChip {
 .conversationStatusChip.error {
   border-color: color-mix(in srgb, hsl(var(--destructive)) 36%, var(--legacy-border));
   background: color-mix(in srgb, hsl(var(--destructive)) 8%, var(--panel));
+}
+
+.mobileSessionStatusStrip {
+  margin-top: 0.45rem;
+  max-width: 100%;
+  padding-bottom: 0.05rem;
+}
+
+.mobileSessionStatusStrip .conversationStatusChip {
+  min-height: 1.38rem;
+  padding: 0.12rem 0.44rem;
+  font-size: 0.66rem;
 }
 
 .sessionsPane {
@@ -1476,22 +1521,22 @@ button.conversationStatusChip {
 
 .sessionCardSurface {
   height: 100%;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 28%, transparent);
-  border-radius: 0.9rem;
-  background: color-mix(in srgb, white 92%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 20%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, white 65%, var(--panel));
   box-shadow: none;
   transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .sessionCard:hover .sessionCardSurface,
 .sessionCard:focus-within .sessionCardSurface {
-  background: color-mix(in srgb, white 84%, var(--accent));
-  border-color: color-mix(in srgb, var(--primary) 18%, var(--legacy-border));
+  background: color-mix(in srgb, white 74%, var(--accent));
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--legacy-border));
 }
 
 .sessionCard.active .sessionCardSurface {
-  border-color: color-mix(in srgb, var(--primary) 28%, var(--legacy-border));
-  background: color-mix(in srgb, white 78%, var(--accent));
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--legacy-border));
+  background: color-mix(in srgb, var(--primary) 7%, var(--accent));
 }
 
 .sessionCardContent {
@@ -1503,8 +1548,8 @@ button.conversationStatusChip {
   content: "";
   position: absolute;
   left: 0;
-  top: 8px;
-  bottom: 8px;
+  top: 7px;
+  bottom: 7px;
   width: 2px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--legacy-accent) 88%, white);
@@ -1528,8 +1573,8 @@ button.conversationStatusChip {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.55rem 0.7rem 0.52rem 0.78rem;
+  gap: 0.32rem;
+  padding: 0.48rem 0.64rem 0.46rem 0.74rem;
 }
 
 .sessionCardMainRow {
@@ -1544,7 +1589,7 @@ button.conversationStatusChip {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.55rem;
+  gap: 0.45rem;
   min-width: 0;
 }
 
@@ -1702,21 +1747,22 @@ button.conversationStatusChip {
 .backendBadge,
 .ownerBadge,
 .queueBadge {
-  min-height: 1.2rem;
-  padding: 0 0.38rem;
+  min-height: 1.05rem;
+  padding: 0 0.34rem;
   border-radius: 999px;
-  font-size: 0.66rem;
+  font-size: 0.62rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   text-transform: lowercase;
 }
 
 .backendBadge {
-  background: rgba(15, 23, 42, 0.07);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text-muted);
 }
 
 .ownerBadge {
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
   color: var(--legacy-muted);
 }
 
@@ -2107,12 +2153,12 @@ button.conversationStatusChip {
   align-items: center;
   gap: 0.58rem;
   padding: 0.42rem 0.62rem;
-  border: 1px solid color-mix(in srgb, var(--chrome-border) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chrome-border) 58%, transparent);
   border-radius: 0.72rem;
-  background: color-mix(in srgb, var(--message-card-system-bg) 84%, var(--panel));
+  background: color-mix(in srgb, var(--message-card-system-bg) 64%, transparent);
   color: var(--text);
   text-align: left;
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
 }
 
@@ -2482,8 +2528,8 @@ button.conversationStatusChip {
   min-width: 0;
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid var(--legacy-border);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 62%, transparent);
+  box-shadow: none;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -2492,8 +2538,8 @@ button.conversationStatusChip {
   align-self: flex-end;
   max-width: min(72ch, 86%);
   background: color-mix(in srgb, var(--bubble-user) 88%, white);
-  border-color: color-mix(in srgb, var(--primary) 24%, transparent);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
 }
 
 .messageBubble.assistant {
@@ -2501,9 +2547,9 @@ button.conversationStatusChip {
   max-width: min(980px, 100%);
   padding: 9px 11px;
   border-radius: 8px;
-  border-color: color-mix(in srgb, var(--chrome-border) 82%, transparent);
-  background: color-mix(in srgb, var(--message-card-base) 88%, var(--panel));
-  box-shadow: var(--shadow-sm);
+  border-color: color-mix(in srgb, var(--chrome-border) 54%, transparent);
+  background: color-mix(in srgb, var(--message-card-base) 78%, transparent);
+  box-shadow: none;
 }
 
 .messageBubble .messageBody,
@@ -2535,9 +2581,9 @@ button.conversationStatusChip {
   min-width: 0;
   padding: 11px 13px;
   border-radius: 8px;
-  border: 1px solid var(--chrome-border);
-  background: var(--message-card-base);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid color-mix(in srgb, var(--chrome-border) 62%, transparent);
+  background: color-mix(in srgb, var(--message-card-base) 84%, transparent);
+  box-shadow: none;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -3133,6 +3179,41 @@ button.conversationStatusChip {
 
 .workspacePanelGrid {
   align-items: start;
+}
+
+.workspaceMetadataList {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.workspaceMetadataRow {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.42fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.38rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
+}
+
+.workspaceMetadataRow:last-child {
+  border-bottom: 0;
+}
+
+.workspaceMetadataRow dt {
+  min-width: 0;
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.workspaceMetadataRow dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--foreground);
+  font-size: 0.82rem;
+  line-height: 1.35;
 }
 
 .workspaceSurface h3 {
