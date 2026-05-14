@@ -29,7 +29,7 @@ function blockBody(source: string, openBraceIndex: number) {
 }
 
 function ruleBody(source: string, selector: string) {
-  const match = new RegExp(`${escapeRegExp(selector)}\\s*\\{`, "m").exec(source);
+  const match = new RegExp(`(?:^|\\n)\\s*${escapeRegExp(selector)}\\s*\\{`, "m").exec(source);
   expect(match, `Expected CSS rule for ${selector}`).not.toBeNull();
 
   return blockBody(source, match!.index + match![0].length - 1);
@@ -239,11 +239,15 @@ describe("conversation layout scroll guards", () => {
 
   it("keeps mobile tool-result content bounded to the viewport and wraps long tokens", () => {
     const messageRowRule = ruleBody(css, ".messageRow");
+    const messageListRule = ruleBody(css, ".messageList");
     const messageSurfaceRule = ruleBody(css, ".messageSurface");
     const toolBlockRule = ruleBody(css, ".messageToolBlock");
     const toolDetailsRule = ruleBody(css, ".messageToolDetails");
     const bodyRule = ruleBody(css, ".messageBody");
 
+    expect(messageListRule).toContain("min-width: 0;");
+    expect(messageListRule).toContain("max-width: 100%;");
+    expect(messageRowRule).toContain("width: 100%;");
     expect(messageRowRule).toContain("min-width: 0;");
     expect(messageSurfaceRule).toContain("min-width: 0;");
     expect(messageSurfaceRule).toContain("max-width: 100%;");
@@ -254,6 +258,28 @@ describe("conversation layout scroll guards", () => {
     expect(bodyRule).toContain("max-width: 100%;");
     expect(bodyRule).toContain("overflow-wrap: anywhere;");
     expect(bodyRule).toContain("word-break: break-word;");
+  });
+
+  it("lets the mobile shell and assistant messages shrink to the viewport", () => {
+    const shellRule = ruleBody(css, ".mobileShell");
+    const shellBodyRule = ruleBody(css, ".mobileShellBody");
+    const paneRule = ruleBody(css, ".mobilePane");
+    const mobilePaneKindRule = ruleBody(css, ".mobileChatPane,\n.mobileReadPane,\n.mobileConversationPane,\n.mobileWorkspacePane,\n.mobileWaitsPane,\n.mobileSettingsPane");
+    const mobileRules = mediaBody(css, "(max-width: 880px)");
+    const mobileMessageBoundsRule = ruleBody(mobileRules, ".mobileReadPane .conversationTimeline,\n  .mobileChatPane .conversationTimeline,\n  .mobileReadPane .conversationPane,\n  .mobileChatPane .conversationPane,\n  .mobileReadPane .messageList,\n  .mobileChatPane .messageList,\n  .mobileReadPane .messageRow,\n  .mobileChatPane .messageRow,\n  .mobileReadPane .messageSurface,\n  .mobileChatPane .messageSurface,\n  .mobileReadPane .messageBody,\n  .mobileChatPane .messageBody");
+    const mobileAssistantRule = ruleBody(mobileRules, ".mobileReadPane .messageBubble.assistant,\n  .mobileChatPane .messageBubble.assistant");
+    const mobileBubbleContentRule = ruleBody(mobileRules, ".mobileReadPane .messageBubble .messageBody,\n  .mobileChatPane .messageBubble .messageBody,\n  .mobileReadPane .messageBubble .commandIOBlock,\n  .mobileChatPane .messageBubble .commandIOBlock,\n  .mobileReadPane .messageBubble .assistantTurnSummaryRow,\n  .mobileChatPane .messageBubble .assistantTurnSummaryRow,\n  .mobileReadPane .messageBubble .supervisorRunStack,\n  .mobileChatPane .messageBubble .supervisorRunStack");
+
+    for (const rule of [shellRule, shellBodyRule, paneRule, mobilePaneKindRule]) {
+      expect(rule).toContain("width: 100%;");
+      expect(rule).toContain("max-width: 100%;");
+      expect(rule).toContain("min-width: 0;");
+    }
+    expect(mobileMessageBoundsRule).toContain("min-width: 0;");
+    expect(mobileMessageBoundsRule).toContain("max-width: 100%;");
+    expect(mobileAssistantRule).toContain("width: 100%;");
+    expect(mobileAssistantRule).toContain("max-width: 100%;");
+    expect(mobileBubbleContentRule).toContain("padding-right: 0;");
   });
 
   it("keeps the mobile message header compact with a two-line clamped title", () => {
