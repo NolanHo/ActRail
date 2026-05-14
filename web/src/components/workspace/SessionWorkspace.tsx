@@ -70,21 +70,60 @@ function runtimeEntries(session: SessionSummary | null, runtimeId: string | null
   pushEntry(entries, "agent_backend", session?.agent_backend);
   pushEntry(entries, "runtime_id", session?.runtime_id ?? runtimeId);
   pushEntry(entries, "generation_id", session?.generation_id);
-  pushEntry(entries, "transport_state", session?.transport_state);
-  pushEntry(entries, "reset_required", session?.reset_required);
-  pushEntry(entries, "transport_reason", session?.transport_reason);
   pushEntry(entries, "model", session?.model ?? diagnostics?.model);
   pushEntry(entries, "provider", session?.provider_choice ?? diagnostics?.provider);
   pushEntry(entries, "reasoning_effort", session?.reasoning_effort ?? diagnostics?.reasoning_effort);
   pushEntry(entries, "service_tier", session?.service_tier);
   pushEntry(entries, "busy", session?.busy);
-  pushEntry(entries, "queue_len", session?.queue_len);
   pushEntry(entries, "focused", session?.focused);
   if (session?.iod) {
     pushEntry(entries, "iod_mode", session.iod.mode);
     pushEntry(entries, "iod_git_sha", session.iod.git_sha);
     pushEntry(entries, "iod_build_date", session.iod.build_date);
   }
+  return entries;
+}
+
+function transportEntries(session: SessionSummary | null, diagnostics: Record<string, unknown> | null): MetadataEntry[] {
+  const entries: MetadataEntry[] = [];
+  pushEntry(entries, "transport_state", session?.transport_state);
+  pushEntry(entries, "transport_reason", session?.transport_reason ?? diagnostics?.transport_reason);
+  pushEntry(entries, "reset_required", session?.reset_required);
+  pushEntry(entries, "generation_id", session?.generation_id);
+  pushEntry(entries, "runtime_state", session?.runtime_state);
+  pushEntry(entries, "runtime_state_reason", session?.runtime_state_reason);
+  pushEntry(entries, "pending_startup", session?.pending_startup);
+  pushEntry(entries, "probing", session?.probing);
+  return entries;
+}
+
+function queueEntries(queue: Record<string, unknown> | null, session: SessionSummary | null): MetadataEntry[] {
+  const entries: MetadataEntry[] = [];
+  pushEntry(entries, "queue_len", session?.queue_len);
+  const rawItems = queue?.items;
+  if (Array.isArray(rawItems)) {
+    pushEntry(entries, "state_queue_items", rawItems.length);
+  }
+  return entries;
+}
+
+function timingEntries(session: SessionSummary | null, diagnostics: Record<string, unknown> | null): MetadataEntry[] {
+  const entries: MetadataEntry[] = [];
+  pushEntry(entries, "updated_ts", session?.updated_ts ?? diagnostics?.updated_ts);
+  pushEntry(entries, "last_assistant_message_ts", session?.last_assistant_message_ts);
+  if (session?.iod) {
+    pushEntry(entries, "iod_start_ts", session.iod.start_ts);
+    pushEntry(entries, "iod_build_date", session.iod.build_date);
+  }
+  return entries;
+}
+
+function contextSnapshotEntries(session: SessionSummary | null, diagnostics: Record<string, unknown> | null): MetadataEntry[] {
+  const entries: MetadataEntry[] = [];
+  pushEntry(entries, "model", session?.model ?? diagnostics?.model);
+  pushEntry(entries, "provider", session?.provider_choice ?? diagnostics?.provider);
+  pushEntry(entries, "reasoning_effort", session?.reasoning_effort ?? diagnostics?.reasoning_effort);
+  pushEntry(entries, "service_tier", session?.service_tier);
   return entries;
 }
 
@@ -109,6 +148,12 @@ const representedDiagnosticKeys = new Set([
   "session_id",
   "transport_reason",
   "transport_state",
+  "runtime_state",
+  "runtime_state_reason",
+  "pending_startup",
+  "probing",
+  "updated_ts",
+  "last_assistant_message_ts",
 ]);
 
 function diagnosticEntries(diagnostics: Record<string, unknown> | null, sessionHasFilePath: boolean): MetadataEntry[] {
@@ -136,6 +181,20 @@ function formatDiagnosticLabel(key: string): string {
       return "Backend";
     case "transport_state":
       return "Transport";
+    case "runtime_state":
+      return "Runtime state";
+    case "runtime_state_reason":
+      return "Runtime reason";
+    case "pending_startup":
+      return "Pending startup";
+    case "state_queue_items":
+      return "State queue";
+    case "last_assistant_message_ts":
+      return "Last assistant";
+    case "iod_start_ts":
+      return "IOD started";
+    case "iod_build_date":
+      return "IOD build";
     case "reset_required":
       return "Reset required";
     default:
@@ -160,7 +219,10 @@ function isMonospaceMetadataKey(key: string) {
   return key.endsWith("_id") || key.endsWith("_path") || key === "cwd" || key === "git_branch" || key === "log_path";
 }
 
-function renderKeyValueList(entries: MetadataEntry[]) {
+function renderKeyValueList(entries: MetadataEntry[], options: { empty?: string } = {}) {
+  if (!entries.length) {
+    return <p className="text-sm text-muted-foreground">{options.empty || "No data available."}</p>;
+  }
   return (
     <dl className="workspaceMetadataList">
       {entries.map(([key, value]) => (
@@ -213,6 +275,14 @@ function BackendCapabilitiesPanel({ backend, capabilities }: { backend: string; 
   );
 }
 
+
+function MetadataFactSection({ title, badge, entries, empty }: { title: string; badge?: string; entries: MetadataEntry[]; empty?: string }) {
+  return (
+    <WorkspaceSection title={title} badge={badge ?? (entries.length ? `${entries.length}` : undefined)}>
+      {renderKeyValueList(entries, { empty })}
+    </WorkspaceSection>
+  );
+}
 
 function WorkspaceSection({ title, badge, children }: { title: string; badge?: string; children: ComponentChildren }) {
   return (
@@ -311,6 +381,10 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
   const queueItems = queueItemsFromValue(queue);
   const sessionMeta = sessionEntries(activeSession, workspaceSessionId);
   const runtimeMeta = runtimeEntries(activeSession, runtimeId, diagnostics);
+  const transportMeta = transportEntries(activeSession, diagnostics);
+  const queueMeta = queueEntries(queue, activeSession);
+  const timingMeta = timingEntries(activeSession, diagnostics);
+  const contextSnapshotMeta = contextSnapshotEntries(activeSession, diagnostics);
   const diagnosticMeta = diagnosticEntries(diagnostics, typeof activeSession?.session_file_path === "string" && activeSession.session_file_path.trim().length > 0);
   const activeBackend = normalizeLaunchBackend(activeSession?.agent_backend ?? (typeof diagnostics?.agent_backend === "string" ? diagnostics.agent_backend : undefined));
   const activeBackendCapabilities = backendCapability(newSessionDefaults, activeBackend);
@@ -319,7 +393,7 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
   const [contextUsageError, setContextUsageError] = useState("");
   const compact = mode === "default";
   const panelLabel = initialTab === "metadata" ? "Metadata" : "Metadata";
-  const hasWorkspaceData = sessionMeta.length > 0 || runtimeMeta.length > 0 || diagnosticMeta.length > 0 || queueItems.length > 0 || requests.length > 0 || files.length > 0 || Boolean(activeWait);
+  const hasWorkspaceData = sessionMeta.length > 0 || runtimeMeta.length > 0 || transportMeta.length > 0 || queueMeta.length > 0 || timingMeta.length > 0 || contextSnapshotMeta.length > 0 || diagnosticMeta.length > 0 || queueItems.length > 0 || requests.length > 0 || files.length > 0 || Boolean(activeWait);
 
   const calculateContextUsage = async () => {
     if (!workspaceSessionId || contextUsageCalculating) {
@@ -366,13 +440,17 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
         <CardContent className="min-h-0 flex-1 p-0 px-6 pb-6">
           <ScrollArea className="workspaceScroll h-full pr-1">
             <div className="workspacePanelGrid grid gap-4 lg:grid-cols-2">
-              <WorkspaceSection title="Session" badge={sessionMeta.length ? `${sessionMeta.length}` : undefined}>
-                {sessionMeta.length ? renderKeyValueList(sessionMeta) : <p className="text-sm text-muted-foreground">No session metadata available.</p>}
-              </WorkspaceSection>
+              <MetadataFactSection title="Identity" entries={sessionMeta} empty="No session identity metadata available." />
 
-              <WorkspaceSection title="Runtime" badge={runtimeMeta.length ? `${runtimeMeta.length}` : undefined}>
-                {runtimeMeta.length ? renderKeyValueList(runtimeMeta) : <p className="text-sm text-muted-foreground">No runtime metadata available.</p>}
-              </WorkspaceSection>
+              <MetadataFactSection title="Runtime" entries={runtimeMeta} empty="No runtime metadata available." />
+
+              <MetadataFactSection title="Transport" entries={transportMeta} empty="No transport metadata available." />
+
+              <MetadataFactSection title="Context Snapshot" entries={contextSnapshotMeta} empty="No context snapshot available." />
+
+              <MetadataFactSection title="Queue" entries={queueMeta} empty="No queue metadata available." />
+
+              <MetadataFactSection title="Timing" entries={timingMeta} empty="No timing metadata available." />
 
               <BackendCapabilitiesPanel backend={activeBackend} capabilities={activeBackendCapabilities} />
 
@@ -409,9 +487,7 @@ export function SessionWorkspace({ mode = "details", initialTab = "metadata" }: 
                 ]) : <p className="text-sm text-muted-foreground">No active wait.</p>}
               </WorkspaceSection>
 
-              <WorkspaceSection title="Diagnostics" badge={diagnosticMeta.length ? `${diagnosticMeta.length}` : undefined}>
-                {diagnosticMeta.length ? renderKeyValueList(diagnosticMeta) : <p className="text-sm text-muted-foreground">No diagnostics available.</p>}
-              </WorkspaceSection>
+              <MetadataFactSection title="Diagnostics" entries={diagnosticMeta} empty="No diagnostics available." />
 
               <ContextUsagePanel
                 calculating={contextUsageCalculating}
