@@ -191,6 +191,15 @@ func (r *helperRegistry) Attachment(sessionID session.SessionID) (attachedHelper
 	return attachment, ok
 }
 
+func (r *helperRegistry) Set(sessionID session.SessionID, attachment attachedHelper) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if current, ok := r.attachments[sessionID]; ok && current.Client != attachment.Client {
+		_ = current.Client.Close()
+	}
+	r.attachments[sessionID] = attachment
+}
+
 func (r *helperRegistry) Fenced() []helperFence {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
