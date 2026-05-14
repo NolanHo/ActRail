@@ -105,6 +105,22 @@ select {
   grid-template-columns: 4.5rem minmax(18rem, var(--sidebar-w)) minmax(0, 1fr);
 }
 
+.appShell.editorialShell.isMobileLayout {
+  grid-template-columns: 1fr;
+  top: var(--visualViewportOffsetTop, 0px);
+  right: 0;
+  bottom: auto;
+  left: 0;
+  height: var(--appH, 100dvh);
+  max-height: var(--appH, 100dvh);
+  padding: 0;
+  gap: 0;
+}
+
+.appShell.editorialShell.withGlobalNav.isMobileLayout {
+  grid-template-columns: 1fr;
+}
+
 .mobileSheetTrigger,
 .mobileToolsTrigger {
   display: none;
@@ -4469,14 +4485,6 @@ button.conversationStatusChip {
 @media (max-width: 880px) {
   .appShell.editorialShell {
     grid-template-columns: 1fr;
-    top: var(--visualViewportOffsetTop, 0px);
-    right: 0;
-    bottom: auto;
-    left: 0;
-    height: var(--appH, 100dvh);
-    max-height: var(--appH, 100dvh);
-    padding: 0;
-    gap: 0;
   }
 
   .appShell.editorialShell.withGlobalNav {

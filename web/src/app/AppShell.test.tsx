@@ -4,6 +4,7 @@ import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppProviders } from "./providers";
 import { AppShell } from "./AppShell";
+import { MOBILE_LAYOUT_MEDIA_QUERY } from "./app-shell/utils";
 
 const realtimeMocks = vi.hoisted(() => {
   let frameListener: ((frame: Record<string, unknown>) => void) | null = null;
@@ -535,7 +536,7 @@ describe("AppShell", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: query === "(max-width: 880px)",
+        matches: query === MOBILE_LAYOUT_MEDIA_QUERY,
         media: query,
         onchange: null,
         addListener: vi.fn(),
@@ -564,6 +565,36 @@ describe("AppShell", () => {
     }
   });
 
+  it("uses the mobile shell on coarse pointer devices even above the narrow viewport breakpoint", () => {
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query === MOBILE_LAYOUT_MEDIA_QUERY,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn().mockReturnValue(false),
+      })),
+    });
+
+    try {
+      renderAppShell({ activeSessionId: null, diagnostics: null });
+      const shell = getRoot().querySelector('[data-testid="app-shell"]');
+      expect(shell?.classList.contains("isMobileLayout")).toBe(true);
+      expect(getRoot().querySelector('[data-testid="mobile-shell"]')).not.toBeNull();
+      expect(getRoot().querySelector('[data-testid="sessions-surface"]')).not.toBeNull();
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    }
+  });
+
   it("renders direct toolbar icon actions on desktop without a grouped tools trigger", async () => {
     renderAppShell({ diagnostics: { status: "ok" } });
     await flush();
@@ -580,7 +611,7 @@ describe("AppShell", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: query === "(max-width: 880px)",
+        matches: query === MOBILE_LAYOUT_MEDIA_QUERY,
         media: query,
         onchange: null,
         addListener: vi.fn(),
@@ -614,7 +645,7 @@ describe("AppShell", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: query === "(max-width: 880px)",
+        matches: query === MOBILE_LAYOUT_MEDIA_QUERY,
         media: query,
         onchange: null,
         addListener: vi.fn(),
@@ -790,7 +821,7 @@ describe("AppShell", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: query === "(max-width: 880px)",
+        matches: query === MOBILE_LAYOUT_MEDIA_QUERY,
         media: query,
         onchange: null,
         addListener: vi.fn(),
@@ -824,7 +855,7 @@ describe("AppShell", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: query === "(max-width: 880px)",
+        matches: query === MOBILE_LAYOUT_MEDIA_QUERY,
         media: query,
         onchange: null,
         addListener: vi.fn(),
@@ -862,7 +893,7 @@ describe("AppShell", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: query === "(max-width: 880px)",
+        matches: query === MOBILE_LAYOUT_MEDIA_QUERY,
         media: query,
         onchange: null,
         addListener: vi.fn(),
