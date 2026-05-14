@@ -3893,6 +3893,52 @@ describe("ConversationPane", () => {
     expect(loadInitial).toHaveBeenCalledWith("history:pi:resume-hist");
   });
 
+  it("demand-loads an unloaded live session before showing the empty state", async () => {
+    const sessionsStore = createStaticStore(
+      {
+        items: [{ session_id: "sess-codex-empty", runtime_id: "runtime-codex-empty", agent_backend: "codex" }],
+        activeSessionId: "sess-codex-empty",
+        loading: false,
+        newSessionDefaults: null,
+      },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {},
+        offsetsBySessionId: {},
+        hasOlderBySessionId: {},
+        olderBeforeBySessionId: {},
+        loadingOlderBySessionId: {},
+        loadingBySessionId: {},
+        loadedBySessionId: {},
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+    const liveLoadInitial = vi.fn().mockResolvedValue(undefined);
+    const liveSessionStore = createStaticStore(
+      { offsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: {}, loadingBySessionId: {} },
+      { loadInitial: liveLoadInitial, poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders liveSessionStore={liveSessionStore as any} sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+          <ConversationPane />
+        </AppProviders>,
+        root!,
+      );
+      await Promise.resolve();
+    });
+
+    expect(liveLoadInitial).toHaveBeenCalledWith("sess-codex-empty", "runtime-codex-empty");
+    expect(root.querySelector("[data-kind='loading']")).not.toBeNull();
+    expect(root.textContent).not.toContain("No conversation events yet.");
+  });
+
   it("shows the loading skeleton immediately for an unloaded historical pi session", async () => {
     const sessionsStore = createStaticStore(
       {

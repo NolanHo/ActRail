@@ -3311,6 +3311,14 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   }, [activeSessionId]);
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsHistoricalPi = activeSession?.historical === true && activeSessionIsPi;
+  const shouldDemandLoadActiveSession = Boolean(
+    activeSessionId
+    && activeSession
+    && !activeSessionLoaded
+    && !activeSessionLoading
+    && persistedMessages.length === 0
+    && pendingMessages.length === 0
+  );
   const allowLegacyAskUserFallback = Boolean(activeSessionIsPi && activeSession?.transport !== "pi-rpc");
   const isBusy = Boolean(
     isGenerating
@@ -3403,7 +3411,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const [sessionSwitchLoadingId, setSessionSwitchLoadingId] = useState<string | null>(activeSessionId);
   const showHistoryControls = Boolean(activeSessionId && messages.length && (hasOlder || olderCursor > 0 || olderLoading));
   const showHistoryTopReached = Boolean(activeSessionId && messages.length && attemptedLoadOlder && !olderLoading && !hasOlder && olderCursor <= 0);
-  const waitingForInitialHistoricalReplay = activeSessionIsHistoricalPi && messages.length === 0 && !activeSessionLoaded;
+  const waitingForInitialReplay = shouldDemandLoadActiveSession;
   const showLoadingState = Boolean(
     activeSessionId
     && !liveSessionError
@@ -3411,7 +3419,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     && !activeSessionLoaded
     && (
       activeSessionLoading
-      || waitingForInitialHistoricalReplay
+      || waitingForInitialReplay
       || sessionSwitchLoadingId === activeSessionId
     )
   );
@@ -3570,14 +3578,18 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   };
 
   useEffect(() => {
-    if (!activeSessionId || !activeSessionIsHistoricalPi) {
+    if (!activeSessionId || !shouldDemandLoadActiveSession) {
       return;
     }
-    if (activeSessionLoaded || activeSessionLoading) {
+    if (activeSessionIsHistoricalPi) {
+      messagesStoreApi.loadInitial(activeSessionId).catch(() => undefined);
       return;
     }
-    void messagesStoreApi.loadInitial(activeSessionId);
-  }, [activeSessionId, activeSessionIsHistoricalPi, activeSessionLoaded, activeSessionLoading, messagesStoreApi]);
+    (activeSessionRuntimeId
+      ? liveSessionStoreApi.loadInitial(activeSessionId, activeSessionRuntimeId)
+      : liveSessionStoreApi.loadInitial(activeSessionId))
+      .catch(() => undefined);
+  }, [activeSessionId, activeSessionIsHistoricalPi, activeSessionRuntimeId, liveSessionStoreApi, messagesStoreApi, shouldDemandLoadActiveSession]);
 
   const handleJumpToLatest = async () => {
     if (!activeSessionId) return;
