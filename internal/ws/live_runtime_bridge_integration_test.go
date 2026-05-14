@@ -193,7 +193,8 @@ func TestLiveRuntimeBridgePublishesAssistantReplyPathOverWebSocketAndMessages(t 
 
 func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
-	pty := &testPTY{}
+	pty := newStreamingPTY()
+	defer pty.Close()
 	handle.SetPTY(pty)
 	svc, cfg, server, cookie := newLiveBridgeServer(t, &process.FakeRunner{NextHandle: handle})
 	defer server.Close()
@@ -207,9 +208,6 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 	}
 	sessionID := created.Session.SessionID
 	parsed := mustSessionID(t, sessionID)
-	if err := svc.SetSessionUIRequest(parsed, app.SessionUIRequestSnapshot{RequestID: "ask_1", Kind: "ask_user", Prompt: "Choose one option"}); err != nil {
-		t.Fatalf("SetSessionUIRequest() error = %v", err)
-	}
 
 	mainStream := StreamName("session:" + sessionID)
 	uiStream := StreamName("session:" + sessionID + ":ui")
@@ -287,6 +285,9 @@ func TestLiveRuntimeBridgeRoutesWebSocketCommandsIntoAppControl(t *testing.T) {
 		}
 		return state.ResumeCursors.Session == "5" && state.ResumeCursors.UI == ""
 	})
+	if err := svc.SetSessionUIRequest(parsed, app.SessionUIRequestSnapshot{RequestID: "ask_1", Kind: "ask_user", Prompt: "Choose one option"}); err != nil {
+		t.Fatalf("SetSessionUIRequest() error = %v", err)
+	}
 
 	interruptSub := dialBridgeWebSocket(t, server.URL, cfg, cookie)
 	subscribeBridgeStreams(t, interruptSub, []Subscription{{Name: mainStream}})
