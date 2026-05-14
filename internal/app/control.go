@@ -125,6 +125,9 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		if err := transportControlError(s.sessionTransportSnapshot(record)); err != nil {
 			return err
 		}
+		if err := sendIdlePrecondition(record); err != nil {
+			return err
+		}
 		if err := s.prepareRuntimeSend(ctx, req.SessionID, record.runtime); err != nil {
 			if errors.Is(err, errRuntimeChanged) {
 				return err
@@ -219,6 +222,22 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		s.startCodexTurnStartWatch(req.SessionID, codexTurnWatchRuntime)
 	}
 	return response, nil
+}
+
+func sendIdlePrecondition(record sessionRecord) error {
+	if busy, reason := effectiveBusy(record); busy {
+		if reason != "" {
+			return Conflict("session is busy: " + reason)
+		}
+		return Conflict("session is busy")
+	}
+	if record.state.Queue().Len() > 0 {
+		return Conflict("session has queued prompts")
+	}
+	if record.uiRequest != nil {
+		return Conflict("session has unresolved UI request")
+	}
+	return nil
 }
 
 func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, error) {

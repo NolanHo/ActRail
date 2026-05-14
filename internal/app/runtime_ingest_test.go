@@ -1768,6 +1768,57 @@ func TestCodexSendDoesNotWaitForTurnStarted(t *testing.T) {
 	_ = stdoutW.Close()
 }
 
+func TestCodexSendRejectsSecondPromptWhileTurnStarting(t *testing.T) {
+	stdoutR, stdoutW := io.Pipe()
+	defer stdoutR.Close()
+	pty := &recordingPTY{reader: stdoutR}
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetPTY(pty)
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+
+	waitForAppCondition(t, func() bool {
+		return strings.Contains(strings.Join(pty.Writes(), "\n"), `"method":"initialize"`)
+	})
+	_, _ = stdoutW.Write([]byte("{\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}\n"))
+	waitForAppCondition(t, func() bool {
+		return strings.Contains(strings.Join(pty.Writes(), "\n"), `"method":"thread/start"`)
+	})
+	_, _ = stdoutW.Write([]byte("{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-busy-send\",\"status\":{\"type\":\"idle\"}}}}\n"))
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.RuntimeState == string(codexRuntimePhaseIdle)
+	})
+
+	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "first prompt"}); err != nil {
+		t.Fatalf("Send(first) error = %v", err)
+	}
+	_, err = svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "second prompt"})
+	assertConflict(t, err)
+
+	writes := strings.Join(pty.Writes(), "\n")
+	if count := strings.Count(writes, `"method":"turn/start"`); count != 1 {
+		t.Fatalf("runtime turn/start count = %d, writes = %q", count, writes)
+	}
+	if strings.Contains(writes, "second prompt") {
+		t.Fatalf("runtime writes contain rejected prompt: %q", writes)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Role != "user" || messages.Items[0].Text != "first prompt" {
+		t.Fatalf("SessionMessages() = %+v, want only first user prompt", messages.Items)
+	}
+	_ = stdoutW.Close()
+}
+
 func TestCodexInterruptDefersUntilTurnStarts(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()
