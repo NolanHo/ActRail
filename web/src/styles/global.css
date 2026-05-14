@@ -1489,22 +1489,22 @@ button.conversationStatusChip {
 
 .sessionCardSurface {
   height: 100%;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 28%, transparent);
-  border-radius: 0.9rem;
-  background: color-mix(in srgb, white 92%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 20%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, white 65%, var(--panel));
   box-shadow: none;
   transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .sessionCard:hover .sessionCardSurface,
 .sessionCard:focus-within .sessionCardSurface {
-  background: color-mix(in srgb, white 84%, var(--accent));
-  border-color: color-mix(in srgb, var(--primary) 18%, var(--legacy-border));
+  background: color-mix(in srgb, white 74%, var(--accent));
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--legacy-border));
 }
 
 .sessionCard.active .sessionCardSurface {
-  border-color: color-mix(in srgb, var(--primary) 28%, var(--legacy-border));
-  background: color-mix(in srgb, white 78%, var(--accent));
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--legacy-border));
+  background: color-mix(in srgb, var(--primary) 7%, var(--accent));
 }
 
 .sessionCardContent {
@@ -1516,8 +1516,8 @@ button.conversationStatusChip {
   content: "";
   position: absolute;
   left: 0;
-  top: 8px;
-  bottom: 8px;
+  top: 7px;
+  bottom: 7px;
   width: 2px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--legacy-accent) 88%, white);
@@ -1541,8 +1541,8 @@ button.conversationStatusChip {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.55rem 0.7rem 0.52rem 0.78rem;
+  gap: 0.32rem;
+  padding: 0.48rem 0.64rem 0.46rem 0.74rem;
 }
 
 .sessionCardMainRow {
@@ -1557,7 +1557,7 @@ button.conversationStatusChip {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.55rem;
+  gap: 0.45rem;
   min-width: 0;
 }
 
@@ -1715,21 +1715,22 @@ button.conversationStatusChip {
 .backendBadge,
 .ownerBadge,
 .queueBadge {
-  min-height: 1.2rem;
-  padding: 0 0.38rem;
+  min-height: 1.05rem;
+  padding: 0 0.34rem;
   border-radius: 999px;
-  font-size: 0.66rem;
+  font-size: 0.62rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   text-transform: lowercase;
 }
 
 .backendBadge {
-  background: rgba(15, 23, 42, 0.07);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text-muted);
 }
 
 .ownerBadge {
-  background: rgba(255, 255, 255, 0.92);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
   color: var(--legacy-muted);
 }
 
