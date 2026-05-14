@@ -194,6 +194,8 @@ describe("conversation layout scroll guards", () => {
 
   it("keeps the mobile composer and shell sizing rules scoped to the 880px media block", () => {
     const mobileRules = mediaBody(css, "(max-width: 880px)");
+    const mobileClassRule = ruleBody(css, ".appShell.editorialShell.isMobileLayout");
+    const mobileClassGlobalNavRule = ruleBody(css, ".appShell.editorialShell.withGlobalNav.isMobileLayout");
     const mobileShellRule = ruleBody(mobileRules, ".appShell.editorialShell");
     const mobileGlobalNavShellRule = ruleBody(mobileRules, ".appShell.editorialShell.withGlobalNav");
     const mobileStackRule = ruleBody(mobileRules, ".composerStack");
@@ -203,8 +205,12 @@ describe("conversation layout scroll guards", () => {
     const mobileChatStackRule = ruleBody(mobileRules, ".mobileChatPane .composerStack");
     const mobileTextareaRule = ruleBody(mobileRules, ".composerTextarea");
 
+    expect(mobileClassRule).toContain("grid-template-columns: 1fr;");
+    expect(mobileClassRule).toContain("top: var(--visualViewportOffsetTop, 0px);");
+    expect(mobileClassRule).toContain("height: var(--appH, 100dvh);");
+    expect(mobileClassRule).toContain("padding: 0;");
+    expect(mobileClassGlobalNavRule).toContain("grid-template-columns: 1fr;");
     expect(mobileShellRule).toContain("grid-template-columns: 1fr;");
-    expect(mobileShellRule).toContain("top: var(--visualViewportOffsetTop, 0px);");
     expect(mobileGlobalNavShellRule).toContain("grid-template-columns: 1fr;");
     expect(mobileStackRule).toContain("padding: 8px 10px calc(8px + env(safe-area-inset-bottom));");
     expect(mobileStackRule).not.toContain("--keyboardBottom");

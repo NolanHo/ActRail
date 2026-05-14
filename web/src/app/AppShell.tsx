@@ -33,6 +33,7 @@ import {
 } from "./providers";
 import {
   applyThemeMode,
+  MOBILE_LAYOUT_MEDIA_QUERY,
   readThemeMode,
   shouldUseMobileLayout,
   shortSessionId,
@@ -557,7 +558,7 @@ export function AppShell() {
       return;
     }
 
-    const mediaQuery = window.matchMedia("(max-width: 880px)");
+    const mediaQuery = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
     const update = () => {
       setMobileLayout(mediaQuery.matches);
     };
@@ -626,7 +627,10 @@ export function AppShell() {
     sidebarWidthPxRef.current = sidebarWidthPx;
   }, [sidebarWidthPx]);
 
-  const shellClassName = useMemo(() => ["appShell", "editorialShell", "withGlobalNav", sidebarResizing ? "isResizingSidebar" : ""].filter(Boolean).join(" "), [sidebarResizing]);
+  const shellClassName = useMemo(
+    () => ["appShell", "editorialShell", "withGlobalNav", mobileLayout ? "isMobileLayout" : "", sidebarResizing ? "isResizingSidebar" : ""].filter(Boolean).join(" "),
+    [mobileLayout, sidebarResizing],
+  );
   const shellStyle = useMemo(() => ({ "--sidebar-w": `${sidebarWidthPx}px` }), [sidebarWidthPx]);
 
   const commitSidebarWidth = useCallback((value: number) => {

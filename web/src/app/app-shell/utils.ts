@@ -113,9 +113,11 @@ export function notificationDeviceClass() {
   return isMobileNotificationDevice() ? "mobile" : "desktop";
 }
 
+export const MOBILE_LAYOUT_MEDIA_QUERY = "(max-width: 880px), (pointer: coarse)";
+
 export function shouldUseMobileLayout() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-  return window.matchMedia("(max-width: 880px)").matches;
+  return window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
 }
 
 export function shouldPreferNativeHlsPlayback() {
