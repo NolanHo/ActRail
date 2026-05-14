@@ -81,8 +81,21 @@ type UIResponseResponse struct {
 	Queue             SessionQueueSnapshot `json:"queue"`
 }
 
+func (s *Stub) resolveCommandSessionID(routeID session.SessionID) (session.SessionID, error) {
+	record, err := s.lookupSession(routeID)
+	if err != nil {
+		return "", err
+	}
+	return record.identity.SessionID(), nil
+}
+
 func (s *Stub) Send(ctx context.Context, req SendRequest) (SendResponse, error) {
 	if err := s.waitRuntimeRestore(ctx); err != nil {
+		return SendResponse{}, err
+	}
+	var err error
+	req.SessionID, err = s.resolveCommandSessionID(req.SessionID)
+	if err != nil {
 		return SendResponse{}, err
 	}
 	response, err := s.send(ctx, req, false)
@@ -245,6 +258,11 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 	if text == "" {
 		return EnqueueResponse{}, Invalid("text", "text required")
 	}
+	var err error
+	req.SessionID, err = s.resolveCommandSessionID(req.SessionID)
+	if err != nil {
+		return EnqueueResponse{}, err
+	}
 	var response EnqueueResponse
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
 		if s.activeWaitForSession(req.SessionID) != nil {
@@ -268,6 +286,11 @@ func (s *Stub) Enqueue(_ context.Context, req EnqueueRequest) (EnqueueResponse, 
 }
 
 func (s *Stub) CancelQueue(_ context.Context, req CancelQueueRequest) (CancelQueueResponse, error) {
+	var err error
+	req.SessionID, err = s.resolveCommandSessionID(req.SessionID)
+	if err != nil {
+		return CancelQueueResponse{}, err
+	}
 	var response CancelQueueResponse
 	if err := s.withSessionInputLock(req.SessionID, func(sessionRecord) error {
 		state, ok, err := s.registry.ClearQueue(req.SessionID)
@@ -360,6 +383,11 @@ func (s *Stub) finishManualInboxMirror(ctx context.Context, sessionID session.Se
 }
 
 func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptResponse, error) {
+	var err error
+	req.SessionID, err = s.resolveCommandSessionID(req.SessionID)
+	if err != nil {
+		return InterruptResponse{}, err
+	}
 	record, err := s.lookupSession(req.SessionID)
 	if err != nil {
 		return InterruptResponse{}, err
@@ -416,6 +444,11 @@ func (s *Stub) RespondUI(ctx context.Context, req UIResponseRequest) (UIResponse
 	value := strings.TrimSpace(req.Value)
 	if value == "" {
 		return UIResponseResponse{}, Invalid("value", "value required")
+	}
+	var err error
+	req.SessionID, err = s.resolveCommandSessionID(req.SessionID)
+	if err != nil {
+		return UIResponseResponse{}, err
 	}
 	var response UIResponseResponse
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {

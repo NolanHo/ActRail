@@ -111,6 +111,20 @@ func TestSessionCommandServiceSendMapsToController(t *testing.T) {
 	}
 }
 
+func TestSessionCommandServiceSendPrefersRuntimeIDRoute(t *testing.T) {
+	controller := &controllerStub{}
+	h := NewHandler(controller, NewBroker(10))
+	req := httptest.NewRequest(http.MethodPost, "/api/connect/actrail.v1.SessionCommandService/Send", strings.NewReader(`{"session":{"sessionId":"s_123","runtimeId":"r_123"},"text":"hello"}`))
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", res.Code, res.Body.String())
+	}
+	if controller.sendReq.SessionID != session.SessionID("r_123") || controller.sendReq.Text != "hello" {
+		t.Fatalf("send req = %+v", controller.sendReq)
+	}
+}
+
 func TestSessionCommandServiceSendAcceptsProto(t *testing.T) {
 	controller := &controllerStub{}
 	h := NewHandler(controller, NewBroker(10))
@@ -137,6 +151,25 @@ func TestSessionCommandServiceSendAcceptsProto(t *testing.T) {
 	}
 	if !strings.Contains(string(response.GetPayloadJson()), `"busy":true`) {
 		t.Fatalf("payload_json = %s", string(response.GetPayloadJson()))
+	}
+}
+
+func TestSessionCommandServiceSendProtoPrefersRuntimeIDRoute(t *testing.T) {
+	controller := &controllerStub{}
+	h := NewHandler(controller, NewBroker(10))
+	body, err := proto.Marshal(&actrailv1.SendRequest{Session: &actrailv1.SessionIdentity{SessionId: "s_123", RuntimeId: "r_123"}, Text: "hello"})
+	if err != nil {
+		t.Fatalf("marshal request proto: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/connect/actrail.v1.SessionCommandService/Send", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/connect+proto")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", res.Code, res.Body.String())
+	}
+	if controller.sendReq.SessionID != session.SessionID("r_123") || controller.sendReq.Text != "hello" {
+		t.Fatalf("send req = %+v", controller.sendReq)
 	}
 }
 
