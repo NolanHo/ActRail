@@ -140,6 +140,35 @@ func TestSameRuntimeHandleAllowsSameHelperGenerationReattachment(t *testing.T) {
 	}
 }
 
+func TestSendWithRuntimeIDRouteWritesCanonicalSession(t *testing.T) {
+	svc, sessionID, _, _ := newControlFixture(t)
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	runtimeID, ok := record.identity.RuntimeID()
+	if !ok {
+		t.Fatal("RuntimeID() ok = false, want true")
+	}
+	if _, err := svc.Send(context.Background(), SendRequest{SessionID: session.SessionID(runtimeID.String()), Text: "hello via runtime"}); err != nil {
+		t.Fatalf("Send(runtime route) error = %v", err)
+	}
+	sent, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(sent.Items) != 1 || sent.Items[0].Text != "hello via runtime" {
+		t.Fatalf("SessionMessages() = %+v, want canonical committed prompt", sent.Items)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: session.SessionID(runtimeID.String())})
+	if err != nil {
+		t.Fatalf("SessionMessages(runtime route) error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "hello via runtime" {
+		t.Fatalf("SessionMessages(runtime route) = %+v, want canonical committed prompt", messages.Items)
+	}
+}
+
 func TestEnqueueAcceptsEndedSessionAndCancelClearsManualInbox(t *testing.T) {
 	svc, sessionID, _, _ := newControlFixture(t)
 	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{State: SessionTransportStateEnded, Reason: "helper_not_running"}); err != nil || !ok {

@@ -414,7 +414,7 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 
 func (r sessionMessagesRequest) sessionID() (session.SessionID, error) {
 	identity := r.Session
-	if strings.TrimSpace(identity.SessionID) == "" && strings.TrimSpace(identity.SessionIDRaw) == "" {
+	if identity.isZero() {
 		identity = r.SessionRaw
 	}
 	value := firstString(identity.SessionID, identity.SessionIDRaw)
@@ -426,14 +426,21 @@ func (r sessionMessagesRequest) sessionID() (session.SessionID, error) {
 
 func (r commandRequest) sessionID() (session.SessionID, error) {
 	identity := r.Session
-	if strings.TrimSpace(identity.SessionID) == "" && strings.TrimSpace(identity.SessionIDRaw) == "" {
+	if identity.isZero() {
 		identity = r.SessionRaw
 	}
-	value := firstString(identity.SessionID, identity.SessionIDRaw)
+	value := firstString(identity.RuntimeID, identity.RuntimeIDRaw, identity.SessionID, identity.SessionIDRaw)
 	if strings.TrimSpace(value) == "" {
 		return "", fmt.Errorf("session.sessionId is required")
 	}
 	return session.ParseSessionID(value)
+}
+
+func (i SessionIdentity) isZero() bool {
+	return strings.TrimSpace(i.SessionID) == "" &&
+		strings.TrimSpace(i.SessionIDRaw) == "" &&
+		strings.TrimSpace(i.RuntimeID) == "" &&
+		strings.TrimSpace(i.RuntimeIDRaw) == ""
 }
 
 func (r commandRequest) responseTo() string {
