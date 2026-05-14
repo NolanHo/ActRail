@@ -4,6 +4,7 @@ import { SessionsPane } from "@/components/sessions/SessionsPane";
 import { Composer } from "@/components/composer/Composer";
 import { ConversationPane } from "@/components/conversation/ConversationPane";
 import { MetadataIcon, StopIcon } from "./icons";
+import { SessionStatusStrip, type ConversationStatusItem } from "./AppShellToolbar";
 
 export type MobileRoute =
   | { screen: "sessions" }
@@ -17,6 +18,7 @@ interface MobileShellProps {
   announcementEnabled: boolean;
   announcementLabel: string;
   canInterrupt: boolean;
+  statusItems?: ConversationStatusItem[];
   notificationLabel: string;
   notificationsEnabled: boolean;
   onInterrupt(): void;
@@ -61,11 +63,13 @@ interface MobileTopBarProps {
   canInterrupt: boolean;
   compact?: boolean;
   route: MobileRoute;
+  statusItems?: ConversationStatusItem[];
   onBack(): void;
   onInterrupt(): void;
 }
 
-function MobileTopBar({ activeTitle, canInterrupt, compact = false, route, onBack, onInterrupt }: MobileTopBarProps) {
+function MobileTopBar({ activeTitle, canInterrupt, compact = false, route, statusItems = [], onBack, onInterrupt }: MobileTopBarProps) {
+  const showStatus = route.screen !== "sessions" && statusItems.length > 0;
   return (
     <header className={compact ? "mobileRouteHeader compact" : "mobileRouteHeader"}>
       {route.screen !== "sessions" ? (
@@ -74,6 +78,7 @@ function MobileTopBar({ activeTitle, canInterrupt, compact = false, route, onBac
       <div className="mobileChatHeading">
         <p className="mobileSectionEyebrow">{routeLabel(route)}</p>
         <h1 className="mobileChatTitle">{route.screen === "sessions" ? "Sessions" : activeTitle}</h1>
+        {showStatus ? <SessionStatusStrip items={statusItems} className="mobileSessionStatusStrip" /> : null}
       </div>
       {canInterrupt ? (
         <Button type="button" variant="outline" size="sm" className="mobileInterruptButton" onClick={onInterrupt}>
@@ -140,6 +145,7 @@ export function MobileShell({
   announcementEnabled,
   announcementLabel,
   canInterrupt,
+  statusItems = [],
   notificationLabel,
   notificationsEnabled,
   onInterrupt,
@@ -197,7 +203,7 @@ export function MobileShell({
         ) : null}
         {route.screen === "read" ? (
           <section className="mobilePane mobileReadPane">
-            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} compact route={route} onBack={back} onInterrupt={onInterrupt} />
+            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} compact route={route} statusItems={statusItems} onBack={back} onInterrupt={onInterrupt} />
             <ConversationPane
               key={route.sessionId || "no-session"}
               onOpenFilePath={(path, line) => onOpenFilePath(path, line ?? null)}
@@ -206,7 +212,7 @@ export function MobileShell({
         ) : null}
         {route.screen === "chat" ? (
           <section className="mobilePane mobileChatPane">
-            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} route={route} onBack={back} onInterrupt={onInterrupt} />
+            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} route={route} statusItems={statusItems} onBack={back} onInterrupt={onInterrupt} />
             <ConversationPane
               key={route.sessionId || "no-session"}
               onOpenFilePath={(path, line) => onOpenFilePath(path, line ?? null)}
@@ -216,7 +222,7 @@ export function MobileShell({
         ) : null}
         {route.screen === "settings" ? (
           <div className="mobilePane mobileSettingsPane">
-            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} route={route} onBack={back} onInterrupt={onInterrupt} />
+            <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} route={route} statusItems={statusItems} onBack={back} onInterrupt={onInterrupt} />
             <MobileSettingsSection
               announcementEnabled={announcementEnabled}
               announcementLabel={announcementLabel}

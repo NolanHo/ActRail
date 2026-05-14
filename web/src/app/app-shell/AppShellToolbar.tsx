@@ -11,6 +11,45 @@ export interface ConversationStatusItem {
   onActivate?: () => void;
 }
 
+export function SessionStatusStrip({ items, className }: { items: ConversationStatusItem[]; className?: string }) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <div className={cn("conversationStatusStrip", className)} aria-label="Session status">
+      {items.map((item) => {
+        const className = cn(
+          "conversationStatusChip",
+          item.onActivate && "actionable",
+          item.tone && item.tone !== "default" && item.tone,
+        );
+        const content = (
+          <>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </>
+        );
+        return item.onActivate ? (
+          <button
+            key={`${item.label}:${item.value}`}
+            type="button"
+            className={className}
+            aria-label={item.actionLabel || item.label}
+            title={item.actionLabel || item.label}
+            onClick={item.onActivate}
+          >
+            {content}
+          </button>
+        ) : (
+          <span key={`${item.label}:${item.value}`} className={className}>
+            {content}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 interface AppShellToolbarProps {
   activeSessionId: string | null;
   activeTitle: string;
@@ -209,39 +248,7 @@ export function AppShellToolbar({
         ) : null}
         <div className="conversationIdentityBlock">
           <div className="conversationTitle">{activeSessionId ? activeTitle : "No session selected"}</div>
-          {activeSessionId && statusItems.length ? (
-            <div className="conversationStatusStrip" aria-label="Session status">
-              {statusItems.map((item) => {
-                const className = cn(
-                  "conversationStatusChip",
-                  item.onActivate && "actionable",
-                  item.tone && item.tone !== "default" && item.tone,
-                );
-                const content = (
-                  <>
-                    <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                  </>
-                );
-                return item.onActivate ? (
-                  <button
-                    key={`${item.label}:${item.value}`}
-                    type="button"
-                    className={className}
-                    aria-label={item.actionLabel || item.label}
-                    title={item.actionLabel || item.label}
-                    onClick={item.onActivate}
-                  >
-                    {content}
-                  </button>
-                ) : (
-                  <span key={`${item.label}:${item.value}`} className={className}>
-                    {content}
-                  </span>
-                );
-              })}
-            </div>
-          ) : null}
+          {activeSessionId ? <SessionStatusStrip items={statusItems} /> : null}
         </div>
       </div>
       <div className="conversationToolbarGroup conversationToolbarGroupActions">

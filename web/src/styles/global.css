@@ -597,6 +597,7 @@ select {
 
 .mobileChatHeading {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .mobileSectionEyebrow {
@@ -884,6 +885,18 @@ button.conversationStatusChip {
 .conversationStatusChip.error {
   border-color: color-mix(in srgb, hsl(var(--destructive)) 36%, var(--legacy-border));
   background: color-mix(in srgb, hsl(var(--destructive)) 8%, var(--panel));
+}
+
+.mobileSessionStatusStrip {
+  margin-top: 0.45rem;
+  max-width: 100%;
+  padding-bottom: 0.05rem;
+}
+
+.mobileSessionStatusStrip .conversationStatusChip {
+  min-height: 1.38rem;
+  padding: 0.12rem 0.44rem;
+  font-size: 0.66rem;
 }
 
 .sessionsPane {
