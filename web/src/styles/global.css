@@ -557,6 +557,9 @@ select {
 .mobileShell {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 0;
   height: 100%;
   border: 0;
@@ -568,6 +571,9 @@ select {
 
 .mobileShellBody {
   flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 0;
   display: flex;
   overflow: hidden;
@@ -575,6 +581,9 @@ select {
 
 .mobilePane {
   flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -586,6 +595,9 @@ select {
 .mobileWorkspacePane,
 .mobileWaitsPane,
 .mobileSettingsPane {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 0;
   background: color-mix(in srgb, var(--panel) 97%, white);
 }
@@ -597,6 +609,9 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   gap: 0.65rem;
   padding: 0.7rem 0.85rem 0.55rem;
   border-bottom: 1px solid color-mix(in srgb, var(--legacy-border) 72%, white);
@@ -1826,6 +1841,8 @@ button.conversationStatusChip {
 
 .conversationTimeline {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .conversationNavButtons {
@@ -1919,11 +1936,14 @@ button.conversationStatusChip {
 .messageList {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   gap: 0.45rem;
 }
 
 .messageRow {
   display: flex;
+  width: 100%;
   margin-top: 3px;
   min-width: 0;
 }
@@ -4847,6 +4867,39 @@ button.conversationStatusChip {
     max-width: calc(100% - 8px);
     padding: 8px 10px;
     border-radius: 14px;
+  }
+
+  .mobileReadPane .conversationTimeline,
+  .mobileChatPane .conversationTimeline,
+  .mobileReadPane .conversationPane,
+  .mobileChatPane .conversationPane,
+  .mobileReadPane .messageList,
+  .mobileChatPane .messageList,
+  .mobileReadPane .messageRow,
+  .mobileChatPane .messageRow,
+  .mobileReadPane .messageSurface,
+  .mobileChatPane .messageSurface,
+  .mobileReadPane .messageBody,
+  .mobileChatPane .messageBody {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .mobileReadPane .messageBubble.assistant,
+  .mobileChatPane .messageBubble.assistant {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .mobileReadPane .messageBubble .messageBody,
+  .mobileChatPane .messageBubble .messageBody,
+  .mobileReadPane .messageBubble .commandIOBlock,
+  .mobileChatPane .messageBubble .commandIOBlock,
+  .mobileReadPane .messageBubble .assistantTurnSummaryRow,
+  .mobileChatPane .messageBubble .assistantTurnSummaryRow,
+  .mobileReadPane .messageBubble .supervisorRunStack,
+  .mobileChatPane .messageBubble .supervisorRunStack {
+    padding-right: 0;
   }
 
   .messageCard {
