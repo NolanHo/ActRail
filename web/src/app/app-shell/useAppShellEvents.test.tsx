@@ -133,3 +133,52 @@ it("does not repair active messages when the advertised tail is already loaded",
 
   expect(liveSessionStoreApi.poll).not.toHaveBeenCalled();
 });
+
+it("repairs only the affected session when realtime stream cursors have a gap", async () => {
+  realtimeMocks.subscribeRealtimeFrames.mockImplementation((listener: (frame: RealtimeEnvelope) => void) => {
+    realtimeMocks.frameListener = listener;
+    return vi.fn();
+  });
+  realtimeMocks.subscribeRealtimeState.mockImplementation(() => vi.fn());
+  const liveSessionStoreApi = {
+    applyFrame: vi.fn(() => ({
+      ignored: true,
+      reason: "stream_gap",
+      resyncNeeded: true,
+      sessionId: "sess-2",
+      stream: "session",
+      expectedSeq: 4,
+      receivedSeq: 5,
+    })),
+    getState: vi.fn(() => ({ offsetsBySessionId: { "sess-1": 2 }, streamCursorsBySessionId: { "sess-2": 3 }, uiStreamCursorsBySessionId: {} })),
+    poll: vi.fn().mockResolvedValue(undefined),
+    setBufferAssistantOutput: vi.fn(),
+  } as any;
+  const sessionsStoreApi = { applySessionStateFrame: vi.fn(), refresh: vi.fn().mockResolvedValue(undefined) } as any;
+  const waitsStoreApi = { applyFrame: vi.fn() } as any;
+
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  await act(async () => {
+    render(<Harness {...baseProps({
+      items: [{ session_id: "sess-1", runtime_id: "runtime-1" }, { session_id: "sess-2", runtime_id: "runtime-2", busy: true }] as any,
+      liveSessionStoreApi,
+      sessionsStoreApi,
+      waitsStoreApi,
+    })} />, root);
+    await flush();
+  });
+
+  await act(async () => {
+    realtimeMocks.frameListener?.({
+      type: "message.commit",
+      stream: "session:sess-2",
+      payload: { session_id: "sess-2", stream_seq: 5, turn_id: "turn-gap", message: { seq: 3, role: "assistant", text: "gap" } },
+    });
+    await flush();
+  });
+
+  expect(liveSessionStoreApi.poll).toHaveBeenCalledWith("sess-2", "runtime-2");
+  expect(sessionsStoreApi.refresh).not.toHaveBeenCalled();
+  expect(waitsStoreApi.applyFrame).not.toHaveBeenCalled();
+});

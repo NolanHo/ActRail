@@ -211,7 +211,18 @@ export function useAppShellEvents({
         if (type === "session.state") {
           sessionsStoreApi.applySessionStateFrame(frame);
         }
-        liveSessionStoreApi.applyFrame(frame);
+        const applyResult = liveSessionStoreApi.applyFrame(frame) ?? {};
+        if (applyResult.resyncNeeded && applyResult.sessionId) {
+          const session = latestRef.current.items.find((item) => item.session_id === applyResult.sessionId) ?? null;
+          void refreshLiveSessionSnapshot(applyResult.sessionId, session?.runtime_id ?? null);
+          if (latestRef.current.activeSessionId === applyResult.sessionId) {
+            void refreshSessions();
+          }
+          if (applyResult.stream === "ui" && latestRef.current.activeSessionId === applyResult.sessionId && latestRef.current.workspaceOpen) {
+            void refreshActiveWorkspace();
+          }
+          return;
+        }
         waitsStoreApi.applyFrame(frame);
         if (type === "session.state") {
           const sessionId = resolveSessionId(frame);
