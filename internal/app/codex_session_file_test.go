@@ -129,6 +129,56 @@ func TestSessionMessagesLoadsCodexHistoryFromSourcePathWithoutHelper(t *testing.
 	}
 }
 
+func TestWarmCodexSourceHistoriesCachesSourceFile(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_warmup")
+	threadID := "019e2107-ca2f-7e73-994d-8726965f8c8b"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-13T04:10:19.000Z","type":"session_meta","payload":{"id":"019e2107-ca2f-7e73-994d-8726965f8c8b","cwd":"/tmp/codex-history","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-13T04:10:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"warm this source"}}`,
+		`{"timestamp":"2026-05-13T04:11:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"warmed from startup","phase":"final_answer"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewDetachedIdentity(sessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-history",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	signature, ok := codexSessionFileSignature(sourcePath)
+	if !ok {
+		t.Fatalf("codexSessionFileSignature(%q) = false", sourcePath)
+	}
+	if _, ok := svc.messageCache.Get(sessionID, "codex-source-file:"+signature); ok {
+		t.Fatal("message cache unexpectedly warm before warmCodexSourceHistories")
+	}
+
+	svc.warmCodexSourceHistories(context.Background())
+
+	items, ok := svc.messageCache.Get(sessionID, "codex-source-file:"+signature)
+	if !ok {
+		t.Fatal("message cache missing source file after warmCodexSourceHistories")
+	}
+	got := messageRolesAndText(items)
+	want := []string{"user:warm this source", "assistant:warmed from startup"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("cached messages = %#v, want %#v", got, want)
+	}
+}
+
 func TestCodexSessionMessagesFromJSONLLines(t *testing.T) {
 	lines := []string{
 		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827"}}`,

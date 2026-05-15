@@ -828,9 +828,6 @@ func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRe
 	if response, ok, err := s.loadCodexIODHistory(ctx, record, req); ok {
 		return response, true, err
 	}
-	if record.transcript.Len() > 0 && codexIODHistoryHasSource(ctx, record) {
-		return SessionMessagesResponse{}, false, nil
-	}
 	return s.loadCodexSourceFileHistory(ctx, record, req)
 }
 
@@ -867,16 +864,6 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	return paginateSessionMessagesForRequest(items, req), true, nil
 }
 
-func codexIODHistoryHasSource(ctx context.Context, record sessionRecord) bool {
-	if record.runtime.helper == nil {
-		return false
-	}
-	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer cancel()
-	packet, err := record.runtime.helper.sessionHistory(historyCtx)
-	return err == nil && strings.TrimSpace(packet.SourcePath) != ""
-}
-
 func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
 	path, threadID, err := s.codexSessionFileForRecord(record)
 	if err != nil {
@@ -909,6 +896,32 @@ func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRec
 	s.rememberCodexThreadBinding(record, threadID, path)
 	s.messageCache.Put(sessionID, cacheKey, items)
 	return paginateSessionMessagesForRequest(items, req), true, nil
+}
+
+func (s *Stub) startCodexSourceHistoryWarmup(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	go s.warmCodexSourceHistories(ctx)
+}
+
+func (s *Stub) warmCodexSourceHistories(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	for _, record := range s.registry.ListAll() {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if record.identity.Backend() != session.BackendCodex {
+			continue
+		}
+		_, _, _ = s.loadCodexSourceFileHistory(ctx, record, SessionMessagesRequest{
+			SessionID:         record.identity.SessionID(),
+			Limit:             1,
+			IncludeToolEvents: true,
+		})
+	}
 }
 
 func sessionMessagesFromIODHistory(messages []iod.SessionHistoryMessage) []SessionMessage {
