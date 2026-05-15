@@ -587,6 +587,62 @@ describe("createLiveSessionStore", () => {
     expect(messagesStore.getState().bySessionId.s1).toEqual([{ seq: 1, role: "assistant", text: "final", turn_id: "turn-1" }]);
   });
 
+  it("reports main stream cursor gaps without applying the out-of-order frame", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 5, busy: false, runtime_state: "idle" },
+    });
+    const result = liveStore.applyFrame({
+      type: "message.commit",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 7, turn_id: "turn-gap", message: { seq: 2, role: "assistant", text: "missed prior event" } },
+    });
+
+    expect(result).toEqual({
+      ignored: true,
+      reason: "stream_gap",
+      resyncNeeded: true,
+      sessionId: "s1",
+      stream: "session",
+      expectedSeq: 6,
+      receivedSeq: 7,
+    });
+    expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(5);
+    expect(messagesStore.getState().bySessionId.s1 ?? []).toEqual([]);
+  });
+
+  it("reports ui stream cursor gaps without applying the out-of-order request", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "ui.request",
+      stream: "session:s1:ui",
+      payload: { session_id: "s1", stream_seq: 3, request: { request_id: "ask-1", question: "First" } },
+    });
+    const result = liveStore.applyFrame({
+      type: "ui.request",
+      stream: "session:s1:ui",
+      payload: { session_id: "s1", stream_seq: 5, request: { request_id: "ask-2", question: "Skipped one" } },
+    });
+
+    expect(result).toMatchObject({
+      ignored: true,
+      reason: "stream_gap",
+      resyncNeeded: true,
+      sessionId: "s1",
+      stream: "ui",
+      expectedSeq: 4,
+      receivedSeq: 5,
+    });
+    expect(liveStore.getState().uiStreamCursorsBySessionId.s1).toBe(3);
+    expect(liveStore.getState().requestsBySessionId.s1).toEqual([{ id: "ask-1", request_id: "ask-1", question: "First" }]);
+  });
+
   it("does not stop assistant generation on non-assistant commits", () => {
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);

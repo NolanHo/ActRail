@@ -39,9 +39,19 @@ export interface LiveSessionStore {
   loadInitial(sessionId: string, runtimeId?: string | null): Promise<void>;
   poll(sessionId: string, runtimeId?: string | null): Promise<void>;
   probe(sessionId: string, runtimeId?: string | null): Promise<void>;
-  applyFrame(frame: RealtimeEnvelope): void;
+  applyFrame(frame: RealtimeEnvelope): RealtimeFrameApplyResult;
   resetSession(sessionId: string): void;
   setBufferAssistantOutput(value: boolean): void;
+}
+
+export interface RealtimeFrameApplyResult {
+  ignored?: boolean;
+  reason?: "invalid_frame" | "stale_cursor" | "stream_gap";
+  resyncNeeded?: boolean;
+  sessionId?: string;
+  stream?: "session" | "ui";
+  expectedSeq?: number;
+  receivedSeq?: number;
 }
 
 function liveSessionErrorMessage(error: unknown): string {
@@ -116,13 +126,23 @@ function staleCursor(prior: number | undefined, value: unknown) {
   return parsed !== undefined && parsed <= (prior ?? 0);
 }
 
-function isMainStreamFrame(type: string) {
+function cursorGap(prior: number | undefined, value: unknown) {
+  const parsed = parseSnapshotCursor(value);
+  const baseline = typeof prior === "number" && Number.isFinite(prior) ? Math.floor(prior) : 0;
+  if (parsed === undefined || baseline <= 0) {
+    return null;
+  }
+  if (parsed <= baseline + 1) {
+    return null;
+  }
+  return { expectedSeq: baseline + 1, receivedSeq: parsed };
+}
+
+function isCursorGapSensitiveMainFrame(type: string) {
   return type === "session.state"
     || type === "message.delta"
     || type === "message.generating"
-    || type === "message.commit"
-    || type === "session.generation.broken"
-    || type === "transport.reset_required";
+    || type === "message.commit";
 }
 
 function assistantCommitEndsGeneration(message: Record<string, unknown> | null) {
@@ -630,13 +650,37 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       const sessionId = resolveSessionId(frame);
       const payload = toObjectRecord(frame.payload);
       if (!type || !sessionId) {
-        return;
+        return { ignored: true, reason: "invalid_frame" };
       }
-      if (isMainStreamFrame(type) && staleCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq)) {
-        return;
+      const mainGap = isCursorGapSensitiveMainFrame(type) ? cursorGap(state.streamCursorsBySessionId[sessionId], payload?.stream_seq) : null;
+      if (mainGap) {
+        return {
+          ignored: true,
+          reason: "stream_gap",
+          resyncNeeded: true,
+          sessionId,
+          stream: "session",
+          expectedSeq: mainGap.expectedSeq,
+          receivedSeq: mainGap.receivedSeq,
+        };
+      }
+      const uiGap = isUIStreamFrame(type) ? cursorGap(state.uiStreamCursorsBySessionId[sessionId], payload?.stream_seq) : null;
+      if (uiGap) {
+        return {
+          ignored: true,
+          reason: "stream_gap",
+          resyncNeeded: true,
+          sessionId,
+          stream: "ui",
+          expectedSeq: uiGap.expectedSeq,
+          receivedSeq: uiGap.receivedSeq,
+        };
+      }
+      if (isCursorGapSensitiveMainFrame(type) && staleCursor(state.streamCursorsBySessionId[sessionId], payload?.stream_seq)) {
+        return { ignored: true, reason: "stale_cursor", sessionId, stream: "session" };
       }
       if (isUIStreamFrame(type) && staleCursor(state.uiStreamCursorsBySessionId[sessionId], payload?.stream_seq)) {
-        return;
+        return { ignored: true, reason: "stale_cursor", sessionId, stream: "ui" };
       }
 
       if (type === "session.state") {
@@ -673,7 +717,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
         };
         emit();
-        return;
+        return {};
       }
 
       if (type === "message.delta") {
@@ -688,7 +732,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             },
           };
           emit();
-          return;
+          return {};
         }
         const turnId = typeof payload?.turn_id === "string" && payload.turn_id.trim()
           ? payload.turn_id.trim()
@@ -716,7 +760,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             : state.generatingBySessionId,
         };
         emit();
-        return;
+        return {};
       }
 
       if (type === "message.generating") {
@@ -737,7 +781,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             : state.generatingBySessionId,
         };
         emit();
-        return;
+        return {};
       }
 
       if (type === "message.commit") {
@@ -773,13 +817,13 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
         };
         emit();
-        return;
+        return {};
       }
 
       if (type === "ui.request") {
         const request = normalizeRequest(payload?.request);
         if (!request) {
-          return;
+          return { ignored: true, reason: "invalid_frame", sessionId, stream: "ui" };
         }
         const prior = state.requestsBySessionId[sessionId] ?? [];
         const next = request.id
@@ -797,7 +841,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
         };
         emit();
-        return;
+        return {};
       }
 
       if (type === "ui.resolved") {
@@ -807,7 +851,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ? payload.response_to.trim()
             : "";
         if (!requestId) {
-          return;
+          return { ignored: true, reason: "invalid_frame", sessionId, stream: "ui" };
         }
         state = {
           ...state,
@@ -821,7 +865,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
         };
         emit();
-        return;
+        return {};
       }
 
       if (type === "session.generation.broken") {
@@ -852,7 +896,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
         };
         emit();
-        return;
+        return {};
       }
 
       if (type === "transport.reset_required") {
@@ -887,7 +931,9 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
         };
         emit();
+        return {};
       }
+      return { ignored: true, reason: "invalid_frame", sessionId };
     },
     resetSession(sessionId: string) {
       clearStreamingArtifacts(sessionId);
