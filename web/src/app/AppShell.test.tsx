@@ -483,7 +483,7 @@ describe("AppShell", () => {
     expect(findButtonByAriaLabel("Metadata")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")).not.toBeNull();
     expect(findButtonByAriaLabel("Session Inbox")).not.toBeNull();
-    expect(findButtonByAriaLabel("Interrupt (Esc)")).not.toBeNull();
+    expect(findButtonByAriaLabel("Interrupt")).not.toBeNull();
 
   });
 
@@ -604,7 +604,7 @@ describe("AppShell", () => {
     expect(findButtonByAriaLabel("Metadata")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")?.querySelector("svg")).not.toBeNull();
     expect(findButtonByAriaLabel("Inbox")?.querySelector("svg")).not.toBeNull();
-    expect(findButtonByAriaLabel("Interrupt (Esc)")?.querySelector("svg")).not.toBeNull();
+    expect(findButtonByAriaLabel("Interrupt")?.querySelector("svg")).not.toBeNull();
   });
 
   it("defaults to read route on narrow viewports when a session is active", async () => {
@@ -1024,7 +1024,7 @@ describe("AppShell", () => {
     renderAppShell({ items: [{ session_id: "sess-1", alias: "Legacy shell", agent_backend: "pi", busy: true }] });
     await flush();
 
-    const button = findButtonByAriaLabel("Interrupt (Esc)");
+    const button = findButtonByAriaLabel("Interrupt");
     expect(button).not.toBeNull();
     expect(button?.disabled).toBe(false);
 
@@ -1036,7 +1036,7 @@ describe("AppShell", () => {
     expect(api.interruptSession).toHaveBeenCalledWith("sess-1");
   });
 
-  it("interrupts the active busy session when Escape is pressed", async () => {
+  it("does not interrupt the active busy session when Escape is pressed", async () => {
     const { api } = await import("../lib/api");
     renderAppShell({ items: [{ session_id: "sess-1", alias: "Legacy shell", agent_backend: "pi", busy: true }] });
     await flush();
@@ -1046,7 +1046,7 @@ describe("AppShell", () => {
     });
     await flush();
 
-    expect(api.interruptSession).toHaveBeenCalledWith("sess-1");
+    expect(api.interruptSession).not.toHaveBeenCalled();
   });
 
   it("keeps the interrupt toolbar action when live session state is still busy", async () => {
@@ -1056,7 +1056,7 @@ describe("AppShell", () => {
     });
     await flush();
 
-    const button = findButtonByAriaLabel("Interrupt (Esc)");
+    const button = findButtonByAriaLabel("Interrupt");
     expect(button).not.toBeNull();
     expect(button?.disabled).toBe(false);
   });
@@ -1068,7 +1068,7 @@ describe("AppShell", () => {
     });
     await flush();
 
-    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Interrupt")).toBeNull();
   });
 
   it("shows ended transport state instead of idle in the active runtime chip", async () => {
@@ -1140,7 +1140,7 @@ describe("AppShell", () => {
 
     const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
     expect(runtimeChip?.textContent).toContain("failed");
-    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Interrupt")).toBeNull();
     expect(findButtonByAriaLabel("Cancel current loop")).toBeNull();
   });
 
@@ -1155,7 +1155,7 @@ describe("AppShell", () => {
 
     const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
     expect(runtimeChip?.textContent).toContain("ended");
-    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Interrupt")).toBeNull();
     expect(findButtonByAriaLabel("Cancel current loop")).toBeNull();
   });
 
@@ -1170,7 +1170,7 @@ describe("AppShell", () => {
 
     const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
     expect(runtimeChip?.textContent).toContain("failed");
-    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Interrupt")).toBeNull();
     expect(findButtonByAriaLabel("Cancel current loop")).toBeNull();
   });
 
@@ -1185,7 +1185,7 @@ describe("AppShell", () => {
 
     const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
     expect(runtimeChip?.textContent).toContain("ended");
-    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Interrupt")).toBeNull();
     expect(findButtonByAriaLabel("Cancel current loop")).toBeNull();
   });
 
@@ -1307,7 +1307,7 @@ describe("AppShell", () => {
     renderAppShell({ items: [{ session_id: "sess-1", alias: "Legacy shell", agent_backend: "pi", busy: false }] });
     await flush();
 
-    expect(findButtonByAriaLabel("Interrupt (Esc)")).toBeNull();
+    expect(findButtonByAriaLabel("Interrupt")).toBeNull();
   });
 
   it("opens announcement settings when announcements are enabled without credentials", async () => {

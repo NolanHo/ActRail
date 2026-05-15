@@ -757,27 +757,6 @@ export function AppShell() {
     await sessionsStoreApi.refresh();
   }, [activeSession, sessionsStoreApi]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.key !== "Escape") {
-        return;
-      }
-      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
-        return;
-      }
-      if (!activeSessionId || !activeSessionBusy) {
-        return;
-      }
-      event.preventDefault();
-      void interruptActiveSession();
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [activeSessionBusy, activeSessionId, interruptActiveSession]);
-
   const triggerTestPushNotification = async () => {
     if (!notificationsSupported) {
       setVoiceSettingsStatus("Notifications are unavailable on this backend.");

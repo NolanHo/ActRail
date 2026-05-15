@@ -198,8 +198,8 @@ export function AppShellToolbar({
               variant="ghost"
               size="sm"
               className="conversationMenuItem conversationMenuItemDanger"
-              aria-label="Interrupt (Esc)"
-              title="Interrupt (Esc)"
+              aria-label="Interrupt"
+              title="Interrupt"
               disabled={!canInterrupt}
               onClick={() => {
                 closeMobileToolsMenu();
@@ -278,8 +278,8 @@ export function AppShellToolbar({
               variant="outline"
               size="icon"
               className="toolbarButton conversationToolButton conversationToolButtonDanger"
-              aria-label="Interrupt (Esc)"
-              title="Interrupt (Esc)"
+              aria-label="Interrupt"
+              title="Interrupt"
               disabled={!canInterrupt}
               onClick={onInterrupt}
             >
