@@ -652,6 +652,51 @@ export interface MessageEvent {
   [key: string]: unknown;
 }
 
+export interface CodexSessionFileSummary {
+  thread_id: string;
+  session_id?: string;
+  title?: string;
+  display_name?: string;
+  cwd?: string;
+  path?: string;
+  first_user_message?: string;
+  updated_ts?: number;
+  archived?: boolean;
+  source?: string;
+}
+
+export interface CodexSessionFilesResponse {
+  ok?: boolean;
+  scope?: "all" | "cwd" | string;
+  cwd?: string;
+  offset?: number;
+  limit?: number;
+  remaining?: number;
+  items: CodexSessionFileSummary[];
+}
+
+export interface CodexSessionFileTurn {
+  index: number;
+  user?: MessageEvent | null;
+  assistant?: MessageEvent | null;
+  messages?: MessageEvent[];
+}
+
+export interface CodexSessionFileResponse {
+  ok?: boolean;
+  summary?: CodexSessionFileSummary;
+  items?: MessageEvent[];
+  turns?: CodexSessionFileTurn[];
+  tail_seq?: number;
+  has_more?: boolean;
+  truncated?: boolean;
+}
+
+export interface RenameCodexSessionFileResponse {
+  ok?: boolean;
+  summary?: CodexSessionFileSummary;
+}
+
 export interface MessagesResponse {
   trace_id?: string;
   items?: MessageEvent[];

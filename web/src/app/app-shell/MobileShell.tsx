@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { SessionsPane } from "@/components/sessions/SessionsPane";
 import { Composer } from "@/components/composer/Composer";
 import { ConversationPane } from "@/components/conversation/ConversationPane";
-import { MetadataIcon, StopIcon } from "./icons";
+import { HistoryIcon, MetadataIcon, StopIcon } from "./icons";
 import { SessionStatusStrip, type ConversationStatusItem } from "./AppShellToolbar";
 
 export type MobileRoute =
@@ -24,6 +24,7 @@ interface MobileShellProps {
   onInterrupt(): void;
   onLogout(): void;
   onNewSession(): void;
+  onOpenCodexSessions(): void;
   onOpenFilePath(path: string, line?: number | null): void;
   onOpenRuntimeSettings(): void;
   onOpenSettings(): void;
@@ -96,14 +97,22 @@ function MobileSettingsSection({
   notificationLabel,
   notificationsEnabled,
   onLogout,
+  onOpenCodexSessions,
   onOpenSettings,
   onOpenRuntimeSettings,
   onToggleAnnouncements,
   onToggleNotifications,
-}: Pick<MobileShellProps, "announcementEnabled" | "announcementLabel" | "notificationLabel" | "notificationsEnabled" | "onLogout" | "onOpenRuntimeSettings" | "onOpenSettings" | "onToggleAnnouncements" | "onToggleNotifications">) {
+}: Pick<MobileShellProps, "announcementEnabled" | "announcementLabel" | "notificationLabel" | "notificationsEnabled" | "onLogout" | "onOpenCodexSessions" | "onOpenRuntimeSettings" | "onOpenSettings" | "onToggleAnnouncements" | "onToggleNotifications">) {
   return (
     <section className="mobileToolsPage" aria-label="Settings">
       <div className="mobileToolsGrid">
+        <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenCodexSessions}>
+          <span className="mobileToolCardIcon" aria-hidden="true"><HistoryIcon /></span>
+          <span className="mobileToolCardText">
+            <strong>Codex sessions</strong>
+            <span>Session files and rename.</span>
+          </span>
+        </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenRuntimeSettings}>
           <span className="mobileToolCardIcon" aria-hidden="true"><MetadataIcon /></span>
           <span className="mobileToolCardText">
@@ -151,6 +160,7 @@ export function MobileShell({
   onInterrupt,
   onLogout,
   onNewSession,
+  onOpenCodexSessions,
   onOpenFilePath,
   onOpenRuntimeSettings,
   onOpenSettings,
@@ -229,6 +239,7 @@ export function MobileShell({
               notificationLabel={notificationLabel}
               notificationsEnabled={notificationsEnabled}
               onLogout={onLogout}
+              onOpenCodexSessions={onOpenCodexSessions}
               onOpenRuntimeSettings={onOpenRuntimeSettings}
               onOpenSettings={onOpenSettings}
               onToggleAnnouncements={onToggleAnnouncements}

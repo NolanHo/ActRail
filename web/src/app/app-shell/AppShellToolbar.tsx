@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { FileIcon, InboxIcon, MenuIcon, MetadataIcon, ProbeIcon, SessionsIcon, StopIcon } from "./icons";
+import { FileIcon, HistoryIcon, InboxIcon, MenuIcon, MetadataIcon, ProbeIcon, SessionsIcon, StopIcon } from "./icons";
 
 export interface ConversationStatusItem {
   label: string;
@@ -65,6 +65,7 @@ interface AppShellToolbarProps {
   onProbeRuntime?(): void;
   onOpenFiles(): void;
   onOpenInbox(): void;
+  onOpenSessionFiles(): void;
   onOpenSessions(): void;
   onOpenWorkspace(): void;
 }
@@ -84,6 +85,7 @@ export function AppShellToolbar({
   onProbeRuntime,
   onOpenFiles,
   onOpenInbox,
+  onOpenSessionFiles,
   onOpenSessions,
   onOpenWorkspace,
 }: AppShellToolbarProps) {
@@ -157,6 +159,21 @@ export function AppShellToolbar({
           >
             <MetadataIcon />
             <span>Metadata</span>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="conversationMenuItem"
+            aria-label="Codex Sessions"
+            title="Codex Sessions"
+            onClick={() => {
+              closeMobileToolsMenu();
+              onOpenSessionFiles();
+            }}
+          >
+            <HistoryIcon />
+            <span>Codex Sessions</span>
           </Button>
           <Button
             type="button"
@@ -243,6 +260,17 @@ export function AppShellToolbar({
             onClick={onOpenWorkspace}
           >
             <MetadataIcon />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="toolbarButton conversationToolButton"
+            aria-label="Codex Sessions"
+            title="Codex Sessions"
+            onClick={onOpenSessionFiles}
+          >
+            <HistoryIcon />
           </Button>
           <Button
             type="button"

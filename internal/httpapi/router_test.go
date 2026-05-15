@@ -24,6 +24,9 @@ type serviceStub struct {
 	createSessionFunc func(context.Context, app.CreateSessionRequest) (app.CreateSessionResponse, error)
 	teamsFunc         func(context.Context, app.ListTeamsRequest) (app.ListTeamsResponse, error)
 	resumeFunc        func(context.Context, app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error)
+	codexFilesFunc    func(context.Context, app.CodexSessionFilesRequest) (app.CodexSessionFilesResponse, error)
+	codexFileFunc     func(context.Context, app.CodexSessionFileRequest) (app.CodexSessionFileResponse, error)
+	codexRenameFunc   func(context.Context, app.RenameCodexSessionFileRequest) (app.RenameCodexSessionFileResponse, error)
 	detailsFunc       func(context.Context, app.SessionDetailsRequest) (app.SessionDetailsResponse, error)
 	messagesFunc      func(context.Context, app.SessionMessagesRequest) (app.SessionMessagesResponse, error)
 	stateFunc         func(context.Context, app.SessionStateRequest) (app.SessionStateResponse, error)
@@ -128,6 +131,27 @@ func (s serviceStub) SessionResumeCandidates(ctx context.Context, req app.Sessio
 		return s.resumeFunc(ctx, req)
 	}
 	return s.base.SessionResumeCandidates(ctx, req)
+}
+
+func (s serviceStub) CodexSessionFiles(ctx context.Context, req app.CodexSessionFilesRequest) (app.CodexSessionFilesResponse, error) {
+	if s.codexFilesFunc != nil {
+		return s.codexFilesFunc(ctx, req)
+	}
+	return s.base.CodexSessionFiles(ctx, req)
+}
+
+func (s serviceStub) CodexSessionFile(ctx context.Context, req app.CodexSessionFileRequest) (app.CodexSessionFileResponse, error) {
+	if s.codexFileFunc != nil {
+		return s.codexFileFunc(ctx, req)
+	}
+	return s.base.CodexSessionFile(ctx, req)
+}
+
+func (s serviceStub) RenameCodexSessionFile(ctx context.Context, req app.RenameCodexSessionFileRequest) (app.RenameCodexSessionFileResponse, error) {
+	if s.codexRenameFunc != nil {
+		return s.codexRenameFunc(ctx, req)
+	}
+	return s.base.RenameCodexSessionFile(ctx, req)
 }
 
 func (s serviceStub) SessionDetails(ctx context.Context, req app.SessionDetailsRequest) (app.SessionDetailsResponse, error) {
@@ -338,6 +362,9 @@ type fixtureService struct {
 	createReq         app.CreateSessionRequest
 	teamsReq          app.ListTeamsRequest
 	resumeReq         app.SessionResumeCandidatesRequest
+	codexFilesReq     app.CodexSessionFilesRequest
+	codexFileReq      app.CodexSessionFileRequest
+	codexRenameReq    app.RenameCodexSessionFileRequest
 	detailsReq        app.SessionDetailsRequest
 	messagesReq       app.SessionMessagesRequest
 	stateReq          app.SessionStateRequest
@@ -534,6 +561,58 @@ func (s *fixtureService) SessionResumeCandidates(_ context.Context, req app.Sess
 			FirstUserMessage: "Investigate backlog",
 			UpdatedTS:        1760000000,
 		}},
+	}, nil
+}
+
+func (s *fixtureService) CodexSessionFiles(_ context.Context, req app.CodexSessionFilesRequest) (app.CodexSessionFilesResponse, error) {
+	s.codexFilesReq = req
+	return app.CodexSessionFilesResponse{
+		OK:     true,
+		Scope:  req.Scope,
+		CWD:    req.CWD,
+		Offset: req.Offset,
+		Limit:  req.Limit,
+		Items: []app.CodexSessionFileSummary{{
+			ThreadID:         "019e1111-0000-7000-8000-000000000001",
+			SessionID:        "history:codex:019e1111-0000-7000-8000-000000000001",
+			Title:            "Codex task",
+			DisplayName:      "Codex task",
+			CWD:              "/root/code/ActRail",
+			Path:             "/tmp/codex/sessions/2026/05/10/rollout-2026-05-10T01-02-03-019e1111-0000-7000-8000-000000000001.jsonl",
+			FirstUserMessage: "Investigate codex",
+			UpdatedTS:        1760000000,
+			Source:           "state_db",
+		}},
+	}, nil
+}
+
+func (s *fixtureService) CodexSessionFile(_ context.Context, req app.CodexSessionFileRequest) (app.CodexSessionFileResponse, error) {
+	s.codexFileReq = req
+	item := app.SessionMessage{Seq: 1, Role: "user", Kind: "message", Text: "Investigate codex"}
+	return app.CodexSessionFileResponse{
+		OK: true,
+		Summary: app.CodexSessionFileSummary{
+			ThreadID:    req.ThreadID,
+			SessionID:   "history:codex:" + req.ThreadID,
+			Title:       "Codex task",
+			DisplayName: "Codex task",
+		},
+		Items:   []app.SessionMessage{item},
+		Turns:   []app.CodexSessionFileTurn{{Index: 1, User: &item, Messages: []app.SessionMessage{item}}},
+		TailSeq: 1,
+	}, nil
+}
+
+func (s *fixtureService) RenameCodexSessionFile(_ context.Context, req app.RenameCodexSessionFileRequest) (app.RenameCodexSessionFileResponse, error) {
+	s.codexRenameReq = req
+	return app.RenameCodexSessionFileResponse{
+		OK: true,
+		Summary: app.CodexSessionFileSummary{
+			ThreadID:    req.ThreadID,
+			SessionID:   "history:codex:" + req.ThreadID,
+			Title:       req.Name,
+			DisplayName: req.Name,
+		},
 	}, nil
 }
 
@@ -1568,6 +1647,60 @@ func TestSessionActionRoutesUseAppSeams(t *testing.T) {
 		decodeJSON(t, res, &body)
 		if !body.OK || len(body.Sessions) != 1 {
 			t.Fatalf("resume response = %+v", body)
+		}
+	})
+
+	t.Run("codex session files", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/codex/session-files?scope=cwd&cwd=/root/code/ActRail&offset=2&limit=10&q=codex", nil)
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.codexFilesReq.Scope != "cwd" || svc.codexFilesReq.CWD != "/root/code/ActRail" || svc.codexFilesReq.Offset != 2 || svc.codexFilesReq.Limit != 10 || svc.codexFilesReq.Query != "codex" {
+			t.Fatalf("codex files request = %+v", svc.codexFilesReq)
+		}
+		var body app.CodexSessionFilesResponse
+		decodeJSON(t, res, &body)
+		if !body.OK || len(body.Items) != 1 || body.Items[0].ThreadID == "" {
+			t.Fatalf("codex files response = %+v", body)
+		}
+	})
+
+	t.Run("codex session file detail", func(t *testing.T) {
+		threadID := "019e1111-0000-7000-8000-000000000001"
+		req := httptest.NewRequest(http.MethodGet, "/api/codex/session-files/"+threadID+"?limit=25", nil)
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.codexFileReq.ThreadID != threadID || svc.codexFileReq.Limit != 25 {
+			t.Fatalf("codex file request = %+v", svc.codexFileReq)
+		}
+		var body app.CodexSessionFileResponse
+		decodeJSON(t, res, &body)
+		if !body.OK || len(body.Items) != 1 || len(body.Turns) != 1 {
+			t.Fatalf("codex file response = %+v", body)
+		}
+	})
+
+	t.Run("codex session file rename", func(t *testing.T) {
+		threadID := "019e1111-0000-7000-8000-000000000001"
+		req := httptest.NewRequest(http.MethodPost, "/api/codex/session-files/"+threadID+"/rename", bytes.NewBufferString(`{"name":"Renamed Codex"}`))
+		res := httptest.NewRecorder()
+
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+		if svc.codexRenameReq.ThreadID != threadID || svc.codexRenameReq.Name != "Renamed Codex" {
+			t.Fatalf("codex rename request = %+v", svc.codexRenameReq)
 		}
 	})
 

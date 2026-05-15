@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,113 @@ import (
 	"actrail/internal/adapters/iodclient"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
+
+	_ "modernc.org/sqlite"
 )
+
+func TestCodexSessionFilesListsAllAndCWDFromStateDB(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	otherCWD := filepath.Join(t.TempDir(), "other")
+	threadOne := "019e1111-0000-7000-8000-000000000101"
+	threadTwo := "019e1111-0000-7000-8000-000000000102"
+	writeCodexResumeCandidateFile(t, codexHome, threadOne, cwd, "first prompt", time.Unix(1760000300, 0))
+	writeCodexResumeCandidateFile(t, codexHome, threadTwo, otherCWD, "other prompt", time.Unix(1760000200, 0))
+	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
+		{ID: threadOne, CWD: cwd, Title: "Indexed One", FirstUserMessage: "first prompt", UpdatedMS: 1760000300000},
+		{ID: threadTwo, CWD: otherCWD, Title: "Indexed Two", FirstUserMessage: "other prompt", UpdatedMS: 1760000200000},
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+
+	all, err := svc.CodexSessionFiles(context.Background(), CodexSessionFilesRequest{Scope: "all", Limit: 10})
+	if err != nil {
+		t.Fatalf("CodexSessionFiles(all) error = %v", err)
+	}
+	if len(all.Items) != 2 || all.Items[0].ThreadID != threadOne || all.Items[0].Title != "Indexed One" || all.Items[0].Source != "merged" {
+		t.Fatalf("all items = %+v", all.Items)
+	}
+
+	filtered, err := svc.CodexSessionFiles(context.Background(), CodexSessionFilesRequest{Scope: "cwd", CWD: cwd, Limit: 10})
+	if err != nil {
+		t.Fatalf("CodexSessionFiles(cwd) error = %v", err)
+	}
+	if len(filtered.Items) != 1 || filtered.Items[0].ThreadID != threadOne {
+		t.Fatalf("cwd items = %+v", filtered.Items)
+	}
+}
+
+func TestCodexSessionFileDetailGroupsUserAssistantTurns(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	threadID := "019e1111-0000-7000-8000-000000000201"
+	sourcePath := writeCodexSessionFile(t, codexHome, threadID, []string{
+		`{"timestamp":"2026-05-10T08:00:00Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":` + quoteJSON(cwd) + `}}`,
+		`{"timestamp":"2026-05-10T08:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"first prompt"}}`,
+		`{"timestamp":"2026-05-10T08:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"first answer","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-10T08:00:03Z","type":"event_msg","payload":{"type":"user_message","message":"second prompt"}}`,
+	})
+	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
+		{ID: threadID, CWD: cwd, Title: "Grouped Thread", FirstUserMessage: "first prompt", UpdatedMS: 1760000300000},
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+
+	detail, err := svc.CodexSessionFile(context.Background(), CodexSessionFileRequest{ThreadID: threadID})
+	if err != nil {
+		t.Fatalf("CodexSessionFile() error = %v", err)
+	}
+	if detail.Summary.Path != sourcePath || detail.Summary.Title != "Grouped Thread" {
+		t.Fatalf("summary = %+v, want path %q and title", detail.Summary, sourcePath)
+	}
+	if got := messageRolesAndText(detail.Items); strings.Join(got, "\n") != "user:first prompt\nassistant:first answer\nuser:second prompt" {
+		t.Fatalf("items = %#v", got)
+	}
+	if len(detail.Turns) != 2 || detail.Turns[0].User == nil || detail.Turns[0].Assistant == nil || detail.Turns[1].User == nil {
+		t.Fatalf("turns = %+v", detail.Turns)
+	}
+}
+
+func TestRenameCodexSessionFileWritesCodexMetadataAndActRailRecord(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	threadID := "019e1111-0000-7000-8000-000000000301"
+	sourcePath := writeCodexResumeCandidateFile(t, codexHome, threadID, cwd, "first prompt", time.Unix(1760000300, 0))
+	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
+		{ID: threadID, CWD: cwd, Title: "Before Rename", FirstUserMessage: "first prompt", UpdatedMS: 1760000300000},
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	record, err := svc.registry.Create(sessionCreateSpec{
+		Backend:          session.BackendCodex,
+		CWD:              cwd,
+		Title:            "Before Rename",
+		SourcePath:       sourcePath,
+		BackendSessionID: threadID,
+		SourceConfidence: sourceConfidenceExact,
+	})
+	if err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+
+	renamed, err := svc.RenameCodexSessionFile(context.Background(), RenameCodexSessionFileRequest{ThreadID: threadID, Name: "After Rename"})
+	if err != nil {
+		t.Fatalf("RenameCodexSessionFile() error = %v", err)
+	}
+	if !renamed.OK || renamed.Summary.Title != "After Rename" {
+		t.Fatalf("renamed = %+v", renamed)
+	}
+	if got := readCodexStateDBTitle(t, codexHome, threadID); got != "After Rename" {
+		t.Fatalf("state db title = %q", got)
+	}
+	if got := codexThreadNameFromIndex(threadID); got != "After Rename" {
+		t.Fatalf("session index name = %q", got)
+	}
+	updated, ok := svc.registry.Lookup(record.identity.SessionID())
+	if !ok || updated.title != "After Rename" || updated.alias != "After Rename" {
+		t.Fatalf("updated record = %+v ok=%v", updated, ok)
+	}
+}
 
 func TestSessionMessagesLoadsCodexHistoryFromSessionFile(t *testing.T) {
 	cfg := persistentTestConfig(t)
@@ -1134,4 +1241,18 @@ func messageRolesAndText(items []SessionMessage) []string {
 		out = append(out, item.Role+":"+item.Text)
 	}
 	return out
+}
+
+func readCodexStateDBTitle(t *testing.T, codexHome, threadID string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(codexHome, "state_6.sqlite"))
+	if err != nil {
+		t.Fatalf("open codex state db: %v", err)
+	}
+	defer db.Close()
+	var title string
+	if err := db.QueryRow(`SELECT title FROM threads WHERE id = ?`, threadID).Scan(&title); err != nil {
+		t.Fatalf("select codex thread title: %v", err)
+	}
+	return title
 }

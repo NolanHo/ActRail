@@ -6,6 +6,8 @@ import type {
   AttachmentInjectResponse,
   AudioListenerResponse,
   CreateSessionResponse,
+  CodexSessionFileResponse,
+  CodexSessionFilesResponse,
   DeleteSessionResponse,
   EditSessionResponse,
   ExecuteSessionCommandResponse,
@@ -23,6 +25,7 @@ import type {
   NotificationMessageResponse,
   NotificationSubscriptionStateResponse,
   RenameSessionResponse,
+  RenameCodexSessionFileResponse,
   LogoutResponse,
   SessionFileListResponse,
   SessionFileReadResponse,
@@ -415,6 +418,40 @@ export const api = {
   },
   renameSession(sessionId: string, name: string) {
     return postJson<RenameSessionResponse>(`/api/sessions/${sessionId}/rename`, { name });
+  },
+  getCodexSessionFiles(options?: { scope?: "all" | "cwd"; cwd?: string; offset?: number; limit?: number; query?: string }, signal?: AbortSignal) {
+    const query = new URLSearchParams();
+    if (options?.scope) {
+      query.set("scope", options.scope);
+    }
+    if (typeof options?.cwd === "string" && options.cwd.trim()) {
+      query.set("cwd", options.cwd.trim());
+    }
+    if (typeof options?.offset === "number" && Number.isFinite(options.offset) && options.offset > 0) {
+      query.set("offset", String(Math.floor(options.offset)));
+    }
+    if (typeof options?.limit === "number" && Number.isFinite(options.limit) && options.limit > 0) {
+      query.set("limit", String(Math.floor(options.limit)));
+    }
+    if (typeof options?.query === "string" && options.query.trim()) {
+      query.set("query", options.query.trim());
+    }
+    const suffix = query.size ? `?${query.toString()}` : "";
+    return getJson<CodexSessionFilesResponse>(`/api/codex/session-files${suffix}`, signal);
+  },
+  getCodexSessionFile(threadId: string, options?: { path?: string; limit?: number }, signal?: AbortSignal) {
+    const query = new URLSearchParams();
+    if (typeof options?.path === "string" && options.path.trim()) {
+      query.set("path", options.path.trim());
+    }
+    if (typeof options?.limit === "number" && Number.isFinite(options.limit) && options.limit > 0) {
+      query.set("limit", String(Math.floor(options.limit)));
+    }
+    const suffix = query.size ? `?${query.toString()}` : "";
+    return getJson<CodexSessionFileResponse>(`/api/codex/session-files/${encodeURIComponent(threadId)}${suffix}`, signal);
+  },
+  renameCodexSessionFile(threadId: string, name: string) {
+    return postJson<RenameCodexSessionFileResponse>(`/api/codex/session-files/${encodeURIComponent(threadId)}/rename`, { name });
   },
   setSessionFocus(sessionId: string, focused: boolean, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);

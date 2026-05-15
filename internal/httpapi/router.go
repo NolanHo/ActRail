@@ -40,6 +40,10 @@ type renameSessionRequest struct {
 	Name *string `json:"name"`
 }
 
+type renameCodexSessionFileRequest struct {
+	Name *string `json:"name"`
+}
+
 type focusSessionRequest struct {
 	Focused *bool `json:"focused"`
 }
@@ -125,6 +129,9 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("GET /api/supervisor/provider", r.requireAuth(http.HandlerFunc(r.supervisorProvider)))
 	mux.Handle("POST /api/supervisor/provider", r.requireAuth(http.HandlerFunc(r.updateSupervisorProvider)))
 	mux.Handle("POST /api/supervisor/provider/test", r.requireAuth(http.HandlerFunc(r.testSupervisorProvider)))
+	mux.Handle("GET /api/codex/session-files", r.requireAuth(http.HandlerFunc(r.codexSessionFiles)))
+	mux.Handle("GET /api/codex/session-files/{thread_id}", r.requireAuth(http.HandlerFunc(r.codexSessionFile)))
+	mux.Handle("POST /api/codex/session-files/{thread_id}/rename", r.requireAuth(http.HandlerFunc(r.renameCodexSessionFile)))
 	mux.Handle("GET /api/sessions/{session_id}/details", r.requireAuth(http.HandlerFunc(r.sessionDetails)))
 	mux.Handle("GET /api/sessions/{session_id}/messages", r.requireAuth(http.HandlerFunc(r.sessionMessages)))
 	mux.Handle("GET /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.sessionSupervisor)))
@@ -459,6 +466,70 @@ func (r Router) sessionResumeCandidates(w http.ResponseWriter, req *http.Request
 		Limit:        limit,
 		ScanOffset:   scanOffset,
 		ScanLimit:    scanLimit,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) codexSessionFiles(w http.ResponseWriter, req *http.Request) {
+	offset, err := queryInt(req, "offset")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	limit, err := queryInt(req, "limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.CodexSessionFiles(req.Context(), app.CodexSessionFilesRequest{
+		Scope:  strings.TrimSpace(req.URL.Query().Get("scope")),
+		CWD:    strings.TrimSpace(req.URL.Query().Get("cwd")),
+		Offset: offset,
+		Limit:  limit,
+		Query:  strings.TrimSpace(req.URL.Query().Get("q")),
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) codexSessionFile(w http.ResponseWriter, req *http.Request) {
+	limit, err := queryInt(req, "limit")
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	payload, err := r.app.CodexSessionFile(req.Context(), app.CodexSessionFileRequest{
+		ThreadID: strings.TrimSpace(req.PathValue("thread_id")),
+		Path:     strings.TrimSpace(req.URL.Query().Get("path")),
+		Limit:    limit,
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) renameCodexSessionFile(w http.ResponseWriter, req *http.Request) {
+	var body renameCodexSessionFileRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	if body.Name == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "name required", "name")
+		return
+	}
+	payload, err := r.app.RenameCodexSessionFile(req.Context(), app.RenameCodexSessionFileRequest{
+		ThreadID: strings.TrimSpace(req.PathValue("thread_id")),
+		Name:     *body.Name,
 	})
 	if err != nil {
 		writeAppError(w, err)
