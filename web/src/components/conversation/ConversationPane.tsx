@@ -1120,6 +1120,73 @@ async function writeClipboardText(text: string) {
   return copied;
 }
 
+const CLIPBOARD_MARKDOWN_ATTRIBUTES = new Set([
+  "alt",
+  "cite",
+  "colspan",
+  "datetime",
+  "href",
+  "rowspan",
+  "src",
+  "start",
+  "title",
+]);
+
+function isEditableClipboardTarget(target: EventTarget | null): boolean {
+  const element = target instanceof Element ? target : null;
+  const editable = element?.closest("input, textarea, select, [contenteditable]") ?? null;
+  if (!(editable instanceof HTMLElement)) {
+    return false;
+  }
+  return editable.getAttribute("contenteditable") !== "false";
+}
+
+function sanitizeConversationClipboardHtml(fragment: DocumentFragment): string {
+  const container = document.createElement("div");
+  container.appendChild(fragment.cloneNode(true));
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const element = node as Element;
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      if (!CLIPBOARD_MARKDOWN_ATTRIBUTES.has(name)) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+
+  return container.innerHTML;
+}
+
+function handleConversationCopy(event: ClipboardEvent) {
+  if (isEditableClipboardTarget(event.target)) {
+    return;
+  }
+
+  const clipboardData = event.clipboardData;
+  const selection = window.getSelection?.();
+  if (!clipboardData || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return;
+  }
+
+  const currentTarget = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  const range = selection.getRangeAt(0);
+  if (!currentTarget || !currentTarget.contains(range.commonAncestorContainer)) {
+    return;
+  }
+
+  const plainText = selection.toString();
+  const html = sanitizeConversationClipboardHtml(range.cloneContents());
+  if (!plainText.trim() && !html.trim()) {
+    return;
+  }
+
+  event.preventDefault();
+  clipboardData.setData("text/plain", plainText);
+  clipboardData.setData("text/html", html);
+}
+
 function CopyMessageIcon() {
   return (
     <svg className="messageCopyIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -3645,7 +3712,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   };
 
   return (
-    <section ref={sectionRef} className="conversationTimeline relative flex min-h-0 flex-1 flex-col">
+    <section ref={sectionRef} className="conversationTimeline relative flex min-h-0 flex-1 flex-col" onCopy={handleConversationCopy}>
       <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2 text-sm">
         <button
           type="button"

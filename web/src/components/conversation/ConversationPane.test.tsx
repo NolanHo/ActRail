@@ -1813,6 +1813,71 @@ describe("ConversationPane", () => {
     expect(copyButton?.className).toContain("isCopied");
   });
 
+  it("copies selected conversation content as sanitized rich markdown without app backgrounds", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-rich-copy", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-rich-copy": [
+            { role: "assistant", text: "**Bold** text\n\n- first\n- second\n\n`code`" },
+          ],
+        },
+        offsetsBySessionId: { "sess-rich-copy": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const pane = root.querySelector(".conversationTimeline") as HTMLElement | null;
+    const body = root.querySelector(".messageBody") as HTMLElement | null;
+    expect(pane).not.toBeNull();
+    expect(body).not.toBeNull();
+
+    const range = document.createRange();
+    range.selectNodeContents(body as HTMLElement);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const clipboard = new Map<string, string>();
+    const copyEvent = new Event("copy", { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(copyEvent, "clipboardData", {
+      configurable: true,
+      value: {
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    body?.dispatchEvent(copyEvent);
+
+    expect(copyEvent.defaultPrevented).toBe(true);
+    expect(clipboard.get("text/plain")).toContain("Bold text");
+    expect(clipboard.get("text/plain")).toContain("first");
+    const html = clipboard.get("text/html") || "";
+    expect(html).toContain("<strong>Bold</strong>");
+    expect(html).toContain("<ul>");
+    expect(html).toContain("<li>");
+    expect(html).toContain("first");
+    expect(html).toContain("<code>code</code>");
+    expect(html).not.toContain("class=");
+    expect(html).not.toContain("style=");
+    expect(html).not.toContain("background");
+
+    selection?.removeAllRanges();
+  });
+
   it("falls back to execCommand when navigator clipboard rejects copy", async () => {
     const writeText = vi.fn(async () => { throw new Error("denied"); });
     Object.defineProperty(document, "execCommand", {
