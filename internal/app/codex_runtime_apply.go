@@ -101,6 +101,12 @@ func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string, s
 	_ = s.syncCodexRuntimeActivity(sessionID, "thread_attached", true)
 }
 
+func (s *Stub) noteCodexRuntimeProgress(sessionID session.SessionID) {
+	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
+		state.markProgress()
+	})
+}
+
 func (s *Stub) noteCodexProtocolDesynced(sessionID session.SessionID) {
 	var runtime sessionRuntime
 	fallbackThreadID := ""
@@ -171,7 +177,9 @@ func (s *Stub) flushCodexPendingInterrupt(sessionID session.SessionID) {
 	}
 	if err := record.runtime.FlushCodexPendingInterrupt(context.Background()); err != nil {
 		_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_pending_interrupt", err)
+		return
 	}
+	s.startCodexStaleInterruptWatch(sessionID, record.runtime)
 }
 
 func (s *Stub) clearCodexTurnID(sessionID session.SessionID, turnID string) {

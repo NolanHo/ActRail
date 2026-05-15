@@ -20,6 +20,7 @@ type codexRuntimeState struct {
 	activeTurnID        string
 	interruptPending    bool
 	interruptSentTurnID string
+	progressSeq         uint64
 	phase               codexRuntimePhase
 	phaseReason         string
 }
@@ -320,6 +321,48 @@ func (s *codexRuntimeState) markInterruptSent(turnID string) {
 	if s.interruptPending && s.activeTurnID == resolved {
 		s.interruptSentTurnID = resolved
 	}
+}
+
+func (s *codexRuntimeState) markProgress() uint64 {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.progressSeq++
+	return s.progressSeq
+}
+
+func (s *codexRuntimeState) interruptWatchSnapshot() (threadID, turnID string, progressSeq uint64, ok bool) {
+	if s == nil {
+		return "", "", 0, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	threadID = strings.TrimSpace(s.threadID)
+	turnID = strings.TrimSpace(s.activeTurnID)
+	if !s.interruptPending || normalizeCodexRuntimePhase(s.phase) != codexRuntimePhaseInterrupting || threadID == "" || turnID == "" {
+		return "", "", 0, false
+	}
+	return threadID, turnID, s.progressSeq, true
+}
+
+func (s *codexRuntimeState) staleInterruptMatches(threadID, turnID string, progressSeq uint64) bool {
+	if s == nil {
+		return false
+	}
+	expectedThreadID := strings.TrimSpace(threadID)
+	expectedTurnID := strings.TrimSpace(turnID)
+	if expectedThreadID == "" || expectedTurnID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.interruptPending &&
+		normalizeCodexRuntimePhase(s.phase) == codexRuntimePhaseInterrupting &&
+		strings.TrimSpace(s.threadID) == expectedThreadID &&
+		strings.TrimSpace(s.activeTurnID) == expectedTurnID &&
+		s.progressSeq == progressSeq
 }
 
 func (s *codexRuntimeState) pendingInterrupt() bool {

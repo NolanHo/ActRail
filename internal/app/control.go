@@ -407,6 +407,7 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 		if err := s.syncCodexRuntimeActivity(req.SessionID, "interrupt", true); err != nil {
 			return InterruptResponse{}, err
 		}
+		s.startCodexStaleInterruptWatch(req.SessionID, record.runtime)
 		updated, ok := s.registry.Lookup(req.SessionID)
 		if !ok {
 			return InterruptResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
@@ -527,6 +528,8 @@ const (
 	codexRuntimePollInterval      = 10 * time.Millisecond
 )
 
+var codexStaleInterruptWatchDelay = 10 * time.Minute
+
 func (s *Stub) prepareRuntimeSend(ctx context.Context, sessionID session.SessionID, runtime sessionRuntime) error {
 	if runtime.protocol != runtimeProtocolCodexRPC {
 		return nil
@@ -607,6 +610,70 @@ func (s *Stub) startCodexTurnStartWatch(sessionID session.SessionID, runtime ses
 			}
 		}
 	}()
+}
+
+type codexInterruptWatchSnapshot struct {
+	threadID    string
+	turnID      string
+	progressSeq uint64
+}
+
+func (s *Stub) startCodexStaleInterruptWatch(sessionID session.SessionID, runtime sessionRuntime) {
+	if s == nil || runtime.protocol != runtimeProtocolCodexRPC || runtime.codex == nil {
+		return
+	}
+	threadID, turnID, progressSeq, ok := runtime.codex.interruptWatchSnapshot()
+	if !ok {
+		return
+	}
+	snapshot := codexInterruptWatchSnapshot{threadID: threadID, turnID: turnID, progressSeq: progressSeq}
+	go func() {
+		time.Sleep(codexStaleInterruptWatchDelay)
+		if err := s.recoverStaleCodexInterrupt(sessionID, runtime, snapshot); err != nil {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_stale_interrupt_recover", err)
+		}
+	}()
+}
+
+func (s *Stub) recoverStaleCodexInterrupt(sessionID session.SessionID, runtime sessionRuntime, snapshot codexInterruptWatchSnapshot) error {
+	if s == nil || runtime.protocol != runtimeProtocolCodexRPC || runtime.codex == nil {
+		return nil
+	}
+	var updated sessionRecord
+	restarted := false
+	if err := s.withSessionInputLock(sessionID, func(record sessionRecord) error {
+		record.runtime = s.runtimeForRecord(record)
+		if record.identity.Backend() != session.BackendCodex || record.runtime.protocol != runtimeProtocolCodexRPC || record.runtime.codex == nil {
+			return nil
+		}
+		if !sameRuntimeHandle(record.runtime, runtime) {
+			return nil
+		}
+		transport := s.sessionTransportSnapshot(record)
+		if transport.State != SessionTransportStateAttached || transport.ResetRequired {
+			return nil
+		}
+		if record.state.Queue().Len() > 0 || record.uiRequest != nil || s.activeWaitForSession(sessionID) != nil {
+			return nil
+		}
+		if !record.runtime.codex.staleInterruptMatches(snapshot.threadID, snapshot.turnID, snapshot.progressSeq) {
+			return nil
+		}
+		var err error
+		updated, _, err = s.replaceSessionRuntime(context.Background(), sessionID, record, restartSessionUsesPIAgentGRPC(record), true)
+		if err != nil {
+			return err
+		}
+		restarted = true
+		return nil
+	}); err != nil {
+		return err
+	}
+	if restarted {
+		s.emitQueueState(updated.identity.SessionID(), queueSnapshotFromState(updated.state))
+		s.emitSessionState(updated.identity.SessionID())
+	}
+	return nil
 }
 
 func (s *Stub) startCodexTurnCompletionWatch(sessionID session.SessionID, threadID, turnID string) {

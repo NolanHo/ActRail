@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"actrail/internal/adapters/piagentgrpc"
+	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 )
 
@@ -103,6 +104,7 @@ func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.
 func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection runtimeProjection) error {
 	codexCapacityError := runtimeProjectionHasCodexCapacityError(projection)
 	codexCapacityReason := codexCapacityErrorMessage(projection)
+	codexTurnProgress := runtimeProjectionHasCodexTurnProgress(projection)
 	if len(projection.events) > 0 {
 		if err := s.applyPIEvents(sessionID, projection.events); err != nil {
 			return err
@@ -119,6 +121,9 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 		s.noteCodexThreadID(sessionID, projection.codexThreadID, projection.codexSessionPath)
 	}
 	codexMainProjection := s.codexThreadIDInMainThread(sessionID, projection.codexThreadID)
+	if codexMainProjection && codexTurnProgress {
+		s.noteCodexRuntimeProgress(sessionID)
+	}
 	if codexMainProjection && codexCapacityError {
 		s.scheduleCodexCapacityRetry(sessionID, codexCapacityReason)
 	}
@@ -161,4 +166,26 @@ func (s *Stub) applyRuntimeProjection(sessionID session.SessionID, projection ru
 		s.startRuntimeAskUserWait(sessionID, event)
 	}
 	return nil
+}
+
+func runtimeProjectionHasCodexTurnProgress(projection runtimeProjection) bool {
+	if strings.TrimSpace(projection.codexTurnID) != "" || projection.probeCodexTurn {
+		return true
+	}
+	if projection.turnTiming != nil {
+		return true
+	}
+	for _, event := range projection.events {
+		if strings.TrimSpace(event.TurnID) != "" {
+			return true
+		}
+		rawType := strings.TrimSpace(event.RawType)
+		if strings.HasPrefix(rawType, "item/") || strings.HasPrefix(rawType, "turn/") || rawType == "task_started" || rawType == "task_complete" {
+			return true
+		}
+		if event.Kind == pi.EventKindMessageDelta || event.Kind == pi.EventKindTool || event.Kind == pi.EventKindBoundary {
+			return true
+		}
+	}
+	return false
 }
