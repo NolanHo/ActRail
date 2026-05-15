@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"syscall"
 	"time"
 
 	"actrail/internal/adapters/iod"
@@ -14,11 +15,21 @@ import (
 
 var runtimeHelperProjectors sync.Map
 
-const runtimeHelperRedialTimeout = 500 * time.Millisecond
+const (
+	runtimeHelperRedialTimeout        = 500 * time.Millisecond
+	runtimeHelperReconnectInitialWait = 250 * time.Millisecond
+	runtimeHelperReconnectMaxWait     = 5 * time.Second
+)
 
 type runtimeHelperProjector struct {
 	mu      sync.Mutex
 	decoder runtimeEventDecoder
+}
+
+type helperReadErrorResult struct {
+	reattached bool
+	retry      bool
+	client     *iodclient.Client
 }
 
 func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Backend, helper *runtimeIODHelper) {
@@ -26,20 +37,31 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 		return
 	}
 	client := helper.streamClient
+	reconnectWait := runtimeHelperReconnectInitialWait
 	for {
 		packet, err := client.ReadPacket(context.Background())
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return
 			}
-			reattached, nextClient := s.handleHelperReadError(sessionID, backend, helper.generationID, err)
-			if !reattached || nextClient == nil {
+			result := s.handleHelperReadError(sessionID, backend, helper.generationID, err)
+			if result.reattached && result.client != nil {
+				client = result.client
+				helper.streamClient = result.client
+				reconnectWait = runtimeHelperReconnectInitialWait
+				continue
+			}
+			if !result.retry {
 				return
 			}
-			client = nextClient
-			helper.streamClient = nextClient
+			time.Sleep(reconnectWait)
+			reconnectWait *= 2
+			if reconnectWait > runtimeHelperReconnectMaxWait {
+				reconnectWait = runtimeHelperReconnectMaxWait
+			}
 			continue
 		}
+		reconnectWait = runtimeHelperReconnectInitialWait
 		if err := s.applyRuntimeHelperPacket(sessionID, backend, helper.generationID, packet); err != nil {
 			continue
 		}
@@ -149,23 +171,77 @@ func (s *Stub) markHelperTransportAlive(sessionID session.SessionID, generationI
 	return nil
 }
 
-func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, transport SessionTransportSnapshot) (bool, *iodclient.Client) {
+func (s *Stub) markHelperTransportReconnecting(sessionID session.SessionID, generationID iod.GenerationID) error {
 	if s == nil || generationID == "" {
-		return false, nil
+		return nil
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return nil
+	}
+	transport := sessionTransportSnapshot(record)
+	if transport.GenerationID != "" && transport.GenerationID != generationID.String() {
+		return nil
+	}
+	if transport.State == SessionTransportStateSilent && transport.Reason == "attach_lost_reconnecting" && !transport.ResetRequired {
+		return nil
+	}
+	if transport.State == SessionTransportStateEnded && transport.Reason == iod.FactChildExit.String() {
+		return nil
+	}
+	if _, _, err := s.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID: generationID.String(),
+		State:        SessionTransportStateSilent,
+		Reason:       "attach_lost_reconnecting",
+	}); err != nil {
+		return err
+	}
+	s.emitSessionState(sessionID)
+	return nil
+}
+
+func (s *Stub) helperGenerationAppearsAlive(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if s == nil || generationID == "" || s.helpers == nil {
+		return false
 	}
 	attachment, ok := s.helpers.Attachment(sessionID)
 	if !ok || attachment.Binding.GenerationID != generationID {
-		return false, nil
+		return false
 	}
 	manifest := attachment.Manifest
 	if manifest.GenerationID != generationID || manifest.SessionID != sessionID {
-		return false, nil
+		return false
+	}
+	if manifest.HelperPID <= 0 {
+		return false
+	}
+	if err := syscall.Kill(manifest.HelperPID, 0); err != nil {
+		return false
+	}
+	return true
+}
+
+func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, transport SessionTransportSnapshot) helperReadErrorResult {
+	if s == nil || generationID == "" {
+		return helperReadErrorResult{}
+	}
+	attachment, ok := s.helpers.Attachment(sessionID)
+	if !ok || attachment.Binding.GenerationID != generationID {
+		return helperReadErrorResult{}
+	}
+	manifest := attachment.Manifest
+	if manifest.GenerationID != generationID || manifest.SessionID != sessionID {
+		return helperReadErrorResult{}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), runtimeHelperRedialTimeout)
 	defer cancel()
 	client, hello, err := redialHelper(ctx, manifest, s.helperDialer)
 	if err != nil {
-		return false, nil
+		if s.helperGenerationAppearsAlive(sessionID, generationID) {
+			_ = s.markHelperTransportReconnecting(sessionID, generationID)
+			return helperReadErrorResult{retry: true}
+		}
+		return helperReadErrorResult{}
 	}
 	nextAttachment := attachment
 	nextAttachment.Client = client
@@ -190,12 +266,12 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 	}
 	if transport.GenerationID != "" && transport.GenerationID != generationID.String() {
 		_ = client.Close()
-		return false, nil
+		return helperReadErrorResult{}
 	}
 	if _, ok, err := s.registry.SetRuntimeTransport(sessionID, runtime, transportSnapshotAttached(generationID)); err != nil || !ok {
 		_ = client.Close()
-		return false, nil
+		return helperReadErrorResult{}
 	}
 	s.emitSessionState(sessionID)
-	return true, client
+	return helperReadErrorResult{reattached: true, client: client}
 }
