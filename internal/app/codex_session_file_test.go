@@ -71,6 +71,64 @@ func TestSessionMessagesLoadsCodexHistoryFromSessionFile(t *testing.T) {
 	}
 }
 
+func TestSessionMessagesLoadsCodexHistoryFromSourcePathWithoutHelper(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_no_helper")
+	threadID := "019e2107-ca2f-7e73-994d-8726965f8c8b"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-13T04:10:19.000Z","type":"session_meta","payload":{"id":"019e2107-ca2f-7e73-994d-8726965f8c8b","cwd":"/tmp/codex-history","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-13T04:10:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"resume kv store"}}`,
+		`{"timestamp":"2026-05-13T04:11:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"working from source file","phase":"commentary"}}`,
+		`{"timestamp":"2026-05-13T04:12:20.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_pending","arguments":"{}"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewDetachedIdentity(sessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-history",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	got := messageRolesAndText(messages.Items)
+	want := []string{"user:resume kv store", "assistant:working from source file"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	updated, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("session missing after history load")
+	}
+	if !updated.state.Busy() {
+		t.Fatal("state.Busy() = false, want true for incomplete source history")
+	}
+	if !svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = false, want true for incomplete source history")
+	}
+}
+
 func TestCodexSessionMessagesFromJSONLLines(t *testing.T) {
 	lines := []string{
 		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827"}}`,

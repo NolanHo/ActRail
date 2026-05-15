@@ -825,7 +825,13 @@ func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRe
 	if record.identity.Backend() != session.BackendCodex {
 		return SessionMessagesResponse{}, false, nil
 	}
-	return s.loadCodexIODHistory(ctx, record, req)
+	if response, ok, err := s.loadCodexIODHistory(ctx, record, req); ok {
+		return response, true, err
+	}
+	if codexIODHistoryHasSource(ctx, record) {
+		return SessionMessagesResponse{}, false, nil
+	}
+	return s.loadCodexSourceFileHistory(ctx, record, req)
 }
 
 func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
@@ -857,6 +863,50 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 		return SessionMessagesResponse{}, false, nil
 	}
 	s.reconcileCodexSessionFileCompletion(record, complete)
+	s.messageCache.Put(sessionID, cacheKey, items)
+	return paginateSessionMessagesForRequest(items, req), true, nil
+}
+
+func codexIODHistoryHasSource(ctx context.Context, record sessionRecord) bool {
+	if record.runtime.helper == nil {
+		return false
+	}
+	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	packet, err := record.runtime.helper.sessionHistory(historyCtx)
+	return err == nil && strings.TrimSpace(packet.SourcePath) != ""
+}
+
+func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
+	path, threadID, err := s.codexSessionFileForRecord(record)
+	if err != nil {
+		return SessionMessagesResponse{}, true, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return SessionMessagesResponse{}, false, nil
+	}
+	signature, ok := codexSessionFileSignature(path)
+	if !ok {
+		return SessionMessagesResponse{}, false, nil
+	}
+	sessionID := record.identity.SessionID()
+	cacheKey := "codex-source-file:" + signature
+	if items, ok := s.messageCache.Get(sessionID, cacheKey); ok {
+		complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, path)
+		s.reconcileCodexSessionFileCompletion(record, complete)
+		s.rememberCodexThreadBinding(record, threadID, path)
+		return paginateSessionMessagesForRequest(items, req), true, nil
+	}
+	items, err := codexSessionMessagesFromFile(ctx, path)
+	if err != nil {
+		return SessionMessagesResponse{}, true, err
+	}
+	if len(items) == 0 {
+		return SessionMessagesResponse{}, false, nil
+	}
+	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, path)
+	s.reconcileCodexSessionFileCompletion(record, complete)
+	s.rememberCodexThreadBinding(record, threadID, path)
 	s.messageCache.Put(sessionID, cacheKey, items)
 	return paginateSessionMessagesForRequest(items, req), true, nil
 }
