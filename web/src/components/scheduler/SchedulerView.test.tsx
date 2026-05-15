@@ -92,6 +92,42 @@ describe("SchedulerView", () => {
           created_ts: 1_775_000_000,
           updated_ts: 1_775_000_000,
         },
+        {
+          item_id: "inbox-2",
+          session_id: "sess-2",
+          source: "self_reminder",
+          title: "Sent reminder",
+          message: "already sent",
+          due_ts: 1_775_000_100,
+          state: "delivered",
+          delivered_message_id: "msg_123",
+          created_ts: 1_775_000_000,
+          updated_ts: 1_775_000_100,
+        },
+        {
+          item_id: "inbox-3",
+          session_id: "sess-1",
+          source: "manual",
+          title: "Blocked item",
+          message: "wait for idle",
+          due_ts: 1_775_000_200,
+          state: "blocked",
+          blocked_reason: "session busy",
+          created_ts: 1_775_000_000,
+          updated_ts: 1_775_000_200,
+        },
+        {
+          item_id: "inbox-4",
+          session_id: "sess-2",
+          source: "manual",
+          title: "Failed item",
+          message: "send this later",
+          due_ts: 1_775_000_300,
+          state: "error",
+          error: "transport reset required",
+          created_ts: 1_775_000_000,
+          updated_ts: 1_775_000_300,
+        },
       ],
     } as any);
     const root = document.createElement("div");
@@ -111,6 +147,12 @@ describe("SchedulerView", () => {
       expect(root.textContent).toContain("All pending, blocked, delivered, and cancelled inbox messages across sessions.");
       expect(root.textContent).toContain("inspect stuck session");
       expect(root.textContent).toContain("Pi Work (pi)");
+      expect(root.textContent).toContain("Delivered message");
+      expect(root.textContent).toContain("msg_123");
+      expect(root.textContent).toContain("Blocked");
+      expect(root.textContent).toContain("session busy");
+      expect(root.textContent).toContain("Delivery error");
+      expect(root.textContent).toContain("transport reset required");
     });
   });
 

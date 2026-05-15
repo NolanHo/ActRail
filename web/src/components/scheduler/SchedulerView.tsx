@@ -35,6 +35,32 @@ function numericDraft(value: string, fallback: number, min: number) {
   return Math.max(min, parsed);
 }
 
+function inboxStateTone(item: InboxItem) {
+  const state = String(item.state || "").trim().toLowerCase();
+  if (item.error || state === "error" || state === "failed") return "error";
+  if (item.blocked_reason || state === "blocked") return "blocked";
+  if (item.delivered_message_id || state === "delivered" || state === "sent") return "delivered";
+  if (state === "cancelled" || state === "canceled") return "cancelled";
+  if (state === "claimed" || state === "pending" || state === "scheduled") return "pending";
+  return "default";
+}
+
+function inboxStateLabel(item: InboxItem) {
+  const state = String(item.state || "pending").trim();
+  if (!state) return "Pending";
+  return state.replace(/[_-]+/g, " ").replace(/\b\w/g, (value) => value.toUpperCase());
+}
+
+function inboxFeedback(item: InboxItem): { label: string; value: string; tone: string } | null {
+  const error = String(item.error || "").trim();
+  if (error) return { label: "Delivery error", value: error, tone: "error" };
+  const blocked = String(item.blocked_reason || "").trim();
+  if (blocked) return { label: "Blocked", value: blocked, tone: "blocked" };
+  const delivered = String(item.delivered_message_id || "").trim();
+  if (delivered) return { label: "Delivered message", value: delivered, tone: "delivered" };
+  return null;
+}
+
 interface SchedulerSnapshot {
   settings: SchedulerSettings | null;
   items: SchedulerItem[];
@@ -436,23 +462,34 @@ export function SchedulerView() {
             <span className="rounded-md border border-border/70 px-2 py-1 text-xs text-muted-foreground">{snapshot.inbox.length} items</span>
           </div>
           {snapshot.inbox.length ? (
-            <div className="workspaceTableWrap">
-              <table className="workspaceTable">
-                <thead><tr><th>Due</th><th>Source</th><th>Session</th><th>State</th><th>Title</th><th>Message</th><th>Delivery</th></tr></thead>
-                <tbody>
-                  {snapshot.inbox.map((item) => (
-                    <tr key={item.item_id}>
-                      <td>{formatDue(item.due_ts)}</td>
-                      <td>{item.source}</td>
-                      <td>{sessionLabelsById.get(item.session_id) || item.session_id}</td>
-                      <td>{item.state}</td>
-                      <td>{item.title || item.item_id}</td>
-                      <td>{item.message || ""}</td>
-                      <td>{item.blocked_reason || item.error || item.delivered_message_id || ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="schedulerInboxList" aria-label="Inbox items">
+              {snapshot.inbox.map((item) => {
+                const tone = inboxStateTone(item);
+                const feedback = inboxFeedback(item);
+                return (
+                  <article key={item.item_id} className={`schedulerInboxItem ${tone}`}>
+                    <div className="schedulerInboxItemMain">
+                      <div className="schedulerInboxItemTopline">
+                        <span className={`schedulerInboxState ${tone}`}>{inboxStateLabel(item)}</span>
+                        <span className="schedulerInboxSource">{item.source}</span>
+                        <span className="schedulerInboxDue">{formatDue(item.due_ts) || "No due time"}</span>
+                      </div>
+                      <h4>{item.title || item.item_id}</h4>
+                      <p>{item.message || "No message text."}</p>
+                      <div className="schedulerInboxMeta">
+                        <span>{sessionLabelsById.get(item.session_id) || item.session_id}</span>
+                        <span>{item.item_id}</span>
+                      </div>
+                    </div>
+                    {feedback ? (
+                      <div className={`schedulerInboxFeedback ${feedback.tone}`}>
+                        <span>{feedback.label}</span>
+                        <strong>{feedback.value}</strong>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           ) : <p className="text-sm text-muted-foreground">No inbox items.</p>}
         </section>
