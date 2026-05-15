@@ -223,6 +223,32 @@ func TestCodexRuntimeStateDefersInterruptUntilTurnID(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeStateStaleInterruptSnapshotTracksProgress(t *testing.T) {
+	state := newCodexRuntimeState(session.BackendCodex)
+	accepted, _ := state.setThreadID("thread-1")
+	if !accepted {
+		t.Fatal("setThreadID(thread-1) = false, want true")
+	}
+	state.setActiveTurnID("turn-1")
+	state.requestInterrupt()
+
+	threadID, turnID, progressSeq, ok := state.interruptWatchSnapshot()
+	if !ok || threadID != "thread-1" || turnID != "turn-1" {
+		t.Fatalf("interruptWatchSnapshot() = (%q, %q, %d, %v), want thread-1 turn-1 seq true", threadID, turnID, progressSeq, ok)
+	}
+	if !state.staleInterruptMatches(threadID, turnID, progressSeq) {
+		t.Fatal("staleInterruptMatches() = false before progress, want true")
+	}
+	state.markProgress()
+	if state.staleInterruptMatches(threadID, turnID, progressSeq) {
+		t.Fatal("staleInterruptMatches() = true after progress, want false")
+	}
+	state.clearActiveTurnID("turn-1")
+	if _, _, _, ok := state.interruptWatchSnapshot(); ok {
+		t.Fatal("interruptWatchSnapshot() ok = true after interrupt cleared, want false")
+	}
+}
+
 func TestCodexRuntimeStateTransitionsControlAndProtocolPhases(t *testing.T) {
 	state := newCodexRuntimeState(session.BackendCodex)
 	activity, changed := state.transition(codexRuntimePhaseSending, "codex_sending")
