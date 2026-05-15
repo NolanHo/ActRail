@@ -115,6 +115,8 @@ interface AssistantTurnMeta {
   maxToolCallSeconds: number | null;
   turnSeconds: number | null;
   finishedTs: number | null;
+  startedAt: number | null;
+  lastActivityAt: number | null;
   summaryText?: string;
   statusText?: string;
   running?: number;
@@ -1253,14 +1255,22 @@ function pluralTurnMetric(count: number, singular: string, plural = `${singular}
 }
 
 function assistantTurnSummaryParts(meta: AssistantTurnMeta): { summary: string; details: string } {
+  const activityTs = meta.lastActivityAt ?? meta.finishedTs;
+  const timeLabel = activityTs !== null
+    ? `${meta.running && meta.running > 0 ? "last" : "finished"} ${formatTurnMetaTimestamp(activityTs)}`
+    : "";
   if (meta.summaryText) {
+    const detailParts = [
+      meta.statusText || (meta.running && meta.running > 0 ? `running ${meta.running}` : ""),
+      timeLabel,
+    ].filter(Boolean);
     return {
       summary: meta.summaryText,
-      details: meta.statusText || (meta.running && meta.running > 0 ? `running ${meta.running}` : `finished ${meta.finishedTs !== null ? formatTurnMetaTimestamp(meta.finishedTs) : "-"}`),
+      details: detailParts.length ? detailParts.join(" · ") : "finished -",
     };
   }
   const turnLabel = `turn ${formatDuration(meta.turnSeconds)}`;
-  const finishedLabel = `finished ${meta.finishedTs !== null ? formatTurnMetaTimestamp(meta.finishedTs) : "-"}`;
+  const finishedLabel = timeLabel || "finished -";
 
   if (meta.tools <= 0) {
     return {
@@ -2215,6 +2225,8 @@ function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, Assistant
       maxToolCallSeconds: backendSummary?.max_tool_call_seconds ?? maxToolCallSeconds,
       turnSeconds: assistantTs !== null && userTs !== null ? Math.max(0, assistantTs - userTs) : null,
       finishedTs: assistantTs,
+      startedAt: backendSummary?.started_at ?? null,
+      lastActivityAt: backendSummary?.last_activity_at ?? null,
       summaryText: backendSummary?.summary_text,
       statusText: backendSummary?.status_text,
       running: backendSummary?.running,
@@ -2636,6 +2648,14 @@ function MachineTraceSummaryRow({
   metaLabel?: string;
 }) {
   const runningLabel = summary.runningToolNames.length ? summary.runningToolNames.join(", ") : "";
+  const activityTs = summary.lastActivityAt ?? summary.startedAt;
+  const timeLabel = activityTs !== null ? `${summary.running > 0 ? "last" : "finished"} ${formatTurnMetaTimestamp(activityTs)}` : "";
+  const stateLabel = summary.stalled && summary.lastActivityAgeSeconds !== null
+    ? `No output for ${formatRuntimePrecise(summary.lastActivityAgeSeconds)}`
+    : summary.running > 0
+      ? `Running${runningLabel ? `: ${runningLabel}` : ""}`
+      : summary.statusText;
+  const subtext = [stateLabel, timeLabel].filter(Boolean).join(" · ");
   return (
     <button
       type="button"
@@ -2653,13 +2673,7 @@ function MachineTraceSummaryRow({
       <span className="machineTraceSummaryStatus" aria-hidden="true" />
       <span className="machineTraceSummaryMain">
         <span className="machineTraceSummaryText">{summary.summaryText}</span>
-        <span className="machineTraceSummarySubtext">
-          {summary.stalled && summary.lastActivityAgeSeconds !== null
-            ? `No output for ${formatRuntimePrecise(summary.lastActivityAgeSeconds)}`
-            : summary.running > 0
-              ? `Running${runningLabel ? `: ${runningLabel}` : ""}`
-              : summary.statusText}
-        </span>
+        <span className="machineTraceSummarySubtext">{subtext}</span>
       </span>
       <span className="machineTraceSummaryMeta">
         {metaLabel ?? (summary.hiddenEventCount > 0 && expanded ? `showing ${summary.visibleEvents.length}/${summary.visibleEvents.length + summary.hiddenEventCount}` : expanded ? "Hide" : "Details")}
