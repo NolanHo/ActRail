@@ -516,6 +516,10 @@ func TestCodexIODSessionHistoryEndToEnd(t *testing.T) {
 		}
 		return sawUser && sawAssistant
 	})
+	waitForIODCondition(t, func() bool {
+		history, err := record.runtime.helper.sessionHistory(context.Background())
+		return err == nil && history.SourcePath == sessionPath && history.TaskComplete && history.IndexedCount == 2
+	})
 	history, err := record.runtime.helper.sessionHistory(context.Background())
 	if err != nil {
 		t.Fatalf("sessionHistory() error = %v", err)

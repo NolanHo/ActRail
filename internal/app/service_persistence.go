@@ -140,6 +140,7 @@ func (s *Stub) RestoreSurvivingRuntimes(ctx context.Context) error {
 		restoreErr = err
 		return err
 	}
+	s.startCodexSourceHistoryWarmup(ctx)
 	return nil
 }
 
