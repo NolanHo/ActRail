@@ -1525,6 +1525,7 @@ describe("ConversationPane", () => {
     expect(meta?.textContent).toContain("max tool 1m5s");
     expect(meta?.textContent).toContain("turn 2m5s");
     expect(meta?.textContent).toContain("finished");
+    expect(meta?.textContent).toContain("4/24 11:08 UTC+8");
     expandMachineTrace(root);
     expect(root.querySelectorAll(".machineTraceToken.isExtensionUI")).toHaveLength(1);
   });
@@ -1582,7 +1583,7 @@ describe("ConversationPane", () => {
     const summary = root.querySelector('[data-testid="assistant-turn-meta"]');
     expect(summary?.textContent).toContain("Ran 1 tool");
     expect(summary?.textContent).toContain("1 failed");
-    expect(summary?.textContent).toMatch(/finished\s+\d/);
+    expect(summary?.textContent).toContain("finished 4/24 11:08 UTC+8");
     expect(root.querySelector("[data-row-key^='machine-summary:']")).toBeNull();
     expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(0);
     expect(root.querySelector('[data-testid="message-surface"][data-kind="assistant"]')?.textContent).toContain("finished");

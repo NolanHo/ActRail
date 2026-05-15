@@ -930,13 +930,15 @@ function formatMessageTimestamp(ts: number): string {
 }
 
 function formatTurnMetaTimestamp(ts: number): string {
-  return new Intl.DateTimeFormat("zh-CN", {
+  const formatted = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   }).format(new Date(ts * 1000));
+  return `${formatted} UTC+8`;
 }
 
 function formatDuration(seconds: number | null): string {
