@@ -893,6 +893,7 @@ export function AppShell() {
                   activeTitle={activeTitle}
                   canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
                   canProbeRuntime={Boolean(activeSessionId && activeBackendCapabilities?.runtime_probe === true && !activeSessionPending)}
+                  inboxCount={activeQueueCount}
                   probingRuntime={runtimeProbePending}
                   showInterruptAction={showInterruptAction}
                   statusItems={conversationStatusItems}

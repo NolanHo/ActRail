@@ -813,6 +813,13 @@ select {
   background: transparent;
 }
 
+.conversationToolCluster .sessionInboxButton {
+  width: auto;
+  min-width: max-content;
+  gap: 0.4rem;
+  padding-inline: 0.7rem;
+}
+
 .conversationToolCluster .conversationToolButton:hover,
 .conversationToolCluster .conversationToolButton:focus-visible {
   border-color: color-mix(in srgb, var(--legacy-border) 52%, transparent);

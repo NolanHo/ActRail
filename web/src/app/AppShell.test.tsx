@@ -223,6 +223,7 @@ function renderAppShell({
     iod?: { build_date?: string; git_sha?: string; start_ts?: number; mode?: string } | null;
     transport_state?: string | null;
     reset_required?: boolean;
+    queue_len?: number;
   }>;
   liveBusyBySessionId?: Record<string, boolean>;
   liveGeneratingBySessionId?: Record<string, boolean>;
@@ -481,7 +482,7 @@ describe("AppShell", () => {
     expect(getRoot().querySelector(".mobileToolsTrigger")).toBeNull();
     expect(findButtonByAriaLabel("Metadata")).not.toBeNull();
     expect(findButtonByAriaLabel("Files")).not.toBeNull();
-    expect(findButtonByAriaLabel("Inbox")).not.toBeNull();
+    expect(findButtonByAriaLabel("Session Inbox")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt (Esc)")).not.toBeNull();
 
   });
@@ -687,6 +688,24 @@ describe("AppShell", () => {
 
   it("switches to the global Inbox view", async () => {
     const { api } = await import("../lib/api");
+    vi.mocked(api.getScheduler).mockResolvedValueOnce({
+      ok: true,
+      settings: { idle_before_delivery_seconds: 30 },
+      items: [],
+      inbox: [
+        {
+          item_id: "inbox-1",
+          session_id: "sess-1",
+          source: "manual",
+          title: "Manual follow-up",
+          message: "inspect the kv store",
+          due_ts: 1_775_000_000,
+          state: "pending",
+          created_ts: 1_775_000_000,
+          updated_ts: 1_775_000_000,
+        },
+      ],
+    } as any);
     renderAppShell({ diagnostics: { status: "ok" } });
     await flush();
 
@@ -699,6 +718,8 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Inbox");
     expect(getRoot().textContent).toContain("Idle before delivery");
     expect(getRoot().textContent).toContain("Scheduled reminders");
+    expect(getRoot().textContent).toContain("inspect the kv store");
+    expect(getRoot().textContent).toContain("Inbox cleanup (pi)");
   });
 
   it("keeps Teams data sources idle until the global Teams view is opened", async () => {
@@ -783,11 +804,12 @@ describe("AppShell", () => {
 
   it("opens active session inbox from the toolbar", async () => {
     const { api } = await import("../lib/api");
-    renderAppShell({ diagnostics: { status: "ok" } });
+    renderAppShell({ diagnostics: { status: "ok" }, items: [{ session_id: "sess-1", alias: "Legacy shell", agent_backend: "pi", busy: true, queue_len: 2 }] });
     await flush();
 
-    const button = findButtonByAriaLabel("Inbox");
+    const button = findButtonByAriaLabel("Session Inbox");
     expect(button).not.toBeNull();
+    expect(button?.textContent).toContain("Session Inbox 2");
     act(() => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
