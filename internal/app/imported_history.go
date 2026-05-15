@@ -828,7 +828,7 @@ func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRe
 	if response, ok, err := s.loadCodexIODHistory(ctx, record, req); ok {
 		return response, true, err
 	}
-	if codexIODHistoryHasSource(ctx, record) {
+	if record.transcript.Len() > 0 && codexIODHistoryHasSource(ctx, record) {
 		return SessionMessagesResponse{}, false, nil
 	}
 	return s.loadCodexSourceFileHistory(ctx, record, req)
