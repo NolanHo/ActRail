@@ -72,9 +72,28 @@ describe("SchedulerView", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     vi.clearAllMocks();
+    vi.mocked(api.getScheduler).mockResolvedValue({ ok: true, settings: { idle_before_delivery_seconds: 30 }, items: [], inbox: [] });
   });
 
   it("loads scheduler, sessions, and provider", async () => {
+    vi.mocked(api.getScheduler).mockResolvedValue({
+      ok: true,
+      settings: { idle_before_delivery_seconds: 30 },
+      items: [],
+      inbox: [
+        {
+          item_id: "inbox-1",
+          session_id: "sess-1",
+          source: "manual",
+          title: "Manual follow-up",
+          message: "inspect stuck session",
+          due_ts: 1_775_000_000,
+          state: "pending",
+          created_ts: 1_775_000_000,
+          updated_ts: 1_775_000_000,
+        },
+      ],
+    } as any);
     const root = document.createElement("div");
     document.body.appendChild(root);
 
@@ -86,8 +105,13 @@ describe("SchedulerView", () => {
     expect(api.getScheduler).toHaveBeenCalledWith(100);
     expect(api.listSessions).toHaveBeenCalledWith({ limit: 100 }, undefined, false);
     expect(api.getSupervisorProvider).toHaveBeenCalled();
-    expect(root.textContent).toContain("Create self-reminder");
-    expect(root.textContent).toContain("Supervisor provider");
+    await waitForAssertion(() => {
+      expect(root.textContent).toContain("Create self-reminder");
+      expect(root.textContent).toContain("Supervisor provider");
+      expect(root.textContent).toContain("All pending, blocked, delivered, and cancelled inbox messages across sessions.");
+      expect(root.textContent).toContain("inspect stuck session");
+      expect(root.textContent).toContain("Pi Work (pi)");
+    });
   });
 
   it("saves settings and creates a self-reminder from the global view", async () => {

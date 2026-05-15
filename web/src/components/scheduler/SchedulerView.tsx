@@ -69,6 +69,7 @@ export function SchedulerView() {
   const [supervisorStatus, setSupervisorStatus] = useState("");
 
   const selectedSupervisorSession = useMemo(() => sessions.find((session) => session.session_id === selectedSupervisorSessionId), [selectedSupervisorSessionId, sessions]);
+  const sessionLabelsById = useMemo(() => new Map(sessions.map((session) => [session.session_id, sessionBackendLabel(session)])), [sessions]);
   const piSessions = useMemo(() => sessions.filter((session) => session.agent_backend === "pi"), [sessions]);
 
   const loadScheduler = useCallback(async () => {
@@ -427,19 +428,27 @@ export function SchedulerView() {
         </section>
 
         <section className="workspaceCard">
-          <h3>Inbox</h3>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3>Inbox</h3>
+              <p className="text-sm text-muted-foreground">All pending, blocked, delivered, and cancelled inbox messages across sessions.</p>
+            </div>
+            <span className="rounded-md border border-border/70 px-2 py-1 text-xs text-muted-foreground">{snapshot.inbox.length} items</span>
+          </div>
           {snapshot.inbox.length ? (
             <div className="workspaceTableWrap">
               <table className="workspaceTable">
-                <thead><tr><th>Due</th><th>Source</th><th>Session</th><th>State</th><th>Title</th></tr></thead>
+                <thead><tr><th>Due</th><th>Source</th><th>Session</th><th>State</th><th>Title</th><th>Message</th><th>Delivery</th></tr></thead>
                 <tbody>
                   {snapshot.inbox.map((item) => (
                     <tr key={item.item_id}>
                       <td>{formatDue(item.due_ts)}</td>
                       <td>{item.source}</td>
-                      <td>{item.session_id}</td>
+                      <td>{sessionLabelsById.get(item.session_id) || item.session_id}</td>
                       <td>{item.state}</td>
-                      <td>{item.title || item.message || item.item_id}</td>
+                      <td>{item.title || item.item_id}</td>
+                      <td>{item.message || ""}</td>
+                      <td>{item.blocked_reason || item.error || item.delivered_message_id || ""}</td>
                     </tr>
                   ))}
                 </tbody>

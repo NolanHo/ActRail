@@ -55,6 +55,7 @@ interface AppShellToolbarProps {
   activeTitle: string;
   canInterrupt: boolean;
   canProbeRuntime?: boolean;
+  inboxCount?: number;
   probingRuntime?: boolean;
   showInterruptAction: boolean;
   statusItems?: ConversationStatusItem[];
@@ -73,6 +74,7 @@ export function AppShellToolbar({
   activeTitle,
   canInterrupt,
   canProbeRuntime = false,
+  inboxCount = 0,
   probingRuntime = false,
   showInterruptAction,
   statusItems = [],
@@ -87,6 +89,7 @@ export function AppShellToolbar({
 }: AppShellToolbarProps) {
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const mobileToolsMenuRef = useRef<HTMLDivElement | null>(null);
+  const sessionInboxLabel = inboxCount > 0 ? `Session Inbox ${inboxCount}` : "Session Inbox";
 
   useEffect(() => {
     setMobileToolsOpen(false);
@@ -212,8 +215,8 @@ export function AppShellToolbar({
             variant="ghost"
             size="sm"
             className="conversationMenuItem"
-            aria-label="Inbox"
-            title="Inbox"
+            aria-label="Session Inbox"
+            title="Session Inbox"
             disabled={!activeSessionId}
             onClick={() => {
               closeMobileToolsMenu();
@@ -221,7 +224,7 @@ export function AppShellToolbar({
             }}
           >
             <InboxIcon />
-            <span>Inbox</span>
+            <span>{sessionInboxLabel}</span>
           </Button>
         </>
       );
@@ -288,14 +291,15 @@ export function AppShellToolbar({
           <Button
             type="button"
             variant="outline"
-            size="icon"
-            className="toolbarButton conversationToolButton"
-            aria-label="Inbox"
-            title="Inbox"
+            size="sm"
+            className="toolbarButton conversationToolButton sessionInboxButton"
+            aria-label="Session Inbox"
+            title="Session Inbox"
             disabled={!activeSessionId}
             onClick={onOpenInbox}
           >
             <InboxIcon />
+            <span>{sessionInboxLabel}</span>
           </Button>
         </div>
       </>
