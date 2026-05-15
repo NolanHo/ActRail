@@ -632,6 +632,35 @@ function eventKind(event: MessageEvent): string {
   return typeof event.type === "string" && event.type ? event.type : "event";
 }
 
+function assistantMessageClass(event: MessageEvent): string {
+  return typeof event.message_class === "string" ? event.message_class : "";
+}
+
+function isAssistantProgressMessage(event: MessageEvent): boolean {
+  return event.role === "assistant"
+    && event.streaming !== true
+    && assistantMessageClass(event) === "narration";
+}
+
+function isFinalAssistantMessage(event: MessageEvent): boolean {
+  if (event.role !== "assistant" || event.streaming === true || event.pending === true) {
+    return false;
+  }
+  const messageClass = assistantMessageClass(event);
+  if (messageClass === "final_response") {
+    return true;
+  }
+  if (messageClass === "narration") {
+    return false;
+  }
+  if (messageClass === "committed_response") {
+    const details = asRecord(event.details);
+    const phase = typeof details?.phase === "string" ? details.phase : "";
+    return phase === "" || phase === "final_answer";
+  }
+  return messageClass === "";
+}
+
 function isPendingUserEvent(event: MessageEvent): boolean {
   return event.role === "user" && (event.bridge_pseudo === true || event.pending === true);
 }
@@ -1277,6 +1306,27 @@ function ChatMessageCard({
   );
 }
 
+function AssistantProgressCard({ event, options }: { event: MessageEvent; options: MarkdownRenderOptions }) {
+  const text = contentTextFromMessage(event);
+  return (
+    <MessageSurface
+      kind="assistant_progress"
+      compact
+      className="assistantProgressSurface"
+      contentClassName="assistantProgressContent"
+    >
+      <div className="assistantProgressMarker" aria-hidden="true" />
+      <div className="assistantProgressMain">
+        <div className="assistantProgressHeader">
+          <span className="assistantProgressLabel">Assistant progress</span>
+          {typeof event.ts === "number" ? <span className="assistantProgressTime">{formatMessageTimestamp(event.ts)}</span> : null}
+        </div>
+        {renderRichText(text, "assistantProgressBody messageBody", options)}
+      </div>
+    </MessageSurface>
+  );
+}
+
 function executedCommandText(event: MessageEvent): string {
   if (event.role !== "user") {
     return "";
@@ -1429,6 +1479,9 @@ function MessageSurface({
 function renderChatCard(event: MessageEvent, kind: "system" | "user" | "assistant", options: MarkdownRenderOptions, turnMeta?: AssistantTurnMeta, commandOutput?: boolean) {
   if (kind === "system") {
     return <SystemPromptCard event={event} options={options} />;
+  }
+  if (kind === "assistant" && isAssistantProgressMessage(event)) {
+    return <AssistantProgressCard event={event} options={options} />;
   }
   return <ChatMessageCard event={event} kind={kind} options={options} turnMeta={turnMeta} commandOutput={commandOutput} />;
 }
@@ -2228,7 +2281,7 @@ function commandOutputByAssistantIndex(messages: MessageEvent[]): Set<number> {
       waitingForCommandOutput = Boolean(executedCommandText(event));
       continue;
     }
-    if (waitingForCommandOutput && event.role === "assistant" && event.streaming !== true) {
+    if (waitingForCommandOutput && isFinalAssistantMessage(event)) {
       result.add(index);
       waitingForCommandOutput = false;
     }
@@ -2255,7 +2308,7 @@ function buildAssistantTurnMeta(messages: MessageEvent[]): Map<number, Assistant
       lastUserIndex = index;
       continue;
     }
-    if (event.role !== "assistant" || event.streaming === true) {
+    if (!isFinalAssistantMessage(event)) {
       continue;
     }
     const start = lastUserIndex + 1;
@@ -3112,7 +3165,14 @@ function renderConversationEvent(
     case "system":
     case "user":
     case "assistant":
-      return renderChatCard(event, kind, options, kind === "assistant" ? turnMeta : undefined, kind === "assistant" ? commandOutput : undefined);
+    case "assistant_progress":
+      return renderChatCard(
+        event,
+        kind === "assistant_progress" ? "assistant" : kind,
+        options,
+        kind === "assistant" ? turnMeta : undefined,
+        kind === "assistant" ? commandOutput : undefined,
+      );
     case "ask_user":
       return renderAskUserCard(event, sessionId, runtimeId, options, allowFuzzyLiveMatch, allowLegacyFallback);
     case "wait":
@@ -3439,6 +3499,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     commandOutput?: boolean;
   }>>((out, message, index) => {
     const kind = eventKind(message);
+    const rowKind = isAssistantProgressMessage(message) ? "assistant_progress" : kind;
     const traceKind = compactTraceKind(message);
     if (traceKind) {
       const last = out[out.length - 1];
@@ -3468,8 +3529,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     const prevKind = index > 0 ? eventKind(messages[index - 1]) : null;
     out.push({
       key: rowKey,
-      kind,
-      grouped: prevKind === kind && canGroupEvent(kind),
+      kind: rowKind,
+      grouped: prevKind === kind && canGroupEvent(kind) && rowKind === kind,
       events: [message],
       firstTs: ts,
       lastTs: ts,

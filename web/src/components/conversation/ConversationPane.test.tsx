@@ -2329,6 +2329,65 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("late assistant");
   });
 
+  it("renders assistant narration as compact progress instead of a final answer bubble", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-assistant-progress", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-assistant-progress": [
+            { role: "user", text: "/status", ts: 1761177600 },
+            { role: "assistant", message_class: "narration", text: "Checking the workspace", ts: 1761177601 },
+            { type: "tool", name: "bash", text: "git status", ts: 1761177602 },
+            { type: "tool_result", name: "bash", text: "clean", ts: 1761177603 },
+            {
+              role: "assistant",
+              message_class: "final_response",
+              text: "On branch main",
+              ts: 1761177604,
+              details: {
+                tool_activity_summary: {
+                  total_tools: 1,
+                  ok: 1,
+                  failed: 0,
+                  max_tool_call_seconds: 1,
+                },
+              },
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-assistant-progress": 5 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const progressRow = root.querySelector(".messageRow.assistant_progress") as HTMLElement | null;
+    expect(progressRow).not.toBeNull();
+    expect(progressRow?.textContent).toContain("Assistant progress");
+    expect(progressRow?.textContent).toContain("Checking the workspace");
+    expect(progressRow?.querySelector(".assistantProgressSurface")).not.toBeNull();
+    expect(progressRow?.querySelector(".messageBubble.assistant")).toBeNull();
+
+    const finalAssistantRows = Array.from(root.querySelectorAll<HTMLElement>(".messageRow.assistant"))
+      .filter((row) => row.textContent?.includes("On branch main"));
+    expect(finalAssistantRows).toHaveLength(1);
+    expect(finalAssistantRows[0]?.querySelector(".messageBubble.assistant")).not.toBeNull();
+    expect(finalAssistantRows[0]?.textContent).toContain("Output");
+    expect(finalAssistantRows[0]?.textContent).toContain("1 tool");
+  });
+
   it("marks the latest unfinished tool token as running while the session is busy", () => {
     const sessionsStore = createStaticStore(
       { items: [{ session_id: "sess-trace-running", busy: true }], activeSessionId: "sess-trace-running", loading: false, newSessionDefaults: null },
