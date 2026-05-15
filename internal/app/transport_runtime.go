@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"actrail/internal/adapters/iod"
-	"actrail/internal/adapters/iodclient"
 	"actrail/internal/domain/session"
 )
 
@@ -202,39 +201,39 @@ func (s *Stub) applyPITransportPacket(sessionID session.SessionID, packet any) e
 	}
 }
 
-func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, err error) (bool, *iodclient.Client) {
+func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, err error) helperReadErrorResult {
 	if s == nil || err == nil {
-		return false, nil
+		return helperReadErrorResult{}
 	}
 	if generationID != "" && !s.runtimeHelperGenerationCurrent(sessionID, generationID) {
-		return false, nil
+		return helperReadErrorResult{}
 	}
 	state, stateErr := s.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if stateErr != nil {
-		return false, nil
+		return helperReadErrorResult{}
 	}
 	if state.Transport.State == SessionTransportStateEnded || state.Transport.State == SessionTransportStateBroken {
 		if state.Transport.State == SessionTransportStateBroken {
-			if reattached, client := s.tryRedialHelperAfterReadError(sessionID, backend, generationID, state.Transport); reattached {
-				return true, client
+			if result := s.tryRedialHelperAfterReadError(sessionID, backend, generationID, state.Transport); result.reattached || result.retry {
+				return result
 			}
 		}
-		return false, nil
+		return helperReadErrorResult{}
 	}
 	if generationID == "" {
 		generationID = mustTransportGenerationID(state.Transport.GenerationID)
 		if generationID == "" {
-			return false, nil
+			return helperReadErrorResult{}
 		}
 	}
 	if strings.TrimSpace(state.Transport.GenerationID) != "" && strings.TrimSpace(state.Transport.GenerationID) != generationID.String() {
-		return false, nil
+		return helperReadErrorResult{}
 	}
-	if reattached, client := s.tryRedialHelperAfterReadError(sessionID, backend, generationID, state.Transport); reattached {
-		return true, client
+	if result := s.tryRedialHelperAfterReadError(sessionID, backend, generationID, state.Transport); result.reattached || result.retry {
+		return result
 	}
 	_ = s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String())
-	return false, nil
+	return helperReadErrorResult{}
 }
 
 func helperGenerationBreakReason(fact iod.HelperFact) (string, error) {
