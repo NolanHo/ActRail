@@ -21,7 +21,7 @@ var (
 )
 
 func main() {
-	runtime.GOMAXPROCS(1)
+	runtime.GOMAXPROCS(4)
 	var (
 		sessionRaw            = flag.String("session-id", "", "live session id")
 		generationRaw         = flag.String("generation-id", "", "live generation id")
