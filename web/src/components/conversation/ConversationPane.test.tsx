@@ -1555,6 +1555,8 @@ describe("ConversationPane", () => {
                   tool_results: 1,
                   ok: 0,
                   failed: 1,
+                  started_at: 1_777_000_123,
+                  last_activity_at: 1_777_000_125,
                   summary_text: "Ran 1 tool · 1 failed · 2s",
                   status_text: "1 failed",
                 },
@@ -1580,6 +1582,7 @@ describe("ConversationPane", () => {
     const summary = root.querySelector('[data-testid="assistant-turn-meta"]');
     expect(summary?.textContent).toContain("Ran 1 tool");
     expect(summary?.textContent).toContain("1 failed");
+    expect(summary?.textContent).toMatch(/finished\s+\d/);
     expect(root.querySelector("[data-row-key^='machine-summary:']")).toBeNull();
     expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(0);
     expect(root.querySelector('[data-testid="message-surface"][data-kind="assistant"]')?.textContent).toContain("finished");
@@ -1645,6 +1648,7 @@ describe("ConversationPane", () => {
     const summary = root.querySelector('[data-testid="machine-trace-summary"]') as HTMLButtonElement | null;
     expect(summary?.textContent).toContain("Running 1/2 tools");
     expect(summary?.textContent).toContain("Running: bash");
+    expect(summary?.textContent).toMatch(/last\s+\d/);
     expect(summary?.classList.contains("isRunning")).toBe(true);
     expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(0);
   });
