@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { ConversationPane } from "../components/conversation/ConversationPane";
 import { ConversationStateTray } from "../components/conversation/ConversationStateTray";
 import { Composer } from "../components/composer/Composer";
+import { SessionFileView } from "../components/session-files/SessionFileView";
 import type { FileViewMode } from "../components/workspace/FileViewerDialog";
 import { AppShellSidebar, GlobalNavRail, type DesktopGlobalView } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
@@ -249,6 +250,7 @@ export function AppShell() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
+  const [sessionFileViewOpen, setSessionFileViewOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [runtimeSettingsOpen, setRuntimeSettingsOpen] = useState(false);
   const [workspaceInitialTab, setWorkspaceInitialTab] = useState<WorkspaceTab>("metadata");
@@ -821,6 +823,7 @@ export function AppShell() {
               void logout();
             }}
             onNewSession={() => setNewSessionOpen(true)}
+            onOpenCodexSessions={() => setSessionFileViewOpen(true)}
             onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
             onOpenRuntimeSettings={() => setRuntimeSettingsOpen(true)}
             onOpenSettings={() => openVoiceSettings()}
@@ -886,6 +889,7 @@ export function AppShell() {
                   }}
                   onOpenFiles={() => openFileViewer()}
                   onOpenInbox={() => setInboxOpen(true)}
+                  onOpenSessionFiles={() => setSessionFileViewOpen(true)}
                   onOpenSessions={() => setSidebarOpen(true)}
                   onOpenWorkspace={() => openWorkspace("metadata")}
                 />
@@ -913,6 +917,14 @@ export function AppShell() {
         onClose={() => setRuntimeSettingsOpen(false)}
         onRefreshDefaults={() => sessionsStoreApi.refreshBootstrap({ refreshPiModels: true })}
         onSaved={handleRuntimeSettingsSaved}
+      />
+      <SessionFileView
+        open={sessionFileViewOpen}
+        activeCwd={activeSession?.cwd || ""}
+        onClose={() => setSessionFileViewOpen(false)}
+        onRenamed={() => {
+          void sessionsStoreApi.refresh();
+        }}
       />
       <AppShellWorkspaceOverlays
         activeSessionId={activeSessionId}

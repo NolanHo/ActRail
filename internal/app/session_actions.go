@@ -1367,6 +1367,14 @@ func codexStateDBDSN(path string) string {
 	return fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(1000)", abs)
 }
 
+func codexStateDBWriteDSN(path string) string {
+	abs, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil {
+		abs = strings.TrimSpace(path)
+	}
+	return fmt.Sprintf("file:%s?_pragma=busy_timeout(1000)", abs)
+}
+
 func latestCodexStateDBPath() (string, bool) {
 	home := filepath.Dir(codexSessionRoot())
 	matches, err := filepath.Glob(filepath.Join(home, "state_*.sqlite"))
