@@ -1023,7 +1023,7 @@ function renderRichText(value: string, className = "messageBody", options: Markd
     return null;
   }
   return (
-    <div className={className} onClick={(event) => handleRichTextClick(event as MouseEvent, options)}>
+    <div className={className} data-clipboard-markdown={value} onClick={(event) => handleRichTextClick(event as MouseEvent, options)}>
       <MarkdownContent value={value} options={options} />
     </div>
   );
@@ -1188,6 +1188,36 @@ function sanitizeConversationClipboardHtml(fragment: DocumentFragment): string {
   return container.innerHTML;
 }
 
+function normalizedClipboardText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function elementSelectionText(element: Element): string {
+  const htmlElement = element as HTMLElement;
+  return typeof htmlElement.innerText === "string" ? htmlElement.innerText : element.textContent || "";
+}
+
+function selectedMarkdownPlainText(range: Range, selectionText: string, root: HTMLElement): string {
+  const selectedBlocks = Array.from(root.querySelectorAll<HTMLElement>("[data-clipboard-markdown]"))
+    .filter((element) => range.intersectsNode(element))
+    .map((element) => ({
+      markdown: element.getAttribute("data-clipboard-markdown") || "",
+      renderedText: elementSelectionText(element),
+    }))
+    .filter((item) => item.markdown.trim() && item.renderedText.trim());
+
+  if (!selectedBlocks.length) {
+    return "";
+  }
+
+  const renderedText = selectedBlocks.map((item) => item.renderedText.trim()).join("\n\n");
+  if (normalizedClipboardText(renderedText) !== normalizedClipboardText(selectionText)) {
+    return "";
+  }
+
+  return selectedBlocks.map((item) => item.markdown.trim()).join("\n\n");
+}
+
 function handleConversationCopy(event: ClipboardEvent) {
   if (isEditableClipboardTarget(event.target)) {
     return;
@@ -1205,8 +1235,10 @@ function handleConversationCopy(event: ClipboardEvent) {
     return;
   }
 
-  const plainText = selection.toString();
+  const selectionText = selection.toString();
   const html = sanitizeConversationClipboardHtml(range.cloneContents());
+  const markdownText = selectedMarkdownPlainText(range, selectionText, currentTarget);
+  const plainText = markdownText || selectionText;
   if (!plainText.trim() && !html.trim()) {
     return;
   }

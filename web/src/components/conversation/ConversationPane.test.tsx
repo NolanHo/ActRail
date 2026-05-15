@@ -1863,8 +1863,7 @@ describe("ConversationPane", () => {
     body?.dispatchEvent(copyEvent);
 
     expect(copyEvent.defaultPrevented).toBe(true);
-    expect(clipboard.get("text/plain")).toContain("Bold text");
-    expect(clipboard.get("text/plain")).toContain("first");
+    expect(clipboard.get("text/plain")).toBe("**Bold** text\n\n- first\n- second\n\n`code`");
     const html = clipboard.get("text/html") || "";
     expect(html).toContain("<strong>Bold</strong>");
     expect(html).toContain("<ul>");
@@ -1874,6 +1873,61 @@ describe("ConversationPane", () => {
     expect(html).not.toContain("class=");
     expect(html).not.toContain("style=");
     expect(html).not.toContain("background");
+
+    selection?.removeAllRanges();
+  });
+
+  it("keeps partial selected conversation copies as rendered plain text", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-partial-copy", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-partial-copy": [
+            { role: "assistant", text: "**Bold** text\n\n- first\n- second\n\n`code`" },
+          ],
+        },
+        offsetsBySessionId: { "sess-partial-copy": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const paragraphText = root.querySelector(".messageBody p strong")?.firstChild;
+    expect(paragraphText).not.toBeNull();
+
+    const range = document.createRange();
+    range.setStart(paragraphText as Text, 0);
+    range.setEnd(paragraphText as Text, 4);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const clipboard = new Map<string, string>();
+    const copyEvent = new Event("copy", { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(copyEvent, "clipboardData", {
+      configurable: true,
+      value: {
+        setData: (type: string, value: string) => clipboard.set(type, value),
+      },
+    });
+
+    root.querySelector(".messageBody")?.dispatchEvent(copyEvent);
+
+    expect(copyEvent.defaultPrevented).toBe(true);
+    expect(clipboard.get("text/plain")).toBe("Bold");
+    expect(clipboard.get("text/html")).toContain("Bold");
 
     selection?.removeAllRanges();
   });
