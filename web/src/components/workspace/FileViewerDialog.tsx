@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { api } from "../../lib/api";
 import type { GitFileVersion, GitFileVersionsResponse, SessionFileListEntry, SessionFileReadResponse, WorkspaceHistoryItem, WorkspaceResponse } from "../../lib/types";
 import { MarkdownContent } from "../markdown/MarkdownContent";
-import { MonacoWorkspace } from "./MonacoWorkspace";
+import { inferMonacoLanguage, MonacoWorkspace } from "./MonacoWorkspace";
 import { normalizeRememberedLine, preferredFileSelectionForSession, rememberFileSelection } from "./fileSelectionState";
 
 export interface FileViewerDialogProps {
@@ -184,13 +184,6 @@ function normalizePath(value: string, rootPathOrRoots: string | WorkspaceRoots =
   return normalized.waitingForRoot ? "" : normalized.path;
 }
 
-function normalizeViewMode(value?: FileViewMode | null) {
-  if (value === "file" || value === "preview") {
-    return value;
-  }
-  return "diff";
-}
-
 function workspaceHistoryLabel(path: string) {
   const parts = path.trim().split("/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : path.trim();
@@ -240,6 +233,25 @@ function normalizeWorkspaceHistoryItems(value: WorkspaceResponse | null | undefi
 
 function isMarkdownFile(path: string) {
   return /\.(md|markdown)$/i.test(path.trim());
+}
+
+function isCodeFile(path: string) {
+  const language = inferMonacoLanguage(path);
+  return language !== "plaintext" && language !== "markdown";
+}
+
+function defaultViewModeForPath(path: string, requestedMode?: FileViewMode | null, explicitPath = false): FileViewMode {
+  const trimmed = path.trim();
+  if (trimmed && isMarkdownFile(trimmed)) {
+    return "preview";
+  }
+  if (trimmed && isCodeFile(trimmed)) {
+    return "file";
+  }
+  if (requestedMode === "diff" || requestedMode === "file" || requestedMode === "preview") {
+    return requestedMode;
+  }
+  return explicitPath ? "file" : "diff";
 }
 
 function parentPath(path: string) {
@@ -561,7 +573,7 @@ export function FileViewerDialog({
       setHistoryItems(nextHistoryItems);
       if (selectedPath && !initialPath && !rememberedPath) {
         setPath((current) => normalizePath(current, nextWorkspaceRoots) || selectedPath);
-        setViewMode("diff");
+        setViewMode(defaultViewModeForPath(selectedPath));
         if (compactLayout) {
           setShowBrowser(false);
         }
@@ -637,7 +649,7 @@ export function FileViewerDialog({
     const preferredLine = initialPath ? normalizeRememberedLine(initialLine) : normalizeRememberedLine(rememberedSelection?.line);
     setPath(preferredPath);
     setLine(preferredLine);
-    setViewMode(initialPath ? normalizeViewMode(initialMode || "file") : "diff");
+    setViewMode(defaultViewModeForPath(preferredPath, initialMode, Boolean(initialPath)));
     setShowBrowser(compactLayout ? !preferredPath : true);
     setError("");
   }, [canonicalWorkspaceRootPath, compactLayout, initialLine, initialMode, initialPath, open, openRequestKey, persistedSelectedPath, rememberedPath, rememberedSelection?.line, workspaceRootPath]);
@@ -835,8 +847,10 @@ export function FileViewerDialog({
               <Input
                 value={path}
                 onInput={(event) => {
-                  setPath(event.currentTarget.value);
+                  const nextPath = event.currentTarget.value;
+                  setPath(nextPath);
                   setLine(null);
+                  setViewMode(defaultViewModeForPath(nextPath, null, true));
                 }}
                 placeholder="src/app.tsx"
               />
@@ -856,8 +870,8 @@ export function FileViewerDialog({
                         onSelect={(nextPath) => {
                           setPath(nextPath);
                           setLine(null);
+                          setViewMode(defaultViewModeForPath(nextPath, null, true));
                           if (compactLayout) {
-                            setViewMode(isMarkdownFile(nextPath) ? "preview" : "file");
                             setShowBrowser(false);
                           }
                         }}

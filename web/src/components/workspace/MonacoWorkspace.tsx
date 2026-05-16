@@ -19,7 +19,7 @@ interface MonacoWorkspaceProps {
   fallback: ComponentChildren;
 }
 
-function inferLanguage(path: string) {
+export function inferMonacoLanguage(path: string) {
   const extension = path.split(".").pop()?.toLowerCase() || "";
   switch (extension) {
     case "js":
@@ -175,7 +175,7 @@ export function MonacoWorkspace({ mode, path, line = null, originalText = "", mo
           return;
         }
 
-        const language = inferLanguage(path);
+        const language = inferMonacoLanguage(path);
         if (mode === "diff") {
           const originalModel = monaco.editor.createModel(originalText, language);
           const modifiedModel = monaco.editor.createModel(modifiedText, language);

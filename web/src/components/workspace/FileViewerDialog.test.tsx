@@ -16,6 +16,15 @@ vi.mock("../../lib/api", () => ({
 }));
 
 vi.mock("./MonacoWorkspace", () => ({
+  inferMonacoLanguage: (path: string) => {
+    const extension = path.split(".").pop()?.toLowerCase() || "";
+    if (extension === "md" || extension === "markdown") return "markdown";
+    if (["js", "jsx"].includes(extension)) return "javascript";
+    if (["ts", "tsx"].includes(extension)) return "typescript";
+    if (extension === "json") return "json";
+    if (extension === "py") return "python";
+    return "plaintext";
+  },
   MonacoWorkspace: (props: any) => (
     <div
       data-testid="monaco-workspace"
@@ -69,10 +78,7 @@ describe("FileViewerDialog", () => {
       history_items: [{ path: "README.md", label: "README" }],
     });
     (api as any).getFiles.mockResolvedValue({ path: "", items: [] });
-    (api as any).getGitFileVersions.mockResolvedValue({
-      path: "src/main.tsx",
-      items: [{ version_id: "workspace", label: "Workspace", current: true }],
-    } as any);
+    (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "const main = true;" });
 
     root = document.createElement("div");
     document.body.appendChild(root);
@@ -86,7 +92,8 @@ describe("FileViewerDialog", () => {
     await settle(16);
 
     expect((api as any).getWorkspace).toHaveBeenCalledWith("sess-persisted", expect.any(AbortSignal));
-    expect((api as any).getGitFileVersions).toHaveBeenCalledWith("sess-persisted", "src/main.tsx", expect.any(AbortSignal));
+    expect((api as any).getFileRead).toHaveBeenCalledWith("sess-persisted", "src/main.tsx", expect.any(AbortSignal));
+    expect(root.querySelector('[data-testid="monaco-workspace"]')?.getAttribute("data-mode")).toBe("file");
     await waitForCalls((api as any).updateWorkspace);
     expect((api as any).updateWorkspace).toHaveBeenCalledWith("sess-persisted", {
       selected_path: "src/main.tsx",
@@ -98,7 +105,7 @@ describe("FileViewerDialog", () => {
     });
   });
 
-  it("loads the root directory, expands a folder, and opens a selected file in diff mode", async () => {
+  it("loads the root directory, expands a folder, and opens selected code files in highlighted file mode", async () => {
     const { api } = await import("../../lib/api");
     (api as any).getFiles.mockImplementation((_sessionId: string, nextPath?: string) => Promise.resolve(
       nextPath === "src"
@@ -152,9 +159,10 @@ describe("FileViewerDialog", () => {
     });
     await settle(8);
 
-    expect((api as any).getGitFileVersions).toHaveBeenCalledWith("sess-diff", "src/main.tsx", expect.any(AbortSignal));
-    expect(root.textContent).toContain("Workspace");
-    expect(root.textContent).toContain("workspace only");
+    expect((api as any).getFileRead).toHaveBeenCalledWith("sess-diff", "src/main.tsx", expect.any(AbortSignal));
+    const monaco = root.querySelector('[data-testid="monaco-workspace"]') as HTMLElement | null;
+    expect(monaco?.getAttribute("data-mode")).toBe("file");
+    expect(monaco?.getAttribute("data-path")).toBe("src/main.tsx");
   });
 
   it("loads a directory only once when it is collapsed and re-expanded", async () => {
@@ -249,7 +257,7 @@ describe("FileViewerDialog", () => {
     }
   });
 
-  it("can switch from diff mode to file and markdown preview modes", async () => {
+  it("opens markdown files directly in preview mode and can switch back to file mode", async () => {
     const { api } = await import("../../lib/api");
     (api as any).getFiles.mockResolvedValue({ path: "", items: [] });
     (api as any).getGitFileVersions.mockResolvedValue({
@@ -263,30 +271,27 @@ describe("FileViewerDialog", () => {
     document.body.appendChild(root);
     await act(async () => {
       render(
-        <FileViewerDialog open sessionId="sess-preview" initialPath="docs/intro.md" onClose={() => undefined} />,
+        <FileViewerDialog open sessionId="sess-preview" initialPath="docs/intro.md" initialMode="file" onClose={() => undefined} />,
         root!,
       );
       await settle(8);
     });
+    await settle(8);
 
     const fileButton = Array.from(root.querySelectorAll("button")).find((button) => button.textContent === "File") as HTMLButtonElement | undefined;
     const previewButton = Array.from(root.querySelectorAll("button")).find((button) => button.textContent === "Preview") as HTMLButtonElement | undefined;
     expect(fileButton).toBeDefined();
     expect(previewButton).toBeDefined();
+    expect(api.getFileRead).toHaveBeenCalledWith("sess-preview", "docs/intro.md", expect.any(AbortSignal));
+    expect(root.querySelector(".filePreview .messageBody h1")?.textContent).toBe("Hello");
+    expect(root.querySelector(".filePreview .messageBody")?.textContent).toContain("Body");
 
     act(() => {
       fileButton?.click();
     });
     await settle(6);
-    expect(api.getFileRead).toHaveBeenCalledWith("sess-preview", "docs/intro.md", expect.any(AbortSignal));
     expect(root.textContent).toContain("docs/intro.md");
-
-    act(() => {
-      previewButton?.click();
-    });
-    await settle(6);
-    expect(root.querySelector(".filePreview .messageBody h1")?.textContent).toBe("Hello");
-    expect(root.querySelector(".filePreview .messageBody")?.textContent).toContain("Body");
+    expect(root.querySelector('[data-testid="monaco-workspace"]')?.getAttribute("data-mode")).toBe("file");
   });
 
   it("opens explicit file references in file mode and preserves the requested line", async () => {
@@ -310,9 +315,11 @@ describe("FileViewerDialog", () => {
       );
       await settle(8);
     });
+    await settle(8);
 
     expect((api as any).getFileRead).toHaveBeenCalledWith("sess-line", "src/main.tsx", expect.any(AbortSignal));
     expect(root.textContent).toContain("line 18");
+    expect(root.querySelector('[data-testid="monaco-workspace"]')?.getAttribute("data-mode")).toBe("file");
   });
 
   it("converts absolute file references under the workspace root before reading", async () => {
