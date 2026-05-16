@@ -13,11 +13,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 const defaultSessionHistoryWarmLines = 3000
 const sessionHistoryMaxLineBytes = 64 << 20
-const sessionHistoryWatchInterval = 500 * time.Millisecond
+const sessionHistoryPollFallbackInterval = 30 * time.Second
+const sessionHistoryNotifyDebounce = 150 * time.Millisecond
 
 type SessionHistorySnapshot struct {
 	SourcePath   string
@@ -228,12 +231,68 @@ func (c *sessionHistoryCache) ensureWatcher(ctx context.Context) {
 	c.loadCancel = cancel
 	c.mu.Unlock()
 
+	ready := make(chan struct{})
+	go c.watch(loadCtx, ready)
+	select {
+	case <-ready:
+	case <-loadCtx.Done():
+		return
+	}
 	_ = c.refreshIfChanged(loadCtx)
-	go c.watch(loadCtx)
 }
 
-func (c *sessionHistoryCache) watch(ctx context.Context) {
-	ticker := time.NewTicker(sessionHistoryWatchInterval)
+func (c *sessionHistoryCache) watch(ctx context.Context, ready chan<- struct{}) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		close(ready)
+		c.watchByPolling(ctx)
+		return
+	}
+	defer watcher.Close()
+
+	path := c.currentPath()
+	c.ensureNotifyTargets(watcher, path)
+	close(ready)
+	fallback := time.NewTicker(sessionHistoryPollFallbackInterval)
+	defer fallback.Stop()
+	var debounce <-chan time.Time
+	var debounceTimer *time.Timer
+	defer func() {
+		if debounceTimer != nil {
+			debounceTimer.Stop()
+		}
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if c.historyEventMatches(event, path) {
+				if debounceTimer != nil {
+					debounceTimer.Stop()
+				}
+				debounceTimer = time.NewTimer(sessionHistoryNotifyDebounce)
+				debounce = debounceTimer.C
+			}
+		case <-watcher.Errors:
+		case <-debounce:
+			debounce = nil
+			_ = c.refreshIfChanged(ctx)
+			path = c.currentPath()
+			c.ensureNotifyTargets(watcher, path)
+		case <-fallback.C:
+			_ = c.refreshIfChanged(ctx)
+			path = c.currentPath()
+			c.ensureNotifyTargets(watcher, path)
+		}
+	}
+}
+
+func (c *sessionHistoryCache) watchByPolling(ctx context.Context) {
+	ticker := time.NewTicker(sessionHistoryPollFallbackInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -243,6 +302,36 @@ func (c *sessionHistoryCache) watch(ctx context.Context) {
 			_ = c.refreshIfChanged(ctx)
 		}
 	}
+}
+
+func (c *sessionHistoryCache) ensureNotifyTargets(watcher *fsnotify.Watcher, path string) {
+	if watcher == nil || strings.TrimSpace(path) == "" {
+		return
+	}
+	cleaned := filepath.Clean(path)
+	dir := filepath.Dir(cleaned)
+	watched := make(map[string]bool, len(watcher.WatchList()))
+	for _, target := range watcher.WatchList() {
+		watched[filepath.Clean(target)] = true
+	}
+	if dir != "." && !watched[dir] {
+		_ = watcher.Add(dir)
+	}
+	if _, err := os.Stat(cleaned); err == nil && !watched[cleaned] {
+		_ = watcher.Add(cleaned)
+	}
+}
+
+func (c *sessionHistoryCache) historyEventMatches(event fsnotify.Event, path string) bool {
+	if strings.TrimSpace(path) == "" || strings.TrimSpace(event.Name) == "" {
+		return false
+	}
+	cleanedPath := filepath.Clean(path)
+	cleanedEvent := filepath.Clean(event.Name)
+	if cleanedEvent == cleanedPath {
+		return event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Chmod)
+	}
+	return filepath.Dir(cleanedPath) == cleanedEvent
 }
 
 func (c *sessionHistoryCache) warmTail(limit int) error {

@@ -24,6 +24,8 @@ import (
 )
 
 const DefaultProtocolVersion = 1
+const codexChildKeepaliveInterval = 15 * time.Second
+const codexChildKeepaliveWriteTimeout = 5 * time.Second
 
 type ChildIOMode string
 
@@ -84,6 +86,7 @@ type Helper struct {
 	handle    process.Handle
 	childConn net.Conn
 	childWS   *websocket.Conn
+	childWSMu sync.Mutex
 	proof     HelloProof
 	manifest  GenerationManifest
 	history   *sessionHistoryCache
@@ -377,8 +380,9 @@ func (h *Helper) Run(ctx context.Context) error {
 		go h.readPipe(runCtx, "stdout", h.handle.Stdout())
 		go h.readPipe(runCtx, "stderr", h.handle.Stderr())
 	} else if h.childIOMode == ChildIOModeUnix {
-		h.wg.Add(1)
+		h.wg.Add(2)
 		go h.readChildSocket(runCtx)
+		go h.keepChildSocketAlive(runCtx)
 	} else {
 		h.wg.Add(1)
 		go h.readPTY(runCtx)
@@ -772,6 +776,8 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 		if err != nil {
 			return err
 		}
+		h.childWSMu.Lock()
+		defer h.childWSMu.Unlock()
 		return h.childWS.WriteMessage(websocket.TextMessage, data)
 	} else {
 		// Deprecated command path: PTY is an interactive compatibility fallback,
@@ -806,6 +812,32 @@ func normalizeCommandInputPayload(payload json.RawMessage) ([]byte, error) {
 		return nil, fmt.Errorf("decode command input payload: %w", err)
 	}
 	return []byte(text), nil
+}
+
+func (h *Helper) keepChildSocketAlive(ctx context.Context) {
+	defer h.wg.Done()
+	if h == nil || h.childIOMode != ChildIOModeUnix || h.childWS == nil {
+		return
+	}
+	ticker := time.NewTicker(codexChildKeepaliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			deadline := time.Now().Add(codexChildKeepaliveWriteTimeout)
+			h.childWSMu.Lock()
+			err := h.childWS.WriteControl(websocket.PingMessage, nil, deadline)
+			h.childWSMu.Unlock()
+			if err != nil {
+				if !h.isChildExited() && !h.isBroken() {
+					_ = h.emitGenerationBreak(GenerationBreakAttachLost)
+				}
+				return
+			}
+		}
+	}
 }
 
 type utf8ChunkDecoder struct {
