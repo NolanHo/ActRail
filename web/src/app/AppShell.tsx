@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { ConversationPane } from "../components/conversation/ConversationPane";
 import { ConversationStateTray } from "../components/conversation/ConversationStateTray";
 import { Composer } from "../components/composer/Composer";
-import { SessionFileView } from "../components/session-files/SessionFileView";
+import { SessionFileDetail, SessionFileRail, useSessionFileViewState } from "../components/session-files/SessionFileView";
 import type { FileViewMode } from "../components/workspace/FileViewerDialog";
 import { AppShellSidebar, GlobalNavRail, type DesktopGlobalView } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar, type ConversationStatusItem } from "./app-shell/AppShellToolbar";
@@ -58,6 +58,7 @@ const SIDEBAR_WIDTH_DEFAULT_PX = 320;
 const SIDEBAR_WIDTH_MIN_PX = 288;
 const SIDEBAR_WIDTH_MAX_PX = 480;
 const SIDEBAR_WIDTH_STEP_PX = 16;
+const DEFAULT_CODEX_SESSION_CWD = "/root/docs";
 
 function clampSidebarWidth(value: number) {
   if (!Number.isFinite(value)) {
@@ -383,6 +384,7 @@ export function AppShell() {
   const activeTitle = activeSession
     ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
     : "No session selected";
+  const activeCodexSessionCwd = activeSession?.cwd || DEFAULT_CODEX_SESSION_CWD;
   const activeModel = typeof activeSession?.model === "string" ? activeSession.model.trim() : "";
   const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "";
   const activeContextUsageLabel = activeSessionId ? contextUsageStatusLabel(liveActiveSessionState.contextUsage) : "";
@@ -786,10 +788,19 @@ export function AppShell() {
     }
   };
 
+  const codexSessionFileState = useSessionFileViewState({
+    active: desktopGlobalView === "codex_sessions" || mobileLayout,
+    activeCwd: activeCodexSessionCwd,
+    onRenamed: () => {
+      void sessionsStoreApi.refresh();
+    },
+  });
+
   const renderSessionsRail = () => (
     <AppShellSidebar
       activeView={desktopGlobalView}
       activeTeamId={selectedTeamId}
+      codexSessionFileRail={<SessionFileRail state={codexSessionFileState} />}
       teamsData={teamsData}
       onNewSession={() => setNewSessionOpen(true)}
       onOpenSettings={() => openVoiceSettings()}
@@ -822,7 +833,7 @@ export function AppShell() {
               void logout();
             }}
             onNewSession={() => setNewSessionOpen(true)}
-            activeCwd={activeSession?.cwd || ""}
+            activeCwd={activeCodexSessionCwd}
             onCodexSessionRenamed={() => {
               void sessionsStoreApi.refresh();
             }}
@@ -906,13 +917,7 @@ export function AppShell() {
             ) : desktopGlobalView === "teams" ? (
               <TeamsThreadView selectedActorId={selectedTeamId} data={teamsData} />
             ) : desktopGlobalView === "codex_sessions" ? (
-              <SessionFileView
-                active
-                activeCwd={activeSession?.cwd || ""}
-                onRenamed={() => {
-                  void sessionsStoreApi.refresh();
-                }}
-              />
+              <SessionFileDetail state={codexSessionFileState} />
             ) : (
               <SchedulerView />
             )}

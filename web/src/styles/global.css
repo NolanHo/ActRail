@@ -165,6 +165,28 @@ select {
   box-shadow: var(--shadow);
 }
 
+.sessionFileRail {
+  padding-inline: 0;
+  padding-bottom: 0;
+}
+
+.sessionFileRail .sessionsPaneHeader {
+  padding-inline: 1rem;
+}
+
+.sessionFileMessageMarkdown {
+  font-family: var(--font-assistant-prose);
+  letter-spacing: 0;
+}
+
+.sessionFileMessageMarkdown pre {
+  white-space: pre-wrap;
+}
+
+.sessionFileCombinedView .sessionFileRail {
+  border-radius: 0;
+}
+
 .mobileEmbeddedView {
   flex: 1;
   min-height: 0;

@@ -521,6 +521,8 @@ describe("AppShell", () => {
     });
 
     expect(getRoot().querySelector("[data-testid='session-file-view']")).not.toBeNull();
+    expect(getRoot().querySelector(".sidebarColumn.desktopSessionsRail [data-testid='session-file-rail']")).not.toBeNull();
+    expect(getRoot().querySelector("[data-testid='session-file-view'] [data-testid='session-file-rail']")).toBeNull();
     expect(apiModule.api.getCodexSessionFiles).toHaveBeenCalled();
     await act(async () => {
       await flushLazy();
@@ -528,6 +530,29 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Indexed Codex");
     expect(apiModule.api.getCodexSessionFiles).toHaveBeenCalledWith(
       expect.objectContaining({ scope: "cwd", cwd: "/tmp/project", limit: 100 }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("uses /root/docs as the Codex Sessions cwd when no session cwd is active", async () => {
+    const apiModule = await import("../lib/api");
+    vi.mocked(apiModule.api.getCodexSessionFiles).mockResolvedValueOnce({
+      ok: true,
+      scope: "cwd",
+      offset: 0,
+      limit: 100,
+      remaining: 0,
+      items: [],
+    } as any);
+    renderAppShell({ activeSessionId: null, diagnostics: null });
+
+    await act(async () => {
+      findButtonByAriaLabel("Codex Sessions view")?.click();
+      await flushLazy();
+    });
+
+    expect(apiModule.api.getCodexSessionFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "cwd", cwd: "/root/docs", limit: 100 }),
       expect.any(AbortSignal),
     );
   });

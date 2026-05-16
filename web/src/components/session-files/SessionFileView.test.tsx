@@ -80,8 +80,8 @@ describe("SessionFileView", () => {
       turns: [
         {
           index: 0,
-          user: { role: "user", text: "Run tests" },
-          assistant: { role: "assistant", text: "Tests passed" },
+          user: { role: "user", text: "Run **tests**" },
+          assistant: { role: "assistant", text: "Tests **passed**" },
           messages: [],
         },
       ],
@@ -107,6 +107,19 @@ describe("SessionFileView", () => {
     expect(root?.textContent).toContain("Build status");
     expect(root?.textContent).toContain("Run tests");
     expect(root?.textContent).toContain("Tests passed");
+    expect(root?.querySelector(".sessionFileMessageMarkdown strong")?.textContent).toBe("tests");
+  });
+
+  it("defaults cwd scope to /root/docs when no active cwd is provided", async () => {
+    (api as any).getCodexSessionFiles.mockResolvedValue({ items: [] });
+
+    await renderView({ activeCwd: "" });
+
+    expect((api as any).getCodexSessionFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "cwd", cwd: "/root/docs", limit: 100 }),
+      expect.any(AbortSignal),
+    );
+    expect(root?.textContent).toContain("/root/docs");
   });
 
   it("switches to all scope and renames selected session", async () => {
