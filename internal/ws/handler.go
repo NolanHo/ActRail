@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"compress/flate"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -66,7 +67,7 @@ func NewHandler(cfg config.Config, opts ...HandlerOption) *Handler {
 	replay, err := NewReplayBuffer(cfg.Protocol.ResumeBuffer)
 	h := &Handler{
 		cfg:           cfg,
-		upgrader:      websocket.Upgrader{},
+		upgrader:      websocket.Upgrader{EnableCompression: true},
 		registry:      NewRegistry(),
 		replay:        replay,
 		codec:         Codec{},
@@ -190,6 +191,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer wsconn.Close()
+	wsconn.EnableWriteCompression(true)
+	if err := wsconn.SetCompressionLevel(flate.BestSpeed); err != nil {
+		return
+	}
 	wsconn.SetReadLimit(maxIncomingFrameBytes)
 
 	now := h.now()

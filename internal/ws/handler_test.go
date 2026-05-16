@@ -31,6 +31,15 @@ func TestHandlerRejectsMissingAuthCookie(t *testing.T) {
 	}
 }
 
+func TestHandlerEnablesWebSocketCompression(t *testing.T) {
+	cfg := config.Load()
+	h := NewHandler(cfg)
+
+	if !h.upgrader.EnableCompression {
+		t.Fatal("websocket compression disabled, want enabled")
+	}
+}
+
 func TestHandlerAllowsLocalNoAuthModeWithoutCookie(t *testing.T) {
 	cfg := config.Load()
 	h := NewHandler(cfg)

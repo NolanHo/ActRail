@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { LiveSessionStore } from "../../domains/live-session/store";
 import type { SessionUiStore } from "../../domains/session-ui/store";
 import type { SessionsStore } from "../../domains/sessions/store";
@@ -61,6 +61,7 @@ export function useAppShellSessionEffects({
   suppressedReplySoundSessionIdsRef,
 }: UseAppShellSessionEffectsOptions) {
   const [pageVisible, setPageVisible] = useState(isDocumentVisible);
+  const backgroundLivePrimedSessionIdsRef = useRef(new Set<string>());
   const hasBusySession = items.some((session) => Boolean(session.busy || session.pending_startup));
   const sessionsRefreshIntervalMs = realtimeConnected
     ? REALTIME_SESSIONS_RECOVERY_MS
@@ -165,7 +166,7 @@ export function useAppShellSessionEffects({
   }, [activeSessionBackend, activeSessionHistorical, activeSessionId, activeSessionPending, activeSessionRuntimeId, pageVisible, realtimeConnected, sessionUiStoreApi, sessionsStoreApi, workspaceOpen]);
 
   useEffect(() => {
-    if (!pageVisible || !replySoundEnabled) {
+    if (!pageVisible) {
       return;
     }
 
@@ -173,38 +174,47 @@ export function useAppShellSessionEffects({
     for (const session of backgroundBusySessions) {
       const sessionId = session.session_id;
       const runtimeId = getSessionRuntimeId(session);
-      if (
-        backgroundReplySoundPrimedSessionIdsRef.current.has(sessionId)
-        || suppressedReplySoundSessionIdsRef.current.has(sessionId)
-      ) {
+      if (backgroundLivePrimedSessionIdsRef.current.has(sessionId)) {
         continue;
       }
-      suppressedReplySoundSessionIdsRef.current.add(sessionId);
+      backgroundLivePrimedSessionIdsRef.current.add(sessionId);
+      const shouldPrimeReplySound = replySoundEnabled
+        && !backgroundReplySoundPrimedSessionIdsRef.current.has(sessionId)
+        && !suppressedReplySoundSessionIdsRef.current.has(sessionId);
+      if (shouldPrimeReplySound) {
+        suppressedReplySoundSessionIdsRef.current.add(sessionId);
+      }
       (runtimeId
         ? liveSessionStoreApi.loadInitial(sessionId, runtimeId)
         : liveSessionStoreApi.loadInitial(sessionId))
         .catch(() => undefined)
         .finally(() => {
-          suppressedReplySoundSessionIdsRef.current.delete(sessionId);
-          backgroundReplySoundPrimedSessionIdsRef.current.add(sessionId);
+          if (shouldPrimeReplySound) {
+            suppressedReplySoundSessionIdsRef.current.delete(sessionId);
+            backgroundReplySoundPrimedSessionIdsRef.current.add(sessionId);
+          }
         });
     }
   }, [activeSessionId, backgroundReplySoundPrimedSessionIdsRef, items, liveSessionStoreApi, pageVisible, replySoundEnabled, suppressedReplySoundSessionIdsRef]);
 
   useEffect(() => {
-    if (!pageVisible || !replySoundEnabled || realtimeConnected) {
+    if (!pageVisible) {
       return undefined;
     }
 
     const pollBackgroundBusySessions = () => {
       const backgroundBusySessions = items
-        .filter((session) => session.session_id !== activeSessionId && session.busy)
-        .filter((session) => backgroundReplySoundPrimedSessionIdsRef.current.has(session.session_id));
+        .filter((session) => session.session_id !== activeSessionId)
+        .filter((session) => session.busy || backgroundLivePrimedSessionIdsRef.current.has(session.session_id));
       for (const session of backgroundBusySessions) {
         const runtimeId = getSessionRuntimeId(session);
+        if (!session.busy) {
+          backgroundLivePrimedSessionIdsRef.current.delete(session.session_id);
+        }
         (runtimeId
           ? liveSessionStoreApi.poll(session.session_id, runtimeId)
-          : liveSessionStoreApi.poll(session.session_id)).catch(() => undefined);
+          : liveSessionStoreApi.poll(session.session_id))
+          .catch(() => undefined);
       }
     };
 
@@ -214,5 +224,5 @@ export function useAppShellSessionEffects({
       BACKGROUND_BUSY_LIVE_REFRESH_MS,
     );
     return () => window.clearInterval(intervalId);
-  }, [activeSessionId, backgroundReplySoundPrimedSessionIdsRef, items, liveSessionStoreApi, pageVisible, realtimeConnected, replySoundEnabled]);
+  }, [activeSessionId, items, liveSessionStoreApi, pageVisible]);
 }

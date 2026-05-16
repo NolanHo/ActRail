@@ -419,3 +419,97 @@ it("primes and polls background busy sessions every 5 seconds when reply sounds 
 
   expect(liveSessionStoreApi.poll.mock.calls.map((call: [string]) => call[0])).toContain("sess-2");
 });
+
+it("keeps background busy sessions warm when reply sounds are disabled", async () => {
+  vi.useFakeTimers();
+  const liveSessionStoreApi = {
+    loadInitial: vi.fn().mockResolvedValue(undefined),
+    poll: vi.fn().mockResolvedValue(undefined),
+  } as any;
+
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        {...baseProps({
+          items: [
+            { session_id: "sess-1", busy: true },
+            { session_id: "sess-2", busy: true },
+          ] as any,
+          liveSessionStoreApi,
+          replySoundEnabled: false,
+        })}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  expect(liveSessionStoreApi.loadInitial).toHaveBeenCalledWith("sess-1");
+  expect(liveSessionStoreApi.loadInitial).toHaveBeenCalledWith("sess-2");
+
+  await act(async () => {
+    vi.advanceTimersByTime(5000);
+    await flush();
+  });
+
+  expect(liveSessionStoreApi.poll.mock.calls.map((call: [string]) => call[0])).toContain("sess-2");
+});
+
+it("does one trailing poll when a background busy session becomes idle", async () => {
+  vi.useFakeTimers();
+  const liveSessionStoreApi = {
+    loadInitial: vi.fn().mockResolvedValue(undefined),
+    poll: vi.fn().mockResolvedValue(undefined),
+  } as any;
+
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        {...baseProps({
+          items: [
+            { session_id: "sess-1", busy: true },
+            { session_id: "sess-2", busy: true },
+          ] as any,
+          liveSessionStoreApi,
+          replySoundEnabled: false,
+        })}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  await act(async () => {
+    render(
+      <Harness
+        {...baseProps({
+          items: [
+            { session_id: "sess-1", busy: true },
+            { session_id: "sess-2", busy: false },
+          ] as any,
+          liveSessionStoreApi,
+          replySoundEnabled: false,
+        })}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  const trailingPollCount = liveSessionStoreApi.poll.mock.calls.filter((call: [string]) => call[0] === "sess-2").length;
+  expect(trailingPollCount).toBeGreaterThanOrEqual(1);
+
+  await act(async () => {
+    vi.advanceTimersByTime(5000);
+    await flush();
+  });
+
+  const laterPollCount = liveSessionStoreApi.poll.mock.calls.filter((call: [string]) => call[0] === "sess-2").length;
+  expect(laterPollCount).toBe(trailingPollCount);
+});
