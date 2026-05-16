@@ -789,7 +789,7 @@ export function AppShell() {
   };
 
   const codexSessionFileState = useSessionFileViewState({
-    active: desktopGlobalView === "codex_sessions" || mobileLayout,
+    active: desktopGlobalView === "codex_sessions",
     activeCwd: activeCodexSessionCwd,
     onRenamed: () => {
       void sessionsStoreApi.refresh();
@@ -833,10 +833,6 @@ export function AppShell() {
               void logout();
             }}
             onNewSession={() => setNewSessionOpen(true)}
-            activeCwd={activeCodexSessionCwd}
-            onCodexSessionRenamed={() => {
-              void sessionsStoreApi.refresh();
-            }}
             onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
             onOpenRuntimeSettings={() => setRuntimeSettingsOpen(true)}
             onOpenSettings={() => openVoiceSettings()}
