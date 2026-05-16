@@ -10,16 +10,17 @@ import (
 const defaultSessionMessageCacheEntries = 64
 
 type sessionMessageCache struct {
-	mu       sync.Mutex
-	limit    int
-	items    map[session.SessionID]*list.Element
-	lru      *list.List
+	mu    sync.Mutex
+	limit int
+	items map[session.SessionID]*list.Element
+	lru   *list.List
 }
 
 type sessionMessageCacheEntry struct {
 	sessionID session.SessionID
 	signature string
 	items     []SessionMessage
+	complete  bool
 }
 
 func newSessionMessageCache(limit int) *sessionMessageCache {
@@ -49,23 +50,28 @@ func (c *sessionMessageCache) GetSession(sessionID session.SessionID) ([]Session
 }
 
 func (c *sessionMessageCache) Get(sessionID session.SessionID, signature string) ([]SessionMessage, bool) {
+	items, _, ok := c.GetWithCompletion(sessionID, signature)
+	return items, ok
+}
+
+func (c *sessionMessageCache) GetWithCompletion(sessionID session.SessionID, signature string) ([]SessionMessage, bool, bool) {
 	if c == nil || signature == "" {
-		return nil, false
+		return nil, false, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	elem := c.items[sessionID]
 	if elem == nil {
-		return nil, false
+		return nil, false, false
 	}
 	entry := elem.Value.(*sessionMessageCacheEntry)
 	if entry.signature != signature {
 		c.lru.Remove(elem)
 		delete(c.items, sessionID)
-		return nil, false
+		return nil, false, false
 	}
 	c.lru.MoveToFront(elem)
-	return cloneSessionMessages(entry.items), true
+	return cloneSessionMessages(entry.items), entry.complete, true
 }
 
 func (c *sessionMessageCache) GetPage(sessionID session.SessionID, signature string, req SessionMessagesRequest) (SessionMessagesResponse, bool) {
@@ -89,6 +95,10 @@ func (c *sessionMessageCache) GetPage(sessionID session.SessionID, signature str
 }
 
 func (c *sessionMessageCache) Put(sessionID session.SessionID, signature string, items []SessionMessage) {
+	c.PutWithCompletion(sessionID, signature, items, false)
+}
+
+func (c *sessionMessageCache) PutWithCompletion(sessionID session.SessionID, signature string, items []SessionMessage, complete bool) {
 	if c == nil || signature == "" {
 		return
 	}
@@ -98,6 +108,7 @@ func (c *sessionMessageCache) Put(sessionID session.SessionID, signature string,
 		entry := elem.Value.(*sessionMessageCacheEntry)
 		entry.signature = signature
 		entry.items = cloneSessionMessages(items)
+		entry.complete = complete
 		c.lru.MoveToFront(elem)
 		return
 	}
@@ -105,6 +116,7 @@ func (c *sessionMessageCache) Put(sessionID session.SessionID, signature string,
 		sessionID: sessionID,
 		signature: signature,
 		items:     cloneSessionMessages(items),
+		complete:  complete,
 	})
 	c.items[sessionID] = elem
 	for c.lru.Len() > c.limit {

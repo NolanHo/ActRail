@@ -24,7 +24,7 @@ func (s *Stub) AppendSessionMessage(sessionID session.SessionID, role, kind, tex
 	if !ok {
 		return SessionMessage{}, NotFound(fmt.Sprintf("session %q not found", sessionID))
 	}
-	s.messageCache.Invalidate(sessionID)
+	s.invalidateSessionHistoryCaches(sessionID)
 	return sessionMessageFromCommitted(item), nil
 }
 
@@ -47,7 +47,7 @@ func (s *Stub) CommitAssistantTurn(sessionID session.SessionID, turnID, text str
 	if !ok {
 		return SessionMessage{}, NotFound(fmt.Sprintf("session %q not found", sessionID))
 	}
-	s.messageCache.Invalidate(sessionID)
+	s.invalidateSessionHistoryCaches(sessionID)
 	return sessionMessageFromCommitted(item), nil
 }
 

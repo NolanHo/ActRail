@@ -90,7 +90,7 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		if err != nil || !ok {
 			return err
 		}
-		s.messageCache.Invalidate(sessionID)
+		s.invalidateSessionHistoryCaches(sessionID)
 		committed = sessionMessageFromCommitted(item)
 		queue = queueSnapshotFromState(state)
 		activated = true

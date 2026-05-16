@@ -25,7 +25,15 @@ const (
 	sourceConfidenceHelper      = "helper"
 	sourceConfidenceInferred    = "inferred"
 	sourceConfidenceProvisional = "provisional"
+
+	codexIODHistorySnapshotTTL    = 5 * time.Second
+	codexIODHistoryRefreshTimeout = 2 * time.Second
 )
+
+type codexIODHistoryCacheEntry struct {
+	packet    iod.SessionHistoryResponsePacket
+	checkedAt time.Time
+}
 
 func normalizeSourceConfidence(value string) string {
 	switch strings.TrimSpace(value) {
@@ -647,10 +655,8 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, recor
 	if record.runtime.helper == nil {
 		return record
 	}
-	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer cancel()
-	packet, err := record.runtime.helper.sessionHistory(historyCtx)
-	if err != nil || !packet.Complete {
+	packet, ok, err := s.codexIODHistorySnapshot(ctx, record)
+	if err != nil || !ok || !packet.Complete {
 		return record
 	}
 	items := sessionMessagesFromIODHistory(packet.Messages)
@@ -835,16 +841,13 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	if record.runtime.helper == nil {
 		return SessionMessagesResponse{}, false, nil
 	}
-	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer cancel()
-	packet, err := record.runtime.helper.sessionHistory(historyCtx)
-	if err != nil || strings.TrimSpace(packet.SourcePath) == "" || len(packet.Messages) == 0 {
+	packet, ok, err := s.codexIODHistorySnapshot(ctx, record)
+	if err != nil || !ok || strings.TrimSpace(packet.SourcePath) == "" || len(packet.Messages) == 0 {
 		return SessionMessagesResponse{}, false, nil
 	}
 	sessionID := record.identity.SessionID()
 	cacheKey := codexIODHistoryCacheKey(packet)
-	if items, ok := s.messageCache.Get(sessionID, cacheKey); ok {
-		complete := packet.Complete && (codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete)
+	if items, complete, ok := s.messageCache.GetWithCompletion(sessionID, cacheKey); ok {
 		if !codexSessionFileHistoryUsable(record, items, complete) {
 			return SessionMessagesResponse{}, false, nil
 		}
@@ -860,7 +863,7 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 		return SessionMessagesResponse{}, false, nil
 	}
 	s.reconcileCodexSessionFileCompletion(record, complete)
-	s.messageCache.Put(sessionID, cacheKey, items)
+	s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
 	return paginateSessionMessagesForRequest(items, req), true, nil
 }
 
@@ -878,8 +881,7 @@ func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRec
 	}
 	sessionID := record.identity.SessionID()
 	cacheKey := "codex-source-file:" + signature
-	if items, ok := s.messageCache.Get(sessionID, cacheKey); ok {
-		complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, path)
+	if items, complete, ok := s.messageCache.GetWithCompletion(sessionID, cacheKey); ok {
 		s.reconcileCodexSessionFileCompletion(record, complete)
 		s.rememberCodexThreadBinding(record, threadID, path)
 		return paginateSessionMessagesForRequest(items, req), true, nil
@@ -894,8 +896,104 @@ func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRec
 	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, path)
 	s.reconcileCodexSessionFileCompletion(record, complete)
 	s.rememberCodexThreadBinding(record, threadID, path)
-	s.messageCache.Put(sessionID, cacheKey, items)
+	s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
 	return paginateSessionMessagesForRequest(items, req), true, nil
+}
+
+func (s *Stub) codexIODHistorySnapshot(ctx context.Context, record sessionRecord) (iod.SessionHistoryResponsePacket, bool, error) {
+	if s == nil || record.runtime.helper == nil {
+		return iod.SessionHistoryResponsePacket{}, false, nil
+	}
+	sessionID := record.identity.SessionID()
+	now := time.Now()
+	s.codexIODHistoryMu.Lock()
+	if entry, ok := s.codexIODHistory[sessionID]; ok {
+		packet := entry.packet
+		stale := now.Sub(entry.checkedAt) >= codexIODHistorySnapshotTTL
+		s.codexIODHistoryMu.Unlock()
+		if stale {
+			s.kickCodexIODHistoryRefresh(record)
+		}
+		return packet, true, nil
+	}
+	s.codexIODHistoryMu.Unlock()
+
+	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	packet, err := record.runtime.helper.sessionHistory(historyCtx)
+	if err != nil {
+		return iod.SessionHistoryResponsePacket{}, false, err
+	}
+	s.codexIODHistoryMu.Lock()
+	if s.codexIODHistory == nil {
+		s.codexIODHistory = map[session.SessionID]codexIODHistoryCacheEntry{}
+	}
+	s.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
+		packet:    packet,
+		checkedAt: time.Now(),
+	}
+	s.codexIODHistoryMu.Unlock()
+	return packet, true, nil
+}
+
+func (s *Stub) kickCodexIODHistoryRefresh(record sessionRecord) {
+	if s == nil || record.runtime.helper == nil {
+		return
+	}
+	sessionID := record.identity.SessionID()
+	s.codexIODHistoryMu.Lock()
+	if s.codexIODRefreshing == nil {
+		s.codexIODRefreshing = map[session.SessionID]bool{}
+	}
+	refreshGen := s.codexIODHistoryGen[sessionID]
+	if s.codexIODRefreshing[sessionID] {
+		s.codexIODHistoryMu.Unlock()
+		return
+	}
+	s.codexIODRefreshing[sessionID] = true
+	s.codexIODHistoryMu.Unlock()
+
+	helper := record.runtime.helper
+	go func() {
+		defer func() {
+			s.codexIODHistoryMu.Lock()
+			delete(s.codexIODRefreshing, sessionID)
+			s.codexIODHistoryMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), codexIODHistoryRefreshTimeout)
+		defer cancel()
+		packet, err := helper.sessionHistory(ctx)
+		if err != nil {
+			return
+		}
+		s.codexIODHistoryMu.Lock()
+		if s.codexIODHistoryGen[sessionID] != refreshGen {
+			s.codexIODHistoryMu.Unlock()
+			return
+		}
+		if s.codexIODHistory == nil {
+			s.codexIODHistory = map[session.SessionID]codexIODHistoryCacheEntry{}
+		}
+		s.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
+			packet:    packet,
+			checkedAt: time.Now(),
+		}
+		s.codexIODHistoryMu.Unlock()
+	}()
+}
+
+func (s *Stub) invalidateSessionHistoryCaches(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	s.messageCache.Invalidate(sessionID)
+	s.codexIODHistoryMu.Lock()
+	delete(s.codexIODHistory, sessionID)
+	if s.codexIODHistoryGen == nil {
+		s.codexIODHistoryGen = map[session.SessionID]uint64{}
+	}
+	s.codexIODHistoryGen[sessionID]++
+	s.codexIODHistoryMu.Unlock()
 }
 
 func (s *Stub) startCodexSourceHistoryWarmup(ctx context.Context) {

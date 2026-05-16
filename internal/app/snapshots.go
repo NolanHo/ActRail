@@ -445,9 +445,7 @@ func (s *Stub) messageByID(ctx context.Context, record sessionRecord, req Sessio
 		}
 	}
 	if record.identity.Backend() == session.BackendCodex && record.runtime.helper != nil {
-		historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		defer cancel()
-		if packet, err := record.runtime.helper.sessionHistory(historyCtx); err == nil && len(packet.Messages) > 0 {
+		if packet, ok, err := s.codexIODHistorySnapshot(ctx, record); err == nil && ok && len(packet.Messages) > 0 {
 			if msg, ok := findSessionMessageByID(sessionMessagesFromIODHistory(packet.Messages), eventID, toolCallID); ok {
 				msg.SessionID = record.identity.SessionID().String()
 				return msg, true

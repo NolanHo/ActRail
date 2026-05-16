@@ -214,7 +214,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		if !ok {
 			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
 		}
-		s.messageCache.Invalidate(req.SessionID)
+		s.invalidateSessionHistoryCaches(req.SessionID)
 		response = SendResponse{
 			Message: sessionMessageFromCommitted(item),
 			Busy:    state.Busy(),

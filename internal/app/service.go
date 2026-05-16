@@ -86,6 +86,10 @@ type Stub struct {
 	helperBindings      helperBindingStore
 	helpers             *helperRegistry
 	messageCache        *sessionMessageCache
+	codexIODHistoryMu   sync.Mutex
+	codexIODHistory     map[session.SessionID]codexIODHistoryCacheEntry
+	codexIODRefreshing  map[session.SessionID]bool
+	codexIODHistoryGen  map[session.SessionID]uint64
 	codexLiveMirrorMu   sync.Mutex
 	codexLiveMirror     map[session.SessionID]uint64
 	runtimeRestoreMu    sync.RWMutex
@@ -153,6 +157,9 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		helperBindings:      newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
+		codexIODHistory:     map[session.SessionID]codexIODHistoryCacheEntry{},
+		codexIODRefreshing:  map[session.SessionID]bool{},
+		codexIODHistoryGen:  map[session.SessionID]uint64{},
 		codexLiveMirror:     map[session.SessionID]uint64{},
 		runtimeRestoreDone:  closedRuntimeRestoreDone(),
 		waitStore:           newMemoryWaitStore(),
