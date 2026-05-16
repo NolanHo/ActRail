@@ -42,9 +42,8 @@ async function renderView(props?: Partial<Parameters<typeof SessionFileView>[0]>
   await act(async () => {
     render(
       <SessionFileView
-        open
+        active
         activeCwd="/workspace/project"
-        onClose={() => undefined}
         {...props}
       />,
       root!,
@@ -89,12 +88,21 @@ describe("SessionFileView", () => {
     });
 
     await renderView();
-    await waitForCalls((api as any).getCodexSessionFile);
 
     expect((api as any).getCodexSessionFiles).toHaveBeenCalledWith(
       expect.objectContaining({ scope: "cwd", cwd: "/workspace/project", limit: 100 }),
       expect.any(AbortSignal),
     );
+    expect((api as any).getCodexSessionFile).not.toHaveBeenCalled();
+
+    const listItem = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Build status"));
+    expect(listItem).toBeDefined();
+    await act(async () => {
+      listItem?.click();
+      await settle(8);
+    });
+    await waitForCalls((api as any).getCodexSessionFile);
+
     expect((api as any).getCodexSessionFile).toHaveBeenCalledWith("thread-1", { limit: 500 }, expect.any(AbortSignal));
     expect(root?.textContent).toContain("Build status");
     expect(root?.textContent).toContain("Run tests");
@@ -124,6 +132,12 @@ describe("SessionFileView", () => {
     });
 
     await renderView({ onRenamed });
+    const listItem = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Old name"));
+    expect(listItem).toBeDefined();
+    await act(async () => {
+      listItem?.click();
+      await settle(8);
+    });
 
     const allButton = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent === "all");
     expect(allButton).toBeDefined();

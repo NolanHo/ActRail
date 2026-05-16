@@ -26,8 +26,6 @@ func TestCodexSessionFilesListsAllAndCWDFromStateDB(t *testing.T) {
 	otherCWD := filepath.Join(t.TempDir(), "other")
 	threadOne := "019e1111-0000-7000-8000-000000000101"
 	threadTwo := "019e1111-0000-7000-8000-000000000102"
-	writeCodexResumeCandidateFile(t, codexHome, threadOne, cwd, "first prompt", time.Unix(1760000300, 0))
-	writeCodexResumeCandidateFile(t, codexHome, threadTwo, otherCWD, "other prompt", time.Unix(1760000200, 0))
 	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
 		{ID: threadOne, CWD: cwd, Title: "Indexed One", FirstUserMessage: "first prompt", UpdatedMS: 1760000300000},
 		{ID: threadTwo, CWD: otherCWD, Title: "Indexed Two", FirstUserMessage: "other prompt", UpdatedMS: 1760000200000},
@@ -38,7 +36,7 @@ func TestCodexSessionFilesListsAllAndCWDFromStateDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CodexSessionFiles(all) error = %v", err)
 	}
-	if len(all.Items) != 2 || all.Items[0].ThreadID != threadOne || all.Items[0].Title != "Indexed One" || all.Items[0].Source != "merged" {
+	if len(all.Items) != 2 || all.Items[0].ThreadID != threadOne || all.Items[0].Title != "Indexed One" || all.Items[0].Source != "state_db" {
 		t.Fatalf("all items = %+v", all.Items)
 	}
 
@@ -63,7 +61,7 @@ func TestCodexSessionFileDetailGroupsUserAssistantTurns(t *testing.T) {
 		`{"timestamp":"2026-05-10T08:00:03Z","type":"event_msg","payload":{"type":"user_message","message":"second prompt"}}`,
 	})
 	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
-		{ID: threadID, CWD: cwd, Title: "Grouped Thread", FirstUserMessage: "first prompt", UpdatedMS: 1760000300000},
+		{ID: threadID, CWD: cwd, Title: "Grouped Thread", FirstUserMessage: "first prompt", UpdatedMS: 1760000300000, RolloutPath: sourcePath},
 	})
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
 

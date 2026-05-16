@@ -3,17 +3,20 @@ import { Button } from "@/components/ui/button";
 import { SessionsPane } from "@/components/sessions/SessionsPane";
 import { Composer } from "@/components/composer/Composer";
 import { ConversationPane } from "@/components/conversation/ConversationPane";
-import { HistoryIcon, MetadataIcon, StopIcon } from "./icons";
+import { SessionFileView } from "@/components/session-files/SessionFileView";
+import { MetadataIcon, StopIcon } from "./icons";
 import { SessionStatusStrip, type ConversationStatusItem } from "./AppShellToolbar";
 
 export type MobileRoute =
   | { screen: "sessions" }
+  | { screen: "codex_sessions" }
   | { screen: "read"; sessionId: string }
   | { screen: "chat"; sessionId: string }
   | { screen: "settings" };
 
 interface MobileShellProps {
   activeSessionId: string | null;
+  activeCwd?: string;
   activeTitle: string;
   announcementEnabled: boolean;
   announcementLabel: string;
@@ -24,7 +27,7 @@ interface MobileShellProps {
   onInterrupt(): void;
   onLogout(): void;
   onNewSession(): void;
-  onOpenCodexSessions(): void;
+  onCodexSessionRenamed?(): void;
   onOpenFilePath(path: string, line?: number | null): void;
   onOpenRuntimeSettings(): void;
   onOpenSettings(): void;
@@ -50,6 +53,8 @@ function routeLabel(route: MobileRoute) {
   switch (route.screen) {
     case "sessions":
       return "Sessions";
+    case "codex_sessions":
+      return "Codex";
     case "read":
       return "Read";
     case "chat":
@@ -97,22 +102,14 @@ function MobileSettingsSection({
   notificationLabel,
   notificationsEnabled,
   onLogout,
-  onOpenCodexSessions,
   onOpenSettings,
   onOpenRuntimeSettings,
   onToggleAnnouncements,
   onToggleNotifications,
-}: Pick<MobileShellProps, "announcementEnabled" | "announcementLabel" | "notificationLabel" | "notificationsEnabled" | "onLogout" | "onOpenCodexSessions" | "onOpenRuntimeSettings" | "onOpenSettings" | "onToggleAnnouncements" | "onToggleNotifications">) {
+}: Pick<MobileShellProps, "announcementEnabled" | "announcementLabel" | "notificationLabel" | "notificationsEnabled" | "onLogout" | "onOpenRuntimeSettings" | "onOpenSettings" | "onToggleAnnouncements" | "onToggleNotifications">) {
   return (
     <section className="mobileToolsPage" aria-label="Settings">
       <div className="mobileToolsGrid">
-        <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenCodexSessions}>
-          <span className="mobileToolCardIcon" aria-hidden="true"><HistoryIcon /></span>
-          <span className="mobileToolCardText">
-            <strong>Codex sessions</strong>
-            <span>Session files and rename.</span>
-          </span>
-        </Button>
         <Button type="button" variant="outline" className="mobileToolCard" onClick={onOpenRuntimeSettings}>
           <span className="mobileToolCardIcon" aria-hidden="true"><MetadataIcon /></span>
           <span className="mobileToolCardText">
@@ -150,6 +147,7 @@ function MobileSettingsSection({
 
 export function MobileShell({
   activeSessionId,
+  activeCwd = "",
   activeTitle,
   announcementEnabled,
   announcementLabel,
@@ -160,7 +158,7 @@ export function MobileShell({
   onInterrupt,
   onLogout,
   onNewSession,
-  onOpenCodexSessions,
+  onCodexSessionRenamed,
   onOpenFilePath,
   onOpenRuntimeSettings,
   onOpenSettings,
@@ -211,6 +209,17 @@ export function MobileShell({
             />
           </div>
         ) : null}
+        {route.screen === "codex_sessions" ? (
+          <div className="mobilePane mobileCodexSessionsPane">
+            <MobileTopBar activeTitle="Codex Sessions" canInterrupt={canInterrupt} route={route} statusItems={statusItems} onBack={back} onInterrupt={onInterrupt} />
+            <SessionFileView
+              active
+              activeCwd={activeCwd}
+              className="mobileEmbeddedView"
+              onRenamed={onCodexSessionRenamed}
+            />
+          </div>
+        ) : null}
         {route.screen === "read" ? (
           <section className="mobilePane mobileReadPane">
             <MobileTopBar activeTitle={activeTitle} canInterrupt={canInterrupt} compact route={route} statusItems={statusItems} onBack={back} onInterrupt={onInterrupt} />
@@ -239,7 +248,6 @@ export function MobileShell({
               notificationLabel={notificationLabel}
               notificationsEnabled={notificationsEnabled}
               onLogout={onLogout}
-              onOpenCodexSessions={onOpenCodexSessions}
               onOpenRuntimeSettings={onOpenRuntimeSettings}
               onOpenSettings={onOpenSettings}
               onToggleAnnouncements={onToggleAnnouncements}
@@ -250,6 +258,7 @@ export function MobileShell({
       </section>
       <nav className="mobileBottomNav" aria-label="Primary">
         <Button type="button" variant={route.screen === "sessions" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo({ screen: "sessions" })}>Sessions</Button>
+        <Button type="button" variant={route.screen === "codex_sessions" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo({ screen: "codex_sessions" })}>Codex</Button>
         <Button type="button" variant={route.screen === "read" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(readRoute)}>Read</Button>
         <Button type="button" variant={route.screen === "chat" ? "default" : "outline"} className="mobileBottomNavButton" onClick={() => routeTo(chatRoute)}>Chat</Button>
       </nav>

@@ -56,7 +56,7 @@ describe("conversation layout scroll guards", () => {
     const shellRule = ruleBody(css, ".appShell.editorialShell");
     const sidebarRule = ruleBody(css, ".sidebarColumn");
     const desktopSessionsRailRule = ruleBody(css, ".appShell.withGlobalNav > .desktopSessionsRail");
-    const desktopMainRule = ruleBody(css, ".appShell.withGlobalNav > .conversationColumn,\n.appShell.withGlobalNav > .askUserView,\n.appShell.withGlobalNav > .teamsThreadView");
+    const desktopMainRule = ruleBody(css, ".appShell.withGlobalNav > .conversationColumn,\n.appShell.withGlobalNav > .askUserView,\n.appShell.withGlobalNav > .teamsThreadView,\n.appShell.withGlobalNav > .sessionFileView");
     const conversationRule = ruleBody(css, ".conversationColumn");
     const paneRule = ruleBody(css, ".conversationPane");
 

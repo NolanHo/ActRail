@@ -3,7 +3,7 @@ import { SessionsPane } from "../../components/sessions/SessionsPane";
 import { TeamsRail } from "../../components/teams/TeamsView";
 import type { TeamsData } from "../../components/teams/TeamsView";
 
-export type DesktopGlobalView = "sessions" | "ask_user" | "teams" | "scheduler";
+export type DesktopGlobalView = "sessions" | "codex_sessions" | "ask_user" | "teams" | "scheduler";
 
 interface GlobalNavRailProps {
   activeView: DesktopGlobalView;
@@ -28,6 +28,18 @@ function GlobalSchedulerIcon() {
       <path d="M12 8v4l3 2" />
       <path d="M7 4 5 6" />
       <path d="m17 4 2 2" />
+    </svg>
+  );
+}
+
+function GlobalCodexSessionsIcon() {
+  return (
+    <svg className="globalNavIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 4.5h8.5l3.5 3.5v11.5H6z" />
+      <path d="M14.5 4.5V8H18" />
+      <path d="M8.5 11h7" />
+      <path d="M8.5 14h7" />
+      <path d="M8.5 17h4.5" />
     </svg>
   );
 }
@@ -73,6 +85,16 @@ export function GlobalNavRail({
           onClick={() => onViewChange("sessions")}
         >
           <GlobalSessionsIcon />
+        </Button>
+        <Button
+          type="button"
+          variant={activeView === "codex_sessions" ? "default" : "outline"}
+          className="globalNavButton"
+          aria-label="Codex Sessions view"
+          title="Codex Sessions"
+          onClick={() => onViewChange("codex_sessions")}
+        >
+          <GlobalCodexSessionsIcon />
         </Button>
         <Button
           type="button"
@@ -128,9 +150,29 @@ export function AppShellSidebar({
   onLogout,
   onTeamSelect,
 }: AppShellSidebarProps) {
+  const sidebarContent = activeView === "sessions" ? (
+    <SessionsPane onNewSession={onNewSession} />
+  ) : activeView === "codex_sessions" ? (
+    <div className="sessionsPane">
+      <header className="sessionsPaneHeader">
+        <div>
+          <p className="sectionEyebrow">Codex</p>
+          <h2>Session Files</h2>
+        </div>
+      </header>
+      <p className="text-sm text-muted-foreground">Browse indexed Codex sessions by workspace or across all history.</p>
+    </div>
+  ) : activeView === "ask_user" ? (
+    <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Runtime waits</p><h2>AskUser</h2></div></header><p className="text-sm text-muted-foreground">Answer blocking runtime questions without leaving the global context.</p></div>
+  ) : activeView === "teams" ? (
+    <TeamsRail selectedActorId={activeTeamId} data={teamsData} onSelect={onTeamSelect} />
+  ) : (
+    <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Inbox</h2></div></header><p className="text-sm text-muted-foreground">Manage session inbox delivery, self-reminders, and supervisor activity.</p></div>
+  );
+
   return (
     <>
-      {activeView === "sessions" ? <SessionsPane onNewSession={onNewSession} /> : activeView === "ask_user" ? <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Runtime waits</p><h2>AskUser</h2></div></header><p className="text-sm text-muted-foreground">Answer blocking runtime questions without leaving the global context.</p></div> : activeView === "teams" ? <TeamsRail selectedActorId={activeTeamId} data={teamsData} onSelect={onTeamSelect} /> : <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Global</p><h2>Inbox</h2></div></header><p className="text-sm text-muted-foreground">Manage session inbox delivery, self-reminders, and supervisor activity.</p></div>}
+      {sidebarContent}
       <footer className="sidebarFooter">
         <Button type="button" variant="outline" className="footerAction"><span className="buttonGlyph">?</span><span>Help</span></Button>
         <Button type="button" variant="outline" className="footerAction" onClick={onOpenSettings}><span className="buttonGlyph">ST</span><span>Settings</span></Button>

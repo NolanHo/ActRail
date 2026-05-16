@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api } from "../../lib/api";
 import { cn } from "../../lib/utils";
@@ -11,9 +10,9 @@ import type { CodexSessionFileResponse, CodexSessionFileSummary, CodexSessionFil
 type SessionFileScope = "all" | "cwd";
 
 interface SessionFileViewProps {
-  open: boolean;
+  active?: boolean;
   activeCwd?: string;
-  onClose(): void;
+  className?: string;
   onRenamed?(): void;
 }
 
@@ -162,7 +161,7 @@ function SessionTurn({ turn }: { turn: CodexSessionFileTurn }) {
   );
 }
 
-export function SessionFileView({ open, activeCwd = "", onClose, onRenamed }: SessionFileViewProps) {
+export function SessionFileView({ active = true, activeCwd = "", className, onRenamed }: SessionFileViewProps) {
   const [scope, setScope] = useState<SessionFileScope>(activeCwd ? "cwd" : "all");
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<CodexSessionFileSummary[]>([]);
@@ -175,7 +174,7 @@ export function SessionFileView({ open, activeCwd = "", onClose, onRenamed }: Se
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (!open) {
+    if (!active) {
       return;
     }
     setScope(activeCwd ? "cwd" : "all");
@@ -184,10 +183,10 @@ export function SessionFileView({ open, activeCwd = "", onClose, onRenamed }: Se
     setDetail(null);
     setRenameDraft("");
     setRenameStatus("");
-  }, [activeCwd, open]);
+  }, [activeCwd, active]);
 
   useEffect(() => {
-    if (!open) {
+    if (!active) {
       return undefined;
     }
     const controller = new AbortController();
@@ -206,7 +205,7 @@ export function SessionFileView({ open, activeCwd = "", onClose, onRenamed }: Se
           if (current && nextItems.some((item) => item.thread_id === current)) {
             return current;
           }
-          return nextItems[0]?.thread_id || "";
+          return "";
         });
       })
       .catch((error) => {
@@ -220,10 +219,10 @@ export function SessionFileView({ open, activeCwd = "", onClose, onRenamed }: Se
     return () => {
       controller.abort();
     };
-  }, [activeCwd, open, query, refreshKey, scope]);
+  }, [activeCwd, active, query, refreshKey, scope]);
 
   useEffect(() => {
-    if (!open || !selectedThreadId) {
+    if (!active || !selectedThreadId) {
       setDetail(null);
       return undefined;
     }
@@ -246,7 +245,7 @@ export function SessionFileView({ open, activeCwd = "", onClose, onRenamed }: Se
     return () => {
       controller.abort();
     };
-  }, [open, selectedThreadId, refreshKey]);
+  }, [active, selectedThreadId, refreshKey]);
 
   const selectedSummary = useMemo(() => {
     return detail?.summary || items.find((item) => item.thread_id === selectedThreadId) || null;
@@ -284,26 +283,21 @@ export function SessionFileView({ open, activeCwd = "", onClose, onRenamed }: Se
   };
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      if (!nextOpen) {
-        onClose();
-      }
-    }}>
-      <DialogContent className="mobileDetailDialog max-w-[1180px]" titleId="session-file-view-title">
-        <DialogHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
-              <DialogTitle id="session-file-view-title">Codex Sessions</DialogTitle>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span>{items.length} files</span>
-                {scope === "cwd" && activeCwd ? <span className="max-w-[52rem] truncate">{activeCwd}</span> : null}
-              </div>
+    <section className={cn("sessionFileView flex min-h-0 flex-col overflow-hidden border border-border bg-card", className)} data-testid="session-file-view" aria-labelledby="session-file-view-title">
+      <header className="border-b border-border bg-card p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <h1 id="session-file-view-title" className="text-lg font-semibold">Codex Sessions</h1>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>{items.length} files</span>
+              {scope === "cwd" && activeCwd ? <span className="max-w-[52rem] truncate">{activeCwd}</span> : null}
             </div>
-            <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
           </div>
-        </DialogHeader>
+          <Button type="button" variant="outline" size="sm" onClick={() => setRefreshKey((current) => current + 1)}>Refresh</Button>
+        </div>
+      </header>
 
-        <div className="grid min-h-0 flex-1 gap-0 overflow-hidden p-5 pt-4 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 gap-0 overflow-hidden p-5 pt-4 lg:grid-cols-[360px_minmax(0,1fr)]">
           <aside className="flex min-h-[260px] flex-col overflow-hidden border border-border bg-card lg:min-h-0">
             <div className="border-b border-border p-3">
               <div className="inline-flex h-9 rounded-lg bg-secondary p-1 text-sm text-secondary-foreground" role="group" aria-label="Session file scope">
@@ -397,8 +391,7 @@ export function SessionFileView({ open, activeCwd = "", onClose, onRenamed }: Se
               <div className="p-5 text-sm text-muted-foreground">{listStatus || "Select a session."}</div>
             )}
           </section>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </section>
   );
 }
