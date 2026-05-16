@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import type { ComponentChildren } from "preact";
 import { SessionsPane } from "../../components/sessions/SessionsPane";
 import { TeamsRail } from "../../components/teams/TeamsView";
 import type { TeamsData } from "../../components/teams/TeamsView";
@@ -134,6 +135,7 @@ export function GlobalNavRail({
 interface AppShellSidebarProps {
   activeView: DesktopGlobalView;
   activeTeamId: string;
+  codexSessionFileRail?: ComponentChildren;
   teamsData: TeamsData;
   onNewSession(): void;
   onOpenSettings(): void;
@@ -144,6 +146,7 @@ interface AppShellSidebarProps {
 export function AppShellSidebar({
   activeView,
   activeTeamId,
+  codexSessionFileRail,
   teamsData,
   onNewSession,
   onOpenSettings,
@@ -153,15 +156,7 @@ export function AppShellSidebar({
   const sidebarContent = activeView === "sessions" ? (
     <SessionsPane onNewSession={onNewSession} />
   ) : activeView === "codex_sessions" ? (
-    <div className="sessionsPane">
-      <header className="sessionsPaneHeader">
-        <div>
-          <p className="sectionEyebrow">Codex</p>
-          <h2>Session Files</h2>
-        </div>
-      </header>
-      <p className="text-sm text-muted-foreground">Browse indexed Codex sessions by workspace or across all history.</p>
-    </div>
+    codexSessionFileRail
   ) : activeView === "ask_user" ? (
     <div className="sessionsPane"><header className="sessionsPaneHeader"><div><p className="sectionEyebrow">Runtime waits</p><h2>AskUser</h2></div></header><p className="text-sm text-muted-foreground">Answer blocking runtime questions without leaving the global context.</p></div>
   ) : activeView === "teams" ? (
