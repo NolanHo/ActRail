@@ -602,7 +602,7 @@ describe("AppShell", () => {
     expect(shell.style.getPropertyValue("--sidebar-w")).toBe("288px");
   });
 
-  it("renders bottom navigation on narrow viewports and defaults to the sessions page without an active session", () => {
+  it("renders bottom navigation on narrow viewports and defaults to the sessions page without an active session", async () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -622,13 +622,15 @@ describe("AppShell", () => {
       renderAppShell({ activeSessionId: null, diagnostics: null });
       expect(getRoot().querySelector('[data-testid="mobile-shell"]')).not.toBeNull();
       expect(findButtonByText("Sessions")).not.toBeNull();
-      expect(findButtonByText("Codex")).not.toBeNull();
+      expect(findButtonByText("Codex")).toBeUndefined();
       expect(findButtonByText("Read")).not.toBeNull();
       expect(findButtonByText("Chat")).not.toBeNull();
       expect(findButtonByText("Metadata")).toBeUndefined();
       expect(findButtonByText("Settings")).toBeUndefined();
       expect(findButtonByAriaLabel("Conversation tools")).toBeNull();
       expect(getRoot().querySelector('[data-testid="sessions-surface"]')).not.toBeNull();
+      const apiModule = await import("../lib/api");
+      expect(apiModule.api.getCodexSessionFiles).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
