@@ -460,6 +460,66 @@ func TestSendRehydratesCodexHelperRuntimeInsideInputLock(t *testing.T) {
 	}
 }
 
+func TestSendRejectsWhenCodexAuthoritativeHistoryIsActive(t *testing.T) {
+	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "codex")
+	generationID := mustHelperGenerationID(t, "g_codex_active_send")
+	root := filepath.Join("/tmp", fmt.Sprintf("aractive-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000008)
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath: "/tmp/codex/active.jsonl",
+		Lines: []string{
+			`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-active"}}`,
+		},
+		Warmed:   true,
+		Complete: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true, History: &packet})
+	defer cleanup()
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-active")
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_codex_active_send", "t_codex_active_send", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			manifest:     manifest,
+			sessionID:    sessionID,
+			generationID: generationID,
+		},
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, identity, runtime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(active codex) = (%v, %v)", ok, err)
+	}
+
+	_, err = svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "should not go in directly"})
+	if err == nil || !strings.Contains(err.Error(), "codex runtime is still running") {
+		t.Fatalf("Send() error = %v, want authoritative running conflict", err)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseRunning) {
+		t.Fatalf("SessionState() = busy:%v runtime:%q, want authoritative running", state.Busy, state.RuntimeState)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 0 {
+		t.Fatalf("SessionMessages() = %+v, want no direct send committed", messages.Items)
+	}
+}
+
 func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	svc, sessionID, handle, pty := newControlFixture(t)
 

@@ -168,6 +168,16 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 			}
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
+			active, err := s.codexAuthoritativeActiveTurn(ctx, current)
+			if err != nil {
+				_ = s.emitRuntimeControlDiagnostic(req.SessionID, "pre_send_codex_state", err)
+			}
+			if active {
+				_ = s.transitionCodexRuntime(req.SessionID, codexRuntimePhaseRunning, "codex_authoritative_running", "pre_send_codex_state")
+				return Conflict("codex runtime is still running; use queue or interrupt")
+			}
+		}
+		if runtime.protocol == runtimeProtocolCodexRPC {
 			s.trackCodexOutboundPrompt(req.SessionID, text)
 			if trackCapacityRetry {
 				s.trackCodexCapacityRetryPrompt(req.SessionID, text)

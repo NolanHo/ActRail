@@ -283,6 +283,116 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 	}
 }
 
+func TestIodUnixChildModeReconnectsChildSocket(t *testing.T) {
+	sessionID := mustSessionID(t, "s_unix_reconnect")
+	generationID := mustGenerationID(t, "g_unix_reconnect")
+	paths, err := NewGenerationPaths(t.TempDir(), sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	if err := paths.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	listenErr := make(chan error, 1)
+	listeners := make(chan net.Listener, 1)
+	accepted := make(chan *websocket.Conn, 2)
+	defer func() {
+		select {
+		case listener := <-listeners:
+			_ = listener.Close()
+		default:
+		}
+	}()
+
+	handle := newTestHandle(4323, nil)
+	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
+		handle.spec = spec
+		childListener, err := net.Listen("unix", paths.ChildSocketPath)
+		if err != nil {
+			listenErr <- err
+			return handle
+		}
+		listeners <- childListener
+		go func() {
+			upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+			server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					listenErr <- err
+					return
+				}
+				accepted <- conn
+			})}
+			if err := server.Serve(childListener); err != nil && !errors.Is(err, net.ErrClosed) && !strings.Contains(err.Error(), "use of closed network connection") {
+				listenErr <- err
+			}
+		}()
+		return handle
+	}}
+	command, err := process.NewCommand("/bin/test-child", "--listen", "unix://"+paths.ChildSocketPath)
+	if err != nil {
+		t.Fatalf("process.NewCommand() error = %v", err)
+	}
+	env, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("process.InheritEnv() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunHelper(ctx, HelperOptions{
+			SessionID:       sessionID,
+			GenerationID:    generationID,
+			Paths:           paths,
+			Command:         command,
+			CWD:             mustAbsDir(t, paths.RuntimeDir),
+			Environment:     env,
+			ChildIOMode:     ChildIOModeUnix,
+			ProtocolVersion: 1,
+			Runner:          runner,
+			Now: func() time.Time {
+				return time.Unix(1760000000, 0).UTC()
+			},
+		})
+	}()
+	firstConn := acceptChildConn(t, accepted, listenErr, paths.ChildSocketPath)
+
+	waitForSocket(t, paths.ControlSocketPath)
+	control, err := net.Dial("unix", paths.ControlSocketPath)
+	if err != nil {
+		t.Fatalf("Dial(control) error = %v", err)
+	}
+	defer control.Close()
+	dec := json.NewDecoder(control)
+	enc := json.NewEncoder(control)
+	var hello HelloPacket
+	if err := decodeWithin(t, dec, &hello); err != nil {
+		t.Fatalf("decode hello error = %v", err)
+	}
+
+	sendHelperCommand(t, enc, dec, sessionID, generationID, "cmd_unix_reconnect_1", `{"method":"initialize"}`)
+	assertChildMessage(t, firstConn, `{"method":"initialize"}`)
+	_ = firstConn.Close()
+
+	secondConn := acceptChildConn(t, accepted, listenErr, paths.ChildSocketPath)
+	defer secondConn.Close()
+	sendHelperCommand(t, enc, dec, sessionID, generationID, "cmd_unix_reconnect_2", `{"method":"thread/read"}`)
+	assertChildMessage(t, secondConn, `{"method":"thread/read"}`)
+
+	cancel()
+	_ = control.Close()
+	_ = secondConn.Close()
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("helper returned error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("helper stop timed out")
+	}
+}
+
 func TestIodReplay(t *testing.T) {
 	tc := newHelperTestCase(t)
 	defer tc.stop()
@@ -1043,6 +1153,52 @@ func decodeWithin(t *testing.T, dec *json.Decoder, dst any) error {
 		return err
 	case <-time.After(2 * time.Second):
 		return errors.New("decode timed out")
+	}
+}
+
+func acceptChildConn(t *testing.T, accepted <-chan *websocket.Conn, listenErr <-chan error, socketPath string) *websocket.Conn {
+	t.Helper()
+	select {
+	case conn, ok := <-accepted:
+		if !ok {
+			t.Fatal("child socket websocket upgrade failed")
+		}
+		return conn
+	case err := <-listenErr:
+		t.Fatalf("Listen(%q) error = %v", socketPath, err)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for helper to connect to child socket %q", socketPath)
+	}
+	return nil
+}
+
+func sendHelperCommand(t *testing.T, enc *json.Encoder, dec *json.Decoder, sessionID session.SessionID, generationID GenerationID, commandID string, payload string) {
+	t.Helper()
+	packet, err := NewCommandPacket(sessionID, generationID, CommandSend, mustCommandID(t, commandID), json.RawMessage(payload))
+	if err != nil {
+		t.Fatalf("NewCommandPacket() error = %v", err)
+	}
+	if err := enc.Encode(packet); err != nil {
+		t.Fatalf("encode command error = %v", err)
+	}
+	var response CommandAcceptedPacket
+	if err := decodeWithin(t, dec, &response); err != nil {
+		t.Fatalf("decode accepted error = %v", err)
+	}
+}
+
+func assertChildMessage(t *testing.T, conn *websocket.Conn, want string) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	messageType, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read child socket websocket command error = %v", err)
+	}
+	if messageType != websocket.TextMessage {
+		t.Fatalf("child socket message type = %d, want text", messageType)
+	}
+	if got := string(msg); got != want {
+		t.Fatalf("child socket command = %q, want %q", got, want)
 	}
 }
 

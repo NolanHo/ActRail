@@ -407,7 +407,7 @@ func TestPersistentStubAdoptsUnboundCodexIODOnRestart(t *testing.T) {
 	}
 }
 
-func TestRuntimeLauncherForceNewIODSkipsExistingAttach(t *testing.T) {
+func TestRuntimeLauncherForceNewIODReusesHealthyCodexAttach(t *testing.T) {
 	sessionID := mustSessionID(t, "s_force_new_iod")
 	generationID := mustHelperGenerationID(t, "g_force_new_existing")
 	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
@@ -415,6 +415,53 @@ func TestRuntimeLauncherForceNewIODSkipsExistingAttach(t *testing.T) {
 	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			t.Fatal("resolveIODHelperBinPath called; healthy same-session Codex IOD should be reused before launching")
+			return "", nil
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return &RuntimeHelperBinding{GenerationID: generationID}, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir(), ForceNewIOD: true})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if runtime.helper == nil || runtime.helper.generationID != generationID || !runtime.attachedExistingIOD {
+		t.Fatalf("runtime.helper = %+v attached=%v, want reused generation %q", runtime.helper, runtime.attachedExistingIOD, generationID)
+	}
+}
+
+func TestRuntimeLauncherRejectsMismatchedCodexIODHistoryOnAttach(t *testing.T) {
+	sessionID := mustSessionID(t, "s_mismatched_codex_attach")
+	generationID := mustHelperGenerationID(t, "g_mismatched_codex_attach")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", root, err)
+	}
+	sourcePath := filepath.Join(root, "rollout-thread-other.jsonl")
+	if err := os.WriteFile(sourcePath, []byte(`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-other","cwd":"/tmp/fake-codex"}}`+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", sourcePath, err)
+	}
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath:   sourcePath,
+		Messages:     []iod.SessionHistoryMessage{{Seq: 1, Role: "assistant", Kind: "message", Text: "other thread"}},
+		IndexedCount: 1,
+		TaskComplete: true,
+		Warmed:       true,
+		Complete:     true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true, History: &packet})
 	defer cleanup()
 	wantErr := errors.New("new helper requested")
 	launcher := processRuntimeLauncher{
@@ -427,12 +474,12 @@ func TestRuntimeLauncherForceNewIODSkipsExistingAttach(t *testing.T) {
 			return &RuntimeHelperBinding{GenerationID: generationID}, nil
 		},
 	}
-	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir(), ForceNewIOD: true})
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir(), CodexThreadID: "thread-wanted"})
 	if !errors.Is(err, wantErr) {
-		t.Fatalf("Launch() error = %v, want forced new helper path error", err)
+		t.Fatalf("Launch() error = %v, want new helper after mismatched attach", err)
 	}
 	if runtime.helper != nil {
-		t.Fatalf("runtime.helper = %+v, want no existing attachment when ForceNewIOD is true", runtime.helper)
+		t.Fatalf("runtime.helper = %+v, want no mismatched attachment", runtime.helper)
 	}
 }
 
@@ -1573,6 +1620,19 @@ func serveCommandHelperConn(conn net.Conn, manifest iod.GenerationManifest, comm
 			return err
 		}
 		return enc.Encode(done)
+	case iod.PacketSessionHistoryRequest:
+		var request iod.SessionHistoryRequestPacket
+		if err := json.Unmarshal(raw, &request); err != nil {
+			return err
+		}
+		if request.SessionID != manifest.SessionID || request.GenerationID != manifest.GenerationID {
+			return fmt.Errorf("session history request = %q/%q, want %q/%q", request.SessionID, request.GenerationID, manifest.SessionID, manifest.GenerationID)
+		}
+		response, err := iod.NewSessionHistoryResponsePacket(manifest.SessionID, manifest.GenerationID, iod.SessionHistorySnapshot{Warmed: true, Complete: true})
+		if err != nil {
+			return err
+		}
+		return enc.Encode(response)
 	case iod.PacketCommandSend, iod.PacketCommandEnqueue, iod.PacketCommandInterrupt, iod.PacketCommandUIResponseSubmit:
 		var command iod.CommandPacket
 		if err := json.Unmarshal(raw, &command); err != nil {

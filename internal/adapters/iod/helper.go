@@ -26,6 +26,8 @@ import (
 const DefaultProtocolVersion = 1
 const codexChildKeepaliveInterval = 15 * time.Second
 const codexChildKeepaliveWriteTimeout = 5 * time.Second
+const codexChildPongWait = 45 * time.Second
+const codexChildReconnectInterval = 250 * time.Millisecond
 
 type ChildIOMode string
 
@@ -86,6 +88,7 @@ type Helper struct {
 	handle    process.Handle
 	childConn net.Conn
 	childWS   *websocket.Conn
+	childMu   sync.RWMutex
 	childWSMu sync.Mutex
 	proof     HelloProof
 	manifest  GenerationManifest
@@ -320,8 +323,7 @@ func (h *Helper) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		h.childConn = conn
-		h.childWS = wsConn
+		h.replaceChildSocket(conn, wsConn)
 	}
 	h.handle = handle
 	start := h.now().UTC()
@@ -436,17 +438,105 @@ func (h *Helper) shutdown() error {
 		if pty := h.handle.PTY(); pty != nil {
 			_ = pty.Close()
 		}
-		if h.childConn != nil {
-			_ = h.childConn.Close()
-		}
-		if h.childWS != nil {
-			_ = h.childWS.Close()
-		}
+		h.closeChildSocket()
 		if !h.isChildExited() {
 			_ = h.handle.Kill()
 		}
 	}
 	return nil
+}
+
+func (h *Helper) currentChildSocket() (net.Conn, *websocket.Conn) {
+	if h == nil {
+		return nil, nil
+	}
+	h.childMu.RLock()
+	defer h.childMu.RUnlock()
+	return h.childConn, h.childWS
+}
+
+func (h *Helper) replaceChildSocket(conn net.Conn, wsConn *websocket.Conn) {
+	if h == nil {
+		return
+	}
+	h.childWSMu.Lock()
+	defer h.childWSMu.Unlock()
+	h.childMu.Lock()
+	oldConn := h.childConn
+	oldWS := h.childWS
+	h.childConn = conn
+	h.childWS = wsConn
+	h.childMu.Unlock()
+	if oldWS != nil {
+		_ = oldWS.Close()
+	}
+	if oldConn != nil {
+		_ = oldConn.Close()
+	}
+}
+
+func (h *Helper) closeChildSocket() {
+	if h == nil {
+		return
+	}
+	h.childWSMu.Lock()
+	defer h.childWSMu.Unlock()
+	h.childMu.Lock()
+	conn := h.childConn
+	wsConn := h.childWS
+	h.childConn = nil
+	h.childWS = nil
+	h.childMu.Unlock()
+	if wsConn != nil {
+		_ = wsConn.Close()
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (h *Helper) dropChildSocket(wsConn *websocket.Conn) {
+	if h == nil || wsConn == nil {
+		return
+	}
+	h.childWSMu.Lock()
+	defer h.childWSMu.Unlock()
+	h.childMu.Lock()
+	if h.childWS != wsConn {
+		h.childMu.Unlock()
+		return
+	}
+	conn := h.childConn
+	h.childConn = nil
+	h.childWS = nil
+	h.childMu.Unlock()
+	_ = wsConn.Close()
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (h *Helper) reconnectChildSocket(ctx context.Context) bool {
+	if h == nil || h.childIOMode != ChildIOModeUnix {
+		return false
+	}
+	ticker := time.NewTicker(codexChildReconnectInterval)
+	defer ticker.Stop()
+	for {
+		if ctx.Err() != nil || h.isChildExited() || h.isChildExitStarted() {
+			return false
+		}
+		conn, wsConn, err := h.dialChildSocket(ctx)
+		if err == nil {
+			h.replaceChildSocket(conn, wsConn)
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
 }
 
 func (h *Helper) dialChildSocket(ctx context.Context) (net.Conn, *websocket.Conn, error) {
@@ -769,7 +859,8 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 		// compatibility while new state-machine work targets UDS-backed modes.
 		writer = h.handle.Stdin()
 	} else if h.childIOMode == ChildIOModeUnix {
-		if h.childWS == nil {
+		_, childWS := h.currentChildSocket()
+		if childWS == nil {
 			return fmt.Errorf("helper child websocket is unavailable")
 		}
 		data, err := normalizeCommandInputPayload(cmd.payload)
@@ -778,7 +869,11 @@ func (h *Helper) forwardCommand(cmd queuedCommand) error {
 		}
 		h.childWSMu.Lock()
 		defer h.childWSMu.Unlock()
-		return h.childWS.WriteMessage(websocket.TextMessage, data)
+		_, current := h.currentChildSocket()
+		if current != childWS || current == nil {
+			return fmt.Errorf("helper child websocket changed")
+		}
+		return current.WriteMessage(websocket.TextMessage, data)
 	} else {
 		// Deprecated command path: PTY is an interactive compatibility fallback,
 		// not a health-checkable command transport for new session semantics.
@@ -816,7 +911,7 @@ func normalizeCommandInputPayload(payload json.RawMessage) ([]byte, error) {
 
 func (h *Helper) keepChildSocketAlive(ctx context.Context) {
 	defer h.wg.Done()
-	if h == nil || h.childIOMode != ChildIOModeUnix || h.childWS == nil {
+	if h == nil || h.childIOMode != ChildIOModeUnix {
 		return
 	}
 	ticker := time.NewTicker(codexChildKeepaliveInterval)
@@ -826,15 +921,21 @@ func (h *Helper) keepChildSocketAlive(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			_, childWS := h.currentChildSocket()
+			if childWS == nil {
+				continue
+			}
 			deadline := time.Now().Add(codexChildKeepaliveWriteTimeout)
 			h.childWSMu.Lock()
-			err := h.childWS.WriteControl(websocket.PingMessage, nil, deadline)
+			_, current := h.currentChildSocket()
+			if current != childWS || current == nil {
+				h.childWSMu.Unlock()
+				continue
+			}
+			err := current.WriteControl(websocket.PingMessage, nil, deadline)
 			h.childWSMu.Unlock()
 			if err != nil {
-				if !h.isChildExited() && !h.isBroken() {
-					_ = h.emitGenerationBreak(GenerationBreakAttachLost)
-				}
-				return
+				h.dropChildSocket(childWS)
 			}
 		}
 	}
@@ -910,20 +1011,25 @@ func (h *Helper) readPipe(ctx context.Context, stream string, reader io.Reader) 
 
 func (h *Helper) readChildSocket(ctx context.Context) {
 	defer h.wg.Done()
-	if h.childWS == nil {
-		_ = h.emitGenerationBreak(GenerationBreakAttachLost)
-		return
-	}
 	for {
-		messageType, reader, err := h.childWS.NextReader()
-		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) || errors.Is(err, io.EOF) || ctx.Err() != nil {
+		_, childWS := h.currentChildSocket()
+		if childWS == nil {
+			if !h.reconnectChildSocket(ctx) {
 				return
 			}
-			if !h.isChildExited() && !h.isBroken() {
-				_ = h.emitGenerationBreak(GenerationBreakAttachLost)
+			continue
+		}
+		h.configureChildPongWait(childWS)
+		messageType, reader, err := childWS.NextReader()
+		if err != nil {
+			if ctx.Err() != nil || h.isChildExited() || h.isChildExitStarted() {
+				return
 			}
-			return
+			h.dropChildSocket(childWS)
+			if !h.reconnectChildSocket(ctx) {
+				return
+			}
+			continue
 		}
 		if messageType != websocket.TextMessage {
 			continue
@@ -938,15 +1044,26 @@ func (h *Helper) readChildSocket(ctx context.Context) {
 			_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: "unix", Data: text})
 		}
 		if err != nil {
-			if errors.Is(err, io.EOF) || ctx.Err() != nil {
+			if ctx.Err() != nil || h.isChildExited() || h.isChildExitStarted() {
 				return
 			}
-			if !h.isChildExited() && !h.isBroken() {
-				_ = h.emitGenerationBreak(GenerationBreakAttachLost)
+			h.dropChildSocket(childWS)
+			if !h.reconnectChildSocket(ctx) {
+				return
 			}
-			return
 		}
 	}
+}
+
+func (h *Helper) configureChildPongWait(wsConn *websocket.Conn) {
+	if wsConn == nil {
+		return
+	}
+	deadline := time.Now().Add(codexChildPongWait)
+	_ = wsConn.SetReadDeadline(deadline)
+	wsConn.SetPongHandler(func(string) error {
+		return wsConn.SetReadDeadline(time.Now().Add(codexChildPongWait))
+	})
 }
 
 func (h *Helper) observeCodexOutput(ctx context.Context, data string) {

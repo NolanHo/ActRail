@@ -463,7 +463,7 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	if runtimeRoot == "" {
 		return sessionRuntime{}, fmt.Errorf("iod runtime root is required")
 	}
-	if !req.ForceNewIOD {
+	if !req.ForceNewIOD || req.Backend == session.BackendCodex {
 		if runtime, ok := l.attachExistingIODHelper(ctx, req, runtimeRoot); ok {
 			return runtime, nil
 		}
@@ -586,6 +586,10 @@ func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runti
 		startTS:      hello.StartTS,
 		runtimeDir:   filepath.Dir(discovered.Path),
 	}
+	if err := l.verifyAttachedCodexIODThread(ctx, req, helper); err != nil {
+		_ = client.Close()
+		return sessionRuntime{}, err
+	}
 	binding := &RuntimeHelperBinding{GenerationID: generationID}
 	return sessionRuntime{
 		protocol:            runtimeProtocolForBackend(req.Backend),
@@ -598,6 +602,26 @@ func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runti
 			return &resolved, nil
 		},
 	}, nil
+}
+
+func (l processRuntimeLauncher) verifyAttachedCodexIODThread(ctx context.Context, req runtimeLaunchRequest, helper *runtimeIODHelper) error {
+	if req.Backend != session.BackendCodex || strings.TrimSpace(req.CodexThreadID) == "" || helper == nil {
+		return nil
+	}
+	historyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	packet, err := helper.sessionHistory(historyCtx)
+	if err != nil {
+		return nil
+	}
+	sourcePath := strings.TrimSpace(packet.SourcePath)
+	if sourcePath == "" {
+		return nil
+	}
+	if codexSourcePathMatchesSessionID(sourcePath, req.CodexThreadID) {
+		return nil
+	}
+	return fmt.Errorf("attached codex IOD history %q does not match requested thread %q", sourcePath, strings.TrimSpace(req.CodexThreadID))
 }
 
 func (l processRuntimeLauncher) childLaunchSpec(req runtimeLaunchRequest) (process.LaunchSpec, error) {

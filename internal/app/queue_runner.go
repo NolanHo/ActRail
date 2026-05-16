@@ -53,6 +53,15 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		}
 		runtime := current.runtime
 		if runtime.protocol == runtimeProtocolCodexRPC {
+			active, err := s.codexAuthoritativeActiveTurn(context.Background(), current)
+			if err != nil {
+				_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_pre_send_codex_state", err)
+				return nil
+			}
+			if active {
+				_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseRunning, "codex_authoritative_running", "queued_pre_send_codex_state")
+				return nil
+			}
 			s.trackCodexOutboundPrompt(sessionID, queued.Text())
 			s.trackCodexCapacityRetryPrompt(sessionID, queued.Text())
 			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseSending, "codex_queued_sending", "queued_send")
