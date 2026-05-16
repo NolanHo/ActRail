@@ -184,15 +184,10 @@ func (s *Stub) RenameCodexSessionFile(ctx context.Context, req RenameCodexSessio
 
 func (s *Stub) codexSessionFileIndex(ctx context.Context, scope, cwd string) (codexSessionFileIndex, error) {
 	items := map[string]CodexSessionFileSummary{}
-	if err := addCodexStateDBSessionFiles(ctx, items, scope, cwd); err != nil && len(items) == 0 {
-		addCodexRolloutSessionFiles(ctx, items, scope, cwd)
-	} else {
-		addCodexRolloutSessionFiles(ctx, items, scope, cwd)
+	if err := addCodexStateDBSessionFiles(ctx, items, scope, cwd); err != nil {
+		return codexSessionFileIndex{}, err
 	}
-	for key, item := range items {
-		item = s.decorateCodexSessionFileSummary(item)
-		items[key] = item
-	}
+	s.decorateCodexSessionFileSummaries(items)
 	return codexSessionFileIndex{itemsByThread: items}, nil
 }
 
@@ -261,61 +256,6 @@ func addCodexStateDBSessionFiles(ctx context.Context, items map[string]CodexSess
 	return rows.Err()
 }
 
-func addCodexRolloutSessionFiles(ctx context.Context, items map[string]CodexSessionFileSummary, scope, cwd string) {
-	for _, path := range listCodexResumeSourcePaths() {
-		if err := ctx.Err(); err != nil {
-			return
-		}
-		threadID, sourceCWD, firstUser, ok := codexResumeCandidateMetaFromSourcePath(path)
-		if !ok {
-			continue
-		}
-		if scope == codexSessionFileScopeCWD && !sameSessionCWD(sourceCWD, cwd) {
-			continue
-		}
-		threadID = strings.TrimSpace(threadID)
-		if threadID == "" {
-			continue
-		}
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		existing, exists := items[threadID]
-		if exists {
-			existing.Path = firstNonEmptyString(existing.Path, filepath.Clean(path))
-			existing.CWD = firstNonEmptyString(existing.CWD, normalizeSessionCWD(sourceCWD))
-			existing.FirstUserMessage = firstNonEmptyString(existing.FirstUserMessage, firstUser)
-			if existing.UpdatedTS == 0 {
-				existing.UpdatedTS = timestampSeconds(info.ModTime())
-			}
-			if existing.Source == "state_db" {
-				existing.Source = "merged"
-			}
-			items[threadID] = existing
-			continue
-		}
-		name := codexThreadNameFromSourcePath(path)
-		if name == "" {
-			name = truncateResumeTitle(firstUser)
-		}
-		if name == "" {
-			name = threadID
-		}
-		items[threadID] = CodexSessionFileSummary{
-			ThreadID:         threadID,
-			SessionID:        codexHistoricalSessionID(threadID),
-			Title:            name,
-			DisplayName:      name,
-			CWD:              normalizeSessionCWD(sourceCWD),
-			Path:             filepath.Clean(path),
-			FirstUserMessage: firstUser,
-			UpdatedTS:        timestampSeconds(info.ModTime()),
-			Source:           "rollout",
-		}
-	}
-}
-
 func (s *Stub) codexSessionFileSummaryForRequest(ctx context.Context, threadID, path string) (CodexSessionFileSummary, error) {
 	threadID = normalizeCodexThreadID(threadID)
 	path = cleanOptionalPath(path)
@@ -328,15 +268,7 @@ func (s *Stub) codexSessionFileSummaryForRequest(ctx context.Context, threadID, 
 	}
 	if threadID != "" {
 		if item, ok := index.itemsByThread[threadID]; ok {
-			if strings.TrimSpace(item.Path) == "" || !fileExists(item.Path) {
-				if discovered, ok := discoverCodexSessionFileByID(ctx, threadID); ok {
-					item.Path = discovered
-				}
-			}
 			return item, nil
-		}
-		if discovered, ok := discoverCodexSessionFileByID(ctx, threadID); ok {
-			return s.codexSessionFileSummaryFromPath(ctx, discovered)
 		}
 		return CodexSessionFileSummary{}, NotFound("codex session file not found")
 	}
@@ -386,11 +318,31 @@ func (s *Stub) codexSessionFileSummaryFromPath(ctx context.Context, path string)
 }
 
 func (s *Stub) decorateCodexSessionFileSummary(item CodexSessionFileSummary) CodexSessionFileSummary {
+	return s.decorateCodexSessionFileSummaryWithNames(item, codexThreadNamesByIDs([]string{item.ThreadID}))
+}
+
+func (s *Stub) decorateCodexSessionFileSummaries(items map[string]CodexSessionFileSummary) {
+	if len(items) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		if id := strings.TrimSpace(item.ThreadID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	names := codexThreadNamesByIDs(ids)
+	for key, item := range items {
+		items[key] = s.decorateCodexSessionFileSummaryWithNames(item, names)
+	}
+}
+
+func (s *Stub) decorateCodexSessionFileSummaryWithNames(item CodexSessionFileSummary, names map[string]string) CodexSessionFileSummary {
 	item.ThreadID = strings.TrimSpace(item.ThreadID)
 	if item.ThreadID != "" {
 		item.SessionID = codexHistoricalSessionID(item.ThreadID)
 	}
-	if names := codexThreadNamesByIDs([]string{item.ThreadID}); strings.TrimSpace(names[item.ThreadID]) != "" {
+	if strings.TrimSpace(names[item.ThreadID]) != "" {
 		name := strings.TrimSpace(names[item.ThreadID])
 		item.Title = name
 		item.DisplayName = name
@@ -609,11 +561,6 @@ func pathWithinCodexSessionRoot(path string) bool {
 		return false
 	}
 	return rel == "." || (!strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != "..")
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(strings.TrimSpace(path))
-	return err == nil && !info.IsDir()
 }
 
 func codexThreadNameFromIndex(threadID string) string {

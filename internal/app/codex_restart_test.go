@@ -524,6 +524,7 @@ type codexStateDBTestThread struct {
 	Title            string
 	FirstUserMessage string
 	UpdatedMS        int64
+	RolloutPath      string
 }
 
 func writeCodexStateDB(t *testing.T, codexHome string, rows []codexStateDBTestThread) {
@@ -561,11 +562,15 @@ func writeCodexStateDB(t *testing.T, codexHome string, rows []codexStateDBTestTh
 		t.Fatalf("create codex state threads table: %v", err)
 	}
 	for _, row := range rows {
+		rolloutPath := row.RolloutPath
+		if strings.TrimSpace(rolloutPath) == "" {
+			rolloutPath = filepath.Join(codexHome, "sessions", "2026", "05", "10", "rollout-2026-05-10T01-02-03-"+row.ID+".jsonl")
+		}
 		if _, err := db.Exec(`INSERT INTO threads (
 			id, rollout_path, cwd, title, first_user_message, updated_at_ms, created_at_ms, archived
 		) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
 			row.ID,
-			filepath.Join(codexHome, "sessions", "2026", "05", "10", "rollout-2026-05-10T01-02-03-"+row.ID+".jsonl"),
+			rolloutPath,
 			row.CWD,
 			row.Title,
 			row.FirstUserMessage,

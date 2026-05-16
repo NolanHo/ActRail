@@ -152,10 +152,25 @@ select {
 
 .appShell.withGlobalNav > .conversationColumn,
 .appShell.withGlobalNav > .askUserView,
-.appShell.withGlobalNav > .teamsThreadView {
+.appShell.withGlobalNav > .teamsThreadView,
+.appShell.withGlobalNav > .sessionFileView {
   grid-column: 3;
   grid-row: 1;
   min-width: 0;
+}
+
+.sessionFileView {
+  border-radius: 30px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.mobileEmbeddedView {
+  flex: 1;
+  min-height: 0;
+  border-width: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .sidebarResizeHandle {
@@ -4650,6 +4665,8 @@ button.conversationStatusChip {
 :root[data-theme="dark"] .composerCommandMenu,
 :root[data-theme="graphite"] .conversationColumn,
 :root[data-theme="dark"] .conversationColumn,
+:root[data-theme="graphite"] .sessionFileView,
+:root[data-theme="dark"] .sessionFileView,
 :root[data-theme="graphite"] .mobileShell,
 :root[data-theme="dark"] .mobileShell,
 :root[data-theme="graphite"] .conversationToolbar,

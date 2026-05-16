@@ -68,6 +68,9 @@ vi.mock("../lib/api", () => ({
     getSupervisorRuns: vi.fn().mockResolvedValue({ ok: true, runs: [] }),
     runSupervisorOnce: vi.fn().mockResolvedValue({ ok: true, run: { run_id: "supervisor_1", anchor_assistant_event_id: "pi:message:a1", status: "stop", reason: "done" } }),
     getScheduler: vi.fn().mockResolvedValue({ ok: true, settings: { idle_before_delivery_seconds: 30 }, items: [], inbox: [] }),
+    getCodexSessionFiles: vi.fn().mockResolvedValue({ ok: true, items: [] }),
+    getCodexSessionFile: vi.fn().mockResolvedValue({ ok: true, summary: { thread_id: "thread-1", display_name: "Codex thread" }, turns: [], items: [] }),
+    renameCodexSessionFile: vi.fn().mockResolvedValue({ ok: true, summary: { thread_id: "thread-1", display_name: "Renamed" } }),
     saveSchedulerSettings: vi.fn().mockResolvedValue({ idle_before_delivery_seconds: 30 }),
     createSelfReminder: vi.fn().mockResolvedValue({ ok: true, self_reminder: { item_id: "self_reminder_1", session_id: "sess-1", kind: "self_reminder", state: "scheduled", due_ts: 0, created_ts: 0, updated_ts: 0 } }),
     cancelSelfReminder: vi.fn().mockResolvedValue({ ok: true, self_reminder: { item_id: "self_reminder_1", kind: "self_reminder", state: "cancelled" } }),
@@ -475,6 +478,7 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Settings");
     expect(getRoot().textContent).toContain("Log out");
     expect(findButtonByAriaLabel("Sessions view")).not.toBeNull();
+    expect(findButtonByAriaLabel("Codex Sessions view")).not.toBeNull();
     expect(findButtonByAriaLabel("Teams view")).not.toBeNull();
     expect(findButtonByAriaLabel("Inbox view")).not.toBeNull();
     expect(getRoot().textContent).toContain("No session selected");
@@ -484,7 +488,48 @@ describe("AppShell", () => {
     expect(findButtonByAriaLabel("Files")).not.toBeNull();
     expect(findButtonByAriaLabel("Session Inbox")).not.toBeNull();
     expect(findButtonByAriaLabel("Interrupt")).not.toBeNull();
+    expect(findButtonByAriaLabel("Codex Sessions")).toBeNull();
 
+  });
+
+  it("switches to the global Codex Sessions view", async () => {
+    const apiModule = await import("../lib/api");
+    vi.mocked(apiModule.api.getCodexSessionFiles).mockResolvedValueOnce({
+      ok: true,
+      scope: "cwd",
+      offset: 0,
+      limit: 100,
+      remaining: 0,
+      items: [{
+        thread_id: "thread-1",
+        display_name: "Indexed Codex",
+        cwd: "/tmp/project",
+        source: "state_db",
+      }],
+    } as any);
+    renderAppShell({
+      activeSessionId: "sess-1",
+      items: [{ session_id: "sess-1", alias: "Active", agent_backend: "codex", busy: false, cwd: "/tmp/project" } as any],
+    });
+
+    await act(async () => {
+      findButtonByAriaLabel("Codex Sessions view")?.click();
+      await flushLazy();
+    });
+    await act(async () => {
+      await flushLazy();
+    });
+
+    expect(getRoot().querySelector("[data-testid='session-file-view']")).not.toBeNull();
+    expect(apiModule.api.getCodexSessionFiles).toHaveBeenCalled();
+    await act(async () => {
+      await flushLazy();
+    });
+    expect(getRoot().textContent).toContain("Indexed Codex");
+    expect(apiModule.api.getCodexSessionFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "cwd", cwd: "/tmp/project", limit: 100 }),
+      expect.any(AbortSignal),
+    );
   });
 
   it("persists desktop session rail width after dragging the resize handle", async () => {
@@ -552,6 +597,7 @@ describe("AppShell", () => {
       renderAppShell({ activeSessionId: null, diagnostics: null });
       expect(getRoot().querySelector('[data-testid="mobile-shell"]')).not.toBeNull();
       expect(findButtonByText("Sessions")).not.toBeNull();
+      expect(findButtonByText("Codex")).not.toBeNull();
       expect(findButtonByText("Read")).not.toBeNull();
       expect(findButtonByText("Chat")).not.toBeNull();
       expect(findButtonByText("Metadata")).toBeUndefined();
