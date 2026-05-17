@@ -1116,7 +1116,7 @@ func codexSessionFileHasTaskComplete(ctx context.Context, sourcePath string) boo
 		switch strings.TrimSpace(entry.Type) {
 		case "event_msg":
 			switch strings.TrimSpace(stringValue(entry.Payload["type"])) {
-			case "user_message", "agent_message", "task_started", "task_complete":
+			case "user_message", "agent_message", "task_started", "task_complete", "turn_aborted":
 				lastRelevant = strings.TrimSpace(stringValue(entry.Payload["type"]))
 			}
 		case "response_item":
@@ -1129,7 +1129,7 @@ func codexSessionFileHasTaskComplete(ctx context.Context, sourcePath string) boo
 			}
 		}
 	}
-	return scanner.Err() == nil && lastRelevant == "task_complete"
+	return scanner.Err() == nil && codexHistoryTerminalKind(lastRelevant)
 }
 
 func codexSessionLinesHaveTaskComplete(ctx context.Context, lines []string) bool {
@@ -1151,7 +1151,7 @@ func codexSessionLinesHaveTaskComplete(ctx context.Context, lines []string) bool
 		switch strings.TrimSpace(entry.Type) {
 		case "event_msg":
 			switch strings.TrimSpace(stringValue(entry.Payload["type"])) {
-			case "user_message", "agent_message", "task_started", "task_complete":
+			case "user_message", "agent_message", "task_started", "task_complete", "turn_aborted":
 				lastRelevant = strings.TrimSpace(stringValue(entry.Payload["type"]))
 			}
 		case "response_item":
@@ -1164,7 +1164,7 @@ func codexSessionLinesHaveTaskComplete(ctx context.Context, lines []string) bool
 			}
 		}
 	}
-	return lastRelevant == "task_complete"
+	return codexHistoryTerminalKind(lastRelevant)
 }
 
 func (s *Stub) codexThreadIDForRuntimeRestart(_ context.Context, record sessionRecord) (string, error) {

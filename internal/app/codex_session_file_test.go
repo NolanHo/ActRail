@@ -306,6 +306,32 @@ func TestCodexSessionMessagesFromJSONLLines(t *testing.T) {
 	}
 }
 
+func TestCodexSessionTurnAbortedIsTerminalForActiveChecks(t *testing.T) {
+	sessionID := mustSessionID(t, "s_codex_turn_aborted_terminal")
+	generationID := mustHelperGenerationID(t, "g_codex_turn_aborted_terminal")
+	lines := []string{
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"run this"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"working"}]}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"event_msg","payload":{"type":"turn_aborted"}}`,
+	}
+	if !codexSessionLinesHaveTaskComplete(context.Background(), lines) {
+		t.Fatal("codexSessionLinesHaveTaskComplete() = false, want true for turn_aborted")
+	}
+	if codexSessionLinesIndicateActiveTurn(lines) {
+		t.Fatal("codexSessionLinesIndicateActiveTurn() = true, want false after turn_aborted")
+	}
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		Lines:    lines,
+		Messages: []iod.SessionHistoryMessage{{Seq: 1, Role: "user", Kind: "message", Text: "run this"}},
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	if codexIODHistoryPacketActiveTurn(packet) {
+		t.Fatal("codexIODHistoryPacketActiveTurn() = true, want false after turn_aborted")
+	}
+}
+
 func attachCodexHistoryIODHelperFromFile(t *testing.T, svc *Stub, cfg config.Config, sessionID session.SessionID, sourcePath string) {
 	t.Helper()
 	attachCodexHistoryIODHelperFromFileWithComplete(t, svc, cfg, sessionID, sourcePath, true)

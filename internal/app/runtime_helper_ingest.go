@@ -44,6 +44,9 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 			if errors.Is(err, io.EOF) {
 				return
 			}
+			if !s.runtimeHelperStreamCurrent(sessionID, helper.generationID, client) {
+				return
+			}
 			result := s.handleHelperReadError(sessionID, backend, helper.generationID, err)
 			if result.reattached && result.client != nil {
 				client = result.client
@@ -66,6 +69,27 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 			continue
 		}
 	}
+}
+
+func (s *Stub) runtimeHelperStreamCurrent(sessionID session.SessionID, generationID iod.GenerationID, client *iodclient.Client) bool {
+	if s == nil || client == nil {
+		return false
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return false
+	}
+	runtime := s.runtimeForRecord(record)
+	if helper := runtime.helper; helper != nil && helper.generationID == generationID && helper.streamClient == client {
+		return true
+	}
+	if s.helpers != nil {
+		attachment, ok := s.helpers.Attachment(sessionID)
+		if ok && attachment.Binding.GenerationID == generationID && attachment.Client == client {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Stub) applyRuntimeHelperPacket(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, packet any) error {

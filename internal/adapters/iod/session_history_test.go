@@ -191,6 +191,26 @@ func TestSessionHistoryCacheCodexAppendUpdatesIndexAndTail(t *testing.T) {
 	}
 }
 
+func TestSessionHistoryCacheCodexTurnAbortedIsTerminal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}}`,
+		`{"timestamp":"2026-05-08T15:58:05.000Z","type":"event_msg","payload":{"type":"turn_aborted"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	snapshot := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.Complete
+	})
+	t.Cleanup(cache.Stop)
+	if !snapshot.TaskComplete {
+		t.Fatal("Snapshot().TaskComplete = false, want true after turn_aborted")
+	}
+}
+
 func TestSessionHistoryCacheCodexIgnoresPartialTailUntilComplete(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	body := strings.Join([]string{

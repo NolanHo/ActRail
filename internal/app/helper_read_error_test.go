@@ -165,6 +165,59 @@ func TestCurrentHelperReadErrorRedialsLiveCodexHelper(t *testing.T) {
 	}
 }
 
+func TestStaleHelperReadLoopDoesNotBreakRestartedSameGeneration(t *testing.T) {
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_restarted_same_generation")
+	oldClientConn, oldServerConn := net.Pipe()
+	currentClientConn, currentServerConn := net.Pipe()
+	defer oldServerConn.Close()
+	defer currentClientConn.Close()
+	defer currentServerConn.Close()
+	oldClient := iodclient.NewClient(oldClientConn)
+	currentClient := iodclient.NewClient(currentClientConn)
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime = sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			helper:   &runtimeIODHelper{generationID: generationID, streamClient: currentClient},
+			codex:    newCodexRuntimeState(session.BackendCodex),
+		}
+		record.runtime.codex.markInitialized()
+		record.runtime.codex.setThreadID("thread-restarted-same-generation")
+		record.transport = transportSnapshotAttached(generationID)
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		svc.readRuntimeHelper(sessionID, session.BackendCodex, &runtimeIODHelper{
+			generationID: generationID,
+			streamClient: oldClient,
+		})
+		close(done)
+	}()
+	_ = oldClient.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stale read loop did not exit")
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+		t.Fatalf("SessionState().Transport = %+v, want current helper still attached", state.Transport)
+	}
+}
+
 func TestCurrentHelperReadErrorKeepsLiveHelperRecoverableWhenRedialTemporarilyFails(t *testing.T) {
 	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
 		return nil, errors.New("temporary dial failure")

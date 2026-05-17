@@ -479,7 +479,7 @@ func (c *sessionHistoryCache) refreshIfChanged(ctx context.Context) error {
 			lastKind = nextKind
 		}
 		c.lastKind = lastKind
-		c.taskDone = lastKind == "task_complete"
+		c.taskDone = codexHistoryTerminalKind(lastKind)
 		c.warmed = true
 		c.complete = true
 		c.lastSize = size
@@ -529,7 +529,7 @@ type codexHistoryLine struct {
 
 func readCodexHistoryFile(ctx context.Context, path string, tailLimit int) ([]string, []SessionHistoryMessage, []sessionHistoryIndexEntry, bool, string, int, int64, time.Time, error) {
 	lines, indexed, messages, lastRelevant, lineCount, size, mod, err := readCodexHistoryRange(ctx, path, 0, 0, tailLimit, nil, nil)
-	return lines, messages, indexed, lastRelevant == "task_complete", lastRelevant, lineCount, size, mod, err
+	return lines, messages, indexed, codexHistoryTerminalKind(lastRelevant), lastRelevant, lineCount, size, mod, err
 }
 
 func discoverCodexSessionHistoryPath(ctx context.Context, root, threadID string) (string, bool) {
@@ -713,7 +713,7 @@ func codexHistoryRelevantKind(raw string) string {
 	switch strings.TrimSpace(entry.Type) {
 	case "event_msg":
 		switch strings.TrimSpace(historyString(entry.Payload["type"])) {
-		case "user_message", "agent_message", "task_started", "task_complete":
+		case "user_message", "agent_message", "task_started", "task_complete", "turn_aborted":
 			return strings.TrimSpace(historyString(entry.Payload["type"]))
 		}
 	case "response_item":
@@ -726,6 +726,15 @@ func codexHistoryRelevantKind(raw string) string {
 		}
 	}
 	return ""
+}
+
+func codexHistoryTerminalKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case "task_complete", "turn_aborted":
+		return true
+	default:
+		return false
+	}
 }
 
 func codexHistorySource(raw string) string {

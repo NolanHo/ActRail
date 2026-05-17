@@ -51,6 +51,9 @@ func codexIODHistoryPacketActiveTurn(packet iod.SessionHistoryResponsePacket) bo
 	if codexSessionLinesIndicateActiveTurn(packet.Lines) {
 		return true
 	}
+	if len(packet.Lines) > 0 {
+		return false
+	}
 	return len(packet.Messages) > 0
 }
 
@@ -68,7 +71,7 @@ func codexSessionLinesIndicateActiveTurn(lines []string) bool {
 		switch strings.TrimSpace(entry.Type) {
 		case "event_msg":
 			switch kind := strings.TrimSpace(stringValue(entry.Payload["type"])); kind {
-			case "user_message", "agent_message", "task_started", "task_complete":
+			case "user_message", "agent_message", "task_started", "task_complete", "turn_aborted":
 				lastRelevant = kind
 			}
 		case "response_item":
@@ -78,5 +81,14 @@ func codexSessionLinesIndicateActiveTurn(lines []string) bool {
 			}
 		}
 	}
-	return lastRelevant != "" && lastRelevant != "task_complete"
+	return lastRelevant != "" && !codexHistoryTerminalKind(lastRelevant)
+}
+
+func codexHistoryTerminalKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case "task_complete", "turn_aborted":
+		return true
+	default:
+		return false
+	}
 }
