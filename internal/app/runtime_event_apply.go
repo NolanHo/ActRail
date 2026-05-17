@@ -22,7 +22,7 @@ func (s *Stub) applyPIEvents(sessionID session.SessionID, events []pi.Event) err
 }
 
 func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
-	s.invalidateSessionHistoryCaches(sessionID)
+	s.invalidateSessionHistoryCachesForRuntimeMutation(sessionID)
 	if !s.codexRuntimeEventInMainThread(sessionID, event) && !codexSubagentMessageEvent(event) {
 		s.emitSessionState(sessionID)
 		return nil

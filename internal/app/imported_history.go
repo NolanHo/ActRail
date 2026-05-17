@@ -26,8 +26,9 @@ const (
 	sourceConfidenceInferred    = "inferred"
 	sourceConfidenceProvisional = "provisional"
 
-	codexIODHistorySnapshotTTL    = 5 * time.Second
-	codexIODHistoryRefreshTimeout = 2 * time.Second
+	codexIODHistorySnapshotTTL           = 5 * time.Second
+	codexIODHistoryRuntimeMutationMinAge = codexIODHistorySnapshotTTL
+	codexIODHistoryRefreshTimeout        = 2 * time.Second
 )
 
 type codexIODHistoryCacheEntry struct {
@@ -886,12 +887,12 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	}
 	sessionID := record.identity.SessionID()
 	cacheKey := codexIODHistoryCacheKey(packet)
-	if items, complete, ok := s.messageCache.GetWithCompletion(sessionID, cacheKey); ok {
-		if !codexSessionFileHistoryUsable(record, items, complete) {
+	if response, complete, ok := s.messageCache.GetPageWithCompletion(sessionID, cacheKey, req); ok {
+		if !codexSessionFileHistoryUsableStatus(record, response.TailSeq > 0, complete) {
 			return SessionMessagesResponse{}, false, nil
 		}
 		s.reconcileCodexSessionFileCompletion(record, complete)
-		return paginateSessionMessagesForRequest(items, req), true, nil
+		return response, true, nil
 	}
 	items := sessionMessagesFromIODHistory(packet.Messages)
 	if len(items) == 0 {
@@ -1026,6 +1027,7 @@ func (s *Stub) kickCodexIODHistoryRefresh(record sessionRecord) {
 		}
 		s.storeCodexIODHistoryPacketLocked(sessionID, packet)
 		s.codexIODHistoryMu.Unlock()
+		s.warmCodexIODMessageCache(sessionID, packet)
 		if updated, ok := s.registry.Lookup(sessionID); ok {
 			updated.runtime = s.runtimeForRecord(updated)
 			if updated.runtime.helper != nil && updated.runtime.helper.generationID == helper.generationID {
@@ -1033,6 +1035,22 @@ func (s *Stub) kickCodexIODHistoryRefresh(record sessionRecord) {
 			}
 		}
 	}()
+}
+
+func (s *Stub) kickCodexIODHistoryRefreshIfStale(record sessionRecord, minAge time.Duration) {
+	if s == nil || record.runtime.helper == nil {
+		return
+	}
+	sessionID := record.identity.SessionID()
+	now := time.Now()
+	s.codexIODHistoryMu.Lock()
+	entry, ok := s.codexIODHistory[sessionID]
+	if ok && minAge > 0 && now.Sub(entry.checkedAt) < minAge {
+		s.codexIODHistoryMu.Unlock()
+		return
+	}
+	s.codexIODHistoryMu.Unlock()
+	s.kickCodexIODHistoryRefresh(record)
 }
 
 func (s *Stub) storeCodexIODHistoryPacketLocked(sessionID session.SessionID, packet iod.SessionHistoryResponsePacket) {
@@ -1060,6 +1078,22 @@ func (s *Stub) storeCodexIODHistoryPacketLocked(sessionID session.SessionID, pac
 		stateAppliedLineCount: appliedLineCount,
 		stateAppliedMsgCount:  appliedMsgCount,
 	}
+}
+
+func (s *Stub) warmCodexIODMessageCache(sessionID session.SessionID, packet iod.SessionHistoryResponsePacket) {
+	if s == nil || len(packet.Messages) == 0 {
+		return
+	}
+	cacheKey := codexIODHistoryCacheKey(packet)
+	if strings.TrimSpace(cacheKey) == "" || s.messageCache.Has(sessionID, cacheKey) {
+		return
+	}
+	items := sessionMessagesFromIODHistory(packet.Messages)
+	if len(items) == 0 {
+		return
+	}
+	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete
+	s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
 }
 
 func codexIODHistoryCanResumeStateProjection(entry codexIODHistoryCacheEntry, packet iod.SessionHistoryResponsePacket) bool {
@@ -1121,6 +1155,23 @@ func (s *Stub) invalidateSessionHistoryCaches(sessionID session.SessionID) {
 	s.codexIODHistoryMu.Unlock()
 }
 
+func (s *Stub) invalidateSessionHistoryCachesForRuntimeMutation(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		s.invalidateSessionHistoryCaches(sessionID)
+		return
+	}
+	record.runtime = s.runtimeForRecord(record)
+	if record.runtime.helper == nil {
+		s.invalidateSessionHistoryCaches(sessionID)
+		return
+	}
+	s.kickCodexIODHistoryRefreshIfStale(record, codexIODHistoryRuntimeMutationMinAge)
+}
+
 func (s *Stub) startCodexSourceHistoryWarmup(ctx context.Context) {
 	if s == nil {
 		return
@@ -1179,7 +1230,11 @@ func codexIODHistoryCacheKey(packet iod.SessionHistoryResponsePacket) string {
 }
 
 func codexSessionFileHistoryUsable(record sessionRecord, items []SessionMessage, complete bool) bool {
-	if len(items) == 0 {
+	return codexSessionFileHistoryUsableStatus(record, len(items) > 0, complete)
+}
+
+func codexSessionFileHistoryUsableStatus(record sessionRecord, hasItems bool, complete bool) bool {
+	if !hasItems {
 		return false
 	}
 	if complete {
@@ -1191,7 +1246,7 @@ func codexSessionFileHistoryUsable(record sessionRecord, items []SessionMessage,
 	if record.state.Busy() {
 		return false
 	}
-	return record.transcript.Len() == 0 || len(items) > 0
+	return record.transcript.Len() == 0 || hasItems
 }
 
 func codexSessionFileHasFinalAnswer(items []SessionMessage) bool {

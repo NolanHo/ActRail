@@ -14,6 +14,7 @@ import (
 	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/iodclient"
 	"actrail/internal/config"
+	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
 
 	_ "modernc.org/sqlite"
@@ -470,6 +471,107 @@ func TestSessionStateDoesNotBlockOnCodexIODHistoryCacheMiss(t *testing.T) {
 	}
 	if !state.Busy {
 		t.Fatal("SessionState().Busy = false, want current in-memory busy state while history refresh runs")
+	}
+}
+
+func TestCodexRuntimeMutationKeepsIODHistoryCaches(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_runtime_keeps_history_cache")
+	generationID := mustHelperGenerationID(t, "g_codex_runtime_keeps_history_cache")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656828"
+	sourcePath := filepath.Join(t.TempDir(), "rollout-"+threadID+".jsonl")
+
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath: sourcePath,
+		Lines: []string{
+			`{"timestamp":"2026-05-10T08:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"cached answer","phase":"final_answer"}}`,
+		},
+		Messages: []iod.SessionHistoryMessage{{
+			Seq:         1,
+			Role:        "assistant",
+			Kind:        "message",
+			Text:        "cached answer",
+			EventID:     "codex:event:assistant:000001",
+			SourceOrder: "codex:000001",
+			Details:     map[string]any{"phase": "final_answer"},
+		}},
+		Warmed:       true,
+		Complete:     true,
+		TaskComplete: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_runtime_cache", "t_runtime_cache", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	historyCalls := make(chan struct{}, 1)
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity: &identity,
+		Backend:  session.BackendCodex,
+		CWD:      t.TempDir(),
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    runtimeState,
+			helper: &runtimeIODHelper{
+				sessionID:    sessionID,
+				generationID: generationID,
+				historyFunc: func(context.Context) (iod.SessionHistoryResponsePacket, error) {
+					select {
+					case historyCalls <- struct{}{}:
+					default:
+					}
+					return packet, nil
+				},
+			},
+		},
+		SourcePath:       sourcePath,
+		BackendSessionID: threadID,
+		Transport:        SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
+	cacheKey := codexIODHistoryCacheKey(packet)
+	svc.messageCache.PutWithCompletion(sessionID, cacheKey, []SessionMessage{{
+		Seq:         1,
+		Role:        "assistant",
+		Kind:        "message",
+		Text:        "cached answer",
+		EventID:     "codex:event:assistant:000001",
+		SourceOrder: "codex:000001",
+		Details:     map[string]any{"phase": "final_answer"},
+	}}, true)
+
+	err = svc.applyPIEvent(sessionID, pi.Event{
+		Kind:    pi.EventKindMessageDelta,
+		RawType: "item/agentMessage/delta",
+		TurnID:  "turn-runtime-cache",
+		Delta:   &pi.MessageDelta{Role: pi.MessageRoleAssistant, Text: "still running"},
+	})
+	if err != nil {
+		t.Fatalf("applyPIEvent() error = %v", err)
+	}
+	if _, _, ok := svc.messageCache.GetWithCompletion(sessionID, cacheKey); !ok {
+		t.Fatalf("message cache entry for %q was invalidated by Codex runtime mutation", cacheKey)
+	}
+	svc.codexIODHistoryMu.Lock()
+	_, ok := svc.codexIODHistory[sessionID]
+	svc.codexIODHistoryMu.Unlock()
+	if !ok {
+		t.Fatal("codex IOD history packet was invalidated by Codex runtime mutation")
+	}
+	select {
+	case <-historyCalls:
+		t.Fatal("fresh Codex IOD history cache was refreshed synchronously for runtime mutation")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 
