@@ -31,8 +31,9 @@ const (
 )
 
 type codexIODHistoryCacheEntry struct {
-	packet    iod.SessionHistoryResponsePacket
-	checkedAt time.Time
+	packet          iod.SessionHistoryResponsePacket
+	checkedAt       time.Time
+	stateAppliedKey string
 }
 
 func normalizeSourceConfidence(value string) string {
@@ -659,7 +660,7 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(record sessionRecord) sess
 	if !ok {
 		return record
 	}
-	return s.reconcileCodexSessionFileFinalFromIODPacket(record, packet)
+	return s.reconcileCodexSessionFileFinalFromCachedIODPacket(record, packet)
 }
 
 func (s *Stub) reconcileCodexSessionFileFinalFromIODPacket(record sessionRecord, packet iod.SessionHistoryResponsePacket) sessionRecord {
@@ -691,6 +692,24 @@ func (s *Stub) reconcileCodexSessionFileFinalFromIODPacket(record sessionRecord,
 		}
 	}
 	updated.runtime = s.runtimeForRecord(updated)
+	return updated
+}
+
+func (s *Stub) reconcileCodexSessionFileFinalFromCachedIODPacket(record sessionRecord, packet iod.SessionHistoryResponsePacket) sessionRecord {
+	if s == nil {
+		return record
+	}
+	sessionID := record.identity.SessionID()
+	key := codexIODHistoryCacheKey(packet)
+	s.codexIODHistoryMu.Lock()
+	if entry, ok := s.codexIODHistory[sessionID]; ok && codexIODHistoryCacheKey(entry.packet) == key && entry.stateAppliedKey == key {
+		s.codexIODHistoryMu.Unlock()
+		return record
+	}
+	s.codexIODHistoryMu.Unlock()
+
+	updated := s.reconcileCodexSessionFileFinalFromIODPacket(record, packet)
+	s.markCodexIODHistoryStateApplied(sessionID, key)
 	return updated
 }
 
@@ -931,15 +950,7 @@ func (s *Stub) codexIODHistorySnapshot(ctx context.Context, record sessionRecord
 	if err != nil {
 		return iod.SessionHistoryResponsePacket{}, false, err
 	}
-	s.codexIODHistoryMu.Lock()
-	if s.codexIODHistory == nil {
-		s.codexIODHistory = map[session.SessionID]codexIODHistoryCacheEntry{}
-	}
-	s.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
-		packet:    packet,
-		checkedAt: time.Now(),
-	}
-	s.codexIODHistoryMu.Unlock()
+	s.storeCodexIODHistoryPacket(sessionID, packet)
 	return packet, true, nil
 }
 
@@ -1000,21 +1011,45 @@ func (s *Stub) kickCodexIODHistoryRefresh(record sessionRecord) {
 			s.codexIODHistoryMu.Unlock()
 			return
 		}
-		if s.codexIODHistory == nil {
-			s.codexIODHistory = map[session.SessionID]codexIODHistoryCacheEntry{}
-		}
-		s.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
-			packet:    packet,
-			checkedAt: time.Now(),
-		}
+		s.storeCodexIODHistoryPacketLocked(sessionID, packet)
 		s.codexIODHistoryMu.Unlock()
 		if updated, ok := s.registry.Lookup(sessionID); ok {
 			updated.runtime = s.runtimeForRecord(updated)
 			if updated.runtime.helper != nil && updated.runtime.helper.generationID == helper.generationID {
-				s.reconcileCodexSessionFileFinalFromIODPacket(updated, packet)
+				s.reconcileCodexSessionFileFinalFromCachedIODPacket(updated, packet)
 			}
 		}
 	}()
+}
+
+func (s *Stub) storeCodexIODHistoryPacketLocked(sessionID session.SessionID, packet iod.SessionHistoryResponsePacket) {
+	if s.codexIODHistory == nil {
+		s.codexIODHistory = map[session.SessionID]codexIODHistoryCacheEntry{}
+	}
+	key := codexIODHistoryCacheKey(packet)
+	appliedKey := ""
+	if entry, ok := s.codexIODHistory[sessionID]; ok && codexIODHistoryCacheKey(entry.packet) == key {
+		appliedKey = entry.stateAppliedKey
+	}
+	s.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
+		packet:          packet,
+		checkedAt:       time.Now(),
+		stateAppliedKey: appliedKey,
+	}
+}
+
+func (s *Stub) markCodexIODHistoryStateApplied(sessionID session.SessionID, key string) {
+	if s == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	s.codexIODHistoryMu.Lock()
+	defer s.codexIODHistoryMu.Unlock()
+	entry, ok := s.codexIODHistory[sessionID]
+	if !ok || codexIODHistoryCacheKey(entry.packet) != key {
+		return
+	}
+	entry.stateAppliedKey = key
+	s.codexIODHistory[sessionID] = entry
 }
 
 func (s *Stub) invalidateSessionHistoryCaches(sessionID session.SessionID) {

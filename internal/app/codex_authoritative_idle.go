@@ -32,13 +32,7 @@ func (s *Stub) storeCodexIODHistoryPacket(sessionID session.SessionID, packet io
 	}
 	s.codexIODHistoryMu.Lock()
 	defer s.codexIODHistoryMu.Unlock()
-	if s.codexIODHistory == nil {
-		s.codexIODHistory = map[session.SessionID]codexIODHistoryCacheEntry{}
-	}
-	s.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
-		packet:    packet,
-		checkedAt: time.Now(),
-	}
+	s.storeCodexIODHistoryPacketLocked(sessionID, packet)
 }
 
 func codexIODHistoryPacketActiveTurn(packet iod.SessionHistoryResponsePacket) bool {
