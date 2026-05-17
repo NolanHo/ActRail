@@ -35,6 +35,7 @@ type codexIODHistoryCacheEntry struct {
 	checkedAt             time.Time
 	stateAppliedKey       string
 	stateAppliedLineCount int
+	stateAppliedMsgCount  int
 }
 
 func normalizeSourceConfidence(value string) string {
@@ -665,14 +666,14 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(record sessionRecord) sess
 }
 
 func (s *Stub) reconcileCodexSessionFileFinalFromIODPacket(record sessionRecord, packet iod.SessionHistoryResponsePacket) sessionRecord {
-	return s.reconcileCodexSessionFileFinalFromIODPacketLines(record, packet, packet.Lines)
+	return s.reconcileCodexSessionFileFinalFromIODPacketLines(record, packet, packet.Lines, packet.Messages)
 }
 
-func (s *Stub) reconcileCodexSessionFileFinalFromIODPacketLines(record sessionRecord, packet iod.SessionHistoryResponsePacket, projectionLines []string) sessionRecord {
+func (s *Stub) reconcileCodexSessionFileFinalFromIODPacketLines(record sessionRecord, packet iod.SessionHistoryResponsePacket, projectionLines []string, completionMessages []iod.SessionHistoryMessage) sessionRecord {
 	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) || !packet.Complete {
 		return record
 	}
-	complete := codexIODHistoryMessagesHaveAuthoritativeCompletion(packet.Messages) || packet.TaskComplete
+	complete := codexIODHistoryMessagesHaveAuthoritativeCompletion(completionMessages) || packet.TaskComplete
 	_ = s.reconcileCodexSessionFileRuntimeProjection(record.identity.SessionID(), projectionLines)
 	if !complete {
 		if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
@@ -707,16 +708,20 @@ func (s *Stub) reconcileCodexSessionFileFinalFromCachedIODPacket(record sessionR
 	sessionID := record.identity.SessionID()
 	key := codexIODHistoryCacheKey(packet)
 	projectionLines := packet.Lines
+	completionMessages := packet.Messages
 	s.codexIODHistoryMu.Lock()
 	if entry, ok := s.codexIODHistory[sessionID]; ok && codexIODHistoryCacheKey(entry.packet) == key && entry.stateAppliedKey == key {
 		s.codexIODHistoryMu.Unlock()
 		return record
 	} else if ok && codexIODHistoryCanResumeStateProjection(entry, packet) {
 		projectionLines = packet.Lines[entry.stateAppliedLineCount:]
+		if codexIODHistoryCanResumeCompletionScan(entry, packet) {
+			completionMessages = packet.Messages[entry.stateAppliedMsgCount:]
+		}
 	}
 	s.codexIODHistoryMu.Unlock()
 
-	updated := s.reconcileCodexSessionFileFinalFromIODPacketLines(record, packet, projectionLines)
+	updated := s.reconcileCodexSessionFileFinalFromIODPacketLines(record, packet, projectionLines, completionMessages)
 	s.markCodexIODHistoryStateApplied(sessionID, key)
 	return updated
 }
@@ -1037,17 +1042,23 @@ func (s *Stub) storeCodexIODHistoryPacketLocked(sessionID session.SessionID, pac
 	key := codexIODHistoryCacheKey(packet)
 	appliedKey := ""
 	appliedLineCount := 0
+	appliedMsgCount := 0
 	if entry, ok := s.codexIODHistory[sessionID]; ok && codexIODHistoryCacheKey(entry.packet) == key {
 		appliedKey = entry.stateAppliedKey
 		appliedLineCount = entry.stateAppliedLineCount
+		appliedMsgCount = entry.stateAppliedMsgCount
 	} else if ok && codexIODHistoryCanResumeStateProjection(entry, packet) {
 		appliedLineCount = entry.stateAppliedLineCount
+		if codexIODHistoryCanResumeCompletionScan(entry, packet) {
+			appliedMsgCount = entry.stateAppliedMsgCount
+		}
 	}
 	s.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
 		packet:                packet,
 		checkedAt:             time.Now(),
 		stateAppliedKey:       appliedKey,
 		stateAppliedLineCount: appliedLineCount,
+		stateAppliedMsgCount:  appliedMsgCount,
 	}
 }
 
@@ -1062,6 +1073,24 @@ func codexIODHistoryCanResumeStateProjection(entry codexIODHistoryCacheEntry, pa
 	return entry.packet.Lines[applied-1] == packet.Lines[applied-1]
 }
 
+func codexIODHistoryCanResumeCompletionScan(entry codexIODHistoryCacheEntry, packet iod.SessionHistoryResponsePacket) bool {
+	applied := entry.stateAppliedMsgCount
+	if applied <= 0 || applied > len(entry.packet.Messages) || applied > len(packet.Messages) {
+		return false
+	}
+	if strings.TrimSpace(entry.packet.SourcePath) != strings.TrimSpace(packet.SourcePath) {
+		return false
+	}
+	oldMsg := entry.packet.Messages[applied-1]
+	newMsg := packet.Messages[applied-1]
+	return oldMsg.Seq == newMsg.Seq &&
+		oldMsg.Role == newMsg.Role &&
+		oldMsg.Kind == newMsg.Kind &&
+		oldMsg.EventID == newMsg.EventID &&
+		oldMsg.SourceOrder == newMsg.SourceOrder &&
+		oldMsg.ToolCallID == newMsg.ToolCallID
+}
+
 func (s *Stub) markCodexIODHistoryStateApplied(sessionID session.SessionID, key string) {
 	if s == nil || strings.TrimSpace(key) == "" {
 		return
@@ -1074,6 +1103,7 @@ func (s *Stub) markCodexIODHistoryStateApplied(sessionID session.SessionID, key 
 	}
 	entry.stateAppliedKey = key
 	entry.stateAppliedLineCount = len(entry.packet.Lines)
+	entry.stateAppliedMsgCount = len(entry.packet.Messages)
 	s.codexIODHistory[sessionID] = entry
 }
 
