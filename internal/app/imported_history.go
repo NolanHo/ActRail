@@ -31,9 +31,10 @@ const (
 )
 
 type codexIODHistoryCacheEntry struct {
-	packet          iod.SessionHistoryResponsePacket
-	checkedAt       time.Time
-	stateAppliedKey string
+	packet                iod.SessionHistoryResponsePacket
+	checkedAt             time.Time
+	stateAppliedKey       string
+	stateAppliedLineCount int
 }
 
 func normalizeSourceConfidence(value string) string {
@@ -664,12 +665,16 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(record sessionRecord) sess
 }
 
 func (s *Stub) reconcileCodexSessionFileFinalFromIODPacket(record sessionRecord, packet iod.SessionHistoryResponsePacket) sessionRecord {
+	return s.reconcileCodexSessionFileFinalFromIODPacketLines(record, packet, packet.Lines)
+}
+
+func (s *Stub) reconcileCodexSessionFileFinalFromIODPacketLines(record sessionRecord, packet iod.SessionHistoryResponsePacket, projectionLines []string) sessionRecord {
 	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) || !packet.Complete {
 		return record
 	}
 	items := sessionMessagesFromIODHistory(packet.Messages)
 	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete
-	_ = s.reconcileCodexSessionFileRuntimeProjection(record.identity.SessionID(), packet.Lines)
+	_ = s.reconcileCodexSessionFileRuntimeProjection(record.identity.SessionID(), projectionLines)
 	if !complete {
 		if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
 			updated.runtime = s.runtimeForRecord(updated)
@@ -701,14 +706,17 @@ func (s *Stub) reconcileCodexSessionFileFinalFromCachedIODPacket(record sessionR
 	}
 	sessionID := record.identity.SessionID()
 	key := codexIODHistoryCacheKey(packet)
+	projectionLines := packet.Lines
 	s.codexIODHistoryMu.Lock()
 	if entry, ok := s.codexIODHistory[sessionID]; ok && codexIODHistoryCacheKey(entry.packet) == key && entry.stateAppliedKey == key {
 		s.codexIODHistoryMu.Unlock()
 		return record
+	} else if ok && codexIODHistoryCanResumeStateProjection(entry, packet) {
+		projectionLines = packet.Lines[entry.stateAppliedLineCount:]
 	}
 	s.codexIODHistoryMu.Unlock()
 
-	updated := s.reconcileCodexSessionFileFinalFromIODPacket(record, packet)
+	updated := s.reconcileCodexSessionFileFinalFromIODPacketLines(record, packet, projectionLines)
 	s.markCodexIODHistoryStateApplied(sessionID, key)
 	return updated
 }
@@ -1028,14 +1036,30 @@ func (s *Stub) storeCodexIODHistoryPacketLocked(sessionID session.SessionID, pac
 	}
 	key := codexIODHistoryCacheKey(packet)
 	appliedKey := ""
+	appliedLineCount := 0
 	if entry, ok := s.codexIODHistory[sessionID]; ok && codexIODHistoryCacheKey(entry.packet) == key {
 		appliedKey = entry.stateAppliedKey
+		appliedLineCount = entry.stateAppliedLineCount
+	} else if ok && codexIODHistoryCanResumeStateProjection(entry, packet) {
+		appliedLineCount = entry.stateAppliedLineCount
 	}
 	s.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
-		packet:          packet,
-		checkedAt:       time.Now(),
-		stateAppliedKey: appliedKey,
+		packet:                packet,
+		checkedAt:             time.Now(),
+		stateAppliedKey:       appliedKey,
+		stateAppliedLineCount: appliedLineCount,
 	}
+}
+
+func codexIODHistoryCanResumeStateProjection(entry codexIODHistoryCacheEntry, packet iod.SessionHistoryResponsePacket) bool {
+	applied := entry.stateAppliedLineCount
+	if applied <= 0 || applied > len(entry.packet.Lines) || applied > len(packet.Lines) {
+		return false
+	}
+	if strings.TrimSpace(entry.packet.SourcePath) != strings.TrimSpace(packet.SourcePath) {
+		return false
+	}
+	return entry.packet.Lines[applied-1] == packet.Lines[applied-1]
 }
 
 func (s *Stub) markCodexIODHistoryStateApplied(sessionID session.SessionID, key string) {
@@ -1049,6 +1073,7 @@ func (s *Stub) markCodexIODHistoryStateApplied(sessionID session.SessionID, key 
 		return
 	}
 	entry.stateAppliedKey = key
+	entry.stateAppliedLineCount = len(entry.packet.Lines)
 	s.codexIODHistory[sessionID] = entry
 }
 
