@@ -672,8 +672,7 @@ func (s *Stub) reconcileCodexSessionFileFinalFromIODPacketLines(record sessionRe
 	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) || !packet.Complete {
 		return record
 	}
-	items := sessionMessagesFromIODHistory(packet.Messages)
-	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete
+	complete := codexIODHistoryMessagesHaveAuthoritativeCompletion(packet.Messages) || packet.TaskComplete
 	_ = s.reconcileCodexSessionFileRuntimeProjection(record.identity.SessionID(), projectionLines)
 	if !complete {
 		if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
@@ -682,6 +681,7 @@ func (s *Stub) reconcileCodexSessionFileFinalFromIODPacketLines(record sessionRe
 		}
 		return record
 	}
+	items := sessionMessagesFromIODHistory(packet.Messages)
 	if len(items) > 0 {
 		go s.emitCodexSessionFileLiveCommits(record.identity.SessionID(), items)
 	}
@@ -1178,6 +1178,20 @@ func codexSessionMessagesHaveAuthoritativeCompletion(items []SessionMessage) boo
 			return false
 		}
 		return strings.TrimSpace(stringValue(item.Details["phase"])) == "final_answer"
+	}
+	return false
+}
+
+func codexIODHistoryMessagesHaveAuthoritativeCompletion(messages []iod.SessionHistoryMessage) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if strings.TrimSpace(msg.Text) == "" {
+			continue
+		}
+		if msg.Role != "assistant" {
+			return false
+		}
+		return strings.TrimSpace(stringValue(msg.Details["phase"])) == "final_answer"
 	}
 	return false
 }
