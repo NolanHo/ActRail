@@ -648,15 +648,22 @@ func (s *Stub) reconcileCodexSessionFileCompletion(record sessionRecord, complet
 	s.completeCodexRuntimeFromAuthoritativeSource(record.identity.SessionID())
 }
 
-func (s *Stub) reconcileCodexSessionFileFinalForState(ctx context.Context, record sessionRecord) sessionRecord {
+func (s *Stub) reconcileCodexSessionFileFinalForState(record sessionRecord) sessionRecord {
 	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) {
 		return record
 	}
 	if record.runtime.helper == nil {
 		return record
 	}
-	packet, ok, err := s.codexIODHistorySnapshot(ctx, record)
-	if err != nil || !ok || !packet.Complete {
+	packet, ok := s.cachedCodexIODHistorySnapshot(record)
+	if !ok {
+		return record
+	}
+	return s.reconcileCodexSessionFileFinalFromIODPacket(record, packet)
+}
+
+func (s *Stub) reconcileCodexSessionFileFinalFromIODPacket(record sessionRecord, packet iod.SessionHistoryResponsePacket) sessionRecord {
+	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) || !packet.Complete {
 		return record
 	}
 	items := sessionMessagesFromIODHistory(packet.Messages)
@@ -936,6 +943,28 @@ func (s *Stub) codexIODHistorySnapshot(ctx context.Context, record sessionRecord
 	return packet, true, nil
 }
 
+func (s *Stub) cachedCodexIODHistorySnapshot(record sessionRecord) (iod.SessionHistoryResponsePacket, bool) {
+	if s == nil || record.runtime.helper == nil {
+		return iod.SessionHistoryResponsePacket{}, false
+	}
+	sessionID := record.identity.SessionID()
+	now := time.Now()
+	s.codexIODHistoryMu.Lock()
+	entry, ok := s.codexIODHistory[sessionID]
+	if !ok {
+		s.codexIODHistoryMu.Unlock()
+		s.kickCodexIODHistoryRefresh(record)
+		return iod.SessionHistoryResponsePacket{}, false
+	}
+	packet := entry.packet
+	stale := now.Sub(entry.checkedAt) >= codexIODHistorySnapshotTTL
+	s.codexIODHistoryMu.Unlock()
+	if stale {
+		s.kickCodexIODHistoryRefresh(record)
+	}
+	return packet, true
+}
+
 func (s *Stub) kickCodexIODHistoryRefresh(record sessionRecord) {
 	if s == nil || record.runtime.helper == nil {
 		return
@@ -979,6 +1008,12 @@ func (s *Stub) kickCodexIODHistoryRefresh(record sessionRecord) {
 			checkedAt: time.Now(),
 		}
 		s.codexIODHistoryMu.Unlock()
+		if updated, ok := s.registry.Lookup(sessionID); ok {
+			updated.runtime = s.runtimeForRecord(updated)
+			if updated.runtime.helper != nil && updated.runtime.helper.generationID == helper.generationID {
+				s.reconcileCodexSessionFileFinalFromIODPacket(updated, packet)
+			}
+		}
 	}()
 }
 

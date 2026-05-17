@@ -36,6 +36,7 @@ type runtimeIODHelper struct {
 	commandMu    sync.Mutex
 	commandSeq   uint64
 	commandFunc  func(context.Context, iod.CommandName, json.RawMessage) error
+	historyFunc  func(context.Context) (iod.SessionHistoryResponsePacket, error)
 }
 
 func (h *runtimeIODHelper) command(ctx context.Context, name iod.CommandName, payload json.RawMessage) error {
@@ -115,6 +116,9 @@ func helperRejectedCommandError(packet iod.CommandRejectedPacket) error {
 func (h *runtimeIODHelper) sessionHistory(ctx context.Context) (iod.SessionHistoryResponsePacket, error) {
 	if h == nil {
 		return iod.SessionHistoryResponsePacket{}, errRuntimeInputUnavailable
+	}
+	if h.historyFunc != nil {
+		return h.historyFunc(ctx)
 	}
 	client, err := iodclient.DialContext(ctx, h.manifest.ControlSocketPath, h.dialer)
 	if err != nil {

@@ -332,12 +332,12 @@ func TestCodexSessionTurnAbortedIsTerminalForActiveChecks(t *testing.T) {
 	}
 }
 
-func attachCodexHistoryIODHelperFromFile(t *testing.T, svc *Stub, cfg config.Config, sessionID session.SessionID, sourcePath string) {
+func attachCodexHistoryIODHelperFromFile(t *testing.T, svc *Stub, cfg config.Config, sessionID session.SessionID, sourcePath string) iod.SessionHistoryResponsePacket {
 	t.Helper()
-	attachCodexHistoryIODHelperFromFileWithComplete(t, svc, cfg, sessionID, sourcePath, true)
+	return attachCodexHistoryIODHelperFromFileWithComplete(t, svc, cfg, sessionID, sourcePath, true)
 }
 
-func attachCodexHistoryIODHelperFromFileWithComplete(t *testing.T, svc *Stub, cfg config.Config, sessionID session.SessionID, sourcePath string, complete bool) {
+func attachCodexHistoryIODHelperFromFileWithComplete(t *testing.T, svc *Stub, cfg config.Config, sessionID session.SessionID, sourcePath string, complete bool) iod.SessionHistoryResponsePacket {
 	t.Helper()
 	_ = cfg
 	raw, err := os.ReadFile(sourcePath)
@@ -398,6 +398,79 @@ func attachCodexHistoryIODHelperFromFileWithComplete(t *testing.T, svc *Stub, cf
 			Client:   &iodclient.Client{},
 		},
 	}, nil)
+	return packet
+}
+
+func primeCodexIODHistoryCache(t *testing.T, svc *Stub, sessionID session.SessionID, packet iod.SessionHistoryResponsePacket) {
+	t.Helper()
+	svc.codexIODHistoryMu.Lock()
+	if svc.codexIODHistory == nil {
+		svc.codexIODHistory = map[session.SessionID]codexIODHistoryCacheEntry{}
+	}
+	svc.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{packet: packet, checkedAt: time.Now()}
+	svc.codexIODHistoryMu.Unlock()
+}
+
+func TestSessionStateDoesNotBlockOnCodexIODHistoryCacheMiss(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_state_fast_cache_miss")
+	generationID := mustHelperGenerationID(t, "g_codex_state_fast_cache_miss")
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_state_fast", "t_state_fast", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, "019e084e-63e0-7320-9a4a-84f68f656827")
+	runtimeState.setActiveTurnID("turn-state-fast")
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity: &identity,
+		Backend:  session.BackendCodex,
+		CWD:      "/tmp/codex-state-fast",
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    runtimeState,
+			helper: &runtimeIODHelper{
+				sessionID:    sessionID,
+				generationID: generationID,
+				historyFunc: func(ctx context.Context) (iod.SessionHistoryResponsePacket, error) {
+					select {
+					case <-release:
+						return iod.SessionHistoryResponsePacket{}, nil
+					case <-ctx.Done():
+						return iod.SessionHistoryResponsePacket{}, ctx.Err()
+					}
+				},
+			},
+		},
+		Transport: SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+
+	start := time.Now()
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
+		t.Fatalf("SessionState() elapsed = %s, want cache-miss path to return without waiting for IOD history", elapsed)
+	}
+	if !state.Busy {
+		t.Fatal("SessionState().Busy = false, want current in-memory busy state while history refresh runs")
+	}
 }
 
 func TestSessionMessagesCodexHistoryUsesSourceLineSeqForIncrementalResume(t *testing.T) {
@@ -787,7 +860,8 @@ func TestSessionStateCodexFinalAnswerClearsRuntimeAgentRunning(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
-	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	packet := attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
 	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}
@@ -838,7 +912,8 @@ func TestSessionStateCodexTaskCompleteClearsRuntimeAgentRunning(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
-	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	packet := attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
 	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
 		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
 	}
@@ -895,7 +970,8 @@ func TestSessionStateCodexTaskCompleteWithoutMessagesClearsRuntimeAgentRunning(t
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
-	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	packet := attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
 	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
 		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
 	}
@@ -947,7 +1023,8 @@ func TestSessionStateCodexTaskStartedAfterTaskCompleteKeepsRunning(t *testing.T)
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
-	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	packet := attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
 	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
 		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
 	}
@@ -1050,7 +1127,8 @@ func TestSessionStateCodexFinalAnswerDoesNotClearNewerUserTurn(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
-	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	packet := attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
 	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
 		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
 	}
@@ -1101,7 +1179,8 @@ func TestSessionStateCodexFinalAnswerMirrorsLiveCommits(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
-	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	packet := attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
 	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}
@@ -1166,7 +1245,8 @@ func TestSessionStateCodexFinalAnswerDoesNotBlockOnLiveCommitPublish(t *testing.
 	}); err != nil {
 		t.Fatalf("registry.Create() error = %v", err)
 	}
-	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	packet := attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
 	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}

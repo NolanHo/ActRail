@@ -518,7 +518,7 @@ func (s *Stub) SessionState(ctx context.Context, req SessionStateRequest) (Sessi
 	if err != nil {
 		return SessionStateResponse{}, err
 	}
-	record = s.reconcileCodexSessionFileFinalForState(ctx, record)
+	record = s.reconcileCodexSessionFileFinalForState(record)
 	return s.sessionStateResponse(record), nil
 }
 
