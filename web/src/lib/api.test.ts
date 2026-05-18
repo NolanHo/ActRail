@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { sendRealtimeCommand } from "../domains/realtime/client";
-import { CommandResponseSchema, ListSessionsRequestSchema, SessionMessagesResponseSchema } from "../gen/actrail/v1/transport_pb";
+import { CommandResponseSchema, ListSessionsRequestSchema, SessionMessagesRequestSchema, SessionMessagesResponseSchema } from "../gen/actrail/v1/transport_pb";
 import { api } from "./api";
 import { getJson, HttpError, subscribeUnauthorized } from "./http";
 import type { LiveSessionResponse, MessagesResponse, SessionBootstrapResponse, SessionDetailsResponse, SessionUiStateResponse, SessionsResponse, WorkspaceResponse } from "./types";
@@ -509,6 +509,27 @@ describe("api", () => {
       method: "POST",
       headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
     }));
+  });
+
+  it("omits zero after_seq from Connect proto message requests", async () => {
+    const body = toBinary(SessionMessagesResponseSchema, create(SessionMessagesResponseSchema, {
+      eventsJson: [],
+      tailSeq: 0n,
+    }));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listMessages("session-1", false, undefined, 0, undefined, 200);
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const requestBody = init.body as Uint8Array;
+    const decoded = fromBinary(SessionMessagesRequestSchema, requestBody);
+    expect(decoded.afterSeq).toBeUndefined();
+    expect(decoded.limit).toBe(200);
   });
 
   it("builds the init messages REST route when Connect is disabled", async () => {

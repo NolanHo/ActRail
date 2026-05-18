@@ -517,23 +517,27 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ? (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, state.offsetsBySessionId[sessionId], undefined, undefined, undefined, runtimeId, undefined)
             : (api as { getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number, runtimeId?: string | null, bridgeOffset?: number): Promise<LiveSessionResponse> }).getLiveSession(sessionId, state.offsetsBySessionId[sessionId]);
 
-        if (!replace && typeof state.offsetsBySessionId[sessionId] === "number" && Number.isFinite(state.offsetsBySessionId[sessionId])) {
+        const hasKnownOffset = typeof state.offsetsBySessionId[sessionId] === "number" && Number.isFinite(state.offsetsBySessionId[sessionId]);
+        if (!replace && hasKnownOffset) {
           const statePayload = await loadState();
           if (!stateProbeNeedsMessages(sessionId, statePayload)) {
             applyStatePayload(sessionId, statePayload);
             return;
           }
+          const currentOffset = state.offsetsBySessionId[sessionId];
+          const safeAfter = currentOffset > 0 ? currentOffset : undefined;
           const messagePayload = runtimeId
-            ? await api.listMessages(sessionId, false, undefined, state.offsetsBySessionId[sessionId], undefined, undefined, runtimeId)
-            : await api.listMessages(sessionId, false, undefined, state.offsetsBySessionId[sessionId]);
+            ? await api.listMessages(sessionId, safeAfter === undefined, undefined, safeAfter, undefined, INITIAL_HISTORY_PAGE_SIZE, runtimeId, true)
+            : await api.listMessages(sessionId, safeAfter === undefined, undefined, safeAfter, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true);
           applySnapshot(sessionId, messagePayload, statePayload, false);
           return;
         }
 
+        const messageInit = replace || !hasKnownOffset;
         const [messagePayload, statePayload] = await Promise.all([
           runtimeId
-            ? api.listMessages(sessionId, replace, undefined, undefined, undefined, INITIAL_HISTORY_PAGE_SIZE, runtimeId, true)
-            : api.listMessages(sessionId, replace, undefined, undefined, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true),
+            ? api.listMessages(sessionId, messageInit, undefined, undefined, undefined, INITIAL_HISTORY_PAGE_SIZE, runtimeId, true)
+            : api.listMessages(sessionId, messageInit, undefined, undefined, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true),
           loadState(),
         ]);
         const loaded = !replace || normalizeSnapshotEvents(messagePayload, statePayload, bufferAssistantOutput).length > 0 || !scheduleEmptyInitialHistoryRetry(sessionId, runtimeId);

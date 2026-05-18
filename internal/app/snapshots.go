@@ -357,6 +357,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		if !req.IncludeToolEvents {
 			response.Items = annotateHiddenToolActivitySummaries(response.Items, sessionMessagesFromCommittedItems(record.transcript.Items()))
 		}
+		response.Items, response.HasMore, response.NextBeforeSeq = limitSessionMessagesAfterPage(response.Items, req.Limit)
 		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
 	}
 	page := visibleTranscriptHistory(record.transcript, req)

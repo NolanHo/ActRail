@@ -373,8 +373,8 @@ export async function fetchConnectSessionMessages(config: ConnectTransportConfig
   if (wireFormat === "proto") {
     const body = toBinary(SessionMessagesRequestSchema, create(SessionMessagesRequestSchema, {
       sessionId: options.sessionId,
-      ...(typeof options.after === "number" ? { afterSeq: BigInt(Math.floor(options.after)) } : {}),
-      ...(typeof options.before === "number" ? { beforeSeq: BigInt(Math.floor(options.before)) } : {}),
+      ...(typeof options.after === "number" && Number.isFinite(options.after) && options.after > 0 ? { afterSeq: BigInt(Math.floor(options.after)) } : {}),
+      ...(typeof options.before === "number" && Number.isFinite(options.before) && options.before > 0 ? { beforeSeq: BigInt(Math.floor(options.before)) } : {}),
       limit: options.limit || 0,
       init: options.init === true,
       deferred: options.deferred === true,

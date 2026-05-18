@@ -214,7 +214,7 @@ func TestSessionMessagesLoadsCodexHistoryFromSourcePathWithoutHelper(t *testing.
 		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
 	}
 
-	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10})
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 2})
 	if err != nil {
 		t.Fatalf("SessionMessages() error = %v", err)
 	}
@@ -233,6 +233,124 @@ func TestSessionMessagesLoadsCodexHistoryFromSourcePathWithoutHelper(t *testing.
 	if !svc.isRuntimeAgentRunning(sessionID) {
 		t.Fatal("runtimeAgentRunning = false, want true for incomplete source history")
 	}
+}
+
+func TestSessionMessagesCodexSourcePathDoesNotBlockOnSlowHelper(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_fast_helper")
+	generationID := mustHelperGenerationID(t, "g_codex_file_fast_helper")
+	threadID := "019e2107-ca2f-7e73-994d-8726965f8c8c"
+	lines := makeLargeCodexSessionLines(threadID, "/tmp/codex-fast")
+	lines = append(lines,
+		`{"timestamp":"2026-05-13T04:10:19.000Z","type":"session_meta","payload":{"id":"019e2107-ca2f-7e73-994d-8726965f8c8c","cwd":"/tmp/codex-fast","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-13T04:10:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"fast prompt"}}`,
+		`{"timestamp":"2026-05-13T04:11:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"fast answer","phase":"final_answer"}}`,
+	)
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, lines)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_fast_file", "t_fast_file", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-fast",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    runtimeState,
+			helper: &runtimeIODHelper{
+				sessionID:    sessionID,
+				generationID: generationID,
+				historyFunc: func(ctx context.Context) (iod.SessionHistoryResponsePacket, error) {
+					select {
+					case <-release:
+						return iod.SessionHistoryResponsePacket{}, nil
+					case <-ctx.Done():
+						return iod.SessionHistoryResponsePacket{}, ctx.Err()
+					}
+				},
+			},
+		},
+		Transport: SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+
+	start := time.Now()
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 2})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
+		t.Fatalf("SessionMessages() elapsed = %s, want local source page without waiting for helper", elapsed)
+	}
+	got := messageRolesAndText(messages.Items)
+	want := []string{"user:fast prompt", "assistant:fast answer"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionMessagesCodexSourcePageSupportsBeforeSeq(t *testing.T) {
+	threadID := "019e2107-ca2f-7e73-994d-8726965f8c8d"
+	lines := makeLargeCodexSessionLines(threadID, "/tmp/codex-before")
+	lines = append(lines,
+		`{"timestamp":"2026-05-13T04:10:19.000Z","type":"session_meta","payload":{"id":"019e2107-ca2f-7e73-994d-8726965f8c8d","cwd":"/tmp/codex-before","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-13T04:10:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"first prompt"}}`,
+		`{"timestamp":"2026-05-13T04:11:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"first answer","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-13T04:12:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"second prompt"}}`,
+		`{"timestamp":"2026-05-13T04:13:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"second answer","phase":"final_answer"}}`,
+	)
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, lines)
+
+	latest, _, ok, err := codexSessionMessagesPageFromFile(context.Background(), sourcePath, SessionMessagesRequest{Limit: 2})
+	if err != nil || !ok {
+		t.Fatalf("latest page = ok:%v err:%v", ok, err)
+	}
+	got := messageRolesAndText(latest.Items)
+	wantLatest := []string{"user:second prompt", "assistant:second answer"}
+	if strings.Join(got, "\n") != strings.Join(wantLatest, "\n") {
+		t.Fatalf("latest messages = %#v, want %#v", got, wantLatest)
+	}
+	if !latest.HasMore || latest.NextBeforeSeq == nil {
+		t.Fatalf("latest paging = %+v, want older cursor", latest)
+	}
+
+	older, _, ok, err := codexSessionMessagesPageFromFile(context.Background(), sourcePath, SessionMessagesRequest{BeforeSeq: latest.NextBeforeSeq, Limit: 2})
+	if err != nil || !ok {
+		t.Fatalf("older page = ok:%v err:%v", ok, err)
+	}
+	got = messageRolesAndText(older.Items)
+	wantOlder := []string{"user:first prompt", "assistant:first answer"}
+	if strings.Join(got, "\n") != strings.Join(wantOlder, "\n") {
+		t.Fatalf("older messages = %#v, want %#v", got, wantOlder)
+	}
+}
+
+func makeLargeCodexSessionLines(threadID string, cwd string) []string {
+	lines := []string{
+		`{"timestamp":"2026-05-13T04:00:00.000Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":"` + cwd + `","originator":"actrail"}}`,
+	}
+	padding := strings.Repeat("x", 2048)
+	for i := 0; i < 700; i++ {
+		lines = append(lines, fmt.Sprintf(`{"timestamp":"2026-05-13T04:00:01.000Z","type":"response_item","payload":{"type":"reasoning","summary":[{"text":"%s-%03d"}]}}`, padding, i))
+	}
+	return lines
 }
 
 func TestWarmCodexSourceHistoriesCachesSourceFile(t *testing.T) {

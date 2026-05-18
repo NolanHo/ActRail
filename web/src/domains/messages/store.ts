@@ -295,7 +295,8 @@ export function createMessagesStore(): MessagesStore {
       try {
         const after = init ? undefined : state.offsetsBySessionId[sessionId];
         const activeSeq = init ? 0 : activeTurnStartSeq(state.bySessionId[sessionId] ?? []);
-        const data = normalizeMessagePage(await api.listMessages(sessionId, init, undefined, after, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true, undefined, activeSeq));
+        const safeAfter = typeof after === "number" && Number.isFinite(after) && after > 0 ? after : undefined;
+        const data = normalizeMessagePage(await api.listMessages(sessionId, init || safeAfter === undefined, undefined, safeAfter, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true, undefined, activeSeq));
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }

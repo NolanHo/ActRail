@@ -177,6 +177,17 @@ describe("createMessagesStore", () => {
     expect(store.getState().offsetsBySessionId.s1).toBe(1);
   });
 
+  it("uses a bounded latest page when polling from a zero offset", async () => {
+    vi.mocked(api.listMessages).mockResolvedValueOnce({ events: [{ id: "m5", seq: 5 }], offset: 5 } as never);
+    const store = createMessagesStore();
+
+    await store.poll("s1");
+
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
+    expect(store.getState().bySessionId.s1).toEqual([{ id: "m5", seq: 5 }]);
+    expect(store.getState().offsetsBySessionId.s1).toBe(5);
+  });
+
   it("keeps transcript cardinality stable across repeated snapshot polls with stable ids", async () => {
     vi.mocked(api.listMessages)
       .mockResolvedValueOnce({ events: [{ id: "m1", role: "user", seq: 1 }], offset: 1 } as never)

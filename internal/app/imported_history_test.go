@@ -158,6 +158,62 @@ func TestSessionMessagesAddsOpenToolActivitySummaryWhenToolsHidden(t *testing.T)
 	}
 }
 
+func TestSessionMessagesAfterSeqRespectsLimit(t *testing.T) {
+	items := []SessionMessage{
+		{Seq: 1, Role: "user", Kind: "message", Text: "prompt 1"},
+		{Seq: 2, Role: "assistant", Kind: "message", Text: "answer 1"},
+		{Seq: 3, Role: "user", Kind: "message", Text: "prompt 2"},
+		{Seq: 4, Role: "assistant", Kind: "message", Text: "answer 2"},
+		{Seq: 5, Role: "assistant", Kind: "message", Text: "answer 3"},
+	}
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{AfterSeq: testUint64Ptr(0), Limit: 2})
+	if len(response.Items) != 2 {
+		t.Fatalf("len(response.Items) = %d, want bounded page of 2", len(response.Items))
+	}
+	if response.Items[0].Seq != 4 || response.Items[1].Seq != 5 {
+		t.Fatalf("response.Items = %+v, want latest seq 4 and 5", response.Items)
+	}
+	if !response.HasMore || response.NextBeforeSeq == nil || *response.NextBeforeSeq != 4 {
+		t.Fatalf("response paging = hasMore %v next %v, want older cursor 4", response.HasMore, response.NextBeforeSeq)
+	}
+	if response.TailSeq != 5 {
+		t.Fatalf("TailSeq = %d, want 5", response.TailSeq)
+	}
+}
+
+func TestSessionMessagesFastPaginationAnnotatesWindowedToolActivity(t *testing.T) {
+	items := make([]SessionMessage, 0, 1105)
+	for i := 1; i <= 1100; i++ {
+		role := "assistant"
+		if i%2 == 1 {
+			role = "user"
+		}
+		items = append(items, SessionMessage{Seq: uint64(i), Role: role, Kind: "message", Text: "history"})
+	}
+	items = append(items,
+		SessionMessage{Seq: 1101, Role: "user", Kind: "message", Text: "latest prompt", TS: 10},
+		SessionMessage{Seq: 1102, Kind: "tool", Type: "tool", Name: "read", ToolCallID: "call-read", TS: 11},
+		SessionMessage{Seq: 1103, Kind: "tool_result", Type: "tool_result", ToolCallID: "call-read", TS: 13},
+		SessionMessage{Seq: 1104, Role: "assistant", Kind: "message", Text: "latest answer", TS: 14},
+	)
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Limit: 2})
+	if len(response.Items) != 2 || response.Items[0].Seq != 1101 || response.Items[1].Seq != 1104 {
+		t.Fatalf("response.Items = %+v, want latest user and assistant", response.Items)
+	}
+	if !response.HasMore || response.NextBeforeSeq == nil || *response.NextBeforeSeq != 1101 {
+		t.Fatalf("response paging = hasMore %v next %v, want older cursor 1101", response.HasMore, response.NextBeforeSeq)
+	}
+	summary, ok := response.Items[1].Details[toolActivitySummaryDetailsKey].(sessionToolActivitySummary)
+	if !ok {
+		t.Fatalf("assistant details = %+v, want hidden tool activity summary", response.Items[1].Details)
+	}
+	if summary.TotalTools != 1 || summary.OK != 1 {
+		t.Fatalf("tool activity summary = %+v, want one successful tool", summary)
+	}
+}
+
 func TestSessionMessagesByIDReturnsDeferredToolDetails(t *testing.T) {
 	items := []SessionMessage{
 		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},

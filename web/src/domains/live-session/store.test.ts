@@ -114,7 +114,7 @@ describe("createLiveSessionStore", () => {
     await liveStore.loadInitial("s1");
     await liveStore.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s1", false, undefined, 1, undefined, 200, undefined, true);
     expect(messagesStore.getState().bySessionId.s1).toEqual([
       { seq: 1, role: "assistant", text: "durable" },
       { seq: 2, role: "assistant", text: "committed" },
@@ -124,6 +124,25 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(13);
     expect(liveStore.getState().uiStreamCursorsBySessionId.s1).toBe(19);
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(2);
+  });
+
+  it("uses a bounded latest page when polling from a zero offset", async () => {
+    vi.mocked(api.listMessages).mockResolvedValueOnce({
+      items: [{ seq: 5, role: "assistant", text: "latest" }],
+      tail_seq: 5,
+    } as never);
+    vi.mocked(api.getSessionState).mockResolvedValueOnce({
+      busy: false,
+      tail_seq: 5,
+      resume_cursors: { session: "5", ui: "1" },
+    } as never);
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    await liveStore.poll("s1");
+
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 200, undefined, true);
+    expect(liveStore.getState().offsetsBySessionId.s1).toBe(5);
   });
 
   it("keeps transcript cardinality stable across repeated post-send snapshot polls", async () => {

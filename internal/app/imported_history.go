@@ -294,6 +294,13 @@ func paginateSessionMessagesForRequest(items []SessionMessage, req SessionMessag
 	if len(items) > 0 {
 		rawTailSeq = items[len(items)-1].Seq
 	}
+	if canFastPaginateSessionMessages(items, req) {
+		response := fastPaginateSessionMessagesForRequest(items, req)
+		if rawTailSeq > response.TailSeq {
+			response.TailSeq = rawTailSeq
+		}
+		return response
+	}
 	visibleItems := filterSessionMessagesForRequest(items, req)
 	response := paginateSessionMessages(visibleItems, req.AfterSeq, req.BeforeSeq, req.Limit)
 	if rawTailSeq > response.TailSeq {
@@ -310,6 +317,96 @@ func paginateSessionMessagesForRequest(items []SessionMessage, req SessionMessag
 		response.Items[i] = deferSessionMessageForRequest(response.Items[i], req, response.TailSeq, activeTurnStartSeq)
 	}
 	return response
+}
+
+func canFastPaginateSessionMessages(items []SessionMessage, req SessionMessagesRequest) bool {
+	return len(items) > 1000 && req.Limit > 0 && !req.IncludeToolEvents && !req.IncludeToolDetails
+}
+
+func fastPaginateSessionMessagesForRequest(items []SessionMessage, req SessionMessagesRequest) SessionMessagesResponse {
+	upper := len(items)
+	if req.AfterSeq != nil {
+		upper = len(items)
+	} else if req.BeforeSeq != nil {
+		upper = sessionMessageIndexBeforeSeq(items, *req.BeforeSeq)
+	}
+	start, hasMore := fastSessionMessageWindowStart(items, req, upper)
+	windowStart := start
+	if windowStart > 0 {
+		windowStart = previousConversationAnchorIndex(items, windowStart)
+	}
+	window := append([]SessionMessage(nil), items[windowStart:upper]...)
+	visibleItems := filterSessionMessagesForRequest(window, req)
+	response := paginateSessionMessages(visibleItems, req.AfterSeq, req.BeforeSeq, req.Limit)
+	if hasMore && len(response.Items) > 0 {
+		response.HasMore = true
+		next := response.Items[0].Seq
+		response.NextBeforeSeq = &next
+	}
+	if len(items) > 0 {
+		response.TailSeq = items[len(items)-1].Seq
+	}
+	if !req.Deferred {
+		return response
+	}
+	activeTurnStartSeq := req.ActiveTurnStartSeq
+	if activeTurnStartSeq == 0 {
+		activeTurnStartSeq = activeTurnStartSeqForMessages(items)
+	}
+	for i := range response.Items {
+		response.Items[i] = deferSessionMessageForRequest(response.Items[i], req, response.TailSeq, activeTurnStartSeq)
+	}
+	return response
+}
+
+func sessionMessageIndexBeforeSeq(items []SessionMessage, before uint64) int {
+	upper := 0
+	for idx, item := range items {
+		if item.Seq >= before {
+			return idx
+		}
+		upper = idx + 1
+	}
+	return upper
+}
+
+func fastSessionMessageWindowStart(items []SessionMessage, req SessionMessagesRequest, upper int) (int, bool) {
+	if upper < 0 {
+		upper = 0
+	}
+	if upper > len(items) {
+		upper = len(items)
+	}
+	if req.AfterSeq != nil {
+		start := 0
+		for idx, item := range items[:upper] {
+			if item.Seq > *req.AfterSeq {
+				start = idx
+				break
+			}
+			start = idx + 1
+		}
+		if req.Limit > 0 && upper-start > req.Limit {
+			return upper - req.Limit, true
+		}
+		return start, false
+	}
+	if req.Limit > 0 && upper > req.Limit {
+		return upper - req.Limit, true
+	}
+	return 0, false
+}
+
+func previousConversationAnchorIndex(items []SessionMessage, start int) int {
+	if start <= 0 || start > len(items) {
+		return start
+	}
+	for idx := start - 1; idx >= 0; idx-- {
+		if items[idx].Role == "user" || items[idx].Role == "assistant" {
+			return idx
+		}
+	}
+	return start
 }
 
 func filterSessionMessagesForRequest(items []SessionMessage, req SessionMessagesRequest) []SessionMessage {
@@ -429,7 +526,12 @@ func paginateSessionMessages(items []SessionMessage, after *uint64, before *uint
 				page = append(page, item)
 			}
 		}
-		response := SessionMessagesResponse{Items: page}
+		page, hasMore, nextBefore := limitSessionMessagesAfterPage(page, limit)
+		response := SessionMessagesResponse{
+			Items:         page,
+			HasMore:       hasMore,
+			NextBeforeSeq: nextBefore,
+		}
 		if len(items) > 0 {
 			response.TailSeq = items[len(items)-1].Seq
 		}
@@ -463,6 +565,16 @@ func paginateSessionMessages(items []SessionMessage, after *uint64, before *uint
 		response.NextBeforeSeq = &next
 	}
 	return response
+}
+
+func limitSessionMessagesAfterPage(items []SessionMessage, limit int) ([]SessionMessage, bool, *uint64) {
+	if limit <= 0 || len(items) <= limit {
+		return items, false, nil
+	}
+	start := len(items) - limit
+	page := append([]SessionMessage(nil), items[start:]...)
+	nextBefore := page[0].Seq
+	return page, true, &nextBefore
 }
 
 func (s *Stub) loadPIAuthoritativeHistory(ctx context.Context, record sessionRecord, dataDir string, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
@@ -880,6 +992,9 @@ func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRe
 	if record.identity.Backend() != session.BackendCodex {
 		return SessionMessagesResponse{}, false, nil
 	}
+	if response, ok, err := s.loadCodexSourceFileHistoryPage(ctx, record, req); ok {
+		return response, true, err
+	}
 	if response, ok, err := s.loadCodexIODHistory(ctx, record, req); ok {
 		return response, true, err
 	}
@@ -914,6 +1029,28 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	s.reconcileCodexSessionFileCompletion(record, complete)
 	s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
 	return paginateSessionMessagesForRequest(items, req), true, nil
+}
+
+func (s *Stub) loadCodexSourceFileHistoryPage(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
+	path, threadID, err := s.codexSessionFileForRecord(record)
+	if err != nil {
+		return SessionMessagesResponse{}, true, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return SessionMessagesResponse{}, false, nil
+	}
+	response, complete, ok, err := codexSessionMessagesPageFromFile(ctx, path, req)
+	if err != nil || !ok {
+		return response, ok, err
+	}
+	if !codexSourceFileHistoryPageUsable(record, threadID, path, response.TailSeq > 0) {
+		return SessionMessagesResponse{}, false, nil
+	}
+	if complete && !record.state.Busy() && !record.runtimeAgentRunning {
+		s.reconcileCodexSessionFileCompletion(record, true)
+	}
+	s.rememberCodexThreadBinding(record, threadID, path)
+	return response, true, nil
 }
 
 func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
@@ -1266,6 +1403,20 @@ func codexSessionFileHistoryUsableStatus(record sessionRecord, hasItems bool, co
 		return false
 	}
 	return record.transcript.Len() == 0 || hasItems
+}
+
+func codexSourceFileHistoryPageUsable(record sessionRecord, threadID string, sourcePath string, hasItems bool) bool {
+	if !hasItems {
+		return false
+	}
+	resolved := strings.TrimSpace(threadID)
+	if resolved == "" || strings.TrimSpace(record.importedBackendSessionID) != resolved {
+		return false
+	}
+	if strings.TrimSpace(record.importedSourceConfidence) != sourceConfidenceExact {
+		return false
+	}
+	return filepath.Clean(strings.TrimSpace(record.importedSourcePath)) == filepath.Clean(strings.TrimSpace(sourcePath))
 }
 
 func codexSessionFileHasFinalAnswer(items []SessionMessage) bool {
