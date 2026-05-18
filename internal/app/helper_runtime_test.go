@@ -486,6 +486,47 @@ func TestRuntimeLauncherForceNewIODReusesHealthyCodexAttach(t *testing.T) {
 	}
 }
 
+func TestRuntimeLauncherAttachedCodexIODKnownThreadSkipsInitializeBootstrap(t *testing.T) {
+	sessionID := mustSessionID(t, "s_attached_codex_known_thread")
+	generationID := mustHelperGenerationID(t, "g_attached_codex_known_thread")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			t.Fatal("resolveIODHelperBinPath called; healthy same-session Codex IOD should be reused before launching")
+			return "", nil
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return &RuntimeHelperBinding{GenerationID: generationID}, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{
+		SessionID:     sessionID,
+		Backend:       session.BackendCodex,
+		CWD:           t.TempDir(),
+		CodexThreadID: "thread-existing",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if runtime.codex == nil {
+		t.Fatal("runtime.codex = nil")
+	}
+	initialized, threadID, activeTurnID := runtime.codex.snapshot()
+	if !initialized || threadID != "thread-existing" || activeTurnID != "" {
+		t.Fatalf("runtime codex snapshot = initialized:%v thread:%q turn:%q, want attached initialized thread", initialized, threadID, activeTurnID)
+	}
+	if requests := runtime.codex.bootstrapRequests(); len(requests) != 0 {
+		t.Fatalf("bootstrapRequests() after attached existing IOD = %#v, want no initialize/resume", requests)
+	}
+}
+
 func TestRuntimeLauncherRejectsMismatchedCodexIODHistoryOnAttach(t *testing.T) {
 	sessionID := mustSessionID(t, "s_mismatched_codex_attach")
 	generationID := mustHelperGenerationID(t, "g_mismatched_codex_attach")

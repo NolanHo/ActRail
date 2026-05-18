@@ -593,10 +593,14 @@ func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runti
 		_ = client.Close()
 		return sessionRuntime{}, err
 	}
+	codex := newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID)
+	if codex != nil && strings.TrimSpace(req.CodexThreadID) != "" {
+		codex.attachInitializedThread(req.CodexThreadID)
+	}
 	binding := &RuntimeHelperBinding{GenerationID: generationID}
 	return sessionRuntime{
 		protocol:            runtimeProtocolForBackend(req.Backend),
-		codex:               newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID),
+		codex:               codex,
 		helper:              helper,
 		attachedExistingIOD: true,
 		helperBinding:       binding,

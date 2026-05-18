@@ -39,10 +39,11 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 	}
 	client := helper.streamClient
 	reconnectWait := runtimeHelperReconnectInitialWait
+	readAnyPacket := false
 	for {
 		packet, err := client.ReadPacket(context.Background())
 		if err != nil {
-			if errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) && readAnyPacket {
 				return
 			}
 			if !s.runtimeHelperStreamCurrent(sessionID, helper.generationID, client) {
@@ -65,6 +66,7 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 			}
 			continue
 		}
+		readAnyPacket = true
 		reconnectWait = runtimeHelperReconnectInitialWait
 		if err := s.applyRuntimeHelperPacket(sessionID, backend, helper.generationID, packet); err != nil {
 			continue
