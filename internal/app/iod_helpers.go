@@ -356,6 +356,9 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 		}
 		_, hasAttachment := attachments[sessionID]
 		if !hasAttachment && startupTransportAlreadyTerminal(record) {
+			if record.identity.Backend() == session.BackendCodex {
+				_ = s.cleanupStartupCodexOrphans(sessionID, record)
+			}
 			continue
 		}
 		transport, orphanCandidate := s.startupTransportForSession(sessionID, record, bindings, attachments, fencedBySession[sessionID])
@@ -380,10 +383,45 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 		if orphanCandidate != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
 			_, _ = cleanupOrphanChildFromManifest(cleanupCtx, *orphanCandidate)
+			_, _ = cleanupOrphanChildrenForSocket(cleanupCtx, childSocketPathForManifest(*orphanCandidate), orphanCandidate.HelperPID)
 			cancel()
 		}
 	}
 	return nil
+}
+
+func (s *Stub) cleanupStartupCodexOrphans(sessionID session.SessionID, record sessionRecord) error {
+	generationID := strings.TrimSpace(record.transport.GenerationID)
+	if generationID == "" {
+		if binding, err := record.runtime.CurrentHelperBinding(sessionID); err == nil && binding != nil {
+			generationID = binding.GenerationID.String()
+		}
+	}
+	if generationID == "" {
+		return nil
+	}
+	helperGenerationID, err := iod.NewGenerationID(generationID)
+	if err != nil {
+		return nil
+	}
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(s.cfg.Storage.DataDir), sessionID, helperGenerationID)
+	manifest, err := iod.ReadGenerationManifest(manifestPath)
+	if err != nil {
+		return nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
+	defer cancel()
+	_, _ = cleanupOrphanChildFromManifest(cleanupCtx, manifest)
+	_, _ = cleanupOrphanChildrenForSocket(cleanupCtx, childSocketPathForManifest(manifest), manifest.HelperPID)
+	return nil
+}
+
+func childSocketPathForManifest(manifest iod.GenerationManifest) string {
+	controlSocketPath := strings.TrimSpace(manifest.ControlSocketPath)
+	if controlSocketPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(controlSocketPath), "child.sock")
 }
 
 func startupTransportAlreadyTerminal(record sessionRecord) bool {

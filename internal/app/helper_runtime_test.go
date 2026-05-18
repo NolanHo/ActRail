@@ -199,6 +199,41 @@ func TestCleanupOrphanChildFromManifestKillsDeadHelperProcessGroup(t *testing.T)
 	assertEventuallyPIDGone(t, childPID)
 }
 
+func TestCleanupOrphanChildrenForSocketFindsStaleGroups(t *testing.T) {
+	childSocketPath := filepath.Join(t.TempDir(), "child.sock")
+	helperPID, childPID := startOrphanedChildProcessGroupForCommand(t, fmt.Sprintf("python3 -c 'import time; time.sleep(60)' app-server --listen unix://%s", childSocketPath))
+
+	ctx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
+	defer cancel()
+	cleaned, err := cleanupOrphanChildrenForSocket(ctx, childSocketPath, 0)
+	if err != nil {
+		t.Fatalf("cleanupOrphanChildrenForSocket() error = %v", err)
+	}
+	if cleaned != 1 {
+		t.Fatalf("cleanupOrphanChildrenForSocket() = %d, want 1 for helper pgid %d", cleaned, helperPID)
+	}
+	assertEventuallyPIDGone(t, childPID)
+}
+
+func TestCleanupOrphanChildrenForSocketSkipsLiveHelperGroup(t *testing.T) {
+	childSocketPath := filepath.Join(t.TempDir(), "child.sock")
+	helperPID, childPID, stop := startLiveHelperProcessGroupForCommand(t, fmt.Sprintf("python3 -c 'import time; time.sleep(60)' app-server --listen unix://%s", childSocketPath))
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
+	defer cancel()
+	cleaned, err := cleanupOrphanChildrenForSocket(ctx, childSocketPath, 0)
+	if err != nil {
+		t.Fatalf("cleanupOrphanChildrenForSocket() error = %v", err)
+	}
+	if cleaned != 0 {
+		t.Fatalf("cleanupOrphanChildrenForSocket() = %d, want 0 for live helper pgid %d", cleaned, helperPID)
+	}
+	if !processPIDAlive(childPID) {
+		t.Fatalf("child pid %d was killed while helper pgid %d is still alive", childPID, helperPID)
+	}
+}
+
 func TestServerReattach(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
@@ -1626,8 +1661,13 @@ func writeHelperManifestWithPID(t *testing.T, manifestPath string, sessionID ses
 
 func startOrphanedChildProcessGroup(t *testing.T) (int, int) {
 	t.Helper()
+	return startOrphanedChildProcessGroupForCommand(t, "sleep 60")
+}
+
+func startOrphanedChildProcessGroupForCommand(t *testing.T, childCommand string) (int, int) {
+	t.Helper()
 	childPIDPath := filepath.Join(t.TempDir(), "child.pid")
-	cmd := exec.Command("setsid", "sh", "-c", fmt.Sprintf("sleep 60 & echo $! > %s", childPIDPath))
+	cmd := exec.Command("setsid", "sh", "-c", fmt.Sprintf("%s & echo $! > %s", childCommand, childPIDPath))
 	if err := cmd.Start(); err != nil {
 		t.Skipf("setsid unavailable for orphan process group test: %v", err)
 	}
@@ -1660,6 +1700,33 @@ func startOrphanedChildProcessGroup(t *testing.T) (int, int) {
 		_ = syscall.Kill(childPID, syscall.SIGKILL)
 	})
 	return helperPID, childPID
+}
+
+func startLiveHelperProcessGroupForCommand(t *testing.T, childCommand string) (int, int, func()) {
+	t.Helper()
+	childPIDPath := filepath.Join(t.TempDir(), "child.pid")
+	cmd := exec.Command("setsid", "sh", "-c", fmt.Sprintf("%s & echo $! > %s; sleep 60", childCommand, childPIDPath))
+	if err := cmd.Start(); err != nil {
+		t.Skipf("setsid unavailable for live helper process group test: %v", err)
+	}
+	helperPID := cmd.Process.Pid
+	raw := waitForFileBody(t, childPIDPath)
+	childPID, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		_ = syscall.Kill(-helperPID, syscall.SIGKILL)
+		_ = cmd.Wait()
+		t.Fatalf("parse child pid %q error = %v", raw, err)
+	}
+	if !processPIDAlive(childPID) {
+		_ = syscall.Kill(-helperPID, syscall.SIGKILL)
+		_ = cmd.Wait()
+		t.Fatalf("live child pid %d is not alive", childPID)
+	}
+	stop := func() {
+		_ = syscall.Kill(-helperPID, syscall.SIGKILL)
+		_ = cmd.Wait()
+	}
+	return helperPID, childPID, stop
 }
 
 func waitForFileBody(t *testing.T, path string) string {

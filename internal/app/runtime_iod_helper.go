@@ -1,12 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -307,6 +309,68 @@ func cleanupOrphanChildFromManifest(ctx context.Context, manifest iod.Generation
 		case <-ticker.C:
 		}
 	}
+}
+
+func cleanupOrphanChildrenForSocket(ctx context.Context, childSocketPath string, keepHelperPID int) (int, error) {
+	trimmed := strings.TrimSpace(childSocketPath)
+	if trimmed == "" {
+		return 0, nil
+	}
+	matches, err := orphanChildCandidatesForSocket(trimmed, keepHelperPID)
+	if err != nil {
+		return 0, err
+	}
+	cleaned := 0
+	for _, manifest := range matches {
+		ok, err := cleanupOrphanChildFromManifest(ctx, manifest)
+		if err != nil {
+			return cleaned, err
+		}
+		if ok {
+			cleaned++
+		}
+	}
+	return cleaned, nil
+}
+
+func orphanChildCandidatesForSocket(childSocketPath string, keepHelperPID int) ([]iod.GenerationManifest, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, fmt.Errorf("read /proc: %w", err)
+	}
+	matches := make([]iod.GenerationManifest, 0)
+	seenGroups := make(map[int]struct{})
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		if err != nil || !bytes.Contains(cmdline, []byte(childSocketPath)) || !bytes.Contains(cmdline, []byte("app-server")) {
+			continue
+		}
+		pgid, err := syscall.Getpgid(pid)
+		if err != nil || pgid <= 0 || pgid == keepHelperPID {
+			continue
+		}
+		if _, ok := seenGroups[pgid]; ok {
+			continue
+		}
+		seenGroups[pgid] = struct{}{}
+		if processPIDAlive(pgid) {
+			continue
+		}
+		childPID := pid
+		proof, err := iod.NewHelloProof(pgid, &childPID, filepath.Join(filepath.Dir(childSocketPath), "transport.wal"), filepath.Join(filepath.Dir(childSocketPath), "io"), float64(time.Now().Unix()))
+		if err != nil {
+			continue
+		}
+		matches = append(matches, iod.GenerationManifest{HelloProof: proof})
+	}
+	return matches, nil
 }
 
 func (s *Stub) cleanupOrphanChildAsync(manifest iod.GenerationManifest) {
