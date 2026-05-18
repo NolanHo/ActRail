@@ -520,6 +520,46 @@ func TestSendRejectsWhenCodexAuthoritativeHistoryIsActive(t *testing.T) {
 	}
 }
 
+func TestCodexInterruptInvalidatesIODHistoryCache(t *testing.T) {
+	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "codex")
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	record.runtime = svc.runtimeForRecord(record)
+	record.runtime.codex.markInitialized()
+	record.runtime.codex.setThreadID("thread-cache-interrupt")
+	if _, err := svc.setSessionTransport(sessionID, transportSnapshotCodexAttached()); err != nil {
+		t.Fatalf("setSessionTransport() error = %v", err)
+	}
+	svc.codexIODHistoryMu.Lock()
+	svc.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
+		packet: iod.SessionHistoryResponsePacket{
+			SourcePath: "stale.jsonl",
+			Lines:      []string{"stale"},
+			Warmed:     true,
+			Complete:   true,
+		},
+	}
+	svc.codexIODHistoryGen[sessionID] = 4
+	svc.codexIODHistoryMu.Unlock()
+
+	if _, err := svc.Interrupt(context.Background(), InterruptRequest{SessionID: sessionID}); err != nil {
+		t.Fatalf("Interrupt() error = %v", err)
+	}
+
+	svc.codexIODHistoryMu.Lock()
+	_, cached := svc.codexIODHistory[sessionID]
+	gen := svc.codexIODHistoryGen[sessionID]
+	svc.codexIODHistoryMu.Unlock()
+	if cached {
+		t.Fatal("codex IOD history cache still present after interrupt")
+	}
+	if gen <= 4 {
+		t.Fatalf("codex IOD history generation = %d, want > 4", gen)
+	}
+}
+
 func TestStubControlMethodsMutateRuntimeAndSessionState(t *testing.T) {
 	svc, sessionID, handle, pty := newControlFixture(t)
 

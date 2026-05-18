@@ -680,6 +680,9 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 		releaseNewRuntime()
 		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
 	}
+	if updated.identity.Backend() == session.BackendCodex {
+		s.invalidateCodexControlCaches(updated.identity.SessionID())
+	}
 	if !reusedHelper {
 		s.shutdownPreviousHelperGeneration(identity.SessionID(), previousBinding)
 	}

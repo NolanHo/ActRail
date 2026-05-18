@@ -204,12 +204,13 @@ func DecodeSendCommand(frame RawFrame) (SendCommand, error) {
 	}
 	var payload struct {
 		SessionID string `json:"session_id"`
+		RuntimeID string `json:"runtime_id"`
 		Text      string `json:"text"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return SendCommand{}, fmt.Errorf("decode send payload: %w", err)
 	}
-	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeSend)
+	sessionID, err := resolvePayloadRouteID(payload.SessionID, payload.RuntimeID, route, FrameTypeSend)
 	if err != nil {
 		return SendCommand{}, err
 	}
@@ -227,12 +228,13 @@ func DecodeEnqueueCommand(frame RawFrame) (EnqueueCommand, error) {
 	}
 	var payload struct {
 		SessionID string `json:"session_id"`
+		RuntimeID string `json:"runtime_id"`
 		Text      string `json:"text"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return EnqueueCommand{}, fmt.Errorf("decode enqueue payload: %w", err)
 	}
-	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeEnqueue)
+	sessionID, err := resolvePayloadRouteID(payload.SessionID, payload.RuntimeID, route, FrameTypeEnqueue)
 	if err != nil {
 		return EnqueueCommand{}, err
 	}
@@ -250,11 +252,12 @@ func DecodeQueueCancelCommand(frame RawFrame) (QueueCancelCommand, error) {
 	}
 	var payload struct {
 		SessionID string `json:"session_id"`
+		RuntimeID string `json:"runtime_id"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return QueueCancelCommand{}, fmt.Errorf("decode queue cancel payload: %w", err)
 	}
-	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeQueueCancel)
+	sessionID, err := resolvePayloadRouteID(payload.SessionID, payload.RuntimeID, route, FrameTypeQueueCancel)
 	if err != nil {
 		return QueueCancelCommand{}, err
 	}
@@ -268,11 +271,12 @@ func DecodeInterruptCommand(frame RawFrame) (InterruptCommand, error) {
 	}
 	var payload struct {
 		SessionID string `json:"session_id"`
+		RuntimeID string `json:"runtime_id"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return InterruptCommand{}, fmt.Errorf("decode interrupt payload: %w", err)
 	}
-	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeInterrupt)
+	sessionID, err := resolvePayloadRouteID(payload.SessionID, payload.RuntimeID, route, FrameTypeInterrupt)
 	if err != nil {
 		return InterruptCommand{}, err
 	}
@@ -286,13 +290,14 @@ func DecodeUIResponseCommand(frame RawFrame) (UIResponseCommand, error) {
 	}
 	var payload struct {
 		SessionID  string          `json:"session_id"`
+		RuntimeID  string          `json:"runtime_id"`
 		ResponseTo string          `json:"response_to"`
 		Value      json.RawMessage `json:"value"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return UIResponseCommand{}, fmt.Errorf("decode ui.response payload: %w", err)
 	}
-	sessionID, err := validatePayloadSessionID(payload.SessionID, route, FrameTypeUIResponse)
+	sessionID, err := resolvePayloadRouteID(payload.SessionID, payload.RuntimeID, route, FrameTypeUIResponse)
 	if err != nil {
 		return UIResponseCommand{}, err
 	}
@@ -329,6 +334,22 @@ func decodeSessionCommand(frame RawFrame, want FrameType, kind session.StreamKin
 		return "", "", session.StreamRoute{}, fmt.Errorf("%s stream must target session stream kind %q", want, kind)
 	}
 	return frame.RequestID, stream, route, nil
+}
+
+func resolvePayloadRouteID(rawSessionID, rawRuntimeID string, route session.StreamRoute, command FrameType) (session.SessionID, error) {
+	sessionID, err := validatePayloadSessionID(rawSessionID, route, command)
+	if err != nil {
+		return "", err
+	}
+	runtimeID := strings.TrimSpace(rawRuntimeID)
+	if runtimeID == "" {
+		return sessionID, nil
+	}
+	routeID, err := session.ParseSessionID(runtimeID)
+	if err != nil {
+		return "", fmt.Errorf("%s payload runtime_id: %w", command, err)
+	}
+	return routeID, nil
 }
 
 func validatePayloadSessionID(raw string, route session.StreamRoute, command FrameType) (session.SessionID, error) {

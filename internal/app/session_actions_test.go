@@ -1278,6 +1278,61 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	}
 }
 
+func TestStubRestartCodexSessionClearsControlCaches(t *testing.T) {
+	svc, _, sessionID, runtimeID := newSessionActionFixtureForBackend(t, "codex")
+	svc.codexIODHistoryMu.Lock()
+	svc.codexIODHistory[sessionID] = codexIODHistoryCacheEntry{
+		packet: iod.SessionHistoryResponsePacket{
+			SourcePath:   "stale.jsonl",
+			Lines:        []string{"stale"},
+			TaskComplete: true,
+			Warmed:       true,
+			Complete:     true,
+		},
+	}
+	svc.codexIODHistoryGen[sessionID] = 7
+	svc.codexIODHistoryMu.Unlock()
+	svc.codexLiveMirrorMu.Lock()
+	svc.codexLiveMirror[sessionID] = 99
+	svc.codexLiveMirrorMu.Unlock()
+	svc.trackCodexOutboundPrompt(sessionID, "stale prompt")
+	svc.trackCodexCapacityRetryPrompt(sessionID, "stale retry")
+
+	if _, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: runtimeID}); err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+
+	svc.codexIODHistoryMu.Lock()
+	_, cached := svc.codexIODHistory[sessionID]
+	gen := svc.codexIODHistoryGen[sessionID]
+	svc.codexIODHistoryMu.Unlock()
+	if cached {
+		t.Fatal("codex IOD history cache still present after restart")
+	}
+	if gen <= 7 {
+		t.Fatalf("codex IOD history generation = %d, want > 7", gen)
+	}
+	if mirrored := svc.codexLiveMirroredTail(sessionID); mirrored != 0 {
+		t.Fatalf("codex live mirrored tail = %d, want cleared", mirrored)
+	}
+	if prompt := svc.codexOutboundPromptText(sessionID); prompt != "" {
+		t.Fatalf("codex outbound prompt = %q, want cleared", prompt)
+	}
+	svc.codexRetryMu.Lock()
+	_, retryPromptCached := svc.codexCapacityRetry[sessionID]
+	svc.codexRetryMu.Unlock()
+	if retryPromptCached {
+		t.Fatal("codex capacity retry prompt still cached after restart")
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.TailSeq >= 99 {
+		t.Fatalf("SessionState().TailSeq = %d, want stale live mirror ignored", state.TailSeq)
+	}
+}
+
 func TestStubRestartSessionSupportsCodexSessions(t *testing.T) {
 	svc, _, sessionID, runtimeID := newSessionActionFixtureForBackend(t, "codex")
 

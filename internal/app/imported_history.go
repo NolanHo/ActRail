@@ -786,6 +786,15 @@ func (s *Stub) codexLiveMirroredTail(sessionID session.SessionID) uint64 {
 	return s.codexLiveMirror[sessionID]
 }
 
+func (s *Stub) clearCodexLiveMirror(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	s.codexLiveMirrorMu.Lock()
+	delete(s.codexLiveMirror, sessionID)
+	s.codexLiveMirrorMu.Unlock()
+}
+
 func codexFileTurnID(item SessionMessage) string {
 	if item.Details != nil {
 		if turnID := strings.TrimSpace(stringValue(item.Details["turn_id"])); turnID != "" {
@@ -1153,6 +1162,16 @@ func (s *Stub) invalidateSessionHistoryCaches(sessionID session.SessionID) {
 	}
 	s.codexIODHistoryGen[sessionID]++
 	s.codexIODHistoryMu.Unlock()
+}
+
+func (s *Stub) invalidateCodexControlCaches(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	s.invalidateSessionHistoryCaches(sessionID)
+	s.clearCodexLiveMirror(sessionID)
+	s.clearCodexOutboundPromptForSession(sessionID)
+	s.clearCodexCapacityRetryPromptForSession(sessionID)
 }
 
 func (s *Stub) invalidateSessionHistoryCachesForRuntimeMutation(sessionID session.SessionID) {

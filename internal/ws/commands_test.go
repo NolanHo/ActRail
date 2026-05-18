@@ -94,6 +94,22 @@ func TestDecodeSendCommand(t *testing.T) {
 	}
 }
 
+func TestDecodeSendCommandUsesRuntimeIDRoute(t *testing.T) {
+	cmd, err := DecodeSendCommand(RawFrame{
+		Type:      FrameTypeSend,
+		RequestID: "req_send_1",
+		TS:        1760000000,
+		Stream:    "session:s_123",
+		Payload:   []byte(`{"session_id":"s_123","runtime_id":"r_123","text":"hello"}`),
+	})
+	if err != nil {
+		t.Fatalf("DecodeSendCommand() error = %v", err)
+	}
+	if cmd.SessionID.String() != "r_123" {
+		t.Fatalf("SessionID = %q, want runtime route r_123", cmd.SessionID)
+	}
+}
+
 func TestDecodeEnqueueCommand(t *testing.T) {
 	cmd, err := DecodeEnqueueCommand(RawFrame{
 		Type:      FrameTypeEnqueue,
@@ -123,6 +139,22 @@ func TestDecodeInterruptCommand(t *testing.T) {
 	}
 	if cmd.RequestID != "req_interrupt_1" || cmd.SessionID.String() != "s_123" {
 		t.Fatalf("cmd = %#v", cmd)
+	}
+}
+
+func TestDecodeInterruptCommandUsesRuntimeIDRoute(t *testing.T) {
+	cmd, err := DecodeInterruptCommand(RawFrame{
+		Type:      FrameTypeInterrupt,
+		RequestID: "req_interrupt_1",
+		TS:        1760000000,
+		Stream:    "session:s_123",
+		Payload:   []byte(`{"session_id":"s_123","runtime_id":"r_123"}`),
+	})
+	if err != nil {
+		t.Fatalf("DecodeInterruptCommand() error = %v", err)
+	}
+	if cmd.SessionID.String() != "r_123" {
+		t.Fatalf("SessionID = %q, want runtime route r_123", cmd.SessionID)
 	}
 }
 

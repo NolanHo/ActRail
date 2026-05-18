@@ -414,6 +414,7 @@ func (s *Stub) Interrupt(ctx context.Context, req InterruptRequest) (InterruptRe
 		s.holdPIRPCIdle(req.SessionID, record.runtime.helper.generationID)
 	}
 	if record.identity.Backend() == session.BackendCodex && record.runtime.protocol == runtimeProtocolCodexRPC {
+		s.invalidateSessionHistoryCaches(req.SessionID)
 		if err := s.syncCodexRuntimeActivity(req.SessionID, "interrupt", true); err != nil {
 			return InterruptResponse{}, err
 		}
