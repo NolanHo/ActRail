@@ -15,6 +15,8 @@ const (
 	defaultWALFilename      = "transport.wal"
 	defaultSocketFilename   = "io"
 	defaultChildSocketName  = "child.sock"
+	defaultHelperStdoutName = "helper.stdout.log"
+	defaultHelperStderrName = "helper.stderr.log"
 )
 
 // GenerationPaths groups the per-generation runtime artifacts owned by one helper.
@@ -24,6 +26,8 @@ type GenerationPaths struct {
 	WALPath           string
 	ControlSocketPath string
 	ChildSocketPath   string
+	HelperStdoutPath  string
+	HelperStderrPath  string
 }
 
 func NewGenerationPaths(root string, sessionID session.SessionID, generationID GenerationID) (GenerationPaths, error) {
@@ -48,6 +52,8 @@ func NewGenerationPaths(root string, sessionID session.SessionID, generationID G
 		WALPath:           filepath.Join(runtimeDir, defaultWALFilename),
 		ControlSocketPath: filepath.Join(runtimeDir, defaultSocketFilename),
 		ChildSocketPath:   filepath.Join(runtimeDir, defaultChildSocketName),
+		HelperStdoutPath:  filepath.Join(runtimeDir, defaultHelperStdoutName),
+		HelperStderrPath:  filepath.Join(runtimeDir, defaultHelperStderrName),
 	}
 	if err := paths.Validate(); err != nil {
 		return GenerationPaths{}, err
@@ -65,6 +71,8 @@ func (p GenerationPaths) Validate() error {
 		{label: "wal path", value: p.WALPath},
 		{label: "control socket path", value: p.ControlSocketPath},
 		{label: "child socket path", value: p.ChildSocketPath},
+		{label: "helper stdout path", value: p.HelperStdoutPath},
+		{label: "helper stderr path", value: p.HelperStderrPath},
 	} {
 		if strings.TrimSpace(item.value) == "" {
 			return fmt.Errorf("%s is required", item.label)

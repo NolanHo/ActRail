@@ -486,11 +486,14 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	if err := removeRuntimeGenerationArtifacts(paths.RuntimeDir); err != nil {
 		return sessionRuntime{}, err
 	}
+	if err := paths.EnsureDir(); err != nil {
+		return sessionRuntime{}, err
+	}
 	childLaunchSpec, err := l.childLaunchSpecForGeneration(req, &paths)
 	if err != nil {
 		return sessionRuntime{}, err
 	}
-	helperLaunchSpec, err := l.helperLaunchSpec(req, helperBinPath, generationID, childLaunchSpec)
+	helperLaunchSpec, err := l.helperLaunchSpec(req, helperBinPath, generationID, paths, childLaunchSpec)
 	if err != nil {
 		return sessionRuntime{}, err
 	}
@@ -703,7 +706,7 @@ func detachedPipeLaunchSpec(spec process.LaunchSpec) (process.LaunchSpec, error)
 	return process.NewLaunchSpec(spec.Command(), spec.CWD().String(), spec.Environment(), ioSpec, process.Detached())
 }
 
-func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helperBinPath string, generationID iod.GenerationID, childLaunchSpec process.LaunchSpec) (process.LaunchSpec, error) {
+func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helperBinPath string, generationID iod.GenerationID, paths iod.GenerationPaths, childLaunchSpec process.LaunchSpec) (process.LaunchSpec, error) {
 	commandArgs := []string{
 		helperFlagSessionID, req.SessionID.String(),
 		helperFlagGenerationID, generationID.String(),
@@ -736,7 +739,7 @@ func (l processRuntimeLauncher) helperLaunchSpec(req runtimeLaunchRequest, helpe
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}
-	ioSpec, err := process.PipeIO(process.LogPaths{})
+	ioSpec, err := process.PipeIO(process.LogPaths{Stdout: paths.HelperStdoutPath, Stderr: paths.HelperStderrPath})
 	if err != nil {
 		return process.LaunchSpec{}, err
 	}

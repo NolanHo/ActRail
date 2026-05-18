@@ -469,11 +469,11 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 	}
 	codexChild := mustLaunchSpecForHelperContractTest(t, "/tmp/codex", []string{"-c", `model_reasoning_effort="high"`, "app-server", "--listen", "unix://" + paths.ChildSocketPath}, "/tmp/project-codex", childEnv, ioSpec)
 
-	piSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendPI, CWD: "/tmp/project-pi"}, "/tmp/actrail-iod", generationID, piChild)
+	piSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendPI, CWD: "/tmp/project-pi"}, "/tmp/actrail-iod", generationID, paths, piChild)
 	if err != nil {
 		t.Fatalf("helperLaunchSpec(pi) error = %v", err)
 	}
-	codexSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: "/tmp/project-codex", CodexThreadID: "thread-helper-contract"}, "/tmp/actrail-iod", generationID, codexChild)
+	codexSpec, err := launcher.helperLaunchSpec(runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: "/tmp/project-codex", CodexThreadID: "thread-helper-contract"}, "/tmp/actrail-iod", generationID, paths, codexChild)
 	if err != nil {
 		t.Fatalf("helperLaunchSpec(codex) error = %v", err)
 	}
@@ -488,6 +488,12 @@ func TestHelperLaunchSpecEncodesTransparentChildLaunchContract(t *testing.T) {
 	}
 	if !piSpec.Detached() || !codexSpec.Detached() {
 		t.Fatalf("helper launch detached = (%t, %t), want both true", piSpec.Detached(), codexSpec.Detached())
+	}
+	if got := piSpec.IO().Logs(); got.Stdout != paths.HelperStdoutPath || got.Stderr != paths.HelperStderrPath {
+		t.Fatalf("helper log paths = %+v, want stdout %q stderr %q", got, paths.HelperStdoutPath, paths.HelperStderrPath)
+	}
+	if got := codexSpec.IO().Logs(); got.Stdout != paths.HelperStdoutPath || got.Stderr != paths.HelperStderrPath {
+		t.Fatalf("codex helper log paths = %+v, want stdout %q stderr %q", got, paths.HelperStdoutPath, paths.HelperStderrPath)
 	}
 	if codexSpec.CWD().String() != "/tmp/project-codex" {
 		t.Fatalf("codex helper cwd = %q, want %q", codexSpec.CWD().String(), "/tmp/project-codex")

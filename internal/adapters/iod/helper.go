@@ -312,6 +312,15 @@ func (h *Helper) Run(ctx context.Context) error {
 	if handle == nil {
 		return fmt.Errorf("start helper child: nil process handle")
 	}
+	cleanupStartedChild := true
+	defer func() {
+		if cleanupStartedChild {
+			_ = handle.Kill()
+			waitCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_, _ = handle.Wait(waitCtx)
+		}
+	}()
 	if h.childIOMode == ChildIOModePTY && handle.PTY() == nil {
 		return fmt.Errorf("helper child must expose PTY transport")
 	}
@@ -370,6 +379,7 @@ func (h *Helper) Run(ctx context.Context) error {
 			return err
 		}
 	}
+	cleanupStartedChild = false
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

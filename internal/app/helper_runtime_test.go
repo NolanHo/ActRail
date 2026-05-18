@@ -140,14 +140,7 @@ func TestStartupHealthMarksCodexMissingHelperWithLiveChildBroken(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	generationID := mustHelperGenerationID(t, "g_codex_orphan_child")
-	child := exec.Command("sleep", "60")
-	if err := child.Start(); err != nil {
-		t.Fatalf("start child process error = %v", err)
-	}
-	t.Cleanup(func() {
-		_ = child.Process.Kill()
-		_, _ = child.Process.Wait()
-	})
+	helperPID, childPID := startOrphanedChildProcessGroup(t)
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
@@ -158,7 +151,7 @@ func TestStartupHealthMarksCodexMissingHelperWithLiveChildBroken(t *testing.T) {
 	}
 	sessionID := mustSessionID(t, created.Session.SessionID)
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
-	_ = writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, os.Getpid(), 1760000000)
+	_ = writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, helperPID, 1760000000)
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%q) error = %v", manifestPath, err)
@@ -167,7 +160,6 @@ func TestStartupHealthMarksCodexMissingHelperWithLiveChildBroken(t *testing.T) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		t.Fatalf("Unmarshal(%q) error = %v", manifestPath, err)
 	}
-	childPID := child.Process.Pid
 	manifest.ChildPID = &childPID
 	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
 		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
@@ -184,6 +176,27 @@ func TestStartupHealthMarksCodexMissingHelperWithLiveChildBroken(t *testing.T) {
 	if state.Transport.State != SessionTransportStateBroken || state.Transport.Reason != "helper_missing_child_alive" || !state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
 		t.Fatalf("SessionState().Transport = %+v, want broken reset_required orphan child generation %q", state.Transport, generationID)
 	}
+	assertEventuallyPIDGone(t, childPID)
+}
+
+func TestCleanupOrphanChildFromManifestKillsDeadHelperProcessGroup(t *testing.T) {
+	helperPID, childPID := startOrphanedChildProcessGroup(t)
+	sessionID := mustSessionID(t, "s_cleanup_orphan_child")
+	generationID := mustHelperGenerationID(t, "g_cleanup_orphan_child")
+	manifestPath := filepath.Join(t.TempDir(), "generation-manifest.json")
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, helperPID, 1760000000)
+	manifest.ChildPID = &childPID
+
+	ctx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
+	defer cancel()
+	cleaned, err := cleanupOrphanChildFromManifest(ctx, manifest)
+	if err != nil {
+		t.Fatalf("cleanupOrphanChildFromManifest() error = %v", err)
+	}
+	if !cleaned {
+		t.Fatal("cleanupOrphanChildFromManifest() cleaned = false, want true")
+	}
+	assertEventuallyPIDGone(t, childPID)
 }
 
 func TestServerReattach(t *testing.T) {
@@ -1611,6 +1624,73 @@ func writeHelperManifestWithPID(t *testing.T, manifestPath string, sessionID ses
 	return manifest
 }
 
+func startOrphanedChildProcessGroup(t *testing.T) (int, int) {
+	t.Helper()
+	childPIDPath := filepath.Join(t.TempDir(), "child.pid")
+	cmd := exec.Command("setsid", "sh", "-c", fmt.Sprintf("sleep 60 & echo $! > %s", childPIDPath))
+	if err := cmd.Start(); err != nil {
+		t.Skipf("setsid unavailable for orphan process group test: %v", err)
+	}
+	helperPID := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("orphan helper command exited with error: %v", err)
+	}
+	raw := waitForFileBody(t, childPIDPath)
+	childPID, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		t.Fatalf("parse child pid %q error = %v", raw, err)
+	}
+	if !processPIDAlive(childPID) {
+		t.Fatalf("orphan child pid %d is not alive", childPID)
+	}
+	if pgid, err := syscall.Getpgid(childPID); err != nil {
+		t.Fatalf("Getpgid(%d) error = %v", childPID, err)
+	} else if pgid != helperPID {
+		_ = syscall.Kill(childPID, syscall.SIGKILL)
+		t.Skipf("orphan child pgid = %d, want helper pid %d", pgid, helperPID)
+	}
+	if sid, err := processSessionID(childPID); err != nil {
+		t.Fatalf("processSessionID(%d) error = %v", childPID, err)
+	} else if sid != helperPID {
+		_ = syscall.Kill(childPID, syscall.SIGKILL)
+		t.Skipf("orphan child sid = %d, want helper pid %d", sid, helperPID)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-helperPID, syscall.SIGKILL)
+		_ = syscall.Kill(childPID, syscall.SIGKILL)
+	})
+	return helperPID, childPID
+}
+
+func waitForFileBody(t *testing.T, path string) string {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		raw, err := os.ReadFile(path)
+		if err == nil && strings.TrimSpace(string(raw)) != "" {
+			return string(raw)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %q", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func assertEventuallyPIDGone(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if !processPIDAlive(pid) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pid %d is still alive", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func startReplayHelper(t *testing.T, manifest iod.GenerationManifest, script helperReplayScript) func() {
 	t.Helper()
 	if err := os.RemoveAll(manifest.ControlSocketPath); err != nil {
@@ -1872,11 +1952,25 @@ func serveReplayHelperConn(conn net.Conn, manifest iod.GenerationManifest, scrip
 			return err
 		}
 	}
+	if len(script.LivePackets) > 0 {
+		var raw json.RawMessage
+		for {
+			if err := dec.Decode(&raw); err != nil {
+				if helperConnClosed(err) {
+					return nil
+				}
+				return err
+			}
+		}
+	}
 	return nil
 }
 
 func helperConnClosed(err error) bool {
-	return errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection")
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		strings.Contains(err.Error(), "use of closed network connection") ||
+		strings.Contains(err.Error(), "connection reset by peer")
 }
 
 func fakeRuntimeConfigWithHelperBinding(binding RuntimeHelperBinding) RuntimeConfig {

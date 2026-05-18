@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
-	"io"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -28,9 +26,10 @@ type runtimeHelperProjector struct {
 }
 
 type helperReadErrorResult struct {
-	reattached bool
-	retry      bool
-	client     *iodclient.Client
+	reattached      bool
+	retry           bool
+	client          *iodclient.Client
+	orphanCandidate *iod.GenerationManifest
 }
 
 func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Backend, helper *runtimeIODHelper) {
@@ -39,13 +38,9 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 	}
 	client := helper.streamClient
 	reconnectWait := runtimeHelperReconnectInitialWait
-	readAnyPacket := false
 	for {
 		packet, err := client.ReadPacket(context.Background())
 		if err != nil {
-			if errors.Is(err, io.EOF) && readAnyPacket {
-				return
-			}
 			if !s.runtimeHelperStreamCurrent(sessionID, helper.generationID, client) {
 				return
 			}
@@ -66,7 +61,6 @@ func (s *Stub) readRuntimeHelper(sessionID session.SessionID, backend session.Ba
 			}
 			continue
 		}
-		readAnyPacket = true
 		reconnectWait = runtimeHelperReconnectInitialWait
 		if err := s.applyRuntimeHelperPacket(sessionID, backend, helper.generationID, packet); err != nil {
 			continue
@@ -268,7 +262,7 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 			_ = s.markHelperTransportReconnecting(sessionID, generationID)
 			return helperReadErrorResult{retry: true}
 		}
-		return helperReadErrorResult{}
+		return helperReadErrorResult{orphanCandidate: &manifest}
 	}
 	if attachment.Client != nil && attachment.Client != client {
 		_ = attachment.Client.Close()

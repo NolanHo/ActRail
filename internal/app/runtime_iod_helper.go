@@ -18,7 +18,10 @@ import (
 	"actrail/internal/domain/session"
 )
 
-const helperStopTimeout = 3 * time.Second
+const (
+	helperStopTimeout             = 3 * time.Second
+	helperMissingChildAliveReason = "helper_missing_child_alive"
+)
 
 type runtimeIODHelper struct {
 	handle       process.Handle
@@ -183,6 +186,11 @@ func (h *runtimeIODHelper) shutdown(ctx context.Context) error {
 		return err
 	}
 	if !verified {
+		if cleaned, err := cleanupOrphanChildFromManifest(shutdownCtx, h.manifest); err != nil {
+			return err
+		} else if cleaned {
+			return nil
+		}
 		return nil
 	}
 	if _, err := os.FindProcess(h.helperPID); err != nil {
@@ -264,6 +272,98 @@ func processPIDAlive(pid int) bool {
 		return !errors.Is(err, syscall.ESRCH)
 	}
 	return true
+}
+
+func cleanupOrphanChildFromManifest(ctx context.Context, manifest iod.GenerationManifest) (bool, error) {
+	if manifest.HelperPID <= 0 || manifest.ChildPID == nil || *manifest.ChildPID <= 0 {
+		return false, nil
+	}
+	if manifest.ChildPID != nil && *manifest.ChildPID == manifest.HelperPID {
+		return false, nil
+	}
+	if processPIDAlive(manifest.HelperPID) {
+		return false, nil
+	}
+	childPID := *manifest.ChildPID
+	if !processPIDAlive(childPID) {
+		return false, nil
+	}
+	signaled, err := signalOrphanChild(manifest.HelperPID, childPID)
+	if err != nil {
+		return false, err
+	}
+	if !signaled {
+		return false, nil
+	}
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !processPIDAlive(childPID) {
+			return true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return true, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Stub) cleanupOrphanChildAsync(manifest iod.GenerationManifest) {
+	go func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
+		defer cancel()
+		_, _ = cleanupOrphanChildFromManifest(cleanupCtx, manifest)
+	}()
+}
+
+func signalOrphanChild(helperPID int, childPID int) (bool, error) {
+	if childPID <= 0 {
+		return false, os.ErrProcessDone
+	}
+	if helperPID <= 0 {
+		return false, nil
+	}
+	if ok, err := childBelongsToDeadHelperGroup(helperPID, childPID); err != nil || !ok {
+		return false, err
+	}
+	if err := syscall.Kill(-helperPID, syscall.SIGKILL); err == nil || errors.Is(err, syscall.ESRCH) {
+		return true, nil
+	} else {
+		return false, fmt.Errorf("kill orphan child process group %d: %w", helperPID, err)
+	}
+}
+
+func childBelongsToDeadHelperGroup(helperPID int, childPID int) (bool, error) {
+	pgid, err := syscall.Getpgid(childPID)
+	if err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get orphan child pgid %d: %w", childPID, err)
+	}
+	if pgid != helperPID {
+		return false, nil
+	}
+	sid, err := processSessionID(childPID)
+	if err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get orphan child sid %d: %w", childPID, err)
+	}
+	return sid == helperPID, nil
+}
+
+func processSessionID(pid int) (int, error) {
+	if pid <= 0 {
+		return 0, os.ErrProcessDone
+	}
+	sid, _, errno := syscall.Syscall(syscall.SYS_GETSID, uintptr(pid), 0, 0)
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(sid), nil
 }
 
 func shutdownIODManifest(ctx context.Context, manifest iod.GenerationManifest) error {

@@ -216,6 +216,8 @@ func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend sessio
 		if state.Transport.State == SessionTransportStateBroken {
 			if result := s.tryRedialHelperAfterReadError(sessionID, backend, generationID, state.Transport); result.reattached || result.retry {
 				return result
+			} else if result.orphanCandidate != nil {
+				s.cleanupOrphanChildAsync(*result.orphanCandidate)
 			}
 		}
 		return helperReadErrorResult{}
@@ -231,6 +233,11 @@ func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend sessio
 	}
 	if result := s.tryRedialHelperAfterReadError(sessionID, backend, generationID, state.Transport); result.reattached || result.retry {
 		return result
+	} else if result.orphanCandidate != nil {
+		if err := s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String()); err == nil {
+			s.cleanupOrphanChildAsync(*result.orphanCandidate)
+		}
+		return helperReadErrorResult{}
 	}
 	_ = s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String())
 	return helperReadErrorResult{}

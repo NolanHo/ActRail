@@ -286,6 +286,65 @@ func TestCurrentHelperReadLoopEOFMarksAttachLost(t *testing.T) {
 	}
 }
 
+func TestCurrentHelperReadLoopEOFAfterPacketMarksAttachLost(t *testing.T) {
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_current_helper_eof_after_packet")
+	clientConn, serverConn := net.Pipe()
+	client := iodclient.NewClient(clientConn)
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime = sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			helper:   &runtimeIODHelper{generationID: generationID, streamClient: client},
+			codex:    newCodexRuntimeState(session.BackendCodex),
+		}
+		record.runtime.codex.markInitialized()
+		record.runtime.codex.setThreadID("thread-helper-eof-after-packet")
+		record.transport = transportSnapshotAttached(generationID)
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		svc.readRuntimeHelper(sessionID, session.BackendCodex, &runtimeIODHelper{
+			generationID: generationID,
+			streamClient: client,
+		})
+		close(done)
+	}()
+	fact, err := iod.NewHelperFact(iod.FactHelperStart, nil, json.RawMessage(`{"helper_pid":1}`))
+	if err != nil {
+		t.Fatalf("NewHelperFact() error = %v", err)
+	}
+	packet, err := iod.NewStatePacket(sessionID, generationID, fact)
+	if err != nil {
+		t.Fatalf("NewStatePacket() error = %v", err)
+	}
+	if err := json.NewEncoder(serverConn).Encode(packet); err != nil {
+		t.Fatalf("Encode(state packet) error = %v", err)
+	}
+	_ = serverConn.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("current read loop did not exit after post-packet EOF")
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateBroken || !state.Transport.ResetRequired || state.Transport.Reason != iod.GenerationBreakAttachLost.String() {
+		t.Fatalf("SessionState().Transport = %+v, want reset-required attach_lost after post-packet EOF", state.Transport)
+	}
+}
+
 func TestFreshHelperEOFRedialsFromRuntimeManifest(t *testing.T) {
 	var hello iod.HelloPacket
 	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -540,4 +599,40 @@ func TestBrokenAttachLostCanRedialLiveCodexHelper(t *testing.T) {
 	if state.RuntimeState == string(codexRuntimePhaseFailed) {
 		t.Fatalf("SessionState().RuntimeState = %q, want non-failed", state.RuntimeState)
 	}
+}
+
+func TestBrokenHelperReadErrorCleansOrphanCandidate(t *testing.T) {
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_broken_orphan_cleanup")
+	helperPID, childPID := startOrphanedChildProcessGroup(t)
+	manifest := writeHelperManifestWithPID(t, t.TempDir()+"/generation-manifest.json", sessionID, generationID, helperPID, 1760000000)
+	manifest.ChildPID = &childPID
+	svc.helpers.Set(sessionID, attachedHelper{
+		Binding:  helperGenerationBinding{SessionID: sessionID, GenerationID: generationID},
+		Manifest: manifest,
+	})
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime = sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			helper:   &runtimeIODHelper{generationID: generationID},
+			codex:    newCodexRuntimeState(session.BackendCodex),
+		}
+		record.runtime.codex.markInitialized()
+		record.runtime.codex.setThreadID("thread-broken-orphan-cleanup")
+		record.transport = transportSnapshotBroken(generationID, iod.GenerationBreakAttachLost.String(), true)
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+
+	result := svc.handleHelperReadError(sessionID, session.BackendCodex, generationID, errors.New("already broken stream closed"))
+	if result.reattached || result.retry {
+		t.Fatalf("handleHelperReadError() = %+v, want no redial retry", result)
+	}
+	assertEventuallyPIDGone(t, childPID)
 }
