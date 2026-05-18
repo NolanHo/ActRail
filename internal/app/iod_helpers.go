@@ -358,7 +358,7 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 		if !hasAttachment && startupTransportAlreadyTerminal(record) {
 			continue
 		}
-		transport := startupTransportForSession(sessionID, bindings, attachments, fencedBySession[sessionID])
+		transport := s.startupTransportForSession(sessionID, record, bindings, attachments, fencedBySession[sessionID])
 		if transport.State == "" {
 			continue
 		}
@@ -406,6 +406,67 @@ func startupTransportForSession(sessionID session.SessionID, bindings map[sessio
 		return transport
 	}
 	return SessionTransportSnapshot{State: SessionTransportStateEnded, Reason: "helper_binding_missing"}
+}
+
+func (s *Stub) startupTransportForSession(sessionID session.SessionID, record sessionRecord, bindings map[session.SessionID]helperGenerationBinding, attachments map[session.SessionID]attachedHelper, fences []helperFence) SessionTransportSnapshot {
+	transport := startupTransportForSession(sessionID, bindings, attachments, fences)
+	if transport.State == SessionTransportStateEnded && transport.Reason == "helper_not_running" && record.identity.Backend() == session.BackendCodex {
+		if replacement, ok := s.helperMissingCodexChildTransportWithGeneration(sessionID, strings.TrimSpace(transport.GenerationID)); ok {
+			return replacement
+		}
+	}
+	return transport
+}
+
+func (s *Stub) helperMissingCodexChildTransport(record sessionRecord) (SessionTransportSnapshot, bool) {
+	if record.identity.Historical() || record.identity.Backend() != session.BackendCodex {
+		return SessionTransportSnapshot{}, false
+	}
+	if record.runtime.helper != nil || record.runtime.piAgentGRPC != nil || record.runtime.handle != nil {
+		return SessionTransportSnapshot{}, false
+	}
+	transport := record.transport
+	if transport.State != SessionTransportStateAttached && !(transport.State == SessionTransportStateEnded && transport.Reason == "helper_not_running") {
+		return SessionTransportSnapshot{}, false
+	}
+	generationID := strings.TrimSpace(transport.GenerationID)
+	if generationID == "" {
+		if binding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID()); err == nil && binding != nil {
+			generationID = binding.GenerationID.String()
+		}
+	}
+	return s.helperMissingCodexChildTransportWithGeneration(record.identity.SessionID(), generationID)
+}
+
+func (s *Stub) helperMissingCodexChildTransportWithGeneration(sessionID session.SessionID, generationID string) (SessionTransportSnapshot, bool) {
+	if s == nil || strings.TrimSpace(generationID) == "" {
+		return SessionTransportSnapshot{}, false
+	}
+	helperGenerationID, err := iod.NewGenerationID(generationID)
+	if err != nil {
+		return SessionTransportSnapshot{}, false
+	}
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(s.cfg.Storage.DataDir), sessionID, helperGenerationID)
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return SessionTransportSnapshot{}, false
+	}
+	var manifest iod.GenerationManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return SessionTransportSnapshot{}, false
+	}
+	if manifest.SessionID != sessionID || manifest.GenerationID != helperGenerationID || manifest.ChildPID == nil {
+		return SessionTransportSnapshot{}, false
+	}
+	if !processPIDAlive(*manifest.ChildPID) {
+		return SessionTransportSnapshot{}, false
+	}
+	return SessionTransportSnapshot{
+		GenerationID:  helperGenerationID.String(),
+		State:         SessionTransportStateBroken,
+		ResetRequired: true,
+		Reason:        "helper_missing_child_alive",
+	}, true
 }
 
 func startupTransportFromFences(generationID iod.GenerationID, fences []helperFence) (SessionTransportSnapshot, bool) {

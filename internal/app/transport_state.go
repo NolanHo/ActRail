@@ -36,11 +36,17 @@ func (s SessionTransportState) String() string {
 
 func (s *Stub) sessionTransportSnapshot(record sessionRecord) SessionTransportSnapshot {
 	record.runtime = s.runtimeForRecord(record)
+	if transport, ok := s.helperMissingCodexChildTransport(record); ok {
+		return transport
+	}
 	return sessionTransportSnapshot(record)
 }
 
 func (s *Stub) sessionProbing(record sessionRecord) bool {
 	record.runtime = s.runtimeForRecord(record)
+	if transport, ok := s.helperMissingCodexChildTransport(record); ok && transport.ResetRequired {
+		return false
+	}
 	return sessionProbing(record)
 }
 

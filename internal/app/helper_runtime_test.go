@@ -136,6 +136,56 @@ func TestStartupHealthMarksUndialableHelperEnded(t *testing.T) {
 	}
 }
 
+func TestStartupHealthMarksCodexMissingHelperWithLiveChildBroken(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_orphan_child")
+	child := exec.Command("sleep", "60")
+	if err := child.Start(); err != nil {
+		t.Fatalf("start child process error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-orphan-child"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	_ = writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, os.Getpid(), 1760000000)
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", manifestPath, err)
+	}
+	var manifest iod.GenerationManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("Unmarshal(%q) error = %v", manifestPath, err)
+	}
+	childPID := child.Process.Pid
+	manifest.ChildPID = &childPID
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateBroken || state.Transport.Reason != "helper_missing_child_alive" || !state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+		t.Fatalf("SessionState().Transport = %+v, want broken reset_required orphan child generation %q", state.Transport, generationID)
+	}
+}
+
 func TestServerReattach(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
