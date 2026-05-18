@@ -126,13 +126,16 @@ type notificationPayload struct {
 	Kind      string `json:"kind,omitempty"`
 }
 
+const realtimeCommandTimeout = 12 * time.Second
+
 // AppBridge maps app-side live events and control requests onto websocket frames.
 type AppBridge struct {
-	controller app.SessionController
-	cursors    app.SessionResumeCursorWriter
-	publisher  *Publisher
-	now        func() time.Time
-	frameIDs   IDSource
+	controller     app.SessionController
+	cursors        app.SessionResumeCursorWriter
+	publisher      *Publisher
+	now            func() time.Time
+	frameIDs       IDSource
+	commandTimeout time.Duration
 
 	mu               sync.Mutex
 	streamSeqs       map[StreamName]int64
@@ -146,6 +149,7 @@ func NewAppBridge(controller app.SessionController, cursors app.SessionResumeCur
 		publisher:        publisher,
 		now:              time.Now,
 		frameIDs:         NewCounterIDSource("evt"),
+		commandTimeout:   realtimeCommandTimeout,
 		streamSeqs:       make(map[StreamName]int64),
 		generatingByTurn: make(map[string]struct{}),
 	}
@@ -155,7 +159,9 @@ func (b *AppBridge) HandleSend(cmd SendCommand) error {
 	if b.controller == nil {
 		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
 	}
-	_, err := b.controller.Send(context.Background(), app.SendRequest{SessionID: cmd.SessionID, Text: cmd.Text})
+	ctx, cancel := b.commandContext()
+	defer cancel()
+	_, err := b.controller.Send(ctx, app.SendRequest{SessionID: cmd.SessionID, Text: cmd.Text})
 	if err != nil {
 		return mapAppCommandError(err)
 	}
@@ -166,7 +172,9 @@ func (b *AppBridge) HandleEnqueue(cmd EnqueueCommand) error {
 	if b.controller == nil {
 		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
 	}
-	_, err := b.controller.Enqueue(context.Background(), app.EnqueueRequest{SessionID: cmd.SessionID, Text: cmd.Text})
+	ctx, cancel := b.commandContext()
+	defer cancel()
+	_, err := b.controller.Enqueue(ctx, app.EnqueueRequest{SessionID: cmd.SessionID, Text: cmd.Text})
 	if err != nil {
 		return mapAppCommandError(err)
 	}
@@ -177,7 +185,9 @@ func (b *AppBridge) HandleQueueCancel(cmd QueueCancelCommand) error {
 	if b.controller == nil {
 		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
 	}
-	_, err := b.controller.CancelQueue(context.Background(), app.CancelQueueRequest{SessionID: cmd.SessionID})
+	ctx, cancel := b.commandContext()
+	defer cancel()
+	_, err := b.controller.CancelQueue(ctx, app.CancelQueueRequest{SessionID: cmd.SessionID})
 	if err != nil {
 		return mapAppCommandError(err)
 	}
@@ -188,7 +198,9 @@ func (b *AppBridge) HandleInterrupt(cmd InterruptCommand) error {
 	if b.controller == nil {
 		return NewCommandError(ErrorCodeUnsupported, "session control is unavailable", "type")
 	}
-	_, err := b.controller.Interrupt(context.Background(), app.InterruptRequest{SessionID: cmd.SessionID})
+	ctx, cancel := b.commandContext()
+	defer cancel()
+	_, err := b.controller.Interrupt(ctx, app.InterruptRequest{SessionID: cmd.SessionID})
 	if err != nil {
 		return mapAppCommandError(err)
 	}
@@ -203,7 +215,9 @@ func (b *AppBridge) HandleUIResponse(cmd UIResponseCommand) error {
 	if err != nil {
 		return WrapCommandError(ErrorCodeInvalidRequest, err.Error(), "value", err)
 	}
-	_, err = b.controller.RespondUI(context.Background(), app.UIResponseRequest{
+	ctx, cancel := b.commandContext()
+	defer cancel()
+	_, err = b.controller.RespondUI(ctx, app.UIResponseRequest{
 		SessionID:  cmd.SessionID,
 		ResponseTo: cmd.ResponseTo,
 		Value:      value,
@@ -212,6 +226,14 @@ func (b *AppBridge) HandleUIResponse(cmd UIResponseCommand) error {
 		return mapAppCommandError(err)
 	}
 	return nil
+}
+
+func (b *AppBridge) commandContext() (context.Context, context.CancelFunc) {
+	timeout := realtimeCommandTimeout
+	if b != nil && b.commandTimeout > 0 {
+		timeout = b.commandTimeout
+	}
+	return context.WithTimeout(context.Background(), timeout)
 }
 
 func (b *AppBridge) PublishSessionState(event app.SessionStateEvent) {
