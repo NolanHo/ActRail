@@ -25,7 +25,19 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 	)
 	if err := s.withSessionInputLock(sessionID, func(record sessionRecord) error {
 		record.runtime = s.runtimeForRecord(record)
-		busy, _ := effectiveBusy(record)
+		busy, reason := effectiveBusy(record)
+		if busy || record.uiRequest != nil {
+			if busy && record.identity.Backend() == session.BackendCodex && reason == "codex_authoritative_running" {
+				active, err := s.confirmCodexRuntimeActiveTurn(context.Background(), record)
+				if err != nil {
+					_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_pre_send_codex_state", err)
+					return nil
+				}
+				if !active {
+					busy = false
+				}
+			}
+		}
 		if busy || record.uiRequest != nil {
 			return nil
 		}

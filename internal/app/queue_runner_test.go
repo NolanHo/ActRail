@@ -2,11 +2,15 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -99,6 +103,82 @@ func TestSchedulerDeliversManualInboxItemAsPlainUserMessage(t *testing.T) {
 	}
 	if len(inbox.Items) != 1 || inbox.Items[0].State != "delivered" || inbox.Items[0].DeliveredMessageID == "" {
 		t.Fatalf("SessionInbox(after scheduler delivery) = %+v, want delivered manual item", inbox.Items)
+	}
+}
+
+func TestSchedulerDeliversCodexManualInboxAfterAuthoritativeIdleProbe(t *testing.T) {
+	current := time.Unix(1760000000, 0).UTC()
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return current }, RuntimeConfig{})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_codex_inbox_idle_probe")
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath: "/tmp/codex/stale-inbox.jsonl",
+		Lines: []string{
+			`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-stale-inbox"}}`,
+		},
+		Warmed:   true,
+		Complete: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-inbox-idle")
+	runtimeState.transition(codexRuntimePhaseRunning, "codex_authoritative_running")
+	var sent []string
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: generationID,
+			historyFunc: func(context.Context) (iod.SessionHistoryResponsePacket, error) {
+				return packet, nil
+			},
+			commandFunc: func(_ context.Context, _ iod.CommandName, payload json.RawMessage) error {
+				var request struct {
+					Method string `json:"method"`
+				}
+				if err := json.Unmarshal(payload, &request); err != nil {
+					return err
+				}
+				sent = append(sent, request.Method)
+				if request.Method == "thread/read" {
+					_ = svc.applyRuntimeProjection(sessionID, runtimeProjectionFromCodex(mustDecodeCodexProjection(t, `{"id":"thread-read-1","result":{"thread":{"id":"thread-inbox-idle","status":{"type":"idle"},"turns":[{"id":"turn-stale-inbox","status":"interrupted"}]}}}`)))
+				}
+				return nil
+			},
+		},
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), created.Session.RuntimeID, created.Session.ThreadID, session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, identity, runtime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(codex inbox idle probe) = (%v, %v)", ok, err)
+	}
+	if _, err := svc.Enqueue(context.Background(), EnqueueRequest{SessionID: sessionID, Text: "continue from inbox"}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	current = current.Add(31 * time.Second)
+	if err := svc.runSchedulerDeliverySweep(context.Background()); err != nil {
+		t.Fatalf("runSchedulerDeliverySweep() error = %v", err)
+	}
+	if !slices.Contains(sent, "thread/read") || !slices.Contains(sent, "turn/start") {
+		t.Fatalf("sent methods = %#v, want thread/read and turn/start", sent)
+	}
+	inbox, err := svc.SessionInbox(context.Background(), SessionInboxRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionInbox(after codex scheduler delivery) error = %v", err)
+	}
+	if len(inbox.Items) != 1 || inbox.Items[0].State != "delivered" || inbox.Items[0].DeliveredMessageID == "" {
+		t.Fatalf("SessionInbox(after codex scheduler delivery) = %+v, want delivered manual item", inbox.Items)
 	}
 }
 

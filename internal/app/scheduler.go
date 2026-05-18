@@ -375,7 +375,18 @@ func (s *Stub) inboxItemReadyForDelivery(item sqlitestore.InboxItemRow, settings
 	if err != nil {
 		return false, err
 	}
-	busy, _ := effectiveBusy(record)
+	record.runtime = s.runtimeForRecord(record)
+	busy, reason := effectiveBusy(record)
+	if busy && record.identity.Backend() == session.BackendCodex && reason == "codex_authoritative_running" {
+		active, err := s.confirmCodexRuntimeActiveTurn(context.Background(), record)
+		if err != nil {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "inbox_pre_delivery_codex_state", err)
+			return false, nil
+		}
+		if !active {
+			busy = false
+		}
+	}
 	if busy || record.state.Queue().Len() > 0 || record.uiRequest != nil || s.activeWaitForSession(sessionID) != nil {
 		return false, nil
 	}
