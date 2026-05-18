@@ -178,6 +178,8 @@ func (c *sessionHistoryCache) SetCodexThreadID(ctx context.Context, threadID str
 	if threadID == "" {
 		return
 	}
+	var oldCancel context.CancelFunc
+	needsDiscover := true
 	c.mu.Lock()
 	if c.threadID == threadID {
 		hasPath := strings.TrimSpace(c.path) != ""
@@ -188,8 +190,35 @@ func (c *sessionHistoryCache) SetCodexThreadID(ctx context.Context, threadID str
 		return
 	}
 	c.threadID = threadID
+	if strings.TrimSpace(c.path) != "" {
+		currentThreadID, ok, err := codexSessionIDFromHistoryFile(ctx, c.path)
+		if err == nil && ok && currentThreadID == threadID {
+			needsDiscover = false
+		} else {
+			if c.loadCancel != nil {
+				oldCancel = c.loadCancel
+			}
+			c.path = ""
+			c.lines = nil
+			c.messages = nil
+			c.indexed = nil
+			c.taskDone = false
+			c.lastKind = ""
+			c.warmed = false
+			c.complete = false
+			c.lastSize = 0
+			c.lastMod = time.Time{}
+			c.lineCount = 0
+			c.loadCancel = nil
+		}
+	}
 	c.mu.Unlock()
-	_ = c.discoverCodexPath(ctx)
+	if oldCancel != nil {
+		oldCancel()
+	}
+	if needsDiscover {
+		_ = c.discoverCodexPath(ctx)
+	}
 }
 
 func (c *sessionHistoryCache) currentPath() string {

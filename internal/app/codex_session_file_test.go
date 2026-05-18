@@ -1023,6 +1023,50 @@ func TestCodexThreadBindingStoresSessionFilePath(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeRestartPrefersExactSourceBindingOverStaleRuntimeThread(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_restart_prefers_source_binding")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	sourcePath := writeCodexSessionFile(t, codexHome, threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-binding","originator":"actrail"}}`,
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_1", "t_1", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	staleRuntime := newCodexRuntimeState(session.BackendCodex)
+	if accepted, _ := staleRuntime.setThreadID("019e2107-ca2f-7e73-994d-8726965f8c8b"); !accepted {
+		t.Fatal("setThreadID(stale) = false, want true")
+	}
+	record, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-binding",
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: staleRuntime},
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	})
+	if err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+
+	resumeID, err := svc.codexThreadIDForRuntimeRestart(context.Background(), record)
+	if err != nil {
+		t.Fatalf("codexThreadIDForRuntimeRestart() error = %v", err)
+	}
+	if resumeID != threadID {
+		t.Fatalf("codexThreadIDForRuntimeRestart() = %q, want exact binding %q", resumeID, threadID)
+	}
+}
+
 func TestCodexThreadBindingBackfillsMissingSessionFilePath(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
@@ -1060,6 +1104,67 @@ func TestCodexThreadBindingBackfillsMissingSessionFilePath(t *testing.T) {
 	}
 	if updated.importedSourcePath != filepath.Clean(sourcePath) {
 		t.Fatalf("source path = %q, want %q", updated.importedSourcePath, filepath.Clean(sourcePath))
+	}
+}
+
+func TestCodexIODHistoryRebindsSessionSourcePath(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_iod_rebinds_source")
+	oldThreadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	newThreadID := "019e084e-63e0-7320-9a4a-84f68f656828"
+	oldSourcePath := writeCodexSessionFile(t, t.TempDir(), oldThreadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-rebind","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"agent_message","message":"old answer","phase":"final_answer"}}`,
+	})
+	newSourcePath := writeCodexSessionFile(t, t.TempDir(), newThreadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656828","cwd":"/tmp/codex-rebind","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"agent_message","message":"new answer","phase":"final_answer"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewDetachedIdentity(sessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-rebind",
+		BackendSessionID: oldThreadID,
+		SourcePath:       oldSourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, newSourcePath)
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10, IncludeToolEvents: true})
+	if err != nil {
+		t.Fatalf("SessionMessages(include tools) error = %v", err)
+	}
+	got := messageRolesAndText(messages.Items)
+	want := []string{"assistant:new answer"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	updated, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("session missing after IOD history load")
+	}
+	if updated.importedBackendSessionID != newThreadID || updated.importedSourcePath != filepath.Clean(newSourcePath) {
+		t.Fatalf("binding = (%q, %q), want (%q, %q)", updated.importedBackendSessionID, updated.importedSourcePath, newThreadID, filepath.Clean(newSourcePath))
+	}
+	defaultMessages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionMessages(default) error = %v", err)
+	}
+	got = messageRolesAndText(defaultMessages.Items)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("default messages = %#v, want %#v", got, want)
 	}
 }
 

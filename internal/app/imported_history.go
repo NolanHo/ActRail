@@ -1015,6 +1015,7 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 		if !codexSessionFileHistoryUsableStatus(record, response.TailSeq > 0, complete) {
 			return SessionMessagesResponse{}, false, nil
 		}
+		s.rememberCodexThreadBindingFromIODHistory(record, packet)
 		s.reconcileCodexSessionFileCompletion(record, complete)
 		return response, true, nil
 	}
@@ -1026,6 +1027,7 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	if !codexSessionFileHistoryUsable(record, items, complete) {
 		return SessionMessagesResponse{}, false, nil
 	}
+	s.rememberCodexThreadBindingFromIODHistory(record, packet)
 	s.reconcileCodexSessionFileCompletion(record, complete)
 	s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
 	return paginateSessionMessagesForRequest(items, req), true, nil
@@ -1176,6 +1178,7 @@ func (s *Stub) kickCodexIODHistoryRefresh(record sessionRecord) {
 		s.warmCodexIODMessageCache(sessionID, packet)
 		if updated, ok := s.registry.Lookup(sessionID); ok {
 			updated.runtime = s.runtimeForRecord(updated)
+			s.rememberCodexThreadBindingFromIODHistory(updated, packet)
 			if updated.runtime.helper != nil && updated.runtime.helper.generationID == helper.generationID {
 				s.reconcileCodexSessionFileFinalFromCachedIODPacket(updated, packet)
 			}
@@ -1234,6 +1237,7 @@ func (s *Stub) forceCodexIODHistoryRefresh(sessionID session.SessionID) {
 		s.warmCodexIODMessageCache(sessionID, packet)
 		if updated, ok := s.registry.Lookup(sessionID); ok {
 			updated.runtime = s.runtimeForRecord(updated)
+			s.rememberCodexThreadBindingFromIODHistory(updated, packet)
 			if updated.runtime.helper != nil && updated.runtime.helper.generationID == helper.generationID {
 				s.reconcileCodexSessionFileFinalFromCachedIODPacket(updated, packet)
 			}
@@ -1283,6 +1287,26 @@ func (s *Stub) warmCodexIODMessageCache(sessionID session.SessionID, packet iod.
 	}
 	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || packet.TaskComplete
 	s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
+}
+
+func (s *Stub) rememberCodexThreadBindingFromIODHistory(record sessionRecord, packet iod.SessionHistoryResponsePacket) {
+	if s == nil || record.identity.Backend() != session.BackendCodex {
+		return
+	}
+	sourcePath := strings.TrimSpace(packet.SourcePath)
+	if sourcePath == "" {
+		return
+	}
+	threadID, ok, err := codexSessionIDFromFile(context.Background(), sourcePath)
+	if err != nil || !ok || strings.TrimSpace(threadID) == "" {
+		return
+	}
+	beforeThread := strings.TrimSpace(record.importedBackendSessionID)
+	beforePath := filepath.Clean(strings.TrimSpace(record.importedSourcePath))
+	s.rememberCodexThreadBinding(record, threadID, sourcePath)
+	if beforeThread != strings.TrimSpace(threadID) || beforePath != filepath.Clean(sourcePath) {
+		s.invalidateSessionHistoryCaches(record.identity.SessionID())
+	}
 }
 
 func codexIODHistoryCanResumeStateProjection(entry codexIODHistoryCacheEntry, packet iod.SessionHistoryResponsePacket) bool {
@@ -1578,14 +1602,17 @@ func (s *Stub) codexThreadIDForRuntimeRestart(_ context.Context, record sessionR
 	if record.identity.Backend() != session.BackendCodex {
 		return "", nil
 	}
+	if threadID := strings.TrimSpace(record.importedBackendSessionID); threadID != "" {
+		sourcePath := strings.TrimSpace(record.importedSourcePath)
+		if sourcePath == "" || codexSourcePathMatchesSessionID(sourcePath, threadID) {
+			return threadID, nil
+		}
+	}
 	if record.runtime.codex != nil {
 		_, threadID, _ := record.runtime.codex.snapshot()
 		if threadID = strings.TrimSpace(threadID); threadID != "" {
 			return threadID, nil
 		}
-	}
-	if threadID := strings.TrimSpace(record.importedBackendSessionID); threadID != "" {
-		return threadID, nil
 	}
 	return "", nil
 }

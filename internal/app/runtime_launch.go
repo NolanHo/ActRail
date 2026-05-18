@@ -568,6 +568,9 @@ func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runti
 	if discovered.Manifest.SessionID != req.SessionID {
 		return sessionRuntime{}, fmt.Errorf("iod manifest session id = %q, want %q", discovered.Manifest.SessionID, req.SessionID)
 	}
+	if err := verifyCodexIODManifestForAttach(req, discovered.Manifest); err != nil {
+		return sessionRuntime{}, err
+	}
 	client, hello, err := l.attachHelper(ctx, discovered.Manifest)
 	if err != nil {
 		return sessionRuntime{}, err
@@ -604,6 +607,28 @@ func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runti
 	}, nil
 }
 
+func verifyCodexIODManifestForAttach(req runtimeLaunchRequest, manifest iod.GenerationManifest) error {
+	if req.Backend != session.BackendCodex {
+		return nil
+	}
+	threadID := strings.TrimSpace(req.CodexThreadID)
+	requestedPath := filepath.Clean(strings.TrimSpace(req.SessionPath))
+	manifestPath := filepath.Clean(strings.TrimSpace(manifest.SessionHistoryPath))
+	if threadID == "" && requestedPath == "." {
+		return nil
+	}
+	if requestedPath != "." && manifestPath != "." && manifestPath != requestedPath {
+		return fmt.Errorf("attached codex IOD history %q does not match requested history %q", manifestPath, requestedPath)
+	}
+	if threadID != "" && manifestPath != "." && !codexSourcePathMatchesSessionID(manifestPath, threadID) {
+		return fmt.Errorf("attached codex IOD history %q does not match requested thread %q", manifestPath, threadID)
+	}
+	if req.ForceNewIOD && threadID != "" && manifestPath == "." {
+		return fmt.Errorf("attached codex IOD has no session history path for requested thread %q", threadID)
+	}
+	return nil
+}
+
 func (l processRuntimeLauncher) verifyAttachedCodexIODThread(ctx context.Context, req runtimeLaunchRequest, helper *runtimeIODHelper) error {
 	if req.Backend != session.BackendCodex || strings.TrimSpace(req.CodexThreadID) == "" || helper == nil {
 		return nil
@@ -612,10 +637,16 @@ func (l processRuntimeLauncher) verifyAttachedCodexIODThread(ctx context.Context
 	defer cancel()
 	packet, err := helper.sessionHistory(historyCtx)
 	if err != nil {
+		if req.ForceNewIOD {
+			return fmt.Errorf("verify attached codex IOD history: %w", err)
+		}
 		return nil
 	}
 	sourcePath := strings.TrimSpace(packet.SourcePath)
 	if sourcePath == "" {
+		if req.ForceNewIOD && strings.TrimSpace(helper.manifest.SessionHistoryPath) == "" {
+			return fmt.Errorf("attached codex IOD has no session history source for requested thread %q", strings.TrimSpace(req.CodexThreadID))
+		}
 		return nil
 	}
 	if codexSourcePathMatchesSessionID(sourcePath, req.CodexThreadID) {
