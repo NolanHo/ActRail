@@ -181,7 +181,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     (setState) => ({ refresh: vi.fn(), select: vi.fn(), setState }),
   );
   const composerStore = providedComposerStore ?? createStore(
-    { draftBySessionId: activeSessionId ? { [activeSessionId]: draft } : {}, sending: false, pendingBySessionId: {} },
+    { draftBySessionId: activeSessionId ? { [activeSessionId]: draft } : {}, sending: false, sendingBySessionId: {}, pendingBySessionId: {} },
     (setState, getState) => ({
       setDraft(sessionId: string | null | undefined, value: string) {
         if (!sessionId) {
@@ -478,6 +478,29 @@ describe("Composer", () => {
     expect(liveSessionStore.loadInitial).toHaveBeenCalledWith("sess-1");
     expect(sessionUiStore.refresh).toHaveBeenCalledWith("sess-1", { agentBackend: "pi" });
     expect(sessionsStore.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not block the active session when another session is sending", () => {
+    const composerStore = createStore(
+      {
+        draftBySessionId: { "sess-1": "Send this" },
+        sending: true,
+        sendingBySessionId: { "sess-other": true },
+        pendingBySessionId: {},
+      },
+      (setState, getState) => ({
+        setDraft(sessionId: string | null | undefined, value: string) {
+          if (!sessionId) return;
+          setState({ draftBySessionId: { ...(getState().draftBySessionId ?? {}), [sessionId]: value } });
+        },
+        submit: vi.fn().mockResolvedValue(undefined),
+      }),
+    );
+    renderComposer({ composerStore: composerStore as any });
+
+    const sendButton = getRoot().querySelector(".sendButton") as HTMLButtonElement;
+    expect(sendButton.disabled).toBe(false);
+    expect(sendButton.getAttribute("aria-label")).toBe("Send");
   });
 
   it("switches from a historical pi session to the resumed live session after send", async () => {

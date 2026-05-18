@@ -17,6 +17,7 @@ export interface PendingComposerMessage {
 export interface ComposerState {
   draftBySessionId: Record<string, string>;
   sending: boolean;
+  sendingBySessionId: Record<string, boolean>;
   pendingBySessionId: Record<string, PendingComposerMessage[]>;
 }
 
@@ -138,7 +139,7 @@ function nextDraftMap(draftBySessionId: Record<string, string>, sessionId: strin
 }
 
 export function createComposerStore(): ComposerStore {
-  let state: ComposerState = { draftBySessionId: readPersistedDrafts(), sending: false, pendingBySessionId: {} };
+  let state: ComposerState = { draftBySessionId: readPersistedDrafts(), sending: false, sendingBySessionId: {}, pendingBySessionId: {} };
   const listeners = new Set<() => void>();
   let nextPendingId = 0;
   let draftPersistTimerId: number | null = null;
@@ -226,7 +227,7 @@ export function createComposerStore(): ComposerStore {
     async submit(sessionId: string, runtimeId?: string | null) {
       const text = state.draftBySessionId[sessionId] ?? "";
       const normalizedText = text.trim();
-      if (!normalizedText || state.sending) return;
+      if (!normalizedText || state.sendingBySessionId[sessionId]) return;
       const slashCommand = normalizedText.startsWith("/");
 
       nextPendingId += 1;
@@ -243,6 +244,10 @@ export function createComposerStore(): ComposerStore {
         ...state,
         draftBySessionId: nextDraftMap(state.draftBySessionId, sessionId, ""),
         sending: true,
+        sendingBySessionId: {
+          ...state.sendingBySessionId,
+          [sessionId]: true,
+        },
         pendingBySessionId: slashCommand
           ? state.pendingBySessionId
           : {
@@ -262,9 +267,12 @@ export function createComposerStore(): ComposerStore {
         const requestId = response && typeof response === "object" && typeof (response as { request_id?: unknown }).request_id === "string"
           ? String((response as { request_id?: unknown }).request_id)
           : "";
+        const nextSendingBySessionId = { ...state.sendingBySessionId };
+        delete nextSendingBySessionId[sessionId];
         state = {
           ...state,
-          sending: false,
+          sending: Object.values(nextSendingBySessionId).some(Boolean),
+          sendingBySessionId: nextSendingBySessionId,
           pendingBySessionId: slashCommand
             ? state.pendingBySessionId
             : {
@@ -277,10 +285,13 @@ export function createComposerStore(): ComposerStore {
         emit();
         return response;
       } catch (error) {
+        const nextSendingBySessionId = { ...state.sendingBySessionId };
+        delete nextSendingBySessionId[sessionId];
         state = {
           ...state,
           draftBySessionId: nextDraftMap(state.draftBySessionId, sessionId, state.draftBySessionId[sessionId] ? state.draftBySessionId[sessionId] : text),
-          sending: false,
+          sending: Object.values(nextSendingBySessionId).some(Boolean),
+          sendingBySessionId: nextSendingBySessionId,
           pendingBySessionId: slashCommand
             ? state.pendingBySessionId
             : {

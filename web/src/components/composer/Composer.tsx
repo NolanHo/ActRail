@@ -375,7 +375,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
       activeSessionLiveRuntimeState: state.runtimeStateBySessionId?.[activeSessionId],
     };
   }, shallowEqual);
-  const sending = useComposerStoreSelector((state) => state.sending);
+  const sending = useComposerStoreSelector((state) => activeSessionId ? state.sendingBySessionId?.[activeSessionId] === true : false);
   const draft = useComposerStoreSelector((state) => activeSessionId ? state.draftBySessionId?.[activeSessionId] ?? "" : "");
   const activeWait = useWaitsStoreSelector((state) => activeSessionId ? state.activeBySessionId?.[activeSessionId] ?? null : null);
   const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStoreSelector((state) => ({

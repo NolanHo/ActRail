@@ -94,6 +94,7 @@ describe("createComposerStore", () => {
     expect(store.getState()).toEqual({
       draftBySessionId: {},
       sending: false,
+      sendingBySessionId: {},
       pendingBySessionId: {
         s1: [
           {
@@ -110,7 +111,7 @@ describe("createComposerStore", () => {
   });
 
   it("executes slash commands through the command endpoint", async () => {
-vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "s2" } as never);
+    vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "s2" } as never);
     const store = createComposerStore();
     store.setDraft("s1", "  /handoff now  ");
 
@@ -138,7 +139,7 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
 
     await expect(store.submit("s1")).rejects.toThrow("fail");
 
-    expect(store.getState()).toEqual({ draftBySessionId: { s1: "keep me" }, sending: false, pendingBySessionId: { s1: [] } });
+    expect(store.getState()).toEqual({ draftBySessionId: { s1: "keep me" }, sending: false, sendingBySessionId: {}, pendingBySessionId: { s1: [] } });
   });
 
   it("restores the draft after command failure without creating a pending prompt", async () => {
@@ -149,7 +150,7 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
     await expect(store.submit("s1")).rejects.toThrow("fail");
 
     expect(api.sendMessage).not.toHaveBeenCalled();
-    expect(store.getState()).toEqual({ draftBySessionId: { s1: "/rename next" }, sending: false, pendingBySessionId: {} });
+    expect(store.getState()).toEqual({ draftBySessionId: { s1: "/rename next" }, sending: false, sendingBySessionId: {}, pendingBySessionId: {} });
   });
 
   it("adds an optimistic pending message immediately and keeps it until persistence catches up", async () => {
@@ -164,6 +165,7 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
 
     expect(store.getState().draftBySessionId.s1 ?? "").toBe("");
     expect(store.getState().sending).toBe(true);
+    expect(store.getState().sendingBySessionId.s1).toBe(true);
     expect(store.getState().pendingBySessionId.s1).toHaveLength(1);
     expect(store.getState().pendingBySessionId.s1[0]).toMatchObject({ role: "user", text: "hello", pending: true });
 
@@ -172,7 +174,35 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
 
     expect(store.getState().draftBySessionId.s1 ?? "").toBe("");
     expect(store.getState().sending).toBe(false);
+    expect(store.getState().sendingBySessionId.s1).toBeUndefined();
     expect(store.getState().pendingBySessionId.s1).toHaveLength(1);
+  });
+
+  it("allows a second session to submit while another session is still sending", async () => {
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    vi.mocked(api.sendMessage)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveFirst = resolve;
+      }) as never)
+      .mockResolvedValueOnce({ ok: true } as never);
+    const store = createComposerStore();
+    store.setDraft("s1", "first");
+    store.setDraft("s2", "second");
+
+    const firstSubmit = store.submit("s1");
+    await Promise.resolve();
+    await store.submit("s2");
+
+    expect(api.sendMessage).toHaveBeenNthCalledWith(1, "s1", "first");
+    expect(api.sendMessage).toHaveBeenNthCalledWith(2, "s2", "second");
+    expect(store.getState().sending).toBe(true);
+    expect(store.getState().sendingBySessionId).toEqual({ s1: true });
+
+    resolveFirst({ ok: true });
+    await firstSubmit;
+
+    expect(store.getState().sending).toBe(false);
+    expect(store.getState().sendingBySessionId).toEqual({});
   });
 
   it("removes the optimistic pending message and restores the draft after failure", async () => {
@@ -191,7 +221,7 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
     rejectSend(new Error("fail"));
     await expect(submitPromise).rejects.toThrow("fail");
 
-    expect(store.getState()).toEqual({ draftBySessionId: { s1: "keep me" }, sending: false, pendingBySessionId: { s1: [] } });
+    expect(store.getState()).toEqual({ draftBySessionId: { s1: "keep me" }, sending: false, sendingBySessionId: {}, pendingBySessionId: { s1: [] } });
   });
 
   it("clears acknowledged pending messages when persisted user messages arrive", async () => {
@@ -208,7 +238,7 @@ vi.mocked(api.executeSessionCommand).mockResolvedValue({ ok: true, session_id: "
       { role: "user", text: "hello", ts: pendingTS + 0.1 },
     ]);
 
-    expect(store.getState()).toEqual({ draftBySessionId: {}, sending: false, pendingBySessionId: { s1: [] } });
+    expect(store.getState()).toEqual({ draftBySessionId: {}, sending: false, sendingBySessionId: {}, pendingBySessionId: { s1: [] } });
   });
 
   it("does not clear a repeated pending prompt against older durable text", async () => {

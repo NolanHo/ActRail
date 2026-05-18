@@ -3773,8 +3773,9 @@ describe("ConversationPane", () => {
       {
         draft: "",
         sending: true,
+        sendingBySessionId: { "sess-pending": true },
         pendingBySessionId: {
-          "sess-pending": [{ role: "user", text: "Please continue", pending: true, localId: "local-1" }],
+          "sess-pending": [{ role: "user", text: "Please continue", pending: true, localId: "local-1", request_state: "sending" }],
         },
       },
       { setDraft: () => undefined, submit: () => Promise.resolve() },
@@ -3792,8 +3793,60 @@ describe("ConversationPane", () => {
     const text = root.textContent || "";
     expect(text).toContain("Working on it");
     expect(text).toContain("Please continue");
-    expect(text).toContain("Queued");
+    expect(text).toContain("Sending");
     expect(root.querySelectorAll("[data-testid='message-surface'][data-kind='user']")).toHaveLength(1);
+  });
+
+  it("keeps the working indicator visible while a local send is pending even if live state says idle", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-local-send", agent_backend: "pi", busy: false }], activeSessionId: "sess-local-send", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-local-send": [{ role: "assistant", text: "Previous reply" }],
+        },
+        offsetsBySessionId: { "sess-local-send": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+    const liveSessionStore = createStaticStore(
+      {
+        offsetsBySessionId: { "sess-local-send": 1 },
+        liveOffsetsBySessionId: { "sess-local-send": 1 },
+        requestsBySessionId: {},
+        requestVersionsBySessionId: {},
+        busyBySessionId: { "sess-local-send": false },
+        loadingBySessionId: {},
+        errorBySessionId: {},
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+    const composerStore = createStaticStore(
+      {
+        draft: "",
+        sending: true,
+        sendingBySessionId: { "sess-local-send": true },
+        pendingBySessionId: {
+          "sess-local-send": [{ role: "user", text: "Start work", pending: true, localId: "local-1", request_state: "sending" }],
+        },
+      },
+      { setDraft: () => undefined, submit: () => Promise.resolve(), clearAcknowledgedPending: () => undefined },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any} liveSessionStore={liveSessionStore as any} composerStore={composerStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.textContent).toContain("Working");
+    expect(root.textContent).toContain("Sending");
   });
 
   it("renders server-backed bridge pseudo user messages and hides them after durable ack", () => {

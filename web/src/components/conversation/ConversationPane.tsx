@@ -3455,6 +3455,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   }, shallowEqual);
   const composerStoreApi = useComposerStoreApi();
   const pendingMessages = useComposerStoreSelector((state) => activeSessionId ? state.pendingBySessionId?.[activeSessionId] ?? EMPTY_PENDING_MESSAGES : EMPTY_PENDING_MESSAGES);
+  const activeSessionSending = useComposerStoreSelector((state) => activeSessionId ? state.sendingBySessionId?.[activeSessionId] === true : false);
   const {
     persistedMessages,
     hasOlder,
@@ -3497,6 +3498,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const allowLegacyAskUserFallback = Boolean(activeSessionIsPi && activeSession?.transport !== "pi-rpc");
   const isBusy = Boolean(
     isGenerating
+    || activeSessionSending
+    || pendingMessages.some((message) => message.request_state === "sending")
     || (hasLiveBusy ? liveBusy : activeSession?.busy === true),
   );
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
