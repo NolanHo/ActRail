@@ -307,8 +307,9 @@ func decodeSessionEventMessage(raw json.RawMessage) (Projection, bool) {
 		}
 		busy := true
 		projection := Projection{
-			TurnID: turnID,
-			Busy:   &busy,
+			TurnID:    turnID,
+			ProbeTurn: true,
+			Busy:      &busy,
 			Events: []runtimeevent.Event{{
 				Kind:    runtimeevent.EventKindBoundary,
 				RawType: "task_started",

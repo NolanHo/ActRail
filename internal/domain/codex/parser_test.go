@@ -227,6 +227,9 @@ func TestDecodeAppServerLineSessionTaskStartedSetsBusy(t *testing.T) {
 	if projection.Busy == nil || !*projection.Busy || projection.ClearTurn {
 		t.Fatalf("projection busy/clear = (%v, %v), want true/false", projection.Busy, projection.ClearTurn)
 	}
+	if !projection.ProbeTurn {
+		t.Fatal("projection.ProbeTurn = false, want task_started to probe Codex thread state")
+	}
 	if projection.Timing == nil || projection.Timing.StartedTS != 1778675057 {
 		t.Fatalf("projection timing = %+v, want task start timestamp", projection.Timing)
 	}
