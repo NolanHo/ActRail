@@ -11,6 +11,8 @@ import (
 )
 
 const codexPreSendHistoryTimeout = 750 * time.Millisecond
+const codexPreSendThreadProbeTimeout = 1200 * time.Millisecond
+const codexPreSendThreadProbePollInterval = 25 * time.Millisecond
 
 func (s *Stub) codexAuthoritativeActiveTurn(ctx context.Context, record sessionRecord) (bool, error) {
 	if s == nil || record.identity.Backend() != session.BackendCodex || record.runtime.helper == nil {
@@ -23,7 +25,52 @@ func (s *Stub) codexAuthoritativeActiveTurn(ctx context.Context, record sessionR
 		return false, err
 	}
 	s.storeCodexIODHistoryPacket(record.identity.SessionID(), packet)
-	return codexIODHistoryPacketActiveTurn(packet), nil
+	if !codexIODHistoryPacketActiveTurn(packet) {
+		return false, nil
+	}
+	return s.confirmCodexRuntimeActiveTurn(ctx, record)
+}
+
+func (s *Stub) confirmCodexRuntimeActiveTurn(ctx context.Context, record sessionRecord) (bool, error) {
+	if s == nil || record.identity.Backend() != session.BackendCodex || record.runtime.protocol != runtimeProtocolCodexRPC || record.runtime.codex == nil {
+		return true, nil
+	}
+	if record.runtime.helper != nil && record.runtime.helper.streamClient == nil {
+		return true, nil
+	}
+	if err := record.runtime.RequestCodexThreadState(ctx); err != nil {
+		return true, err
+	}
+	deadline := time.NewTimer(codexPreSendThreadProbeTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(codexPreSendThreadProbePollInterval)
+	defer ticker.Stop()
+	for {
+		updated, err := s.lookupSession(record.identity.SessionID())
+		if err != nil {
+			return true, err
+		}
+		updated.runtime = s.runtimeForRecord(updated)
+		if !sameRuntimeHandle(record.runtime, updated.runtime) {
+			return true, errRuntimeChanged
+		}
+		activity := codexVisibleActivity(updated)
+		switch activity.Phase {
+		case codexRuntimePhaseIdle, codexRuntimePhaseEnded, codexRuntimePhaseFailed:
+			return false, nil
+		case codexRuntimePhaseRunning, codexRuntimePhaseInterrupting, codexRuntimePhaseWaitingUser:
+			if activity.Reason != "codex_authoritative_running" {
+				return true, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return true, ctx.Err()
+		case <-deadline.C:
+			return true, nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Stub) storeCodexIODHistoryPacket(sessionID session.SessionID, packet iod.SessionHistoryResponsePacket) {

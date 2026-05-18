@@ -18,6 +18,7 @@ import (
 	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
+	"actrail/internal/domain/codex"
 	"actrail/internal/domain/session"
 )
 
@@ -518,6 +519,81 @@ func TestSendRejectsWhenCodexAuthoritativeHistoryIsActive(t *testing.T) {
 	if len(messages.Items) != 0 {
 		t.Fatalf("SessionMessages() = %+v, want no direct send committed", messages.Items)
 	}
+}
+
+func TestSendAllowsWhenCodexHistoryActiveButThreadProbeIdle(t *testing.T) {
+	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "codex")
+	generationID := mustHelperGenerationID(t, "g_codex_idle_probe_send")
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath: "/tmp/codex/stale-active.jsonl",
+		Lines: []string{
+			`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-stale-active"}}`,
+		},
+		Warmed:   true,
+		Complete: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-idle")
+	runtimeState.transition(codexRuntimePhaseRunning, "codex_authoritative_running")
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_codex_idle_probe_send", "t_codex_idle_probe_send", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	var sent []string
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: generationID,
+			historyFunc: func(context.Context) (iod.SessionHistoryResponsePacket, error) {
+				return packet, nil
+			},
+			commandFunc: func(_ context.Context, _ iod.CommandName, payload json.RawMessage) error {
+				var request struct {
+					Method string `json:"method"`
+					Params struct {
+						Input []struct {
+							Text string `json:"text"`
+						} `json:"input"`
+					} `json:"params"`
+				}
+				if err := json.Unmarshal(payload, &request); err != nil {
+					return err
+				}
+				sent = append(sent, request.Method)
+				if request.Method == "thread/read" {
+					_ = svc.applyRuntimeProjection(sessionID, runtimeProjectionFromCodex(mustDecodeCodexProjection(t, `{"id":"thread-read-1","result":{"thread":{"id":"thread-idle","status":{"type":"idle"},"turns":[{"id":"turn-stale-active","status":"interrupted"}]}}}`)))
+				}
+				return nil
+			},
+		},
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, identity, runtime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(idle probe codex) = (%v, %v)", ok, err)
+	}
+
+	_, err = svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "continue after stale active"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if !slices.Contains(sent, "thread/read") || !slices.Contains(sent, "turn/start") {
+		t.Fatalf("sent methods = %#v, want thread/read and turn/start", sent)
+	}
+}
+
+func mustDecodeCodexProjection(t *testing.T, raw string) codex.Projection {
+	t.Helper()
+	projection, ok := codex.DecodeAppServerLine([]byte(raw))
+	if !ok {
+		t.Fatalf("DecodeAppServerLine(%s) ok = false", raw)
+	}
+	return projection
 }
 
 func TestCodexInterruptInvalidatesIODHistoryCache(t *testing.T) {

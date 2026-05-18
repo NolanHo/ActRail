@@ -138,7 +138,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		if err := transportControlError(s.sessionTransportSnapshot(record)); err != nil {
 			return err
 		}
-		if err := sendIdlePrecondition(record); err != nil {
+		if err := s.sendIdlePrecondition(ctx, record); err != nil {
 			return err
 		}
 		if err := s.prepareRuntimeSend(ctx, req.SessionID, record.runtime); err != nil {
@@ -247,8 +247,17 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 	return response, nil
 }
 
-func sendIdlePrecondition(record sessionRecord) error {
+func (s *Stub) sendIdlePrecondition(ctx context.Context, record sessionRecord) error {
 	if busy, reason := effectiveBusy(record); busy {
+		if record.identity.Backend() == session.BackendCodex && reason == "codex_authoritative_running" {
+			active, err := s.confirmCodexRuntimeActiveTurn(ctx, record)
+			if err != nil {
+				_ = s.emitRuntimeControlDiagnostic(record.identity.SessionID(), "pre_send_codex_state", err)
+			}
+			if !active {
+				return nil
+			}
+		}
 		if reason != "" {
 			return Conflict("session is busy: " + reason)
 		}
