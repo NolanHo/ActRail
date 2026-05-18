@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -225,11 +226,11 @@ func (s *Stub) markHelperTransportReconnecting(sessionID session.SessionID, gene
 }
 
 func (s *Stub) helperGenerationAppearsAlive(sessionID session.SessionID, generationID iod.GenerationID) bool {
-	if s == nil || generationID == "" || s.helpers == nil {
+	if s == nil || generationID == "" {
 		return false
 	}
-	attachment, ok := s.helpers.Attachment(sessionID)
-	if !ok || attachment.Binding.GenerationID != generationID {
+	attachment, ok := s.helperAttachmentForRedial(sessionID, generationID)
+	if !ok {
 		return false
 	}
 	manifest := attachment.Manifest
@@ -249,8 +250,8 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 	if s == nil || generationID == "" {
 		return helperReadErrorResult{}
 	}
-	attachment, ok := s.helpers.Attachment(sessionID)
-	if !ok || attachment.Binding.GenerationID != generationID {
+	attachment, ok := s.helperAttachmentForRedial(sessionID, generationID)
+	if !ok {
 		return helperReadErrorResult{}
 	}
 	manifest := attachment.Manifest
@@ -266,6 +267,9 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 			return helperReadErrorResult{retry: true}
 		}
 		return helperReadErrorResult{}
+	}
+	if attachment.Client != nil && attachment.Client != client {
+		_ = attachment.Client.Close()
 	}
 	nextAttachment := attachment
 	nextAttachment.Client = client
@@ -298,4 +302,51 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 	}
 	s.emitSessionState(sessionID)
 	return helperReadErrorResult{reattached: true, client: client}
+}
+
+func (s *Stub) helperAttachmentForRedial(sessionID session.SessionID, generationID iod.GenerationID) (attachedHelper, bool) {
+	if s == nil || generationID == "" {
+		return attachedHelper{}, false
+	}
+	if s.helpers != nil {
+		if attachment, ok := s.helpers.Attachment(sessionID); ok && attachment.Binding.GenerationID == generationID {
+			return attachment, true
+		}
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return attachedHelper{}, false
+	}
+	helper := record.runtime.helper
+	if helper == nil || helper.generationID != generationID {
+		return attachedHelper{}, false
+	}
+	manifest := helper.manifest
+	manifestPath := ""
+	if helper.runtimeDir != "" {
+		manifestPath = filepath.Join(helper.runtimeDir, iodclient.ManifestFilename)
+	}
+	if err := manifest.Validate(); err != nil {
+		if manifestPath == "" {
+			return attachedHelper{}, false
+		}
+		loaded, loadErr := iod.ReadGenerationManifest(manifestPath)
+		if loadErr != nil {
+			return attachedHelper{}, false
+		}
+		manifest = loaded
+	}
+	if manifest.SessionID != sessionID || manifest.GenerationID != generationID {
+		return attachedHelper{}, false
+	}
+	binding := helperGenerationBinding{SessionID: sessionID, GenerationID: generationID}
+	if record.runtime.helperBinding != nil && record.runtime.helperBinding.GenerationID == generationID {
+		binding.LastReplayOffset = record.runtime.helperBinding.LastReplayOffset
+	}
+	return attachedHelper{
+		Binding:      binding,
+		ManifestPath: manifestPath,
+		Manifest:     manifest,
+		Client:       helper.streamClient,
+	}, true
 }
