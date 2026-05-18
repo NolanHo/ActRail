@@ -1199,6 +1199,49 @@ func (s *Stub) kickCodexIODHistoryRefreshIfStale(record sessionRecord, minAge ti
 	s.kickCodexIODHistoryRefresh(record)
 }
 
+func (s *Stub) forceCodexIODHistoryRefresh(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return
+	}
+	record.runtime = s.runtimeForRecord(record)
+	if record.runtime.helper == nil {
+		s.invalidateSessionHistoryCaches(sessionID)
+		return
+	}
+	helper := record.runtime.helper
+	s.codexIODHistoryMu.Lock()
+	refreshGen := s.codexIODHistoryGen[sessionID]
+	s.codexIODHistoryMu.Unlock()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), codexIODHistoryRefreshTimeout)
+		defer cancel()
+		packet, err := helper.sessionHistory(ctx)
+		if err != nil {
+			return
+		}
+		s.codexIODHistoryMu.Lock()
+		if s.codexIODHistoryGen[sessionID] != refreshGen {
+			s.codexIODHistoryMu.Unlock()
+			return
+		}
+		s.storeCodexIODHistoryPacketLocked(sessionID, packet)
+		s.codexIODHistoryMu.Unlock()
+		s.warmCodexIODMessageCache(sessionID, packet)
+		if updated, ok := s.registry.Lookup(sessionID); ok {
+			updated.runtime = s.runtimeForRecord(updated)
+			if updated.runtime.helper != nil && updated.runtime.helper.generationID == helper.generationID {
+				s.reconcileCodexSessionFileFinalFromCachedIODPacket(updated, packet)
+			}
+		}
+		s.emitSessionState(sessionID)
+	}()
+}
+
 func (s *Stub) storeCodexIODHistoryPacketLocked(sessionID session.SessionID, packet iod.SessionHistoryResponsePacket) {
 	if s.codexIODHistory == nil {
 		s.codexIODHistory = map[session.SessionID]codexIODHistoryCacheEntry{}

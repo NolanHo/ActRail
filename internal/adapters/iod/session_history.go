@@ -105,6 +105,9 @@ func (c *sessionHistoryCache) Snapshot(ctx context.Context) (SessionHistorySnaps
 		_ = c.discoverCodexPath(ctx)
 	}
 	c.ensureWatcher(ctx)
+	if err := c.refreshIfChanged(ctx); err != nil {
+		return SessionHistorySnapshot{}, err
+	}
 	c.mu.RLock()
 	path := c.path
 	lines := append([]string(nil), c.lines...)

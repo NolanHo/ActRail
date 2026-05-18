@@ -23,6 +23,7 @@ func (s *Stub) applyPIEvents(sessionID session.SessionID, events []pi.Event) err
 
 func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 	s.invalidateSessionHistoryCachesForRuntimeMutation(sessionID)
+	forceHistoryRefreshAfterApply := codexRuntimeEventShouldForceHistoryRefresh(event)
 	if !s.codexRuntimeEventInMainThread(sessionID, event) && !codexSubagentMessageEvent(event) {
 		s.emitSessionState(sessionID)
 		return nil
@@ -32,23 +33,34 @@ func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 			return err
 		}
 	}
+	var err error
 	switch event.Kind {
 	case pi.EventKindMessageDelta:
-		return s.applyPIDelta(sessionID, event)
+		err = s.applyPIDelta(sessionID, event)
 	case pi.EventKindMessage:
-		return s.applyPIMessage(sessionID, event)
+		err = s.applyPIMessage(sessionID, event)
 	case pi.EventKindTool:
-		return s.applyPITool(sessionID, event)
+		err = s.applyPITool(sessionID, event)
 	case pi.EventKindError:
-		return s.applyPIError(sessionID, event)
+		err = s.applyPIError(sessionID, event)
 	case pi.EventKindUIRequest:
-		return s.applyPIUIRequest(sessionID, event)
+		err = s.applyPIUIRequest(sessionID, event)
 	case pi.EventKindUIResolved:
-		return s.applyPIUIResolved(sessionID, event)
+		err = s.applyPIUIResolved(sessionID, event)
 	case pi.EventKindBoundary:
-		return s.applyPIBoundary(sessionID, event)
+		err = s.applyPIBoundary(sessionID, event)
 	}
-	return nil
+	if err == nil && forceHistoryRefreshAfterApply {
+		s.forceCodexIODHistoryRefresh(sessionID)
+	}
+	return err
+}
+
+func codexRuntimeEventShouldForceHistoryRefresh(event pi.Event) bool {
+	if event.Kind == pi.EventKindBoundary && event.Boundary != nil {
+		return event.Boundary.Kind == pi.BoundaryKindTurnCompleted || event.Boundary.Kind == pi.BoundaryKindTurnAborted
+	}
+	return runtimeAssistantMessageCompletesTurn(event)
 }
 
 func codexSubagentMessageEvent(event pi.Event) bool {

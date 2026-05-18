@@ -693,6 +693,127 @@ func TestCodexRuntimeMutationKeepsIODHistoryCaches(t *testing.T) {
 	}
 }
 
+func TestCodexTurnCompletedForcesIODHistoryRefresh(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_turn_complete_refresh")
+	generationID := mustHelperGenerationID(t, "g_codex_turn_complete_refresh")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656829"
+	sourcePath := filepath.Join(t.TempDir(), "rollout-"+threadID+".jsonl")
+	stalePacket, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath: sourcePath,
+		Messages: []iod.SessionHistoryMessage{{
+			Seq:  1,
+			Role: "user",
+			Kind: "message",
+			Text: "old prompt",
+		}},
+		Warmed:   true,
+		Complete: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket(stale) error = %v", err)
+	}
+	freshPacket, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath: sourcePath,
+		Lines: []string{
+			`{"timestamp":"2026-05-10T08:00:01Z","type":"event_msg","payload":{"type":"agent_message","message":"fresh answer","phase":"final_answer"}}`,
+		},
+		Messages: []iod.SessionHistoryMessage{{
+			Seq:         2,
+			Role:        "assistant",
+			Kind:        "message",
+			Text:        "fresh answer",
+			EventID:     "codex:event:assistant:000002",
+			SourceOrder: "codex:000002",
+			Details:     map[string]any{"phase": "final_answer"},
+		}},
+		Warmed:       true,
+		Complete:     true,
+		TaskComplete: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket(fresh) error = %v", err)
+	}
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_turn_refresh", "t_turn_refresh", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	runtimeState.setActiveTurnID("turn-refresh")
+	historyCalls := make(chan struct{}, 1)
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity: &identity,
+		Backend:  session.BackendCodex,
+		CWD:      t.TempDir(),
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    runtimeState,
+			helper: &runtimeIODHelper{
+				sessionID:    sessionID,
+				generationID: generationID,
+				historyFunc: func(context.Context) (iod.SessionHistoryResponsePacket, error) {
+					select {
+					case historyCalls <- struct{}{}:
+					default:
+					}
+					return freshPacket, nil
+				},
+			},
+		},
+		SourcePath:       sourcePath,
+		BackendSessionID: threadID,
+		Transport:        SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	primeCodexIODHistoryCache(t, svc, sessionID, stalePacket)
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+
+	if err := svc.applyPIEvent(sessionID, pi.Event{
+		Kind:     pi.EventKindBoundary,
+		RawType:  "turn/completed",
+		TurnID:   "turn-refresh",
+		ThreadID: threadID,
+		Boundary: &pi.Boundary{
+			Kind:       pi.BoundaryKindTurnCompleted,
+			CommitLike: true,
+			Reason:     "turn/completed",
+		},
+	}); err != nil {
+		t.Fatalf("applyPIEvent() error = %v", err)
+	}
+	select {
+	case <-historyCalls:
+	case <-time.After(time.Second):
+		t.Fatal("turn completion did not request fresh IOD history")
+	}
+	waitForAppCondition(t, func() bool {
+		svc.codexIODHistoryMu.Lock()
+		packet := svc.codexIODHistory[sessionID].packet
+		svc.codexIODHistoryMu.Unlock()
+		return codexIODHistoryCacheKey(packet) == codexIODHistoryCacheKey(freshPacket)
+	})
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	got := messageRolesAndText(messages.Items)
+	want := []string{"assistant:fresh answer"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+}
+
 func TestSessionMessagesCodexHistoryUsesSourceLineSeqForIncrementalResume(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
