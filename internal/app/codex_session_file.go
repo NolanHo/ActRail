@@ -23,6 +23,8 @@ const codexSessionFileMaxLineBytes = 64 << 20
 const codexSessionFilePageInitialChunk = 1 << 20
 const codexSessionFilePageMaxChunk = 64 << 20
 const codexSessionFilePageMinSize = codexSessionFilePageInitialChunk
+const codexSessionFileCompletionInitialChunk = 64 << 10
+const codexSessionFileCompletionMaxChunk = 1 << 20
 
 func (s *Stub) codexSessionFileForRecord(record sessionRecord) (string, string, error) {
 	sourcePath := strings.TrimSpace(record.importedSourcePath)
@@ -234,6 +236,55 @@ func codexSessionMessagesPageFromFile(ctx context.Context, path string, req Sess
 	return response, complete, true, nil
 }
 
+func codexSessionFileTailHasAuthoritativeCompletion(ctx context.Context, path string) (bool, bool) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return false, false
+	}
+	file, err := os.Open(trimmed)
+	if err != nil {
+		return false, false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() || info.Size() <= 0 {
+		return false, false
+	}
+	upper := info.Size()
+	chunk := int64(codexSessionFileCompletionInitialChunk)
+	for upper > 0 {
+		if err := ctx.Err(); err != nil {
+			return false, false
+		}
+		lower := upper - chunk
+		if lower < 0 {
+			lower = 0
+		}
+		buf := make([]byte, upper-lower)
+		if _, err := file.ReadAt(buf, lower); err != nil && err != io.EOF {
+			return false, false
+		}
+		lines := codexSessionFileLinesFromWindow(buf, lower, lower == 0, upper == info.Size())
+		for i := len(lines) - 1; i >= 0; i-- {
+			complete, relevant := codexSessionLineAuthoritativeCompletion(string(lines[i].Text))
+			if relevant {
+				return complete, true
+			}
+		}
+		if lower == 0 {
+			break
+		}
+		upper = lower
+		if chunk < codexSessionFileCompletionMaxChunk {
+			chunk *= 2
+			if chunk > codexSessionFileCompletionMaxChunk {
+				chunk = codexSessionFileCompletionMaxChunk
+			}
+		}
+	}
+	return false, true
+}
+
 type locatedCodexSessionFileLine struct {
 	Offset int64
 	Text   []byte
@@ -394,6 +445,40 @@ func locatedCodexSessionFileLineTexts(lines []locatedCodexSessionFileLine) []str
 		out = append(out, string(line.Text))
 	}
 	return out
+}
+
+func codexSessionLineAuthoritativeCompletion(raw string) (bool, bool) {
+	line := strings.TrimSpace(raw)
+	if line == "" {
+		return false, false
+	}
+	var entry codexSessionLine
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return false, false
+	}
+	switch strings.TrimSpace(entry.Type) {
+	case "event_msg":
+		kind := strings.TrimSpace(stringValue(entry.Payload["type"]))
+		switch kind {
+		case "task_complete", "turn_aborted":
+			return true, true
+		case "task_started", "user_message":
+			return false, true
+		case "agent_message":
+			return strings.TrimSpace(stringValue(entry.Payload["phase"])) == "final_answer", true
+		}
+	case "response_item":
+		switch strings.TrimSpace(stringValue(entry.Payload["type"])) {
+		case "message":
+			if strings.TrimSpace(stringValue(entry.Payload["role"])) == "assistant" && strings.TrimSpace(stringValue(entry.Payload["phase"])) == "final_answer" {
+				return true, true
+			}
+			return false, true
+		case "function_call", "function_call_output", "reasoning", "custom_tool_call", "custom_tool_call_output":
+			return false, true
+		}
+	}
+	return false, false
 }
 
 func codexSessionMessagesFromJSONLLines(ctx context.Context, sourcePath string, lines []string) ([]SessionMessage, error) {

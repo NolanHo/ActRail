@@ -1737,6 +1737,64 @@ func TestSessionStateCodexFinalAnswerMirrorsLiveCommits(t *testing.T) {
 	}
 }
 
+func TestSessionStateCodexSourceTailFinalClearsPartialTurn(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_state_source_final_clears_partial")
+	generationID := mustHelperGenerationID(t, "g_codex_state_source_final_clears_partial")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656831"
+	turnID := "019e3e2a-92c5-7b62-886e-59b89d94f95e"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-19T03:00:01.000Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656831","cwd":"/tmp/codex-source-final","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-19T03:00:02.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"` + turnID + `","started_at":1779159602}}`,
+		`{"timestamp":"2026-05-19T03:08:12.605Z","type":"event_msg","payload":{"type":"agent_message","message":"done from source","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-19T03:08:12.613Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"` + turnID + `","completed_at":1779160092}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_state_source_final", "t_state_source_final", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	runtimeState.setActiveTurnID(turnID)
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-source-final",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: runtimeState},
+		Transport:        SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	if _, err := svc.AppendAssistantDelta(sessionID, turnID, "stale partial"); err != nil {
+		t.Fatalf("AppendAssistantDelta() error = %v", err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.PartialAssistantTurn != nil {
+		t.Fatalf("SessionState() = busy:%v partial:%+v, want source tail final to clear partial", state.Busy, state.PartialAssistantTurn)
+	}
+	if svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = true, want false after source tail final")
+	}
+}
+
 func TestSessionStateCodexUsesAuthoritativeSourceTail(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

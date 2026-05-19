@@ -769,14 +769,17 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(record sessionRecord) sess
 		return record
 	}
 	if record.runtime.helper == nil {
-		return record
+		return s.reconcileCodexSessionFileFinalFromSourceTail(record)
 	}
 	packet, ok := s.cachedCodexIODHistorySnapshot(record)
 	if !ok {
-		return record
+		return s.reconcileCodexSessionFileFinalFromSourceTail(record)
 	}
 	if codexIODHistoryPacketNeedsAuthoritativeFinalReconcile(packet) {
 		return s.reconcileCodexSessionFileFinalFromCachedIODPacket(record, packet)
+	}
+	if s.codexTrustedSessionFileTailComplete(record) {
+		return s.reconcileCodexSessionFileFinalFromSourceTail(record)
 	}
 	if !codexIODHistoryPacketActiveTurn(packet) {
 		return record
@@ -784,6 +787,18 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(record sessionRecord) sess
 	if err := s.reconcileCodexSessionFileRuntimeProjection(record.identity.SessionID(), codexIODHistoryActiveProjectionLines(packet.Lines)); err != nil {
 		return record
 	}
+	if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
+		updated.runtime = s.runtimeForRecord(updated)
+		return updated
+	}
+	return record
+}
+
+func (s *Stub) reconcileCodexSessionFileFinalFromSourceTail(record sessionRecord) sessionRecord {
+	if s == nil || !s.codexTrustedSessionFileTailComplete(record) {
+		return record
+	}
+	s.reconcileCodexSessionFileCompletion(record, true)
 	if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
 		updated.runtime = s.runtimeForRecord(updated)
 		return updated
@@ -1061,7 +1076,7 @@ func (s *Stub) loadCodexSourceFileHistoryPage(ctx context.Context, record sessio
 	if !codexSourceFileHistoryPageUsable(record, threadID, path, response.TailSeq > 0) {
 		return SessionMessagesResponse{}, false, nil
 	}
-	if complete && !record.state.Busy() && !record.runtimeAgentRunning {
+	if complete {
 		s.reconcileCodexSessionFileCompletion(record, true)
 	}
 	s.rememberCodexThreadBinding(record, threadID, path)
@@ -1498,6 +1513,15 @@ func (s *Stub) codexTrustedSessionFilePath(record sessionRecord) string {
 		}
 	}
 	return ""
+}
+
+func (s *Stub) codexTrustedSessionFileTailComplete(record sessionRecord) bool {
+	path := s.codexTrustedSessionFilePath(record)
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	complete, ok := codexSessionFileTailHasAuthoritativeCompletion(context.Background(), path)
+	return ok && complete
 }
 
 func codexIODHistoryCacheKey(packet iod.SessionHistoryResponsePacket) string {
