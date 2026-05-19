@@ -154,6 +154,35 @@ func TestNoteCodexThreadIDPreservesHelperGenerationTransport(t *testing.T) {
 	}
 }
 
+func TestSessionTransportSnapshotPrefersCodexHelperGenerationOverAppServerPlaceholder(t *testing.T) {
+	sessionID := mustSessionID(t, "s_codex_helper_generation_snapshot")
+	generationID := mustHelperGenerationID(t, "g_codex_helper_generation_snapshot")
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_1", "t_1", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	record := sessionRecord{
+		identity: identity,
+		runtime: sessionRuntime{
+			protocol:      runtimeProtocolCodexRPC,
+			codex:         newCodexRuntimeState(session.BackendCodex),
+			helper:        &runtimeIODHelper{generationID: generationID},
+			helperBinding: &RuntimeHelperBinding{GenerationID: generationID},
+		},
+		transport: SessionTransportSnapshot{
+			GenerationID: "codex_app_server",
+			State:        SessionTransportStateAttached,
+			Reason:       "codex_thread",
+		},
+	}
+
+	snapshot := sessionTransportSnapshot(record)
+
+	if snapshot.GenerationID != generationID.String() || snapshot.State != SessionTransportStateAttached || snapshot.Reason != "codex_thread" {
+		t.Fatalf("sessionTransportSnapshot() = %+v, want attached generation %q", snapshot, generationID)
+	}
+}
+
 func TestSameRuntimeHandleAllowsSameHelperGenerationReattachment(t *testing.T) {
 	sessionID := mustSessionID(t, "s_same_helper")
 	generationID := mustHelperGenerationID(t, "g_same_helper")

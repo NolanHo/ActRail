@@ -64,6 +64,14 @@ func sessionProbing(record sessionRecord) bool {
 
 func sessionTransportSnapshot(record sessionRecord) SessionTransportSnapshot {
 	snapshot := record.transport
+	if record.identity.Backend() == session.BackendCodex {
+		if binding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID()); err == nil && binding != nil && binding.GenerationID != "" {
+			boundGenerationID := strings.TrimSpace(binding.GenerationID.String())
+			if boundGenerationID != "" && strings.TrimSpace(snapshot.GenerationID) == "codex_app_server" {
+				snapshot.GenerationID = boundGenerationID
+			}
+		}
+	}
 	if snapshot.State == SessionTransportStateAttached && !record.identity.Historical() && record.runtime.helper == nil && record.runtime.piAgentGRPC == nil && record.runtime.handle == nil {
 		snapshot.State = SessionTransportStateEnded
 		if snapshot.Reason == "" {
