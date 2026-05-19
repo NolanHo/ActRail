@@ -520,6 +520,9 @@ func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListS
 	for _, item := range items[start:end] {
 		record := item.record
 		record.runtime = s.runtimeForRecord(record)
+		if reconciled, ok := s.reconcileClearedCodexMissingChildTransport(record); ok {
+			record = reconciled
+		}
 		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt))
 	}
 	return ListSessionsResponse{

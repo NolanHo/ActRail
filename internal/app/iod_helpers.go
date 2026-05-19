@@ -429,6 +429,49 @@ func (s *Stub) cleanupStartupCodexOrphans(sessionID session.SessionID, record se
 	return SessionTransportSnapshot{}, false, nil
 }
 
+func (s *Stub) reconcileClearedCodexMissingChildTransport(record sessionRecord) (sessionRecord, bool) {
+	if s == nil || record.identity.Historical() || record.identity.Backend() != session.BackendCodex {
+		return record, false
+	}
+	transport := record.transport
+	if !startupCodexBrokenChildGone(transport, iod.GenerationManifest{}) {
+		return record, false
+	}
+	generationID := strings.TrimSpace(transport.GenerationID)
+	if generationID == "" {
+		if binding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID()); err == nil && binding != nil {
+			generationID = binding.GenerationID.String()
+		}
+	}
+	if generationID == "" {
+		return record, false
+	}
+	helperGenerationID, err := iod.NewGenerationID(generationID)
+	if err != nil {
+		return record, false
+	}
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(s.cfg.Storage.DataDir), record.identity.SessionID(), helperGenerationID)
+	manifest, err := iod.ReadGenerationManifest(manifestPath)
+	if err != nil || !startupCodexBrokenChildGone(transport, manifest) {
+		return record, false
+	}
+	updatedTransport, ok, err := s.registry.SetTransport(record.identity.SessionID(), transportSnapshotEnded(helperGenerationID, "helper_not_running"))
+	if err != nil || !ok {
+		return record, false
+	}
+	if record.state.Busy() || record.runtimeAgentRunning {
+		_, _, _ = s.registry.MarkRuntimeCompleted(record.identity.SessionID())
+		_ = s.setRuntimeAgentRunning(record.identity.SessionID(), false)
+	}
+	updated, ok := s.registry.Lookup(record.identity.SessionID())
+	if !ok {
+		record.transport = updatedTransport
+		return record, true
+	}
+	updated.runtime = s.runtimeForRecord(updated)
+	return updated, true
+}
+
 func startupCodexBrokenChildGone(transport SessionTransportSnapshot, manifest iod.GenerationManifest) bool {
 	if transport.State != SessionTransportStateBroken || strings.TrimSpace(transport.Reason) != helperMissingChildAliveReason {
 		return false

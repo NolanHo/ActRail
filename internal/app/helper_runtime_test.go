@@ -173,8 +173,8 @@ func TestStartupHealthMarksCodexMissingHelperWithLiveChildBroken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateBroken || state.Transport.Reason != "helper_missing_child_alive" || !state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
-		t.Fatalf("SessionState().Transport = %+v, want broken reset_required orphan child generation %q", state.Transport, generationID)
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+		t.Fatalf("SessionState().Transport = %+v, want orphan cleanup reconciled to ended helper_not_running generation %q", state.Transport, generationID)
 	}
 	assertEventuallyPIDGone(t, childPID)
 }
@@ -218,6 +218,51 @@ func TestStartupHealthReconcilesClearedCodexMissingChildBroken(t *testing.T) {
 	}
 	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want ended helper_not_running after cleared orphan", state.Transport)
+	}
+}
+
+func TestSessionStateReconcilesClearedCodexMissingChildBroken(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_orphan_child_gone_live")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-orphan-child-gone-live"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, staleTestPID(), 1760000000)
+	childPID := staleTestPID()
+	manifest.ChildPID = &childPID
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID:  generationID.String(),
+		State:         SessionTransportStateBroken,
+		ResetRequired: true,
+		Reason:        helperMissingChildAliveReason,
+	}); err != nil || !ok {
+		t.Fatalf("SetTransport() ok=%v err=%v", ok, err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want live reconcile to ended helper_not_running", state.Transport)
+	}
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 || listed.Items[0].TransportState != SessionTransportStateEnded.String() || listed.Items[0].TransportReason != "helper_not_running" || listed.Items[0].ResetRequired {
+		t.Fatalf("ListSessions().Items = %+v, want reconciled ended helper_not_running", listed.Items)
 	}
 }
 

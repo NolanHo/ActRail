@@ -519,6 +519,9 @@ func (s *Stub) SessionState(ctx context.Context, req SessionStateRequest) (Sessi
 	if err != nil {
 		return SessionStateResponse{}, err
 	}
+	if reconciled, ok := s.reconcileClearedCodexMissingChildTransport(record); ok {
+		record = reconciled
+	}
 	record = s.reconcileCodexSessionFileFinalForState(record)
 	return s.sessionStateResponse(record), nil
 }
