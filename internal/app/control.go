@@ -116,6 +116,84 @@ func (s *Stub) sendWithPrecondition(ctx context.Context, req SendRequest, follow
 }
 
 func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bool, precondition sendLockedPrecondition, trackCapacityRetry bool) (SendResponse, error) {
+	if !s.asyncSQLiteActions {
+		return s.sendWithOptionsSync(ctx, req, followUp, precondition, trackCapacityRetry)
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		return SendResponse{}, Invalid("text", "text required")
+	}
+	var response SendResponse
+	var runtime sessionRuntime
+	var recordAtCommit sessionRecord
+	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
+		record.runtime = s.runtimeForRecord(record)
+		if reconciled, ok := s.reconcileClearedCodexMissingChildTransport(record); ok {
+			record = reconciled
+		}
+		if reconciled, ok := s.reconcileLiveCodexAttachLostTransport(record); ok {
+			record = reconciled
+		}
+		if precondition != nil {
+			if err := precondition(record); err != nil {
+				return err
+			}
+		}
+		if s.activeWaitForSession(req.SessionID) != nil {
+			return Conflict("session is waiting on user")
+		}
+		if err := transportControlError(s.sessionTransportSnapshot(record)); err != nil {
+			return err
+		}
+		if err := s.sendIdlePrecondition(ctx, record); err != nil {
+			return err
+		}
+		if record.runtime.protocol == runtimeProtocolCodexRPC {
+			active, err := s.codexAuthoritativeActiveTurn(ctx, record)
+			if err != nil {
+				_ = s.emitRuntimeControlDiagnostic(req.SessionID, "pre_send_codex_state", err)
+			}
+			if active {
+				_ = s.transitionCodexRuntime(req.SessionID, codexRuntimePhaseRunning, "codex_authoritative_running", "pre_send_codex_state")
+				return Conflict("codex runtime is still running; use queue or interrupt")
+			}
+		}
+		runtime = record.runtime
+		recordAtCommit = record
+		busyOnSend := true
+		item, state, uiRequest, ok, err := s.registry.ActivateSendWithBusy(req.SessionID, text, busyOnSend)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+		}
+		s.invalidateSessionHistoryCaches(req.SessionID)
+		response = SendResponse{
+			Message: sessionMessageFromCommitted(item),
+			Busy:    state.Busy(),
+			Queue:   queueSnapshotFromState(state),
+			UI:      copySessionUIRequest(uiRequest),
+		}
+		if record.identity.Backend() == session.BackendCodex {
+			s.trackCodexOutboundPrompt(req.SessionID, text)
+			if trackCapacityRetry {
+				s.trackCodexCapacityRetryPrompt(req.SessionID, text)
+			}
+			_ = s.transitionCodexRuntime(req.SessionID, codexRuntimePhaseSending, "codex_sending", "send")
+		}
+		return nil
+	}); err != nil {
+		return SendResponse{}, err
+	}
+	s.emitMessageCommit(req.SessionID, "", response.Message)
+	s.emitQueueState(req.SessionID, response.Queue)
+	s.emitSessionState(req.SessionID)
+	s.startAsyncRuntimeSend(req.SessionID, text, followUp, runtime, recordAtCommit)
+	return response, nil
+}
+
+func (s *Stub) sendWithOptionsSync(ctx context.Context, req SendRequest, followUp bool, precondition sendLockedPrecondition, trackCapacityRetry bool) (SendResponse, error) {
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
 		return SendResponse{}, Invalid("text", "text required")
@@ -251,6 +329,68 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		s.startCodexTurnStartWatch(req.SessionID, codexTurnWatchRuntime)
 	}
 	return response, nil
+}
+
+func (s *Stub) startAsyncRuntimeSend(sessionID session.SessionID, text string, followUp bool, runtime sessionRuntime, record sessionRecord) {
+	if s == nil {
+		return
+	}
+	go s.finishAsyncRuntimeSend(sessionID, text, followUp, runtime, record)
+}
+
+func (s *Stub) finishAsyncRuntimeSend(sessionID session.SessionID, text string, followUp bool, runtime sessionRuntime, record sessionRecord) {
+	if err := s.withSessionInputLock(sessionID, func(current sessionRecord) error {
+		current.runtime = s.runtimeForRecord(current)
+		if !sameRuntimeHandle(runtime, current.runtime) {
+			return errRuntimeChanged
+		}
+		if err := s.prepareRuntimeSend(context.Background(), sessionID, runtime); err != nil {
+			return err
+		}
+		sendRuntimePrompt := runtime.SendPromptWithStaleCheck
+		if followUp {
+			sendRuntimePrompt = func(ctx context.Context, text string, stale func() bool) error {
+				if stale != nil && stale() {
+					return errRuntimeChanged
+				}
+				return runtime.SendFollowUp(ctx, text)
+			}
+		}
+		if err := sendRuntimePrompt(context.Background(), text, func() bool {
+			current, err := s.lookupSession(sessionID)
+			if err == nil {
+				current.runtime = s.runtimeForRecord(current)
+			}
+			return err != nil || !sameRuntimeHandle(runtime, current.runtime)
+		}); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		if errors.Is(err, errRuntimeChanged) {
+			return
+		}
+		if record.identity.Backend() == session.BackendCodex || runtime.protocol == runtimeProtocolCodexRPC {
+			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_send_failed", "send_failed")
+			s.clearCodexOutboundPrompt(sessionID, text)
+		}
+		_, _, _ = s.registry.SetBusy(sessionID, false)
+		_ = s.emitRuntimeControlDiagnostic(sessionID, "send", err)
+		s.emitSessionState(sessionID)
+		return
+	}
+	if runtime.protocol == runtimeProtocolCodexRPC {
+		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseTurnStarting, "codex_turn_starting", "turn_starting")
+		s.startCodexTurnStartWatch(sessionID, runtime)
+	}
+	if record.identity.Backend() == session.BackendPI {
+		if runtime.protocol == runtimeProtocolPIRPC && runtime.helper != nil {
+			s.holdPIRPCBusy(sessionID, runtime.helper.generationID)
+			s.kickPIRPCStateProbe(sessionID, runtime.helper.generationID)
+		}
+		s.startPIRPCStatePolling(sessionID, runtime)
+	}
+	s.emitSessionState(sessionID)
 }
 
 func (s *Stub) sendIdlePrecondition(ctx context.Context, record sessionRecord) error {

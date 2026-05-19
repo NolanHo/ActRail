@@ -117,6 +117,7 @@ type Stub struct {
 	appStateMu          sync.RWMutex
 	recentCwds          []string
 	cwdGroups           map[string]CwdGroupMeta
+	asyncSQLiteActions  bool
 }
 
 func NewStub(cfg config.Config) (*Stub, error) {
@@ -137,7 +138,12 @@ func NewStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeC
 }
 
 func NewPersistentStubForTest(cfg config.Config, now func() time.Time, runtimeCfg RuntimeConfig) (*Stub, error) {
-	return newPersistentStubWithRuntime(cfg, now, runtimeCfg)
+	stub, err := newPersistentStubWithRuntime(cfg, now, runtimeCfg)
+	if err != nil {
+		return nil, err
+	}
+	stub.asyncSQLiteActions = false
+	return stub, nil
 }
 
 func newStub(cfg config.Config, now func() time.Time) *Stub {
@@ -629,6 +635,56 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 			return CreateSessionResponse{}, err
 		}
 	}
+	if !s.asyncSQLiteActions {
+		return s.createSessionWithRuntimeLaunch(ctx, req, identity, backend, cwd, sourcePath, resumeBackendSessionID)
+	}
+	runtimeReq := runtimeLaunchRequest{
+		SessionID:       identity.SessionID(),
+		Backend:         backend,
+		CWD:             cwd,
+		Provider:        optionalString(req.Provider),
+		Model:           optionalString(req.Model),
+		ReasoningEffort: optionalString(req.ReasoningEffort),
+		SessionPath:     sourcePath,
+		CodexThreadID:   resumeBackendSessionID,
+		PIAgentGRPC:     createSessionUsesPIAgentGRPC(req, backend),
+	}
+	runtime := pendingRuntimeForLaunch(runtimeReq)
+	transport := pendingTransportForLaunch(runtimeReq)
+	record, err := s.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          backend,
+		CWD:              cwd,
+		Provider:         optionalString(req.Provider),
+		Model:            optionalString(req.Model),
+		ReasoningEffort:  optionalString(req.ReasoningEffort),
+		Title:            optionalString(req.Title),
+		Hidden:           req.Hidden,
+		SourcePath:       sourcePath,
+		BackendSessionID: resumeBackendSessionID,
+		SourceConfidence: map[bool]string{true: sourceConfidenceExact, false: sourceConfidenceProvisional}[resumeBackendSessionID != ""],
+		Runtime:          runtime,
+		Transport:        transport,
+	})
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	s.startSessionRuntimeLaunch(record.identity.SessionID(), runtimeReq)
+	stream, err := session.MainStream(record.identity)
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	return CreateSessionResponse{
+		OK:      true,
+		Session: s.createdSessionFromRecord(record),
+		WSAttach: &SessionAttachRequest{
+			SessionID:            record.identity.SessionID().String(),
+			SuggestSubscriptions: []string{stream.String()},
+		},
+	}, nil
+}
+
+func (s *Stub) createSessionWithRuntimeLaunch(ctx context.Context, req CreateSessionRequest, identity session.Identity, backend session.Backend, cwd, sourcePath, resumeBackendSessionID string) (CreateSessionResponse, error) {
 	runtime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
 		SessionID:       identity.SessionID(),
 		Backend:         backend,
@@ -656,14 +712,6 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		return CreateSessionResponse{}, err
 	}
 	bindingSaved = true
-	transport := SessionTransportSnapshot{}
-	if runtime.PendingPIAgentGRPCReady() {
-		transport = transportSnapshotPIAgentGRPCStarting()
-	} else if runtime.UsesPIAgentGRPC() {
-		transport = piAgentGRPCTransportSnapshot()
-	} else if runtime.PendingCodexThread() {
-		transport = transportSnapshotCodexStarting()
-	}
 	record, err := s.registry.Create(sessionCreateSpec{
 		Identity:         &identity,
 		Backend:          backend,
@@ -677,7 +725,7 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 		BackendSessionID: resumeBackendSessionID,
 		SourceConfidence: map[bool]string{true: sourceConfidenceExact, false: sourceConfidenceProvisional}[resumeBackendSessionID != ""],
 		Runtime:          runtime,
-		Transport:        transport,
+		Transport:        transportForRuntimeStartup(runtime),
 	})
 	if err != nil {
 		rollbackRuntime()
@@ -702,6 +750,105 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 			SuggestSubscriptions: []string{stream.String()},
 		},
 	}, nil
+}
+
+func pendingRuntimeForLaunch(req runtimeLaunchRequest) sessionRuntime {
+	codex := newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID)
+	if codex != nil {
+		codex.transition(codexRuntimePhaseInitializing, "codex_initializing")
+	}
+	return sessionRuntime{
+		protocol: runtimeProtocolForBackend(req.Backend),
+		codex:    codex,
+	}
+}
+
+func pendingTransportForLaunch(req runtimeLaunchRequest) SessionTransportSnapshot {
+	if req.Backend == session.BackendPI && req.PIAgentGRPC {
+		return transportSnapshotPIAgentGRPCStarting()
+	}
+	if req.Backend == session.BackendCodex {
+		return transportSnapshotCodexStarting()
+	}
+	return SessionTransportSnapshot{State: SessionTransportStateStarting, Reason: "runtime_starting"}
+}
+
+func transportForRuntimeStartup(runtime sessionRuntime) SessionTransportSnapshot {
+	if runtime.PendingPIAgentGRPCReady() {
+		return transportSnapshotPIAgentGRPCStarting()
+	}
+	if runtime.UsesPIAgentGRPC() {
+		return piAgentGRPCTransportSnapshot()
+	}
+	if runtime.PendingCodexThread() {
+		return transportSnapshotCodexStarting()
+	}
+	return SessionTransportSnapshot{}
+}
+
+func (s *Stub) startSessionRuntimeLaunch(sessionID session.SessionID, req runtimeLaunchRequest) {
+	if s == nil {
+		return
+	}
+	go s.finishSessionRuntimeLaunch(sessionID, req)
+}
+
+func (s *Stub) finishSessionRuntimeLaunch(sessionID session.SessionID, req runtimeLaunchRequest) {
+	runtime, err := s.launcher.Launch(context.Background(), req)
+	if err != nil {
+		_ = runtime.CleanupHelperArtifacts()
+		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		return
+	}
+	bindingSaved := false
+	rollbackRuntime := func() {
+		runtime.ReleaseAttachedHelperRollback()
+		if bindingSaved {
+			_ = s.helperBindings.Delete(sessionID)
+		}
+	}
+	if err := s.bindRuntimeCurrentGeneration(sessionID, runtime); err != nil {
+		rollbackRuntime()
+		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		return
+	}
+	bindingSaved = true
+	updated, ok, err := s.registry.SetRuntimeStarting(sessionID, transportForRuntimeStartup(runtime), runtime)
+	if err != nil || !ok {
+		rollbackRuntime()
+		if err != nil {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "runtime_launch", err)
+		}
+		return
+	}
+	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), runtime)
+	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), runtime)
+	s.startCodexThreadBootstrap(updated.identity.SessionID(), runtime)
+	s.emitSessionState(updated.identity.SessionID())
+}
+
+func (s *Stub) markRuntimeStartupFailed(sessionID session.SessionID, generationID string, err error) {
+	if s == nil {
+		return
+	}
+	reason := "runtime_start_failed"
+	if err != nil {
+		reason = strings.TrimSpace(err.Error())
+	}
+	if reason == "" {
+		reason = "runtime_start_failed"
+	}
+	transportGenerationID := strings.TrimSpace(generationID)
+	_, _, _ = s.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID: transportGenerationID,
+		State:        SessionTransportStateFailed,
+		Reason:       reason,
+	})
+	if record, ok := s.registry.Lookup(sessionID); ok && record.identity.Backend() == session.BackendCodex {
+		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, reason, "runtime_start_failed")
+	}
+	_ = s.emitRuntimeControlDiagnostic(sessionID, "runtime_launch", err)
+	s.emitSessionState(sessionID)
 }
 
 func (s *Stub) createSessionResponseForExistingCodexOwner(ctx context.Context, owner sessionRecord) (CreateSessionResponse, error) {

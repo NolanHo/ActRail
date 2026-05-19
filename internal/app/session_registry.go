@@ -316,13 +316,32 @@ func (r *sessionRegistry) SetSourceBinding(sessionID session.SessionID, backendS
 	return copySessionRecord(cp), true, nil
 }
 
-func (r *sessionRegistry) SwapRuntime(routeID session.SessionID, identity session.Identity, runtime sessionRuntime, sourcePath string) (sessionRecord, bool, error) {
-	transport := SessionTransportSnapshot{}
-	if runtime.PendingPIAgentGRPCReady() {
-		transport = transportSnapshotPIAgentGRPCStarting()
-	} else if runtime.UsesPIAgentGRPC() {
-		transport = piAgentGRPCTransportSnapshot()
+func (r *sessionRegistry) SetRuntimeStarting(sessionID session.SessionID, transport SessionTransportSnapshot, runtime sessionRuntime) (sessionRecord, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return sessionRecord{}, true, err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return sessionRecord{}, false, nil
+	}
+	record.runtime = runtime
+	record.transport = transport
+	record.updatedAt = r.now().UTC()
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return sessionRecord{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionRecord(cp), true, nil
+}
+
+func (r *sessionRegistry) SwapRuntime(routeID session.SessionID, identity session.Identity, runtime sessionRuntime, sourcePath string) (sessionRecord, bool, error) {
+	return r.SwapRuntimeWithTransport(routeID, identity, runtime, sourcePath, transportForRuntimeStartup(runtime))
+}
+
+func (r *sessionRegistry) SwapRuntimeWithTransport(routeID session.SessionID, identity session.Identity, runtime sessionRuntime, sourcePath string, transport SessionTransportSnapshot) (sessionRecord, bool, error) {
 	if err := identity.Validate(); err != nil {
 		return sessionRecord{}, true, err
 	}

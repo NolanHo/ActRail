@@ -36,7 +36,7 @@ func transportSnapshotPIAgentGRPCFailed(reason string) SessionTransportSnapshot 
 }
 
 func transportSnapshotCodexStarting() SessionTransportSnapshot {
-	return SessionTransportSnapshot{State: SessionTransportStateStarting, GenerationID: "codex_app_server", Reason: "codex_thread_starting"}
+	return SessionTransportSnapshot{State: SessionTransportStateStarting, GenerationID: "codex_app_server", Reason: "codex_initializing"}
 }
 
 func transportSnapshotCodexAttached() SessionTransportSnapshot {

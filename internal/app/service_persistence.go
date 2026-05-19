@@ -73,6 +73,7 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		piModels:            piModelCache{},
 		recentCwds:          recentCwds,
 		cwdGroups:           cwdGroups,
+		asyncSQLiteActions:  true,
 	}
 	if err := stub.registry.Rehydrate(records); err != nil {
 		_ = catalog.Close()

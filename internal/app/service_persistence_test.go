@@ -34,6 +34,114 @@ func fakeRuntimeConfig() RuntimeConfig {
 	return RuntimeConfig{Runner: &process.FakeRunner{NextHandle: handle}}
 }
 
+func TestAsyncSQLiteCreateSessionReturnsBeforeRuntimeLaunchCompletes(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	blockLaunch := make(chan struct{})
+	launchStarted := make(chan struct{}, 1)
+	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
+		select {
+		case launchStarted <- struct{}{}:
+		default:
+		}
+		<-blockLaunch
+		handle := process.NewFakeHandle(spec)
+		handle.SetPID(321)
+		return handle
+	}}
+	svc, err := newPersistentStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntime() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	start := time.Now()
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+		AgentBackend: "pi",
+		PIAgentGRPC:  boolPtr(false),
+		CWD:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("CreateSession() elapsed = %s, want sqlite-backed async return", elapsed)
+	}
+	if created.Session == nil || !created.Session.PendingStartup || created.Session.TransportState != SessionTransportStateStarting.String() {
+		t.Fatalf("CreateSession().Session = %+v, want pending startup shell before launch completes", created.Session)
+	}
+	select {
+	case <-launchStarted:
+	case <-time.After(time.Second):
+		t.Fatal("runtime launch did not start in background")
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("created session not persisted")
+	}
+	if record.runtime.handle != nil {
+		t.Fatal("record.runtime.handle != nil before background launch completes")
+	}
+	close(blockLaunch)
+	waitForTestCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		return ok && record.runtime.handle != nil
+	})
+}
+
+func TestAsyncSQLiteSendReturnsBeforeRuntimeCommandCompletes(t *testing.T) {
+	svc, sessionID, _, pty := newControlFixture(t)
+	svc.asyncSQLiteActions = true
+	ptyBlock := make(chan struct{})
+	pty.blockWrite = ptyBlock
+	sendDone := make(chan struct {
+		response SendResponse
+		err      error
+	}, 1)
+	start := time.Now()
+	go func() {
+		response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "async prompt"})
+		sendDone <- struct {
+			response SendResponse
+			err      error
+		}{response: response, err: err}
+	}()
+	var result struct {
+		response SendResponse
+		err      error
+	}
+	select {
+	case result = <-sendDone:
+	case <-time.After(200 * time.Millisecond):
+		close(ptyBlock)
+		t.Fatal("Send() waited for runtime command instead of returning after sqlite commit")
+	}
+	if result.err != nil {
+		close(ptyBlock)
+		t.Fatalf("Send() error = %v", result.err)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		close(ptyBlock)
+		t.Fatalf("Send() elapsed = %s, want async return", elapsed)
+	}
+	if result.response.Message.Text != "async prompt" || !result.response.Busy {
+		close(ptyBlock)
+		t.Fatalf("Send() = %+v, want committed busy user message", result.response)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		close(ptyBlock)
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "async prompt" {
+		close(ptyBlock)
+		t.Fatalf("SessionMessages() = %+v, want committed async prompt", messages.Items)
+	}
+	close(ptyBlock)
+	waitForTestCondition(t, func() bool {
+		return len(pty.Writes()) == 1
+	})
+}
+
 func TestLookupSessionSeedsCodexRuntimeFromPersistedBackendSessionID(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

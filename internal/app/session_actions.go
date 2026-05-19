@@ -616,6 +616,48 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 			return sessionRecord{}, "", Conflict(fmt.Sprintf("codex session file is already attached to session %q", owner.identity.SessionID()))
 		}
 	}
+	if !s.asyncSQLiteActions {
+		return s.replaceSessionRuntimeSync(ctx, routeID, record, identity, usePIAgentGRPC, forceNewIOD, sourcePath, codexThreadID)
+	}
+	launchReq := runtimeLaunchRequest{
+		SessionID:       identity.SessionID(),
+		Backend:         record.identity.Backend(),
+		CWD:             record.cwd,
+		Provider:        record.provider,
+		Model:           record.model,
+		ReasoningEffort: record.reasoningEffort,
+		SessionPath:     sourcePath,
+		CodexThreadID:   codexThreadID,
+		PIAgentGRPC:     usePIAgentGRPC,
+		ForceNewIOD:     forceNewIOD,
+	}
+	if sourcePath != "" && sourcePath == strings.TrimSpace(record.importedSourcePath) {
+		sourcePath = ""
+	}
+	previousBinding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID())
+	if err != nil {
+		return sessionRecord{}, "", err
+	}
+	pendingRuntime := pendingRuntimeForLaunch(launchReq)
+	if err := s.setRuntimeAgentRunning(routeID, false); err != nil {
+		return sessionRecord{}, "", err
+	}
+	updated, ok, err := s.registry.SwapRuntimeWithTransport(routeID, identity, pendingRuntime, sourcePath, pendingTransportForLaunch(launchReq))
+	if err != nil {
+		return sessionRecord{}, "", err
+	}
+	if !ok {
+		return sessionRecord{}, "", NotFound(fmt.Sprintf("session %q not found", routeID))
+	}
+	if updated.identity.Backend() == session.BackendCodex {
+		s.invalidateCodexControlCaches(updated.identity.SessionID())
+	}
+	s.startReplacementRuntimeLaunch(updated.identity.SessionID(), launchReq, record, previousBinding)
+	previousRuntimeID, _ := record.identity.RuntimeID()
+	return updated, previousRuntimeID, nil
+}
+
+func (s *Stub) replaceSessionRuntimeSync(ctx context.Context, routeID session.SessionID, record sessionRecord, identity session.Identity, usePIAgentGRPC bool, forceNewIOD bool, sourcePath string, codexThreadID string) (sessionRecord, session.RuntimeID, error) {
 	newRuntime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
 		SessionID:       identity.SessionID(),
 		Backend:         record.identity.Backend(),
@@ -700,6 +742,76 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	}
 	previousRuntimeID, _ := record.identity.RuntimeID()
 	return updated, previousRuntimeID, nil
+}
+
+func (s *Stub) startReplacementRuntimeLaunch(sessionID session.SessionID, req runtimeLaunchRequest, previous sessionRecord, previousBinding *RuntimeHelperBinding) {
+	if s == nil {
+		return
+	}
+	go s.finishReplacementRuntimeLaunch(sessionID, req, previous, previousBinding)
+}
+
+func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, req runtimeLaunchRequest, previous sessionRecord, previousBinding *RuntimeHelperBinding) {
+	newRuntime, err := s.launcher.Launch(context.Background(), req)
+	if err != nil {
+		_ = newRuntime.CleanupHelperArtifacts()
+		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		return
+	}
+	releaseNewRuntime := func() {
+		newRuntime.ReleaseAttachedHelperRollback()
+	}
+	nextBinding, err := newRuntime.CurrentHelperBinding(sessionID)
+	if err != nil {
+		releaseNewRuntime()
+		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		return
+	}
+	reusedHelper := helperBindingSameGeneration(previousBinding, nextBinding)
+	if err := s.bindRuntimeCurrentGeneration(sessionID, newRuntime); err != nil {
+		releaseNewRuntime()
+		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		return
+	}
+	restoreBinding := func() {
+		if previousBinding != nil {
+			_ = s.bindCurrentGeneration(helperGenerationBinding{
+				SessionID:        sessionID,
+				GenerationID:     previousBinding.GenerationID,
+				LastReplayOffset: previousBinding.LastReplayOffset,
+			})
+			return
+		}
+		_ = s.helperBindings.Delete(sessionID)
+	}
+	updated, ok, err := s.registry.SetRuntimeStarting(sessionID, transportForRuntimeStartup(newRuntime), newRuntime)
+	if err != nil {
+		restoreBinding()
+		releaseNewRuntime()
+		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		return
+	}
+	if !ok {
+		restoreBinding()
+		releaseNewRuntime()
+		return
+	}
+	if !reusedHelper {
+		s.shutdownPreviousHelperGeneration(sessionID, previousBinding)
+	}
+	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
+	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), newRuntime)
+	s.startCodexThreadBootstrap(updated.identity.SessionID(), newRuntime)
+	if reusedHelper {
+		previous.runtime.CloseHelperStream()
+	} else {
+		_ = previous.runtime.Kill(context.Background())
+		if previous.runtime.helper != nil && s.helpers != nil {
+			s.helpers.Remove(previous.identity.SessionID())
+		}
+		_ = previous.runtime.CleanupHelperArtifacts()
+	}
+	s.emitSessionState(updated.identity.SessionID())
 }
 
 func helperBindingSameGeneration(left, right *RuntimeHelperBinding) bool {

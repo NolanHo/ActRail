@@ -1227,8 +1227,8 @@ func TestCodexSessionWaitsForThreadBeforeInput(t *testing.T) {
 	if created.Session.TransportState != SessionTransportStateStarting.String() || !created.Session.PendingStartup {
 		t.Fatalf("CreateSession().Session transport = (%q, pending=%v), want starting pending", created.Session.TransportState, created.Session.PendingStartup)
 	}
-	if created.Session.RuntimeState != string(codexRuntimePhaseThreadStarting) || !created.Session.Busy {
-		t.Fatalf("CreateSession().Session runtime = (%q, busy=%v), want thread_starting busy", created.Session.RuntimeState, created.Session.Busy)
+	if created.Session.RuntimeState != string(codexRuntimePhaseInitializing) || !created.Session.Busy {
+		t.Fatalf("CreateSession().Session runtime = (%q, busy=%v), want initializing busy", created.Session.RuntimeState, created.Session.Busy)
 	}
 	sessionID, err := session.ParseSessionID(created.Session.SessionID)
 	if err != nil {
@@ -1239,8 +1239,8 @@ func TestCodexSessionWaitsForThreadBeforeInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() before thread error = %v", err)
 	}
-	if startingState.RuntimeState != string(codexRuntimePhaseThreadStarting) || !startingState.Busy {
-		t.Fatalf("SessionState() before thread runtime = (%q, busy=%v), want thread_starting busy", startingState.RuntimeState, startingState.Busy)
+	if startingState.RuntimeState != string(codexRuntimePhaseInitializing) || !startingState.Busy {
+		t.Fatalf("SessionState() before thread runtime = (%q, busy=%v), want initializing busy", startingState.RuntimeState, startingState.Busy)
 	}
 
 	if _, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "hello"}); err == nil || !strings.Contains(err.Error(), "session runtime is starting") {

@@ -23,8 +23,9 @@ import (
 )
 
 type fakePTY struct {
-	mu     sync.Mutex
-	writes []string
+	mu         sync.Mutex
+	writes     []string
+	blockWrite <-chan struct{}
 }
 
 func (p *fakePTY) Read([]byte) (int, error) {
@@ -32,6 +33,9 @@ func (p *fakePTY) Read([]byte) (int, error) {
 }
 
 func (p *fakePTY) Write(data []byte) (int, error) {
+	if p.blockWrite != nil {
+		<-p.blockWrite
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.writes = append(p.writes, string(data))

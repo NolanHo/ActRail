@@ -1210,12 +1210,15 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	if restarted.Session == nil || restarted.Session.RuntimeID != restarted.RuntimeID {
 		t.Fatalf("RestartSession().Session = %+v, want runtime %q", restarted.Session, restarted.RuntimeID)
 	}
-	if restarted.Session.TransportState != SessionTransportStateAttached.String() {
-		t.Fatalf("RestartSession().Session.TransportState = %q, want %q", restarted.Session.TransportState, SessionTransportStateAttached)
+	if restarted.Session.TransportState != SessionTransportStateStarting.String() {
+		t.Fatalf("RestartSession().Session.TransportState = %q, want %q", restarted.Session.TransportState, SessionTransportStateStarting)
 	}
 	if restarted.WSAttach == nil || restarted.WSAttach.SessionID != sessionID.String() {
 		t.Fatalf("RestartSession().WSAttach = %+v, want session %q", restarted.WSAttach, sessionID)
 	}
+	waitForAppCondition(t, func() bool {
+		return len(*handles) == 2
+	})
 	if len(*handles) != 2 {
 		t.Fatalf("len(handles) after restart = %d, want 2", len(*handles))
 	}
@@ -1226,10 +1229,12 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 		t.Fatalf("new handle KillCalls() = %d, want 0", (*handles)[1].KillCalls())
 	}
 
-	record, err := svc.lookupSession(sessionID)
-	if err != nil {
-		t.Fatalf("lookupSession() after restart error = %v", err)
-	}
+	var record sessionRecord
+	waitForAppCondition(t, func() bool {
+		var err error
+		record, err = svc.lookupSession(sessionID)
+		return err == nil && record.runtime.PID() == 322
+	})
 	updatedRuntimeID, ok := record.identity.RuntimeID()
 	if !ok {
 		t.Fatal("record.identity.RuntimeID() ok = false, want true")
@@ -1246,8 +1251,8 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	if record.uiRequest != nil {
 		t.Fatalf("record.uiRequest = %+v, want nil after restart", record.uiRequest)
 	}
-	if record.transport != (SessionTransportSnapshot{}) {
-		t.Fatalf("record.transport = %+v, want empty after restart", record.transport)
+	if record.transport.State != SessionTransportStateStarting || record.transport.Reason != "codex_initializing" {
+		t.Fatalf("record.transport = %+v, want codex starting after async restart", record.transport)
 	}
 	if record.resumeCursors != (SessionResumeCursors{}) {
 		t.Fatalf("record.resumeCursors = %+v, want empty", record.resumeCursors)
@@ -1270,8 +1275,8 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	if state.UIRequest != nil {
 		t.Fatalf("SessionState().UIRequest = %+v, want nil after restart", state.UIRequest)
 	}
-	if state.Transport.State != SessionTransportStateAttached {
-		t.Fatalf("SessionState().Transport = %+v, want attached after restart", state.Transport)
+	if state.Transport.State != SessionTransportStateStarting {
+		t.Fatalf("SessionState().Transport = %+v, want starting after async restart", state.Transport)
 	}
 	if state.PartialAssistantTurn != nil {
 		t.Fatalf("SessionState().PartialAssistantTurn = %+v, want nil after restart", state.PartialAssistantTurn)
