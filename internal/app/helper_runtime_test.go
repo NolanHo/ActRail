@@ -179,6 +179,91 @@ func TestStartupHealthMarksCodexMissingHelperWithLiveChildBroken(t *testing.T) {
 	assertEventuallyPIDGone(t, childPID)
 }
 
+func TestStartupHealthReconcilesClearedCodexMissingChildBroken(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_orphan_child_gone")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-orphan-child-gone"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, staleTestPID(), 1760000000)
+	childPID := staleTestPID()
+	manifest.ChildPID = &childPID
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID:  generationID.String(),
+		State:         SessionTransportStateBroken,
+		ResetRequired: true,
+		Reason:        helperMissingChildAliveReason,
+	}); err != nil || !ok {
+		t.Fatalf("SetTransport() ok=%v err=%v", ok, err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want ended helper_not_running after cleared orphan", state.Transport)
+	}
+}
+
+func TestStartupHealthReconcilesPersistedCodexMissingChildBrokenAfterCleanup(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_orphan_child_cleanup")
+	helperPID, childPID := startOrphanedChildProcessGroup(t)
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-orphan-child-cleanup"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, helperPID, 1760000000)
+	manifest.ChildPID = &childPID
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID:  generationID.String(),
+		State:         SessionTransportStateBroken,
+		ResetRequired: true,
+		Reason:        helperMissingChildAliveReason,
+	}); err != nil || !ok {
+		t.Fatalf("SetTransport() ok=%v err=%v", ok, err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want ended helper_not_running after orphan cleanup", state.Transport)
+	}
+	assertEventuallyPIDGone(t, childPID)
+}
+
 func TestCleanupOrphanChildFromManifestKillsDeadHelperProcessGroup(t *testing.T) {
 	helperPID, childPID := startOrphanedChildProcessGroup(t)
 	sessionID := mustSessionID(t, "s_cleanup_orphan_child")
@@ -1727,6 +1812,15 @@ func startLiveHelperProcessGroupForCommand(t *testing.T, childCommand string) (i
 		_ = cmd.Wait()
 	}
 	return helperPID, childPID, stop
+}
+
+func staleTestPID() int {
+	for pid := 4194304; pid < 4194400; pid++ {
+		if !processPIDAlive(pid) {
+			return pid
+		}
+	}
+	return 4194304
 }
 
 func waitForFileBody(t *testing.T, path string) string {

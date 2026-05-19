@@ -357,7 +357,17 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 		_, hasAttachment := attachments[sessionID]
 		if !hasAttachment && startupTransportAlreadyTerminal(record) {
 			if record.identity.Backend() == session.BackendCodex {
-				_ = s.cleanupStartupCodexOrphans(sessionID, record)
+				transport, ok, err := s.cleanupStartupCodexOrphans(sessionID, record)
+				if err != nil {
+					return err
+				}
+				if ok {
+					if _, ok, err := s.registry.SetStartupTransport(sessionID, transport); err != nil {
+						return err
+					} else if !ok {
+						return fmt.Errorf("session %q not found while reconciling startup transport", sessionID)
+					}
+				}
 			}
 			continue
 		}
@@ -390,7 +400,7 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 	return nil
 }
 
-func (s *Stub) cleanupStartupCodexOrphans(sessionID session.SessionID, record sessionRecord) error {
+func (s *Stub) cleanupStartupCodexOrphans(sessionID session.SessionID, record sessionRecord) (SessionTransportSnapshot, bool, error) {
 	generationID := strings.TrimSpace(record.transport.GenerationID)
 	if generationID == "" {
 		if binding, err := record.runtime.CurrentHelperBinding(sessionID); err == nil && binding != nil {
@@ -398,22 +408,38 @@ func (s *Stub) cleanupStartupCodexOrphans(sessionID session.SessionID, record se
 		}
 	}
 	if generationID == "" {
-		return nil
+		return SessionTransportSnapshot{}, false, nil
 	}
 	helperGenerationID, err := iod.NewGenerationID(generationID)
 	if err != nil {
-		return nil
+		return SessionTransportSnapshot{}, false, nil
 	}
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(s.cfg.Storage.DataDir), sessionID, helperGenerationID)
 	manifest, err := iod.ReadGenerationManifest(manifestPath)
 	if err != nil {
-		return nil
+		return SessionTransportSnapshot{}, false, nil
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
 	defer cancel()
 	_, _ = cleanupOrphanChildFromManifest(cleanupCtx, manifest)
 	_, _ = cleanupOrphanChildrenForSocket(cleanupCtx, childSocketPathForManifest(manifest), manifest.HelperPID)
-	return nil
+	if startupCodexBrokenChildGone(record.transport, manifest) {
+		return transportSnapshotEnded(helperGenerationID, "helper_not_running"), true, nil
+	}
+	return SessionTransportSnapshot{}, false, nil
+}
+
+func startupCodexBrokenChildGone(transport SessionTransportSnapshot, manifest iod.GenerationManifest) bool {
+	if transport.State != SessionTransportStateBroken || strings.TrimSpace(transport.Reason) != helperMissingChildAliveReason {
+		return false
+	}
+	if manifest.HelperPID > 0 && processPIDAlive(manifest.HelperPID) {
+		return false
+	}
+	if manifest.ChildPID != nil && *manifest.ChildPID > 0 && processPIDAlive(*manifest.ChildPID) {
+		return false
+	}
+	return true
 }
 
 func childSocketPathForManifest(manifest iod.GenerationManifest) string {
