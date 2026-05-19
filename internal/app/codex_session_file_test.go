@@ -130,6 +130,33 @@ func TestCodexSessionFileDetailReturnsEmptyForZeroByteRollout(t *testing.T) {
 	}
 }
 
+func TestCodexSessionFileDetailPathRequestOverridesStaleStateDBRollout(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	threadID := "019e1111-0000-7000-8000-000000000213"
+	sourcePath := writeCodexSessionFile(t, codexHome, threadID, []string{
+		`{"timestamp":"2026-05-10T08:00:00Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":` + quoteJSON(cwd) + `}}`,
+		`{"timestamp":"2026-05-10T08:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"path prompt"}}`,
+	})
+	stalePath := filepath.Join(codexHome, "sessions", "2026", "05", "08", "rollout-stale-"+threadID+".jsonl")
+	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
+		{ID: threadID, CWD: cwd, Title: "State DB Title", FirstUserMessage: "state prompt", UpdatedMS: 1760000300000, RolloutPath: stalePath},
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+
+	detail, err := svc.CodexSessionFile(context.Background(), CodexSessionFileRequest{Path: sourcePath})
+	if err != nil {
+		t.Fatalf("CodexSessionFile() error = %v", err)
+	}
+	if detail.Summary.Path != sourcePath || detail.Summary.Title != "State DB Title" {
+		t.Fatalf("summary = %+v, want explicit path with state DB metadata", detail.Summary)
+	}
+	if got := messageRolesAndText(detail.Items); strings.Join(got, "\n") != "user:path prompt" {
+		t.Fatalf("items = %#v, want explicit path contents", got)
+	}
+}
+
 func TestRenameCodexSessionFileWritesCodexMetadataAndActRailRecord(t *testing.T) {
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)

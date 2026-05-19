@@ -315,7 +315,7 @@ func (s *Stub) codexSessionFileSummaryFromPath(ctx context.Context, path string)
 	index, err := s.codexSessionFileIndex(ctx, codexSessionFileScopeAll, "")
 	if err == nil {
 		if item, ok := index.itemsByThread[threadID]; ok {
-			item.Path = firstNonEmptyString(item.Path, cleanOptionalPath(path))
+			item.Path = cleanOptionalPath(path)
 			return item, nil
 		}
 	}
