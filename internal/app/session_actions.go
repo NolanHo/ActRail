@@ -507,6 +507,24 @@ func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (Del
 	if err != nil {
 		return DeleteSessionResponse{}, err
 	}
+	if !s.asyncSQLiteActions {
+		return s.deleteSessionSync(ctx, req, record)
+	}
+	removed, ok, err := s.registry.Delete(req.SessionID)
+	if err != nil {
+		return DeleteSessionResponse{}, err
+	}
+	if !ok {
+		return DeleteSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", req.SessionID))
+	}
+	if err := s.setRuntimeAgentRunning(req.SessionID, false); err != nil {
+		return DeleteSessionResponse{}, err
+	}
+	s.startAsyncSessionDeleteCleanup(req.SessionID, record)
+	return DeleteSessionResponse{OK: true, SessionID: removed.identity.SessionID().String(), Removed: true}, nil
+}
+
+func (s *Stub) deleteSessionSync(ctx context.Context, req DeleteSessionRequest, record sessionRecord) (DeleteSessionResponse, error) {
 	if err := record.runtime.Kill(ctx); err != nil {
 		return DeleteSessionResponse{}, err
 	}
@@ -528,6 +546,26 @@ func (s *Stub) DeleteSession(ctx context.Context, req DeleteSessionRequest) (Del
 		return DeleteSessionResponse{}, err
 	}
 	return DeleteSessionResponse{OK: true, SessionID: removed.identity.SessionID().String(), Removed: true}, nil
+}
+
+func (s *Stub) startAsyncSessionDeleteCleanup(sessionID session.SessionID, record sessionRecord) {
+	if s == nil {
+		return
+	}
+	go s.finishAsyncSessionDeleteCleanup(sessionID, record)
+}
+
+func (s *Stub) finishAsyncSessionDeleteCleanup(sessionID session.SessionID, record sessionRecord) {
+	if err := record.runtime.Kill(context.Background()); err != nil {
+		_ = s.emitRuntimeControlDiagnostic(sessionID, "delete_runtime", err)
+	}
+	if err := s.orphanActiveWaits(context.Background(), &sessionID); err != nil {
+		_ = s.emitRuntimeControlDiagnostic(sessionID, "delete_orphan_waits", err)
+	}
+	s.helpers.Remove(sessionID)
+	if err := s.helperBindings.Delete(sessionID); err != nil {
+		_ = s.emitRuntimeControlDiagnostic(sessionID, "delete_helper_binding", err)
+	}
 }
 
 func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (RestartSessionResponse, error) {

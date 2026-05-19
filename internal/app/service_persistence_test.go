@@ -393,6 +393,87 @@ func TestAsyncSQLiteSendFailureAfterRestartDoesNotClearCurrentBusy(t *testing.T)
 	}
 }
 
+func TestAsyncSQLiteDeleteReturnsBeforeRuntimeKillCompletes(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	killStarted := make(chan struct{}, 1)
+	releaseKill := make(chan struct{})
+	handle := &blockingKillHandle{
+		FakeHandle:  process.NewFakeHandle(process.LaunchSpec{}),
+		killStarted: killStarted,
+		releaseKill: releaseKill,
+	}
+	handle.SetPID(321)
+	handle.SetPTY(&fakePTY{})
+	svc, err := newPersistentStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: &process.FakeRunner{NextHandle: handle}})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntime() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+		AgentBackend: "pi",
+		PIAgentGRPC:  boolPtr(false),
+		CWD:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	waitForTestCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		return ok && record.runtime.handle != nil
+	})
+	start := time.Now()
+	deleted, err := svc.DeleteSession(context.Background(), DeleteSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("DeleteSession() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		close(releaseKill)
+		t.Fatalf("DeleteSession() elapsed = %s, want async return before runtime kill completes", elapsed)
+	}
+	if !deleted.OK || !deleted.Removed || deleted.SessionID != sessionID.String() {
+		close(releaseKill)
+		t.Fatalf("DeleteSession() = %+v, want removed session", deleted)
+	}
+	if _, ok := svc.registry.Lookup(sessionID); ok {
+		close(releaseKill)
+		t.Fatal("session still visible after async delete returned")
+	}
+	select {
+	case <-killStarted:
+	case <-time.After(time.Second):
+		close(releaseKill)
+		t.Fatal("background runtime kill did not start")
+	}
+	if handle.KillCalls() != 0 {
+		close(releaseKill)
+		t.Fatalf("KillCalls() = %d before unblock, want 0", handle.KillCalls())
+	}
+	close(releaseKill)
+	waitForTestCondition(t, func() bool {
+		return handle.KillCalls() == 1
+	})
+}
+
+type blockingKillHandle struct {
+	*process.FakeHandle
+	killStarted chan<- struct{}
+	releaseKill <-chan struct{}
+}
+
+func (h *blockingKillHandle) Kill() error {
+	if h.killStarted != nil {
+		select {
+		case h.killStarted <- struct{}{}:
+		default:
+		}
+	}
+	if h.releaseKill != nil {
+		<-h.releaseKill
+	}
+	return h.FakeHandle.Kill()
+}
+
 func TestLookupSessionSeedsCodexRuntimeFromPersistedBackendSessionID(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
