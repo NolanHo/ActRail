@@ -1516,7 +1516,7 @@ func TestSessionStateCodexTaskCompleteWithoutMessagesClearsRuntimeAgentRunning(t
 	}
 }
 
-func TestSessionStateCodexTaskStartedAfterTaskCompleteKeepsRunning(t *testing.T) {
+func TestSessionStateCodexTaskStartedAfterTaskCompleteDoesNotApplyActiveHistory(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sessionID := mustSessionID(t, "s_codex_file_task_started_keeps_running")
@@ -1565,11 +1565,12 @@ func TestSessionStateCodexTaskStartedAfterTaskCompleteKeepsRunning(t *testing.T)
 	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseRunning) {
 		t.Fatalf("SessionState() = busy:%v runtime:%q, want running after newer task_started", state.Busy, state.RuntimeState)
 	}
-	if state.TurnTiming == nil || state.TurnTiming.StartedTS != 1760000410 || state.TurnTiming.LastEventTS != nil {
-		t.Fatalf("SessionState().TurnTiming = %+v, want newer start with no stale last event", state.TurnTiming)
-	}
-	if state.ContextUsage == nil || state.ContextUsage.TotalTokens == nil || *state.ContextUsage.TotalTokens != 228000 {
-		t.Fatalf("SessionState().ContextUsage = %+v, want context window from task_started", state.ContextUsage)
+	key := codexIODHistoryCacheKey(packet)
+	svc.codexIODHistoryMu.Lock()
+	entry := svc.codexIODHistory[sessionID]
+	svc.codexIODHistoryMu.Unlock()
+	if entry.stateAppliedKey == key {
+		t.Fatal("SessionState applied active non-final IOD history after newer task_started")
 	}
 }
 

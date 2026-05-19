@@ -781,16 +781,6 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(record sessionRecord) sess
 	if s.codexTrustedSessionFileTailComplete(record) {
 		return s.reconcileCodexSessionFileFinalFromSourceTail(record)
 	}
-	if !codexIODHistoryPacketActiveTurn(packet) {
-		return record
-	}
-	if err := s.reconcileCodexSessionFileRuntimeProjection(record.identity.SessionID(), codexIODHistoryActiveProjectionLines(packet.Lines)); err != nil {
-		return record
-	}
-	if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
-		updated.runtime = s.runtimeForRecord(updated)
-		return updated
-	}
 	return record
 }
 
@@ -1601,54 +1591,6 @@ func codexIODHistoryMessagesHaveAuthoritativeCompletion(messages []iod.SessionHi
 
 func codexIODHistoryPacketNeedsAuthoritativeFinalReconcile(packet iod.SessionHistoryResponsePacket) bool {
 	return packet.TaskComplete || codexIODHistoryMessagesHaveAuthoritativeCompletion(packet.Messages)
-}
-
-func codexIODHistoryActiveProjectionLines(lines []string) []string {
-	const maxLines = 512
-	if len(lines) == 0 {
-		return nil
-	}
-	reversed := make([]string, 0, 16)
-	for i := len(lines) - 1; i >= 0 && len(reversed) < maxLines; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		kind := codexSessionLineRuntimeKind(line)
-		switch kind {
-		case "task_started", "task_complete", "turn_aborted", "token_count":
-			reversed = append(reversed, line)
-		default:
-			continue
-		}
-		if kind == "task_started" || codexHistoryTerminalKind(kind) {
-			break
-		}
-	}
-	if len(reversed) == 0 {
-		return nil
-	}
-	projectionLines := make([]string, 0, len(reversed))
-	for i := len(reversed) - 1; i >= 0; i-- {
-		projectionLines = append(projectionLines, reversed[i])
-	}
-	return projectionLines
-}
-
-func codexSessionLineRuntimeKind(raw string) string {
-	var entry codexSessionLine
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &entry); err != nil {
-		return ""
-	}
-	if strings.TrimSpace(entry.Type) != "event_msg" {
-		return ""
-	}
-	switch kind := strings.TrimSpace(stringValue(entry.Payload["type"])); kind {
-	case "task_started", "task_complete", "turn_aborted", "token_count":
-		return kind
-	default:
-		return ""
-	}
 }
 
 func codexSessionFileHasTaskComplete(ctx context.Context, sourcePath string) bool {
