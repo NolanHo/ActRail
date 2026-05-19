@@ -669,7 +669,8 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	if err != nil {
 		return CreateSessionResponse{}, err
 	}
-	s.startSessionRuntimeLaunch(record.identity.SessionID(), runtimeReq)
+	expectedRuntimeID, _ := record.identity.RuntimeID()
+	s.startSessionRuntimeLaunch(record.identity.SessionID(), expectedRuntimeID, runtimeReq)
 	stream, err := session.MainStream(record.identity)
 	if err != nil {
 		return CreateSessionResponse{}, err
@@ -786,18 +787,18 @@ func transportForRuntimeStartup(runtime sessionRuntime) SessionTransportSnapshot
 	return SessionTransportSnapshot{}
 }
 
-func (s *Stub) startSessionRuntimeLaunch(sessionID session.SessionID, req runtimeLaunchRequest) {
+func (s *Stub) startSessionRuntimeLaunch(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, req runtimeLaunchRequest) {
 	if s == nil {
 		return
 	}
-	go s.finishSessionRuntimeLaunch(sessionID, req)
+	go s.finishSessionRuntimeLaunch(sessionID, expectedRuntimeID, req)
 }
 
-func (s *Stub) finishSessionRuntimeLaunch(sessionID session.SessionID, req runtimeLaunchRequest) {
+func (s *Stub) finishSessionRuntimeLaunch(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, req runtimeLaunchRequest) {
 	runtime, err := s.launcher.Launch(context.Background(), req)
 	if err != nil {
 		_ = runtime.CleanupHelperArtifacts()
-		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		s.markRuntimeStartupFailed(sessionID, expectedRuntimeID, pendingTransportForLaunch(req).GenerationID, err)
 		return
 	}
 	bindingSaved := false
@@ -809,11 +810,11 @@ func (s *Stub) finishSessionRuntimeLaunch(sessionID session.SessionID, req runti
 	}
 	if err := s.bindRuntimeCurrentGeneration(sessionID, runtime); err != nil {
 		rollbackRuntime()
-		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		s.markRuntimeStartupFailed(sessionID, expectedRuntimeID, pendingTransportForLaunch(req).GenerationID, err)
 		return
 	}
 	bindingSaved = true
-	updated, ok, err := s.registry.SetRuntimeStarting(sessionID, transportForRuntimeStartup(runtime), runtime)
+	updated, ok, err := s.registry.SetRuntimeStartingIfCurrent(sessionID, expectedRuntimeID, transportForRuntimeStartup(runtime), runtime)
 	if err != nil || !ok {
 		rollbackRuntime()
 		if err != nil {
@@ -827,7 +828,7 @@ func (s *Stub) finishSessionRuntimeLaunch(sessionID session.SessionID, req runti
 	s.emitSessionState(updated.identity.SessionID())
 }
 
-func (s *Stub) markRuntimeStartupFailed(sessionID session.SessionID, generationID string, err error) {
+func (s *Stub) markRuntimeStartupFailed(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, generationID string, err error) {
 	if s == nil {
 		return
 	}
@@ -839,13 +840,18 @@ func (s *Stub) markRuntimeStartupFailed(sessionID session.SessionID, generationI
 		reason = "runtime_start_failed"
 	}
 	transportGenerationID := strings.TrimSpace(generationID)
-	_, _, _ = s.registry.SetTransport(sessionID, SessionTransportSnapshot{
+	if _, ok, setErr := s.registry.SetTransportIfCurrent(sessionID, expectedRuntimeID, SessionTransportSnapshot{
 		GenerationID: transportGenerationID,
 		State:        SessionTransportStateFailed,
 		Reason:       reason,
-	})
+	}); setErr != nil || !ok {
+		if setErr != nil {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "runtime_launch", setErr)
+		}
+		return
+	}
 	if record, ok := s.registry.Lookup(sessionID); ok && record.identity.Backend() == session.BackendCodex {
-		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, reason, "runtime_start_failed")
+		_ = s.transitionCodexRuntimeIfCurrent(sessionID, expectedRuntimeID, codexRuntimePhaseFailed, reason, "runtime_start_failed")
 	}
 	_ = s.emitRuntimeControlDiagnostic(sessionID, "runtime_launch", err)
 	s.emitSessionState(sessionID)

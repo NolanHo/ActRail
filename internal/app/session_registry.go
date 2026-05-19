@@ -317,8 +317,17 @@ func (r *sessionRegistry) SetSourceBinding(sessionID session.SessionID, backendS
 }
 
 func (r *sessionRegistry) SetRuntimeStarting(sessionID session.SessionID, transport SessionTransportSnapshot, runtime sessionRuntime) (sessionRecord, bool, error) {
+	return r.SetRuntimeStartingIfCurrent(sessionID, "", transport, runtime)
+}
+
+func (r *sessionRegistry) SetRuntimeStartingIfCurrent(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, transport SessionTransportSnapshot, runtime sessionRuntime) (sessionRecord, bool, error) {
 	if err := sessionID.Validate(); err != nil {
 		return sessionRecord{}, true, err
+	}
+	if expectedRuntimeID != "" {
+		if err := expectedRuntimeID.Validate(); err != nil {
+			return sessionRecord{}, true, err
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -326,7 +335,44 @@ func (r *sessionRegistry) SetRuntimeStarting(sessionID session.SessionID, transp
 	if !ok {
 		return sessionRecord{}, false, nil
 	}
+	if expectedRuntimeID != "" {
+		currentRuntimeID, ok := record.identity.RuntimeID()
+		if !ok || currentRuntimeID != expectedRuntimeID {
+			return sessionRecord{}, false, nil
+		}
+	}
 	record.runtime = runtime
+	record.transport = transport
+	record.updatedAt = r.now().UTC()
+	cp := copySessionRecord(record)
+	if err := r.persistLocked(cp); err != nil {
+		return sessionRecord{}, true, err
+	}
+	r.sessions[sessionID] = cp
+	return copySessionRecord(cp), true, nil
+}
+
+func (r *sessionRegistry) SetTransportIfCurrent(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, transport SessionTransportSnapshot) (sessionRecord, bool, error) {
+	if err := sessionID.Validate(); err != nil {
+		return sessionRecord{}, true, err
+	}
+	if expectedRuntimeID != "" {
+		if err := expectedRuntimeID.Validate(); err != nil {
+			return sessionRecord{}, true, err
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.sessions[sessionID]
+	if !ok {
+		return sessionRecord{}, false, nil
+	}
+	if expectedRuntimeID != "" {
+		currentRuntimeID, ok := record.identity.RuntimeID()
+		if !ok || currentRuntimeID != expectedRuntimeID {
+			return sessionRecord{}, false, nil
+		}
+	}
 	record.transport = transport
 	record.updatedAt = r.now().UTC()
 	cp := copySessionRecord(record)
@@ -721,11 +767,26 @@ func (r *sessionRegistry) DiscardPartialAssistantTurn(sessionID session.SessionI
 }
 
 func (r *sessionRegistry) SetBusy(sessionID session.SessionID, busy bool) (session.State, bool, error) {
+	return r.SetBusyIfCurrent(sessionID, "", busy)
+}
+
+func (r *sessionRegistry) SetBusyIfCurrent(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, busy bool) (session.State, bool, error) {
+	if expectedRuntimeID != "" {
+		if err := expectedRuntimeID.Validate(); err != nil {
+			return session.State{}, true, err
+		}
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	record, ok := r.sessions[sessionID]
 	if !ok {
 		return session.State{}, false, nil
+	}
+	if expectedRuntimeID != "" {
+		currentRuntimeID, ok := record.identity.RuntimeID()
+		if !ok || currentRuntimeID != expectedRuntimeID {
+			return session.State{}, false, nil
+		}
 	}
 	now := r.now().UTC()
 	record.updatedAt = now

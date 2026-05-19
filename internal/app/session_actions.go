@@ -652,7 +652,8 @@ func (s *Stub) replaceSessionRuntime(ctx context.Context, routeID session.Sessio
 	if updated.identity.Backend() == session.BackendCodex {
 		s.invalidateCodexControlCaches(updated.identity.SessionID())
 	}
-	s.startReplacementRuntimeLaunch(updated.identity.SessionID(), launchReq, record, previousBinding)
+	expectedRuntimeID, _ := updated.identity.RuntimeID()
+	s.startReplacementRuntimeLaunch(updated.identity.SessionID(), expectedRuntimeID, launchReq, record, previousBinding)
 	previousRuntimeID, _ := record.identity.RuntimeID()
 	return updated, previousRuntimeID, nil
 }
@@ -744,18 +745,18 @@ func (s *Stub) replaceSessionRuntimeSync(ctx context.Context, routeID session.Se
 	return updated, previousRuntimeID, nil
 }
 
-func (s *Stub) startReplacementRuntimeLaunch(sessionID session.SessionID, req runtimeLaunchRequest, previous sessionRecord, previousBinding *RuntimeHelperBinding) {
+func (s *Stub) startReplacementRuntimeLaunch(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, req runtimeLaunchRequest, previous sessionRecord, previousBinding *RuntimeHelperBinding) {
 	if s == nil {
 		return
 	}
-	go s.finishReplacementRuntimeLaunch(sessionID, req, previous, previousBinding)
+	go s.finishReplacementRuntimeLaunch(sessionID, expectedRuntimeID, req, previous, previousBinding)
 }
 
-func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, req runtimeLaunchRequest, previous sessionRecord, previousBinding *RuntimeHelperBinding) {
+func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, req runtimeLaunchRequest, previous sessionRecord, previousBinding *RuntimeHelperBinding) {
 	newRuntime, err := s.launcher.Launch(context.Background(), req)
 	if err != nil {
 		_ = newRuntime.CleanupHelperArtifacts()
-		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		s.markRuntimeStartupFailed(sessionID, expectedRuntimeID, pendingTransportForLaunch(req).GenerationID, err)
 		return
 	}
 	releaseNewRuntime := func() {
@@ -764,13 +765,13 @@ func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, req r
 	nextBinding, err := newRuntime.CurrentHelperBinding(sessionID)
 	if err != nil {
 		releaseNewRuntime()
-		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		s.markRuntimeStartupFailed(sessionID, expectedRuntimeID, pendingTransportForLaunch(req).GenerationID, err)
 		return
 	}
 	reusedHelper := helperBindingSameGeneration(previousBinding, nextBinding)
 	if err := s.bindRuntimeCurrentGeneration(sessionID, newRuntime); err != nil {
 		releaseNewRuntime()
-		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		s.markRuntimeStartupFailed(sessionID, expectedRuntimeID, pendingTransportForLaunch(req).GenerationID, err)
 		return
 	}
 	restoreBinding := func() {
@@ -784,11 +785,11 @@ func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, req r
 		}
 		_ = s.helperBindings.Delete(sessionID)
 	}
-	updated, ok, err := s.registry.SetRuntimeStarting(sessionID, transportForRuntimeStartup(newRuntime), newRuntime)
+	updated, ok, err := s.registry.SetRuntimeStartingIfCurrent(sessionID, expectedRuntimeID, transportForRuntimeStartup(newRuntime), newRuntime)
 	if err != nil {
 		restoreBinding()
 		releaseNewRuntime()
-		s.markRuntimeStartupFailed(sessionID, pendingTransportForLaunch(req).GenerationID, err)
+		s.markRuntimeStartupFailed(sessionID, expectedRuntimeID, pendingTransportForLaunch(req).GenerationID, err)
 		return
 	}
 	if !ok {

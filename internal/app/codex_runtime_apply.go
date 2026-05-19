@@ -194,12 +194,22 @@ func (s *Stub) clearCodexTurnID(sessionID session.SessionID, turnID string) {
 }
 
 func (s *Stub) transitionCodexRuntime(sessionID session.SessionID, phase codexRuntimePhase, reason string, cause string) error {
+	return s.transitionCodexRuntimeIfCurrent(sessionID, "", phase, reason, cause)
+}
+
+func (s *Stub) transitionCodexRuntimeIfCurrent(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, phase codexRuntimePhase, reason string, cause string) error {
 	if s == nil {
 		return nil
 	}
 	record, ok := s.registry.Lookup(sessionID)
 	if !ok || record.identity.Backend() != session.BackendCodex {
 		return nil
+	}
+	if expectedRuntimeID != "" {
+		currentRuntimeID, ok := record.identity.RuntimeID()
+		if !ok || currentRuntimeID != expectedRuntimeID {
+			return nil
+		}
 	}
 	changed := false
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {

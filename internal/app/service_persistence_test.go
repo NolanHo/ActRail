@@ -3,10 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +34,14 @@ func fakeRuntimeConfig() RuntimeConfig {
 	handle := process.NewFakeHandle(process.LaunchSpec{})
 	handle.SetPID(321)
 	return RuntimeConfig{Runner: &process.FakeRunner{NextHandle: handle}}
+}
+
+type startFuncRunner struct {
+	start func(context.Context, process.LaunchSpec) (process.Handle, error)
+}
+
+func (r startFuncRunner) Start(ctx context.Context, spec process.LaunchSpec) (process.Handle, error) {
+	return r.start(ctx, spec)
 }
 
 func TestAsyncSQLiteCreateSessionReturnsBeforeRuntimeLaunchCompletes(t *testing.T) {
@@ -140,6 +150,247 @@ func TestAsyncSQLiteSendReturnsBeforeRuntimeCommandCompletes(t *testing.T) {
 	waitForTestCondition(t, func() bool {
 		return len(pty.Writes()) == 1
 	})
+}
+
+func TestAsyncSQLiteRestartIgnoresStaleLaunchCompletion(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	type launchGate struct {
+		started chan struct{}
+		release chan struct{}
+	}
+	gates := []*launchGate{
+		{started: make(chan struct{}, 1), release: make(chan struct{})},
+		{started: make(chan struct{}, 1), release: make(chan struct{})},
+	}
+	var launchSeq int
+	var launchMu sync.Mutex
+	runner := startFuncRunner{start: func(ctx context.Context, spec process.LaunchSpec) (process.Handle, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := spec.Validate(); err != nil {
+			return nil, err
+		}
+		launchMu.Lock()
+		seq := launchSeq
+		launchSeq++
+		launchMu.Unlock()
+		if seq < len(gates) {
+			gate := gates[seq]
+			gate.started <- struct{}{}
+			<-gate.release
+		}
+		handle := process.NewFakeHandle(spec)
+		handle.SetPID(321 + seq)
+		return handle, nil
+	}}
+	svc, err := newPersistentStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntime() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+		AgentBackend: "pi",
+		PIAgentGRPC:  boolPtr(false),
+		CWD:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	select {
+	case <-gates[0].started:
+	case <-time.After(time.Second):
+		t.Fatal("initial async launch did not start")
+	}
+	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+	wantRuntimeID := restarted.RuntimeID
+	select {
+	case <-gates[1].started:
+	case <-time.After(time.Second):
+		t.Fatal("restart async launch did not start")
+	}
+	close(gates[0].release)
+	waitForTestCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		if !ok {
+			return false
+		}
+		runtimeID, ok := record.identity.RuntimeID()
+		return ok && runtimeID.String() == wantRuntimeID && record.runtime.handle == nil && record.transport.State == SessionTransportStateStarting
+	})
+	close(gates[1].release)
+	waitForTestCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		if !ok {
+			return false
+		}
+		runtimeID, ok := record.identity.RuntimeID()
+		return ok && runtimeID.String() == wantRuntimeID && record.runtime.PID() == 322
+	})
+}
+
+func TestAsyncSQLiteRestartIgnoresStaleLaunchFailure(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	failInitial := make(chan struct{})
+	releaseRestart := make(chan struct{})
+	restartStarted := make(chan struct{}, 1)
+	var launchSeq int
+	var launchMu sync.Mutex
+	runner := startFuncRunner{start: func(ctx context.Context, spec process.LaunchSpec) (process.Handle, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := spec.Validate(); err != nil {
+			return nil, err
+		}
+		launchMu.Lock()
+		seq := launchSeq
+		launchSeq++
+		launchMu.Unlock()
+		switch seq {
+		case 0:
+			<-failInitial
+			return nil, fmt.Errorf("stale initial launch failed")
+		case 1:
+			restartStarted <- struct{}{}
+			<-releaseRestart
+		}
+		handle := process.NewFakeHandle(spec)
+		handle.SetPID(321 + seq)
+		return handle, nil
+	}}
+	svc, err := newPersistentStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntime() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+		AgentBackend: "pi",
+		PIAgentGRPC:  boolPtr(false),
+		CWD:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+	wantRuntimeID := restarted.RuntimeID
+	select {
+	case <-restartStarted:
+	case <-time.After(time.Second):
+		t.Fatal("restart async launch did not start")
+	}
+	close(failInitial)
+	time.Sleep(50 * time.Millisecond)
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("session missing after stale failure")
+	}
+	runtimeID, ok := record.identity.RuntimeID()
+	if !ok || runtimeID.String() != wantRuntimeID {
+		t.Fatalf("runtime id after stale failure = %q ok=%v, want %q", runtimeID, ok, wantRuntimeID)
+	}
+	if record.transport.State == SessionTransportStateFailed {
+		t.Fatalf("transport after stale failure = %+v, want restart still current", record.transport)
+	}
+	close(releaseRestart)
+	waitForTestCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		if !ok {
+			return false
+		}
+		runtimeID, ok := record.identity.RuntimeID()
+		return ok && runtimeID.String() == wantRuntimeID && record.runtime.PID() == 322
+	})
+}
+
+func TestAsyncSQLiteSendFailureAfterRestartDoesNotClearCurrentBusy(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	initialPTY := &fakePTY{}
+	initialBlock := make(chan struct{})
+	initialWriteStarted := make(chan struct{}, 1)
+	initialPTY.blockWrite = initialBlock
+	initialPTY.writeStarted = initialWriteStarted
+	var launchSeq int
+	var launchMu sync.Mutex
+	runner := startFuncRunner{start: func(ctx context.Context, spec process.LaunchSpec) (process.Handle, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := spec.Validate(); err != nil {
+			return nil, err
+		}
+		launchMu.Lock()
+		seq := launchSeq
+		launchSeq++
+		launchMu.Unlock()
+		handle := process.NewFakeHandle(spec)
+		handle.SetPID(321 + seq)
+		if seq == 0 {
+			handle.SetPTY(initialPTY)
+		} else {
+			handle.SetPTY(&fakePTY{})
+		}
+		return handle, nil
+	}}
+	svc, err := newPersistentStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntime() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	useGRPC := false
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: &useGRPC, CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	waitForTestCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		return ok && record.runtime.handle != nil
+	})
+	sendResponse, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "blocked async send"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if !sendResponse.Busy {
+		t.Fatalf("Send().Busy = false, want busy while runtime send is pending")
+	}
+	select {
+	case <-initialWriteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("async runtime send did not start writing")
+	}
+	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+	wantRuntimeID := restarted.RuntimeID
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("SetBusy(current true) = (_, %v, %v), want ok true err nil", ok, err)
+	}
+	close(initialBlock)
+	waitForTestCondition(t, func() bool {
+		return len(initialPTY.Writes()) == 1
+	})
+	time.Sleep(50 * time.Millisecond)
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("session missing after stale send failure")
+	}
+	runtimeID, ok := record.identity.RuntimeID()
+	if !ok || runtimeID.String() != wantRuntimeID {
+		t.Fatalf("runtime id after stale send failure = %q ok=%v, want %q", runtimeID, ok, wantRuntimeID)
+	}
+	if !record.state.Busy() {
+		t.Fatal("record.state.Busy() = false, stale send failure cleared current runtime busy")
+	}
 }
 
 func TestLookupSessionSeedsCodexRuntimeFromPersistedBackendSessionID(t *testing.T) {

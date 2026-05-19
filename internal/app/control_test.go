@@ -23,9 +23,10 @@ import (
 )
 
 type fakePTY struct {
-	mu         sync.Mutex
-	writes     []string
-	blockWrite <-chan struct{}
+	mu           sync.Mutex
+	writes       []string
+	blockWrite   <-chan struct{}
+	writeStarted chan<- struct{}
 }
 
 func (p *fakePTY) Read([]byte) (int, error) {
@@ -33,6 +34,12 @@ func (p *fakePTY) Read([]byte) (int, error) {
 }
 
 func (p *fakePTY) Write(data []byte) (int, error) {
+	if p.writeStarted != nil {
+		select {
+		case p.writeStarted <- struct{}{}:
+		default:
+		}
+	}
 	if p.blockWrite != nil {
 		<-p.blockWrite
 	}

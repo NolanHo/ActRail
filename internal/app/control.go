@@ -126,6 +126,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 	var response SendResponse
 	var runtime sessionRuntime
 	var recordAtCommit sessionRecord
+	var expectedRuntimeID session.RuntimeID
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
 		record.runtime = s.runtimeForRecord(record)
 		if reconciled, ok := s.reconcileClearedCodexMissingChildTransport(record); ok {
@@ -160,6 +161,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		}
 		runtime = record.runtime
 		recordAtCommit = record
+		expectedRuntimeID, _ = record.identity.RuntimeID()
 		busyOnSend := true
 		item, state, uiRequest, ok, err := s.registry.ActivateSendWithBusy(req.SessionID, text, busyOnSend)
 		if err != nil {
@@ -189,7 +191,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 	s.emitMessageCommit(req.SessionID, "", response.Message)
 	s.emitQueueState(req.SessionID, response.Queue)
 	s.emitSessionState(req.SessionID)
-	s.startAsyncRuntimeSend(req.SessionID, text, followUp, runtime, recordAtCommit)
+	s.startAsyncRuntimeSend(req.SessionID, expectedRuntimeID, text, followUp, runtime, recordAtCommit)
 	return response, nil
 }
 
@@ -331,38 +333,33 @@ func (s *Stub) sendWithOptionsSync(ctx context.Context, req SendRequest, followU
 	return response, nil
 }
 
-func (s *Stub) startAsyncRuntimeSend(sessionID session.SessionID, text string, followUp bool, runtime sessionRuntime, record sessionRecord) {
+func (s *Stub) startAsyncRuntimeSend(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, text string, followUp bool, runtime sessionRuntime, record sessionRecord) {
 	if s == nil {
 		return
 	}
-	go s.finishAsyncRuntimeSend(sessionID, text, followUp, runtime, record)
+	go s.finishAsyncRuntimeSend(sessionID, expectedRuntimeID, text, followUp, runtime, record)
 }
 
-func (s *Stub) finishAsyncRuntimeSend(sessionID session.SessionID, text string, followUp bool, runtime sessionRuntime, record sessionRecord) {
+func (s *Stub) finishAsyncRuntimeSend(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, text string, followUp bool, runtime sessionRuntime, record sessionRecord) {
+	sendRuntimePrompt := runtime.SendPromptWithStaleCheck
+	if followUp {
+		sendRuntimePrompt = func(ctx context.Context, text string, stale func() bool) error {
+			if stale != nil && stale() {
+				return errRuntimeChanged
+			}
+			return runtime.SendFollowUp(ctx, text)
+		}
+	}
 	if err := s.withSessionInputLock(sessionID, func(current sessionRecord) error {
 		current.runtime = s.runtimeForRecord(current)
+		currentRuntimeID, ok := current.identity.RuntimeID()
+		if expectedRuntimeID != "" && (!ok || currentRuntimeID != expectedRuntimeID) {
+			return errRuntimeChanged
+		}
 		if !sameRuntimeHandle(runtime, current.runtime) {
 			return errRuntimeChanged
 		}
 		if err := s.prepareRuntimeSend(context.Background(), sessionID, runtime); err != nil {
-			return err
-		}
-		sendRuntimePrompt := runtime.SendPromptWithStaleCheck
-		if followUp {
-			sendRuntimePrompt = func(ctx context.Context, text string, stale func() bool) error {
-				if stale != nil && stale() {
-					return errRuntimeChanged
-				}
-				return runtime.SendFollowUp(ctx, text)
-			}
-		}
-		if err := sendRuntimePrompt(context.Background(), text, func() bool {
-			current, err := s.lookupSession(sessionID)
-			if err == nil {
-				current.runtime = s.runtimeForRecord(current)
-			}
-			return err != nil || !sameRuntimeHandle(runtime, current.runtime)
-		}); err != nil {
 			return err
 		}
 		return nil
@@ -370,17 +367,39 @@ func (s *Stub) finishAsyncRuntimeSend(sessionID session.SessionID, text string, 
 		if errors.Is(err, errRuntimeChanged) {
 			return
 		}
-		if record.identity.Backend() == session.BackendCodex || runtime.protocol == runtimeProtocolCodexRPC {
-			_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseFailed, "codex_send_failed", "send_failed")
-			s.clearCodexOutboundPrompt(sessionID, text)
-		}
-		_, _, _ = s.registry.SetBusy(sessionID, false)
-		_ = s.emitRuntimeControlDiagnostic(sessionID, "send", err)
-		s.emitSessionState(sessionID)
+		s.handleAsyncRuntimeSendError(sessionID, expectedRuntimeID, text, runtime, record, err)
 		return
 	}
+	if err := sendRuntimePrompt(context.Background(), text, func() bool {
+		current, err := s.lookupSession(sessionID)
+		if err == nil {
+			current.runtime = s.runtimeForRecord(current)
+		}
+		if err != nil || !sameRuntimeHandle(runtime, current.runtime) {
+			return true
+		}
+		if expectedRuntimeID == "" {
+			return false
+		}
+		currentRuntimeID, ok := current.identity.RuntimeID()
+		return !ok || currentRuntimeID != expectedRuntimeID
+	}); err != nil {
+		if errors.Is(err, errRuntimeChanged) {
+			return
+		}
+		s.handleAsyncRuntimeSendError(sessionID, expectedRuntimeID, text, runtime, record, err)
+		return
+	}
+	if expectedRuntimeID != "" {
+		if current, ok := s.registry.Lookup(sessionID); ok {
+			currentRuntimeID, ok := current.identity.RuntimeID()
+			if !ok || currentRuntimeID != expectedRuntimeID {
+				return
+			}
+		}
+	}
 	if runtime.protocol == runtimeProtocolCodexRPC {
-		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseTurnStarting, "codex_turn_starting", "turn_starting")
+		_ = s.transitionCodexRuntimeIfCurrent(sessionID, expectedRuntimeID, codexRuntimePhaseTurnStarting, "codex_turn_starting", "turn_starting")
 		s.startCodexTurnStartWatch(sessionID, runtime)
 	}
 	if record.identity.Backend() == session.BackendPI {
@@ -390,6 +409,27 @@ func (s *Stub) finishAsyncRuntimeSend(sessionID session.SessionID, text string, 
 		}
 		s.startPIRPCStatePolling(sessionID, runtime)
 	}
+	s.emitSessionState(sessionID)
+}
+
+func (s *Stub) handleAsyncRuntimeSendError(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, text string, runtime sessionRuntime, record sessionRecord, err error) {
+	if s == nil || err == nil {
+		return
+	}
+	if expectedRuntimeID != "" {
+		if current, ok := s.registry.Lookup(sessionID); ok {
+			currentRuntimeID, ok := current.identity.RuntimeID()
+			if !ok || currentRuntimeID != expectedRuntimeID {
+				return
+			}
+		}
+	}
+	if record.identity.Backend() == session.BackendCodex || runtime.protocol == runtimeProtocolCodexRPC {
+		_ = s.transitionCodexRuntimeIfCurrent(sessionID, expectedRuntimeID, codexRuntimePhaseFailed, "codex_send_failed", "send_failed")
+		s.clearCodexOutboundPrompt(sessionID, text)
+	}
+	_, _, _ = s.registry.SetBusyIfCurrent(sessionID, expectedRuntimeID, false)
+	_ = s.emitRuntimeControlDiagnostic(sessionID, "send", err)
 	s.emitSessionState(sessionID)
 }
 
