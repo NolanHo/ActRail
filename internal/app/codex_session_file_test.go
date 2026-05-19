@@ -1592,6 +1592,53 @@ func TestSessionStateCodexTaskCompleteWithoutMessagesClearsRuntimeAgentRunning(t
 	}
 }
 
+func TestSessionStateCodexTaskCompleteClearsStaleFailedRuntime(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_task_complete_clears_failed")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-task-complete-failed","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"weekly report"}}`,
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"authoritative done","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-08T15:59:10.397Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-codex-task-complete-failed","last_agent_message":"authoritative done","completed_at":1760000350}}`,
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_task_complete_failed", "t_task_complete_failed", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	runtimeState.transition(codexRuntimePhaseFailed, "codex_runtime_timeout")
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-task-complete-failed",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: runtimeState},
+		Transport:        SessionTransportSnapshot{State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	packet := attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) {
+		t.Fatalf("SessionState() = busy:%v runtime:%q reason:%q, want idle after authoritative task_complete clears stale failed runtime", state.Busy, state.RuntimeState, state.RuntimeStateReason)
+	}
+	if svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = true, want false after stale failed runtime reconcile")
+	}
+}
+
 func TestSessionStateCodexTaskStartedAfterTaskCompleteDoesNotApplyActiveHistory(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

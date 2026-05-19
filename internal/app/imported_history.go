@@ -843,6 +843,9 @@ func (s *Stub) reconcileCodexSessionFileFinalFromCachedIODPacket(record sessionR
 	s.codexIODHistoryMu.Lock()
 	if entry, ok := s.codexIODHistory[sessionID]; ok && codexIODHistoryCacheKey(entry.packet) == key && entry.stateAppliedKey == key {
 		s.codexIODHistoryMu.Unlock()
+		if codexRecordNeedsAuthoritativeFinalReconcile(record) && codexIODHistoryPacketNeedsAuthoritativeFinalReconcile(packet) {
+			return s.reconcileCodexSessionFileFinalFromIODPacketLines(record, packet, nil, packet.Messages)
+		}
 		return record
 	} else if ok && codexIODHistoryCanResumeStateProjection(entry, packet) {
 		projectionLines = packet.Lines[entry.stateAppliedLineCount:]
@@ -944,7 +947,13 @@ func codexRecordNeedsAuthoritativeFinalReconcile(record sessionRecord) bool {
 	if _, ok := record.transcript.PartialAssistantTurn(); ok {
 		return true
 	}
-	return record.state.Busy() || record.runtimeAgentRunning
+	if record.state.Busy() || record.runtimeAgentRunning {
+		return true
+	}
+	if record.runtime.codex == nil {
+		return false
+	}
+	return record.runtime.codex.activity().Phase == codexRuntimePhaseFailed
 }
 
 func (s *Stub) completeCodexRuntimeFromAuthoritativeSource(sessionID session.SessionID) {
