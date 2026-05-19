@@ -258,7 +258,7 @@ function transportErrorMessage(payload: LiveSessionResponse | Record<string, unk
 
 function transportBusyValue(payload: LiveSessionResponse | Record<string, unknown> | null, busy: boolean) {
   const transport = transportSnapshotFromPayload(payload);
-  if (transport?.state === "broken" || transport?.state === "ended") {
+  if (transport?.state === "broken" || transport?.state === "failed" || transport?.state === "ended") {
     return false;
   }
   return busy;
@@ -896,7 +896,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           },
           runtimeStateBySessionId: {
             ...state.runtimeStateBySessionId,
-            [sessionId]: "ended",
+            [sessionId]: "failed",
           },
         };
         emit();
@@ -961,7 +961,9 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         },
         runtimeStateBySessionId: {
           ...state.runtimeStateBySessionId,
-          [sessionId]: undefined,
+          [sessionId]: state.runtimeStateBySessionId[sessionId] === "failed" || state.runtimeStateBySessionId[sessionId] === "ended"
+            ? state.runtimeStateBySessionId[sessionId]
+            : undefined,
         },
         runtimeStateReasonBySessionId: {
           ...state.runtimeStateReasonBySessionId,

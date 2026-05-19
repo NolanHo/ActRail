@@ -418,6 +418,7 @@ export function Composer({ compactMobile = false, commandSheetRequestKey = 0 }: 
 	const activeSessionTerminalRuntime = sessionRuntimeTerminal(activeSession) || activeSessionRuntimeState === "failed" || activeSessionRuntimeState === "ended";
 	const activeSessionBusy = Boolean(
 		activeSession
+		&& !activeSessionBackendUnavailable
 		&& !activeSessionTerminalRuntime
 		&& (hasActiveSessionLiveBusy ? activeSessionLiveBusy : activeSession.busy === true),
 	);

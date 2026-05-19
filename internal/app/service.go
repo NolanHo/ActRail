@@ -523,6 +523,10 @@ func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListS
 		if reconciled, ok := s.reconcileClearedCodexMissingChildTransport(record); ok {
 			record = reconciled
 		}
+		if reconciled, ok := s.reconcileLiveCodexAttachLostTransport(record); ok {
+			record = reconciled
+		}
+		record = s.reconcileCodexSessionFileFinalForState(record)
 		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt))
 	}
 	return ListSessionsResponse{

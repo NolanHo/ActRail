@@ -127,6 +127,12 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 	watchCodexTurnStart := false
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
 		record.runtime = s.runtimeForRecord(record)
+		if reconciled, ok := s.reconcileClearedCodexMissingChildTransport(record); ok {
+			record = reconciled
+		}
+		if reconciled, ok := s.reconcileLiveCodexAttachLostTransport(record); ok {
+			record = reconciled
+		}
 		if precondition != nil {
 			if err := precondition(record); err != nil {
 				return err

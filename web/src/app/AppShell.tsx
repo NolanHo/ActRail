@@ -372,13 +372,16 @@ export function AppShell() {
   const activeRuntimeState = listedRuntimeState === "failed" || listedRuntimeState === "ended"
     ? listedRuntimeState
     : liveRuntimeState || listedRuntimeState;
+  const activeTransportState = typeof activeSession?.transport_state === "string" ? activeSession.transport_state.trim() : "";
+  const activeSessionTransportUnavailable = activeSession?.reset_required === true || ["broken", "failed", "ended"].includes(activeTransportState);
   const activeSessionTerminalRuntime = activeRuntimeState === "failed" || activeRuntimeState === "ended";
   const activeSessionHasLiveBusy = Boolean(activeSessionId && liveActiveSessionState.hasBusy);
-  const activeSessionLiveBusy = Boolean(activeSessionId && !activeSessionTerminalRuntime && liveActiveSessionState.busy === true);
+  const activeSessionLiveBusy = Boolean(activeSessionId && !activeSessionTransportUnavailable && !activeSessionTerminalRuntime && liveActiveSessionState.busy === true);
   const visibleActiveWait = activeWait ?? activeSession?.active_wait ?? null;
   const activeSessionBusy = Boolean(
-    !activeSessionTerminalRuntime
-    && (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true),
+    !activeSessionTransportUnavailable
+      && !activeSessionTerminalRuntime
+      && (activeSessionHasLiveBusy ? activeSessionLiveBusy : activeSession?.busy === true),
   );
   const activeSessionGenerating = Boolean(activeSessionBusy && liveActiveSessionState.generating === true);
   const activeTitle = activeSession

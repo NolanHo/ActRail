@@ -33,7 +33,7 @@ import type { MessageEvent, SessionSummary, TodoSnapshotItem } from "../../lib/t
 const EMPTY_PENDING_MESSAGES: never[] = [];
 const EMPTY_MESSAGES: MessageEvent[] = [];
 
-type ConversationActiveSession = Pick<SessionSummary, "session_id" | "runtime_id" | "agent_backend" | "historical" | "transport" | "busy" | "cwd">;
+type ConversationActiveSession = Pick<SessionSummary, "session_id" | "runtime_id" | "agent_backend" | "historical" | "transport" | "transport_state" | "reset_required" | "busy" | "cwd">;
 
 function liveSessionErrorTitle(session: ConversationActiveSession | null): string {
   if (session?.agent_backend === "pi" && session.transport === "pi-rpc") {
@@ -56,6 +56,8 @@ function selectConversationActiveSession(state: { activeSessionId: string | null
     agent_backend: session.agent_backend,
     historical: session.historical,
     transport: session.transport,
+    transport_state: session.transport_state,
+    reset_required: session.reset_required,
     busy: session.busy,
     cwd: session.cwd,
   };
@@ -73,6 +75,8 @@ function conversationActiveSessionEqual(left: ConversationActiveSession | null, 
     && left.agent_backend === right.agent_backend
     && left.historical === right.historical
     && left.transport === right.transport
+    && left.transport_state === right.transport_state
+    && left.reset_required === right.reset_required
     && left.busy === right.busy
     && left.cwd === right.cwd;
 }
@@ -3487,6 +3491,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   }, [activeSessionId]);
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsHistoricalPi = activeSession?.historical === true && activeSessionIsPi;
+  const activeTransportState = typeof activeSession?.transport_state === "string" ? activeSession.transport_state.trim() : "";
+  const activeSessionTransportUnavailable = activeSession?.reset_required === true || ["broken", "failed", "ended"].includes(activeTransportState);
   const shouldDemandLoadActiveSession = Boolean(
     activeSessionId
     && activeSession
@@ -3500,7 +3506,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     isGenerating
     || activeSessionSending
     || pendingMessages.some((message) => message.request_state === "sending")
-    || (hasLiveBusy ? liveBusy : activeSession?.busy === true),
+    || (!activeSessionTransportUnavailable && (hasLiveBusy ? liveBusy : activeSession?.busy === true)),
   );
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
   const messages = useMemo(

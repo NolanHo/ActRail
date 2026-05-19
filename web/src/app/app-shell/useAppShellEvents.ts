@@ -256,8 +256,8 @@ export function useAppShellEvents({
         if (!sessionId) {
           return;
         }
-        liveSessionStoreApi.applyFrame(frame);
         liveSessionStoreApi.resetSession(sessionId);
+        liveSessionStoreApi.applyFrame(frame);
         const session = latestRef.current.items.find((item) => item.session_id === sessionId) ?? null;
         void refreshLiveSessionSnapshot(sessionId, session?.runtime_id ?? null);
         if (latestRef.current.activeSessionId === sessionId && latestRef.current.workspaceOpen) {

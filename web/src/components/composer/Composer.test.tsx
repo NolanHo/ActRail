@@ -369,6 +369,30 @@ describe("Composer", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
+  it("shows reset-required backend state instead of stale live busy text", async () => {
+    const { submit } = renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "codex", busy: false, runtime_state: "idle", transport_state: "broken", reset_required: true }],
+      liveBusyBySessionId: { "sess-1": true },
+      liveRuntimeStateBySessionId: { "sess-1": "running" },
+      draft: "continue",
+    });
+
+    const composerRoot = getRoot();
+    const queueButton = Array.from(composerRoot.querySelectorAll("button")).find((button) => button.textContent?.includes("Inbox")) as HTMLButtonElement;
+    const sendButton = composerRoot.querySelector("button[type='submit']") as HTMLButtonElement;
+
+    expect(composerRoot.textContent).toContain("Session backend requires restart before sending.");
+    expect(composerRoot.textContent).not.toContain("Session is busy.");
+    expect(queueButton.disabled).toBe(false);
+    expect(sendButton.disabled).toBe(true);
+
+    await act(async () => {
+      sendButton.click();
+    });
+
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("keeps separate drafts for different sessions", async () => {
     const sessionsStore = createStore(
       {

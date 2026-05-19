@@ -1991,7 +1991,7 @@ func (s *blockingCommitSink) PublishMessageCommit(event MessageCommitEvent) {
 	s.captureRuntimeSink.PublishMessageCommit(event)
 }
 
-func TestListSessionsCodexFinalAnswerDoesNotScanSessionFile(t *testing.T) {
+func TestListSessionsCodexFinalAnswerTailClearsStaleRunning(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sessionID := mustSessionID(t, "s_codex_file_list_clears_running")
@@ -2033,8 +2033,11 @@ func TestListSessionsCodexFinalAnswerDoesNotScanSessionFile(t *testing.T) {
 	if len(listed.Items) != 1 {
 		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
 	}
-	if !listed.Items[0].Busy || listed.Items[0].RuntimeState != string(codexRuntimePhaseThreadStarting) {
-		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want cached starting state without session-file scan", listed.Items[0].Busy, listed.Items[0].RuntimeState)
+	if listed.Items[0].Busy || listed.Items[0].RuntimeState != string(codexRuntimePhaseIdle) {
+		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want trusted final source tail to clear stale running", listed.Items[0].Busy, listed.Items[0].RuntimeState)
+	}
+	if svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = true, want false after trusted final source tail")
 	}
 }
 

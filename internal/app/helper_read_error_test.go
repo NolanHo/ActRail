@@ -166,6 +166,66 @@ func TestCurrentHelperReadErrorRedialsLiveCodexHelper(t *testing.T) {
 	}
 }
 
+func TestSessionStateReconcilesStaleAttachLostWhenCodexHelperIsLive(t *testing.T) {
+	var hello iod.HelloPacket
+	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer serverConn.Close()
+			_ = json.NewEncoder(serverConn).Encode(hello)
+		}()
+		return clientConn, nil
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{IODDialer: dialer})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_stale_attach_lost_live")
+	proof, err := iod.NewHelloProof(os.Getpid(), nil, t.TempDir()+"/transport.wal", t.TempDir()+"/io", float64(time.Unix(1760000000, 0).UTC().Unix()))
+	if err != nil {
+		t.Fatalf("NewHelloProof() error = %v", err)
+	}
+	manifest, err := iod.NewGenerationManifest(sessionID, generationID, proof)
+	if err != nil {
+		t.Fatalf("NewGenerationManifest() error = %v", err)
+	}
+	hello, err = iod.NewHelloPacket(sessionID, generationID, 1, proof)
+	if err != nil {
+		t.Fatalf("NewHelloPacket() error = %v", err)
+	}
+	svc.helpers.Set(sessionID, attachedHelper{
+		Binding:  helperGenerationBinding{SessionID: sessionID, GenerationID: generationID},
+		Manifest: manifest,
+		Hello:    hello,
+	})
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime = sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			helper:   &runtimeIODHelper{generationID: generationID},
+			codex:    newCodexRuntimeState(session.BackendCodex),
+		}
+		record.runtime.codex.markInitialized()
+		record.runtime.codex.setThreadID("thread-stale-attach-lost-live")
+		record.transport = transportSnapshotBroken(generationID, iod.GenerationBreakAttachLost.String(), true)
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+		t.Fatalf("SessionState().Transport = %+v, want attached live helper", state.Transport)
+	}
+	if state.RuntimeState == string(codexRuntimePhaseFailed) {
+		t.Fatalf("SessionState().RuntimeState = %q, want non-failed", state.RuntimeState)
+	}
+}
+
 func TestFreshHelperReadErrorRedialsFromRuntimeManifest(t *testing.T) {
 	var hello iod.HelloPacket
 	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {

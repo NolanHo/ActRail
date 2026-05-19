@@ -221,6 +221,33 @@ func (s *Stub) markHelperTransportReconnecting(sessionID session.SessionID, gene
 	return nil
 }
 
+func (s *Stub) reconcileLiveCodexAttachLostTransport(record sessionRecord) (sessionRecord, bool) {
+	if s == nil || record.identity.Historical() || record.identity.Backend() != session.BackendCodex {
+		return record, false
+	}
+	transport := sessionTransportSnapshot(record)
+	if transport.State != SessionTransportStateBroken || !transport.ResetRequired || transport.Reason != iod.GenerationBreakAttachLost.String() {
+		return record, false
+	}
+	generationID := mustTransportGenerationID(transport.GenerationID)
+	if generationID == "" {
+		return record, false
+	}
+	result := s.tryRedialHelperAfterReadError(record.identity.SessionID(), record.identity.Backend(), generationID, transport)
+	if !result.reattached || result.client == nil {
+		return record, false
+	}
+	updated, ok := s.registry.Lookup(record.identity.SessionID())
+	if !ok {
+		return record, false
+	}
+	updated.runtime = s.runtimeForRecord(updated)
+	if updated.runtime.helper != nil {
+		go s.readRuntimeHelper(updated.identity.SessionID(), updated.identity.Backend(), updated.runtime.helper)
+	}
+	return updated, true
+}
+
 func (s *Stub) helperGenerationAppearsAlive(sessionID session.SessionID, generationID iod.GenerationID) bool {
 	if s == nil || generationID == "" {
 		return false
