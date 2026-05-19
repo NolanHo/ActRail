@@ -278,7 +278,7 @@ export function createComposerStore(): ComposerStore {
             : {
               ...state.pendingBySessionId,
               [sessionId]: (state.pendingBySessionId[sessionId] ?? []).map((item) => item.localId === pendingMessage.localId
-                ? { ...item, requestId: requestId || item.requestId }
+                ? { ...item, requestId: requestId || item.requestId, request_state: "buffered" }
                 : item),
             },
         };

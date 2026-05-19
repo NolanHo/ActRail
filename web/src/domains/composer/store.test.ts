@@ -103,7 +103,8 @@ describe("createComposerStore", () => {
             text: "hello",
             pending: true,
             ts: expect.any(Number),
-            request_state: "sending",
+            requestId: undefined,
+            request_state: "buffered",
           },
         ],
       },
@@ -176,6 +177,7 @@ describe("createComposerStore", () => {
     expect(store.getState().sending).toBe(false);
     expect(store.getState().sendingBySessionId.s1).toBeUndefined();
     expect(store.getState().pendingBySessionId.s1).toHaveLength(1);
+    expect(store.getState().pendingBySessionId.s1[0]).toMatchObject({ request_state: "buffered" });
   });
 
   it("allows a second session to submit while another session is still sending", async () => {
