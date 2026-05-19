@@ -463,7 +463,7 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	if runtimeRoot == "" {
 		return sessionRuntime{}, fmt.Errorf("iod runtime root is required")
 	}
-	if !req.ForceNewIOD || req.Backend == session.BackendCodex {
+	if !req.ForceNewIOD {
 		if runtime, ok := l.attachExistingIODHelper(ctx, req, runtimeRoot); ok {
 			return runtime, nil
 		}

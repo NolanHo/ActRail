@@ -635,7 +635,7 @@ func TestPersistentStubAdoptsUnboundCodexIODOnRestart(t *testing.T) {
 	}
 }
 
-func TestRuntimeLauncherForceNewIODReusesHealthyCodexAttach(t *testing.T) {
+func TestRuntimeLauncherForceNewIODSkipsHealthyCodexAttach(t *testing.T) {
 	sessionID := mustSessionID(t, "s_force_new_iod")
 	generationID := mustHelperGenerationID(t, "g_force_new_existing")
 	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
@@ -644,23 +644,23 @@ func TestRuntimeLauncherForceNewIODReusesHealthyCodexAttach(t *testing.T) {
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
 	defer cleanup()
+	wantErr := errors.New("new helper requested")
 	launcher := processRuntimeLauncher{
 		iodRuntimeRoot: root,
 		useIODHelper:   true,
 		resolveIODHelperBinPath: func() (string, error) {
-			t.Fatal("resolveIODHelperBinPath called; healthy same-session Codex IOD should be reused before launching")
-			return "", nil
+			return "", wantErr
 		},
 		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
 			return &RuntimeHelperBinding{GenerationID: generationID}, nil
 		},
 	}
 	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{SessionID: sessionID, Backend: session.BackendCodex, CWD: t.TempDir(), ForceNewIOD: true})
-	if err != nil {
-		t.Fatalf("Launch() error = %v", err)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Launch() error = %v, want new helper after ForceNewIOD", err)
 	}
-	if runtime.helper == nil || runtime.helper.generationID != generationID || !runtime.attachedExistingIOD {
-		t.Fatalf("runtime.helper = %+v attached=%v, want reused generation %q", runtime.helper, runtime.attachedExistingIOD, generationID)
+	if runtime.helper != nil {
+		t.Fatalf("runtime.helper = %+v, want no existing helper attachment", runtime.helper)
 	}
 }
 
