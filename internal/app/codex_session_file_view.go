@@ -125,7 +125,33 @@ func (s *Stub) CodexSessionFile(ctx context.Context, req CodexSessionFileRequest
 		return CodexSessionFileResponse{}, err
 	}
 	if strings.TrimSpace(summary.Path) == "" {
+		return CodexSessionFileResponse{
+			OK:      true,
+			Summary: summary,
+			Items:   []SessionMessage{},
+			Turns:   []CodexSessionFileTurn{},
+		}, nil
+	}
+	if info, err := os.Stat(summary.Path); err != nil {
+		if os.IsNotExist(err) {
+			summary.Path = ""
+			return CodexSessionFileResponse{
+				OK:      true,
+				Summary: summary,
+				Items:   []SessionMessage{},
+				Turns:   []CodexSessionFileTurn{},
+			}, nil
+		}
+		return CodexSessionFileResponse{}, err
+	} else if info.IsDir() {
 		return CodexSessionFileResponse{}, NotFound("codex session file not found")
+	} else if info.Size() == 0 {
+		return CodexSessionFileResponse{
+			OK:      true,
+			Summary: summary,
+			Items:   []SessionMessage{},
+			Turns:   []CodexSessionFileTurn{},
+		}, nil
 	}
 	items, err := codexSessionMessagesFromFile(ctx, summary.Path)
 	if err != nil {

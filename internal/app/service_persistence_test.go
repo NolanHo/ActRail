@@ -152,6 +152,47 @@ func TestAsyncSQLiteSendReturnsBeforeRuntimeCommandCompletes(t *testing.T) {
 	})
 }
 
+func TestAsyncSQLiteSendRejectsUnavailableRuntimeInputBeforeCommit(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	svc, err := newPersistentStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntime() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	identity, err := session.NewLiveIdentity("s_unavailable_input", "r_unavailable_input", "t_unavailable_input", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	threadID := "019e1111-0000-7000-8000-000000000401"
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	handle.SetPID(321)
+	record, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              t.TempDir(),
+		Title:            "codex without input",
+		BackendSessionID: threadID,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, handle: handle, codex: newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)},
+		Transport:        SessionTransportSnapshot{GenerationID: defaultHelperGeneration, State: SessionTransportStateAttached},
+	})
+	if err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+
+	_, err = svc.Send(context.Background(), SendRequest{SessionID: record.identity.SessionID(), Text: "should not commit"})
+	var appErr *Error
+	if !errors.As(err, &appErr) || appErr.Code != "conflict" || appErr.Message != "session runtime input is unavailable" {
+		t.Fatalf("Send() error = %#v, want conflict runtime input unavailable", err)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: record.identity.SessionID()})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 0 {
+		t.Fatalf("SessionMessages() = %+v, want no committed user message or diagnostic", messages.Items)
+	}
+}
+
 func TestAsyncSQLiteRestartIgnoresStaleLaunchCompletion(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	type launchGate struct {

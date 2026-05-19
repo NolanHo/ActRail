@@ -149,6 +149,9 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		if err := s.sendIdlePrecondition(ctx, record); err != nil {
 			return err
 		}
+		if err := preflightRuntimeSend(record.runtime); err != nil {
+			return mapRuntimeControlError(err)
+		}
 		if record.runtime.protocol == runtimeProtocolCodexRPC {
 			active, err := s.codexAuthoritativeActiveTurn(ctx, record)
 			if err != nil {
@@ -735,6 +738,24 @@ const (
 )
 
 var codexStaleInterruptWatchDelay = 10 * time.Minute
+
+func preflightRuntimeSend(runtime sessionRuntime) error {
+	switch runtime.protocol {
+	case runtimeProtocolTTY:
+		if !runtime.canWriteInput() {
+			return errRuntimeInputUnavailable
+		}
+	case runtimeProtocolPIRPC:
+		if runtime.piAgentGRPC == nil && !runtime.canWriteInput() {
+			return errRuntimeInputUnavailable
+		}
+	case runtimeProtocolCodexRPC:
+		if runtime.codex == nil || !runtime.canWriteInput() {
+			return errRuntimeInputUnavailable
+		}
+	}
+	return nil
+}
 
 func (s *Stub) prepareRuntimeSend(ctx context.Context, sessionID session.SessionID, runtime sessionRuntime) error {
 	if runtime.protocol != runtimeProtocolCodexRPC {

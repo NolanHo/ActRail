@@ -81,6 +81,55 @@ func TestCodexSessionFileDetailGroupsUserAssistantTurns(t *testing.T) {
 	}
 }
 
+func TestCodexSessionFileDetailReturnsEmptyForMissingStateDBRollout(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	threadID := "019e1111-0000-7000-8000-000000000211"
+	missingPath := filepath.Join(codexHome, "sessions", "2026", "05", "08", "rollout-missing-"+threadID+".jsonl")
+	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
+		{ID: threadID, CWD: cwd, Title: "Missing Rollout", FirstUserMessage: "first prompt", UpdatedMS: 1760000300000, RolloutPath: missingPath},
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+
+	detail, err := svc.CodexSessionFile(context.Background(), CodexSessionFileRequest{ThreadID: threadID})
+	if err != nil {
+		t.Fatalf("CodexSessionFile() error = %v", err)
+	}
+	if !detail.OK || len(detail.Items) != 0 || len(detail.Turns) != 0 || detail.TailSeq != 0 {
+		t.Fatalf("detail = %+v, want empty successful response", detail)
+	}
+	if detail.Summary.ThreadID != threadID || detail.Summary.Title != "Missing Rollout" || detail.Summary.Path != "" {
+		t.Fatalf("summary = %+v, want state db metadata without missing path", detail.Summary)
+	}
+}
+
+func TestCodexSessionFileDetailReturnsEmptyForZeroByteRollout(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	cwd := filepath.Join(t.TempDir(), "workspace")
+	threadID := "019e1111-0000-7000-8000-000000000212"
+	sourcePath := filepath.Join(codexHome, "sessions", "2026", "05", "08", "rollout-empty-"+threadID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(sourcePath, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	writeCodexStateDB(t, codexHome, []codexStateDBTestThread{
+		{ID: threadID, CWD: cwd, Title: "Empty Rollout", FirstUserMessage: "first prompt", UpdatedMS: 1760000300000, RolloutPath: sourcePath},
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+
+	detail, err := svc.CodexSessionFile(context.Background(), CodexSessionFileRequest{ThreadID: threadID})
+	if err != nil {
+		t.Fatalf("CodexSessionFile() error = %v", err)
+	}
+	if !detail.OK || len(detail.Items) != 0 || len(detail.Turns) != 0 || detail.Summary.Path != filepath.Clean(sourcePath) {
+		t.Fatalf("detail = %+v, want empty successful response with source path", detail)
+	}
+}
+
 func TestRenameCodexSessionFileWritesCodexMetadataAndActRailRecord(t *testing.T) {
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
