@@ -272,7 +272,7 @@ func readCodexSessionFileLinesBefore(ctx context.Context, path string, beforeOff
 		}
 		windowLines := codexSessionFileLinesFromWindow(buf, lower, lower == 0, upper == info.Size())
 		lines = append(windowLines, lines...)
-		if len(lines) > 0 && countCodexSessionVisibleMessages(ctx, path, lines) >= limit {
+		if len(lines) > 0 && countCodexSessionVisibleMessages(ctx, lines, limit) >= limit {
 			break
 		}
 		if lower == 0 {
@@ -352,16 +352,37 @@ func codexSessionMessagesFromLocatedLines(ctx context.Context, sourcePath string
 	return items, nil
 }
 
-func countCodexSessionVisibleMessages(ctx context.Context, path string, lines []locatedCodexSessionFileLine) int {
-	items, err := codexSessionMessagesFromLocatedLines(ctx, path, lines)
-	if err != nil {
-		return 0
-	}
-	filtered := filterSessionMessagesForRequest(items, SessionMessagesRequest{})
+func countCodexSessionVisibleMessages(ctx context.Context, lines []locatedCodexSessionFileLine, limit int) int {
 	count := 0
-	for _, item := range filtered {
-		if item.Role == "user" || item.Role == "assistant" {
+	seen := make([]SessionMessage, 0, limit)
+	for i := len(lines) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return 0
+		}
+		raw := lines[i]
+		line := strings.TrimSpace(string(raw.Text))
+		if line == "" {
+			continue
+		}
+		var entry codexSessionLine
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			return 0
+		}
+		lineSeq := codexSessionFileSeqForOffset(raw.Offset)
+		msg, ok := sessionMessageFromCodexSessionEntry(entry, int(lineSeq))
+		if !ok {
+			continue
+		}
+		msg.Seq = lineSeq
+		if duplicateCodexSessionMessage(seen, msg) {
+			continue
+		}
+		seen = append(seen, msg)
+		if msg.Role == "user" || msg.Role == "assistant" {
 			count++
+			if limit > 0 && count >= limit {
+				return count
+			}
 		}
 	}
 	return count

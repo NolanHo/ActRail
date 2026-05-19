@@ -592,6 +592,86 @@ func TestSessionStateDoesNotBlockOnCodexIODHistoryCacheMiss(t *testing.T) {
 	}
 }
 
+func TestSessionStateCodexSkipsNonFinalIODProjection(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_state_skip_nonfinal_projection")
+	generationID := mustHelperGenerationID(t, "g_codex_state_skip_nonfinal_projection")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656830"
+	sourcePath := filepath.Join(t.TempDir(), "rollout-"+threadID+".jsonl")
+	lines := []string{
+		`{"timestamp":"2026-05-10T08:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-nonfinal","started_at":1760000001}}`,
+		`{"timestamp":"2026-05-10T08:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"still running","phase":"commentary"}}`,
+	}
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath: sourcePath,
+		Lines:      lines,
+		Messages: []iod.SessionHistoryMessage{{
+			Seq:     2,
+			Role:    "assistant",
+			Kind:    "message",
+			Text:    "still running",
+			Details: map[string]any{"phase": "commentary"},
+		}},
+		Warmed:   true,
+		Complete: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_state_nonfinal_projection", "t_state_nonfinal_projection", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	runtimeState.setActiveTurnID("turn-nonfinal")
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity: &identity,
+		Backend:  session.BackendCodex,
+		CWD:      "/tmp/codex-nonfinal-projection",
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    runtimeState,
+			helper: &runtimeIODHelper{
+				sessionID:    sessionID,
+				generationID: generationID,
+			},
+		},
+		SourcePath:       sourcePath,
+		BackendSessionID: threadID,
+		Transport:        SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseRunning) {
+		t.Fatalf("SessionState() = busy:%v runtime:%q, want running without non-final state projection", state.Busy, state.RuntimeState)
+	}
+	key := codexIODHistoryCacheKey(packet)
+	svc.codexIODHistoryMu.Lock()
+	entry := svc.codexIODHistory[sessionID]
+	svc.codexIODHistoryMu.Unlock()
+	if entry.stateAppliedKey == key {
+		t.Fatal("non-final IOD history packet was marked state-applied by SessionState")
+	}
+}
+
 func TestCodexRuntimeMutationKeepsIODHistoryCaches(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
@@ -1654,6 +1734,133 @@ func TestSessionStateCodexFinalAnswerMirrorsLiveCommits(t *testing.T) {
 	}
 	if len(sink.snapshot().commits) != 2 {
 		t.Fatalf("live commits after second state = %d, want no duplicates", len(sink.snapshot().commits))
+	}
+}
+
+func TestSessionStateCodexUsesAuthoritativeSourceTail(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_state_source_tail")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	lines := []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-source-tail","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"run this"}}`,
+	}
+	padding := strings.Repeat("x", 4096)
+	for i := 0; i < 300; i++ {
+		lines = append(lines, fmt.Sprintf(`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"token_count","input_tokens":%d,"padding":%q}}`, i, padding))
+	}
+	lines = append(lines, `{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"latest answer","phase":"commentary"}}`)
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, lines)
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_state_source_tail", "t_state_source_tail", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-source-tail",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)},
+		Transport:        SessionTransportSnapshot{State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.TailSeq == 0 {
+		t.Fatal("SessionState().TailSeq = 0, want authoritative Codex file tail")
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 1})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if state.TailSeq != messages.TailSeq {
+		t.Fatalf("SessionState().TailSeq = %d, want SessionMessages tail %d", state.TailSeq, messages.TailSeq)
+	}
+}
+
+func TestSessionStateCodexUsesSourceTailWhenIODCacheIsStale(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_state_stale_iod_tail")
+	generationID := mustHelperGenerationID(t, "g_codex_file_state_stale_iod_tail")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	lines := []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-stale-tail","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"run this"}}`,
+	}
+	for i := 0; i < 260; i++ {
+		lines = append(lines, fmt.Sprintf(`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"token_count","input_tokens":%d}}`, i))
+	}
+	lines = append(lines, `{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"source is newer","phase":"commentary"}}`)
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, lines)
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_state_stale_tail", "t_state_stale_tail", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-stale-tail",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID),
+			helper: &runtimeIODHelper{
+				sessionID:    sessionID,
+				generationID: generationID,
+			},
+		},
+		Transport: SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath: sourcePath,
+		Messages: []iod.SessionHistoryMessage{{
+			Seq:  3,
+			Role: "assistant",
+			Kind: "message",
+			Text: "stale cache",
+		}},
+		Warmed: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	primeCodexIODHistoryCache(t, svc, sessionID, packet)
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 1})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if messages.TailSeq != 3 {
+		t.Fatalf("SessionMessages().TailSeq = %d, want stale IOD cache tail 3", messages.TailSeq)
+	}
+	if state.TailSeq <= messages.TailSeq {
+		t.Fatalf("SessionState().TailSeq = %d, want newer source tail over stale IOD cache tail %d", state.TailSeq, messages.TailSeq)
 	}
 }
 

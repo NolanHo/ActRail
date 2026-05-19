@@ -608,6 +608,9 @@ func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 		if mirrored := s.codexLiveMirroredTail(record.identity.SessionID()); mirrored > tailSeq {
 			tailSeq = mirrored
 		}
+		if authoritative := s.codexAuthoritativeTailSeq(record); authoritative > tailSeq {
+			tailSeq = authoritative
+		}
 	}
 	partial := partialAssistantTurn(record.transcript)
 	if !busy {
