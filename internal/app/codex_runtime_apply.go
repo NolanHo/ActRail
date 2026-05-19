@@ -95,7 +95,7 @@ func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string, s
 		_ = s.syncCodexRuntimeActivity(sessionID, "thread_id", changed)
 		return
 	}
-	if _, err := s.setSessionTransport(sessionID, transportSnapshotCodexAttached()); err != nil {
+	if _, err := s.setSessionTransport(sessionID, transportSnapshotCodexAttachedFrom(transport)); err != nil {
 		return
 	}
 	_ = s.syncCodexRuntimeActivity(sessionID, "thread_attached", true)

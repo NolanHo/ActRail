@@ -121,6 +121,39 @@ func TestSessionTransportSnapshotMarksStaleCodexAttachedHelperEnded(t *testing.T
 	}
 }
 
+func TestNoteCodexThreadIDPreservesHelperGenerationTransport(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	sessionID := mustSessionID(t, "s_codex_thread_generation")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_codex_thread_generation", "t_codex_thread_generation", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:  &identity,
+		Backend:   session.BackendCodex,
+		CWD:       t.TempDir(),
+		Runtime:   sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeState(session.BackendCodex)},
+		Transport: SessionTransportSnapshot{GenerationID: "g_current", State: SessionTransportStateStarting, Reason: "codex_thread_resuming"},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+
+	svc.noteCodexThreadID(sessionID, threadID)
+
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("registry.Lookup() missing session")
+	}
+	if record.transport.State != SessionTransportStateAttached || record.transport.GenerationID != "g_current" || record.transport.Reason != "codex_thread" {
+		t.Fatalf("transport = %+v, want attached g_current codex_thread", record.transport)
+	}
+}
+
 func TestSameRuntimeHandleAllowsSameHelperGenerationReattachment(t *testing.T) {
 	sessionID := mustSessionID(t, "s_same_helper")
 	generationID := mustHelperGenerationID(t, "g_same_helper")

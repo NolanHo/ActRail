@@ -43,6 +43,14 @@ func transportSnapshotCodexAttached() SessionTransportSnapshot {
 	return SessionTransportSnapshot{State: SessionTransportStateAttached, GenerationID: "codex_app_server", Reason: "codex_thread"}
 }
 
+func transportSnapshotCodexAttachedFrom(current SessionTransportSnapshot) SessionTransportSnapshot {
+	transport := transportSnapshotCodexAttached()
+	if generationID := strings.TrimSpace(current.GenerationID); generationID != "" {
+		transport.GenerationID = generationID
+	}
+	return transport
+}
+
 func transportSnapshotEnded(generationID iod.GenerationID, reason string) SessionTransportSnapshot {
 	return SessionTransportSnapshot{
 		GenerationID: strings.TrimSpace(generationID.String()),

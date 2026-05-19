@@ -308,6 +308,79 @@ func TestSessionHistoryCacheCodexDedupeKeepsRepeatedPrompts(t *testing.T) {
 	}
 }
 
+func TestSessionHistoryCacheCodexBoundsCachedMessagesTailBytesAndBodySize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	var body strings.Builder
+	for i := 0; i < defaultCodexHistoryWarmMessages+20; i++ {
+		fmt.Fprintf(&body, `{"timestamp":"2026-05-08T15:58:%02d.000Z","type":"event_msg","payload":{"type":"user_message","message":"msg-%04d-%s"}}`+"\n", i%60, i, strings.Repeat("x", 4096))
+	}
+	fmt.Fprintf(&body, `{"timestamp":"2026-05-08T15:59:58.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"%s"}}`+"\n", strings.Repeat("y", defaultCodexHistoryMessageTextBytes+4096))
+	fmt.Fprintf(&body, `{"timestamp":"2026-05-08T15:59:59.000Z","type":"event_msg","payload":{"type":"agent_message","message":"final","phase":"final_answer"}}`+"\n")
+	fmt.Fprintf(&body, `{"timestamp":"2026-05-08T16:00:00.000Z","type":"event_msg","payload":{"type":"task_complete"}}`+"\n")
+	if err := os.WriteFile(path, []byte(body.String()), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	t.Cleanup(cache.Stop)
+
+	snapshot := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.TaskComplete && snapshot.IndexedCount == defaultCodexHistoryWarmMessages+22
+	})
+	if len(snapshot.Messages) != defaultCodexHistoryWarmMessages {
+		t.Fatalf("len(Snapshot().Messages) = %d, want capped %d", len(snapshot.Messages), defaultCodexHistoryWarmMessages)
+	}
+	if snapshot.Messages[0].Text == "" || strings.Contains(snapshot.Messages[0].Text, "msg-0000") {
+		t.Fatalf("first cached message = %q, want old messages trimmed", snapshot.Messages[0].Text)
+	}
+	var toolResult SessionHistoryMessage
+	for _, msg := range snapshot.Messages {
+		if msg.Kind == "tool_result" {
+			toolResult = msg
+			break
+		}
+	}
+	if toolResult.Kind != "tool_result" {
+		t.Fatal("Snapshot().Messages missing tool_result")
+	}
+	if len(toolResult.Text) > defaultCodexHistoryMessageTextBytes+len("\n[truncated]") || !strings.Contains(toolResult.Text, "[truncated]") {
+		t.Fatalf("tool result text length = %d, want truncated marker", len(toolResult.Text))
+	}
+	if toolResult.Details["truncated"] != true {
+		t.Fatalf("tool result details = %#v, want truncated flag", toolResult.Details)
+	}
+	totalTailBytes := 0
+	for _, line := range snapshot.Lines {
+		totalTailBytes += len(line)
+	}
+	if totalTailBytes > defaultCodexHistoryWarmBytes+defaultCodexHistoryTailLineBytes+len("\n[truncated]") {
+		t.Fatalf("tail bytes = %d, want bounded", totalTailBytes)
+	}
+	if len(snapshot.Lines) >= defaultCodexHistoryWarmMessages {
+		t.Fatalf("len(Snapshot().Lines) = %d, want byte-bounded tail", len(snapshot.Lines))
+	}
+}
+
+func TestSessionHistoryCacheCompactKeepsNewestFiveThousand(t *testing.T) {
+	cache := newSessionHistoryCache("", true)
+	cache.lines = make([]string, defaultSessionHistoryWarmLines+10)
+	cache.messages = make([]SessionHistoryMessage, defaultCodexHistoryWarmMessages+10)
+	for i := range cache.lines {
+		cache.lines[i] = fmt.Sprintf("line-%04d", i)
+	}
+	for i := range cache.messages {
+		cache.messages[i] = SessionHistoryMessage{Seq: uint64(i + 1), Kind: "message", Text: fmt.Sprintf("msg-%04d", i)}
+	}
+
+	cache.compact()
+
+	if len(cache.lines) != defaultSessionHistoryWarmLines || cache.lines[0] != "line-0010" {
+		t.Fatalf("compacted lines = len %d first %q, want latest %d", len(cache.lines), cache.lines[0], defaultSessionHistoryWarmLines)
+	}
+	if len(cache.messages) != defaultCodexHistoryWarmMessages || cache.messages[0].Seq != 11 {
+		t.Fatalf("compacted messages = len %d first seq %d, want latest %d", len(cache.messages), cache.messages[0].Seq, defaultCodexHistoryWarmMessages)
+	}
+}
+
 func waitForHistorySnapshot(t *testing.T, cache *sessionHistoryCache, ready func(SessionHistorySnapshot) bool) SessionHistorySnapshot {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
