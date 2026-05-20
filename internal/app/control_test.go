@@ -534,6 +534,94 @@ func TestSendRehydratesCodexHelperRuntimeInsideInputLock(t *testing.T) {
 	}
 }
 
+func TestAsyncSQLiteSendUsesMaterializedCodexRuntimeAfterRehydrate(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	cfg.Storage.DataDir = filepath.Join("/tmp", fmt.Sprintf("arasyncsend-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(cfg.Storage.DataDir) })
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_async_send_rehydrate")
+	threadID := "thread-codex-async-send-rehydrate"
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-async-send-rehydrate"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000009)
+	commandCh := make(chan iod.CommandPacket, 4)
+	cleanup := startCommandHelper(t, manifest, commandCh)
+	defer cleanup()
+	if err := svc.bindCurrentGeneration(helperGenerationBinding{SessionID: sessionID, GenerationID: generationID}); err != nil {
+		t.Fatalf("bindCurrentGeneration() error = %v", err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	if _, _, err := rehydrated.registry.SetSourceBinding(sessionID, threadID, "", sourceConfidenceExact); err != nil {
+		t.Fatalf("SetSourceBinding() error = %v", err)
+	}
+	rehydrated.asyncSQLiteActions = true
+	response, err := rehydrated.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "async send after rehydrate"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if response.Message.Text != "async send after rehydrate" || !response.Busy {
+		t.Fatalf("Send() = %+v, want optimistic busy user message", response)
+	}
+	deadline := time.After(time.Second)
+	sawInitialize := false
+	sawResume := false
+	for {
+		select {
+		case packet := <-commandCh:
+			if packet.Kind != iod.PacketCommandSend {
+				t.Fatalf("command kind = %q, want %q", packet.Kind, iod.PacketCommandSend)
+			}
+			var request struct {
+				Method string `json:"method"`
+				Params struct {
+					ThreadID string `json:"threadId"`
+					Input    []struct {
+						Text string `json:"text"`
+					} `json:"input"`
+				} `json:"params"`
+			}
+			if err := json.Unmarshal(packet.Payload, &request); err != nil {
+				t.Fatalf("decode command payload %q: %v", string(packet.Payload), err)
+			}
+			switch request.Method {
+			case "initialize":
+				sawInitialize = true
+				rehydrated.noteCodexInitialized(sessionID)
+			case "thread/resume":
+				sawResume = true
+				if request.Params.ThreadID != threadID {
+					t.Fatalf("thread/resume thread id = %q, want %q", request.Params.ThreadID, threadID)
+				}
+				rehydrated.noteCodexThreadID(sessionID, threadID)
+			case "thread/start":
+				t.Fatal("unexpected thread/start after rehydrate")
+			case "turn/start":
+				if !sawInitialize || !sawResume {
+					t.Fatalf("turn/start arrived before bootstrap: sawInitialize=%v sawResume=%v", sawInitialize, sawResume)
+				}
+				if request.Params.ThreadID != threadID || len(request.Params.Input) != 1 || request.Params.Input[0].Text != "async send after rehydrate" {
+					t.Fatalf("command payload = %+v, want turn/start on restored thread", request)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for helper turn/start command")
+		}
+	}
+}
+
 func TestSendRejectsWhenCodexAuthoritativeHistoryIsActive(t *testing.T) {
 	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "codex")
 	generationID := mustHelperGenerationID(t, "g_codex_active_send")

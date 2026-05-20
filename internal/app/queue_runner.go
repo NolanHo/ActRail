@@ -136,6 +136,10 @@ func (s *Stub) withSessionInputLock(sessionID session.SessionID, fn func(session
 		return err
 	}
 	if record.inputMu == nil {
+		record, err = s.materializeInputRuntime(record)
+		if err != nil {
+			return err
+		}
 		return fn(record)
 	}
 	record.inputMu.Lock()
@@ -144,5 +148,21 @@ func (s *Stub) withSessionInputLock(sessionID session.SessionID, fn func(session
 	if err != nil {
 		return err
 	}
+	record, err = s.materializeInputRuntime(record)
+	if err != nil {
+		return err
+	}
 	return fn(record)
+}
+
+func (s *Stub) materializeInputRuntime(record sessionRecord) (sessionRecord, error) {
+	runtime := s.runtimeForRecord(record)
+	updated, ok, err := s.registry.SetRuntimeMemory(record.identity.SessionID(), runtime)
+	if err != nil {
+		return sessionRecord{}, err
+	}
+	if !ok {
+		return sessionRecord{}, NotFound("session not found")
+	}
+	return updated, nil
 }
