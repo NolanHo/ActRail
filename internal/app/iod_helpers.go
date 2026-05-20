@@ -326,6 +326,13 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 				continue
 			}
 			attachments[sessionID] = attachment
+			if record.identity.Backend() == session.BackendCodex {
+				if err := s.applyReattachedCodexRuntime(sessionID, record, attachment); err != nil {
+					_ = attachment.Client.Close()
+					fenced = append(fenced, helperFenceFrom(item, helperFenceAttachFailed))
+					continue
+				}
+			}
 			bound = true
 			selectedGeneration = updatedBinding.GenerationID
 			if !hasBinding || updatedBinding.GenerationID != binding.GenerationID || updatedBinding.LastReplayOffset != binding.LastReplayOffset {
@@ -350,6 +357,37 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 	}
 	s.helpers.replaceAll(attachments, fenced)
 	if err := s.applyStartupTransportHealth(bindings, attachments, fenced); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Stub) applyReattachedCodexRuntime(sessionID session.SessionID, record sessionRecord, attachment attachedHelper) error {
+	if s == nil {
+		return nil
+	}
+	if current, ok := s.registry.Lookup(sessionID); ok {
+		record = current
+	}
+	runtime := s.runtimeForSession(sessionID, record.identity.Backend(), record.runtime)
+	if runtime.protocol == runtimeProtocolCodexRPC {
+		if runtime.codex != nil && strings.TrimSpace(record.importedBackendSessionID) != "" {
+			runtime.codex.attachInitializedThread(record.importedBackendSessionID)
+		}
+		runtime.helperBinding = &RuntimeHelperBinding{GenerationID: attachment.Binding.GenerationID, LastReplayOffset: attachment.Binding.LastReplayOffset}
+		runtime.helper = runtimeIODHelperFromAttachment(attachment, s.helperDialer)
+		runtime.attachedExistingIOD = true
+		binding := *runtime.helperBinding
+		runtime.currentHelperBinding = func(session.SessionID) (*RuntimeHelperBinding, error) {
+			resolved := binding
+			return &resolved, nil
+		}
+	}
+	transport := transportSnapshotAttached(attachment.Binding.GenerationID)
+	if attachment.ReplayFailed {
+		transport = transportSnapshotAttachedWithReason(attachment.Binding.GenerationID, "codex_replay_failed:"+string(attachment.ReplayReason))
+	}
+	if _, _, err := s.registry.SetRuntimeTransportMemory(sessionID, runtime, transport); err != nil {
 		return err
 	}
 	return nil
@@ -626,18 +664,6 @@ func (s *Stub) reattachHelper(ctx context.Context, backend session.Backend, bind
 	updatedBinding := binding
 	replayFailed := false
 	replayReason := helperFenceReason("")
-	if backend == session.BackendCodex {
-		// Codex history is session-file backed; helper WAL replay is only a PI recovery path.
-		return attachedHelper{
-			Binding:      updatedBinding,
-			ManifestPath: discovered.Path,
-			Manifest:     discovered.Manifest,
-			Hello:        hello,
-			Client:       client,
-			ReplayFailed: false,
-			ReplayReason: "",
-		}, updatedBinding, "", nil
-	}
 	if s != nil {
 		replayAfterOffset := binding.LastReplayOffset
 		if record, ok := s.registry.Lookup(binding.SessionID); ok {
@@ -648,7 +674,7 @@ func (s *Stub) reattachHelper(ctx context.Context, backend session.Backend, bind
 			if !ok {
 				return fmt.Errorf("session %q not found while replaying helper WAL", binding.SessionID)
 			}
-			return s.applyRuntimeHelperPacket(binding.SessionID, record.identity.Backend(), binding.GenerationID, packet)
+			return s.applyRuntimeHelperPacketTrusted(binding.SessionID, record.identity.Backend(), binding.GenerationID, packet)
 		})
 		request, err := iod.NewReplayRequestPacket(binding.SessionID, binding.GenerationID, replayAfterOffset)
 		if err != nil {
@@ -711,6 +737,19 @@ func redialHelper(ctx context.Context, manifest iod.GenerationManifest, dialer i
 }
 
 func helperReplayAfterOffset(record sessionRecord, binding helperGenerationBinding) iod.WALOffset {
+	if record.identity.Backend() == session.BackendCodex {
+		runtime := record.runtime
+		if strings.TrimSpace(record.importedBackendSessionID) != "" {
+			return binding.LastReplayOffset
+		}
+		if runtime.codex == nil {
+			return 0
+		}
+		initialized, threadID, _ := runtime.codex.snapshot()
+		if !initialized || strings.TrimSpace(threadID) == "" {
+			return 0
+		}
+	}
 	if record.transcript.TailSeq().Uint64() != 0 {
 		return binding.LastReplayOffset
 	}

@@ -869,10 +869,38 @@ func (s *Stub) prepareRuntimeSend(ctx context.Context, sessionID session.Session
 			return err
 		}
 		if time.Now().After(deadline) {
+			if s.seedCodexRuntimeThreadFromRecord(sessionID, runtime) {
+				continue
+			}
 			return errRuntimeInputUnavailable
 		}
 		time.Sleep(codexRuntimePollInterval)
 	}
+}
+
+func (s *Stub) seedCodexRuntimeThreadFromRecord(sessionID session.SessionID, runtime sessionRuntime) bool {
+	if s == nil || runtime.protocol != runtimeProtocolCodexRPC || runtime.codex == nil {
+		return false
+	}
+	_, beforeThreadID, _ := runtime.codex.snapshot()
+	if strings.TrimSpace(beforeThreadID) != "" {
+		return true
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return false
+	}
+	threadID := strings.TrimSpace(record.importedBackendSessionID)
+	if threadID == "" {
+		threadID = runtime.PendingCodexResumeThreadID()
+	}
+	if threadID == "" {
+		return false
+	}
+	runtime.codex.attachInitializedThread(threadID)
+	s.noteCodexThreadID(sessionID, threadID, record.importedSourcePath)
+	_, afterThreadID, _ := runtime.codex.snapshot()
+	return strings.TrimSpace(afterThreadID) != ""
 }
 
 func (s *Stub) startCodexThreadBootstrap(sessionID session.SessionID, runtime sessionRuntime) {

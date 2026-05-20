@@ -90,10 +90,18 @@ func (s *Stub) runtimeHelperStreamCurrent(sessionID session.SessionID, generatio
 }
 
 func (s *Stub) applyRuntimeHelperPacket(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, packet any) error {
+	return s.applyRuntimeHelperPacketWithGenerationCheck(sessionID, backend, generationID, true, packet)
+}
+
+func (s *Stub) applyRuntimeHelperPacketTrusted(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, packet any) error {
+	return s.applyRuntimeHelperPacketWithGenerationCheck(sessionID, backend, generationID, false, packet)
+}
+
+func (s *Stub) applyRuntimeHelperPacketWithGenerationCheck(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, checkGeneration bool, packet any) error {
 	if s == nil {
 		return nil
 	}
-	if generationID != "" && !s.runtimeHelperGenerationCurrent(sessionID, generationID) {
+	if checkGeneration && generationID != "" && !s.runtimeHelperGenerationCurrent(sessionID, generationID) {
 		return nil
 	}
 	key := struct {

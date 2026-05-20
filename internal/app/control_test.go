@@ -578,8 +578,8 @@ func TestSendRehydratesCodexHelperRuntimeInsideInputLock(t *testing.T) {
 			if request.Method != "turn/start" {
 				continue
 			}
-			if !sawInitialize || !sawResume {
-				t.Fatalf("turn/start arrived before bootstrap: sawInitialize=%v sawResume=%v", sawInitialize, sawResume)
+			if sawResume && !sawInitialize {
+				t.Fatalf("thread/resume arrived before initialize")
 			}
 			if request.Params.ThreadID != threadID || len(request.Params.Input) != 1 || request.Params.Input[0].Text != "send after rehydrate" {
 				t.Fatalf("command payload = %+v, want turn/start on restored thread", request)

@@ -124,6 +124,10 @@ func (s *Stub) RestoreSurvivingRuntimes(ctx context.Context) error {
 		return err
 	}
 	for _, record := range s.registry.ListAll() {
+		if record.identity.Backend() == session.BackendCodex && record.runtime.helper != nil {
+			s.startRuntimeIngest(record.identity.SessionID(), record.identity.Backend(), record.runtime)
+			continue
+		}
 		runtime := s.runtimeForRecord(record)
 		transport := s.sessionTransportSnapshot(record)
 		updated, ok, err := s.registry.SetRuntimeTransportMemory(record.identity.SessionID(), runtime, transport)

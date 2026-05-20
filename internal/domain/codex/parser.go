@@ -261,6 +261,9 @@ func DecodeAppServerLine(raw []byte) (Projection, bool) {
 		var thread threadEnvelope
 		if err := json.Unmarshal(line.Result, &thread); err == nil && strings.TrimSpace(thread.Thread.ID) != "" {
 			projection := Projection{ThreadID: strings.TrimSpace(thread.Thread.ID), SessionPath: strings.TrimSpace(thread.Thread.Path)}
+			if strings.HasPrefix(strings.TrimSpace(line.ID), "thread-start-") || strings.HasPrefix(strings.TrimSpace(line.ID), "thread-resume-") {
+				projection.Initialized = true
+			}
 			if busy, ok := threadBusy(thread.Thread.Status, thread.Thread.Turns); ok {
 				projection.Busy = &busy
 			}

@@ -17,6 +17,9 @@ func TestDecodeAppServerLineThreadStatusAndActiveTurn(t *testing.T) {
 	if projection.Busy == nil || !*projection.Busy {
 		t.Fatalf("projection.Busy = %v, want true", projection.Busy)
 	}
+	if projection.Initialized {
+		t.Fatalf("projection.Initialized = true for thread-read result, want false")
+	}
 
 	projection, ok = DecodeAppServerLine([]byte(`{"method":"thread/status/changed","params":{"threadId":"thread-codex-read-1","status":{"type":"idle"}}}`))
 	if !ok {
@@ -24,6 +27,21 @@ func TestDecodeAppServerLineThreadStatusAndActiveTurn(t *testing.T) {
 	}
 	if projection.Busy == nil || *projection.Busy || !projection.ClearTurn {
 		t.Fatalf("idle projection busy/clear = (%v, %v), want false/true", projection.Busy, projection.ClearTurn)
+	}
+}
+
+func TestDecodeAppServerLineThreadAttachResultMarksInitialized(t *testing.T) {
+	for _, raw := range []string{
+		`{"id":"thread-start-2","result":{"thread":{"id":"thread-codex-start","status":{"type":"idle"},"turns":[]}}}`,
+		`{"id":"thread-resume-2","result":{"thread":{"id":"thread-codex-resume","status":{"type":"idle"},"turns":[]}}}`,
+	} {
+		projection, ok := DecodeAppServerLine([]byte(raw))
+		if !ok {
+			t.Fatalf("DecodeAppServerLine(%s) ok = false", raw)
+		}
+		if !projection.Initialized || projection.ThreadID == "" {
+			t.Fatalf("projection = %+v, want initialized thread attach", projection)
+		}
 	}
 }
 

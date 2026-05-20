@@ -1305,12 +1305,6 @@ func (s *Stub) runtimeForSession(sessionID session.SessionID, backend session.Ba
 	}
 	attachment, ok := s.helpers.Attachment(sessionID)
 	if !ok {
-		if runtime.protocol == runtimeProtocolCodexRPC && runtime.codex != nil {
-			_, threadID, _ := runtime.codex.snapshot()
-			if strings.TrimSpace(threadID) != "" {
-				runtime.codex = newCodexRuntimeStateWithResumeThread(backend, threadID)
-			}
-		}
 		return runtime
 	}
 	binding := &RuntimeHelperBinding{GenerationID: attachment.Binding.GenerationID, LastReplayOffset: attachment.Binding.LastReplayOffset}
