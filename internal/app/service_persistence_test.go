@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"actrail/internal/adapters/iod"
+	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
 	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
@@ -150,6 +152,153 @@ func TestAsyncSQLiteSendReturnsBeforeRuntimeCommandCompletes(t *testing.T) {
 	waitForTestCondition(t, func() bool {
 		return len(pty.Writes()) == 1
 	})
+}
+
+func TestRecoverOpenCodexCommandDispatchesPendingSend(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	svc.asyncSQLiteActions = true
+	sessionID := mustSessionID(t, "s_recover_pending")
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-recover-pending")
+	sendStarted := make(chan struct{}, 1)
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: mustHelperGenerationID(t, "g_current"),
+			commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+				select {
+				case sendStarted <- struct{}{}:
+				default:
+				}
+				return nil
+			},
+			historyFunc: func(context.Context) (iod.SessionHistoryResponsePacket, error) {
+				return iod.SessionHistoryResponsePacket{TaskComplete: true}, nil
+			},
+		},
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_recover_pending", "t_recover_pending", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	record, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              t.TempDir(),
+		Title:            "recover pending",
+		BackendSessionID: "thread-recover-pending",
+		Runtime:          runtime,
+		Transport:        SessionTransportSnapshot{GenerationID: "g_current", State: SessionTransportStateAttached},
+	})
+	if err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	item, _, _, ok, err := svc.registry.ActivateCodexSendWithCommand(sessionID, "recover me", true, "r_recover_pending")
+	if err != nil || !ok {
+		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
+	}
+	commandID := codexSendCommandID(record.identity.SessionID(), item.Seq().Uint64())
+
+	svc.recoverOpenCodexSessionCommands(context.Background())
+	select {
+	case <-sendStarted:
+	case <-time.After(time.Second):
+		t.Fatal("recovered pending Codex command was not sent")
+	}
+	store, ok := svc.appStore.(*sqlitestore.SessionCatalog)
+	if !ok {
+		t.Fatalf("appStore = %T, want sqlite catalog", svc.appStore)
+	}
+	waitForTestCondition(t, func() bool {
+		open, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+		return err == nil && len(open) == 1 && open[0].CommandID == commandID && open[0].State == codexCommandAccepted.String()
+	})
+}
+
+func TestRecoverOpenCodexCommandFailsStaleDispatchingWithoutResend(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	svc.asyncSQLiteActions = true
+	sessionID := mustSessionID(t, "s_recover_dispatching")
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-recover-dispatching")
+	sendCount := 0
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: mustHelperGenerationID(t, "g_current"),
+			commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+				sendCount++
+				return nil
+			},
+			historyFunc: func(context.Context) (iod.SessionHistoryResponsePacket, error) {
+				return iod.SessionHistoryResponsePacket{TaskComplete: true}, nil
+			},
+		},
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_recover_dispatching", "t_recover_dispatching", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              t.TempDir(),
+		Title:            "recover dispatching",
+		BackendSessionID: "thread-recover-dispatching",
+		Runtime:          runtime,
+		Transport:        SessionTransportSnapshot{GenerationID: "g_current", State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	item, _, _, ok, err := svc.registry.ActivateCodexSendWithCommand(sessionID, "maybe sent", true, "r_recover_dispatching")
+	if err != nil || !ok {
+		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
+	}
+	commandID := codexSendCommandID(sessionID, item.Seq().Uint64())
+	svc.updateCodexSendCommandState(commandID, codexCommandDispatching, "r_recover_dispatching", "")
+
+	svc.recoverOpenCodexSessionCommands(context.Background())
+	if sendCount != 0 {
+		t.Fatalf("sendCount = %d, want no resend for dispatching recovery", sendCount)
+	}
+	store, ok := svc.appStore.(*sqlitestore.SessionCatalog)
+	if !ok {
+		t.Fatalf("appStore = %T, want sqlite catalog", svc.appStore)
+	}
+	open, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands() error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("open commands after stale dispatching recovery = %+v, want none", open)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseFailed) {
+		t.Fatalf("SessionState() = %+v, want failed idle after stale dispatching recovery", state)
+	}
 }
 
 func TestAsyncSQLiteSendRejectsUnavailableRuntimeInputBeforeCommit(t *testing.T) {

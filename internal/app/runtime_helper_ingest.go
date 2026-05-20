@@ -293,8 +293,37 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 			ManifestPath: manifestPath,
 			Manifest:     manifest,
 		}
-		if record, found := s.registry.Lookup(sessionID); found && record.runtime.helperBinding != nil && record.runtime.helperBinding.GenerationID == generationID {
-			attachment.Binding.LastReplayOffset = record.runtime.helperBinding.LastReplayOffset
+		if record, found := s.registry.Lookup(sessionID); found {
+			binding := helperGenerationBinding{SessionID: sessionID, GenerationID: generationID, LastReplayOffset: attachment.Binding.LastReplayOffset}
+			if record.runtime.helperBinding != nil && record.runtime.helperBinding.GenerationID == generationID {
+				binding.LastReplayOffset = record.runtime.helperBinding.LastReplayOffset
+			}
+			if binding.LastReplayOffset == 0 && s.helperBindings.root != "" {
+				if bindings, err := s.helperBindings.Load(); err == nil {
+					if saved, ok := bindings[sessionID]; ok && saved.GenerationID == generationID {
+						binding.LastReplayOffset = saved.LastReplayOffset
+					}
+				}
+			}
+			attachment.Binding.LastReplayOffset = helperReplayAfterOffset(record, binding)
+		}
+	}
+	if attachment.Binding.LastReplayOffset == 0 && s.helpers != nil {
+		if current, found := s.helpers.Attachment(sessionID); found && current.Binding.GenerationID == generationID && current.Binding.LastReplayOffset != 0 {
+			attachment.Binding.LastReplayOffset = current.Binding.LastReplayOffset
+		}
+	}
+	if attachment.Binding.LastReplayOffset == 0 {
+		if record, found := s.registry.Lookup(sessionID); found {
+			binding := attachment.Binding
+			if s.helperBindings.root != "" {
+				if bindings, err := s.helperBindings.Load(); err == nil {
+					if saved, ok := bindings[sessionID]; ok && saved.GenerationID == generationID && saved.LastReplayOffset != 0 {
+						binding.LastReplayOffset = saved.LastReplayOffset
+					}
+				}
+			}
+			attachment.Binding.LastReplayOffset = helperReplayAfterOffset(record, binding)
 		}
 	}
 	manifest := attachment.Manifest

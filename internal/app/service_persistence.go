@@ -61,6 +61,9 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		helperBindings:      newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:             newHelperRegistry(),
 		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
+		codexIODHistory:     map[session.SessionID]codexIODHistoryCacheEntry{},
+		codexIODRefreshing:  map[session.SessionID]bool{},
+		codexIODHistoryGen:  map[session.SessionID]uint64{},
 		codexLiveMirror:     map[session.SessionID]uint64{},
 		runtimeRestoreDone:  closedRuntimeRestoreDone(),
 		waitStore:           catalog,
@@ -70,6 +73,8 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		sessionCommandStore: catalog,
 		teams:               newTeamRegistry(now, catalog),
 		runtimeAgentRunning: map[session.SessionID]bool{},
+		codexOutboundPrompt: map[session.SessionID]string{},
+		codexCapacityRetry:  map[session.SessionID]codexCapacityRetryState{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
 		piModels:            piModelCache{},
 		recentCwds:          recentCwds,
@@ -147,6 +152,7 @@ func (s *Stub) RestoreSurvivingRuntimes(ctx context.Context) error {
 		return err
 	}
 	s.startCodexSourceHistoryWarmup(ctx)
+	s.recoverOpenCodexSessionCommands(ctx)
 	return nil
 }
 

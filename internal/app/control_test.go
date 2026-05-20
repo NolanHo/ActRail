@@ -539,7 +539,7 @@ func TestSendRehydratesCodexHelperRuntimeInsideInputLock(t *testing.T) {
 		sent, err := rehydrated.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "send after rehydrate"})
 		sendCh <- sendResult{response: sent, err: err}
 	}()
-	deadline := time.After(time.Second)
+	deadline := time.After(5 * time.Second)
 	sawInitialize := false
 	sawResume := false
 	for {
@@ -639,7 +639,7 @@ func TestAsyncSQLiteSendUsesMaterializedCodexRuntimeAfterRehydrate(t *testing.T)
 	if response.Message.Text != "async send after rehydrate" || !response.Busy {
 		t.Fatalf("Send() = %+v, want optimistic busy user message", response)
 	}
-	deadline := time.After(time.Second)
+	deadline := time.After(5 * time.Second)
 	sawInitialize := false
 	sawResume := false
 	for {

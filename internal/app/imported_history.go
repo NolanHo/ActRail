@@ -1467,7 +1467,16 @@ func (s *Stub) startCodexSourceHistoryWarmup(ctx context.Context) {
 	if s == nil {
 		return
 	}
-	go s.warmCodexSourceHistories(ctx)
+	for _, record := range s.registry.ListAll() {
+		if record.identity.Backend() != session.BackendCodex {
+			continue
+		}
+		if strings.TrimSpace(record.importedSourcePath) == "" {
+			continue
+		}
+		go s.warmCodexSourceHistories(ctx)
+		return
+	}
 }
 
 func (s *Stub) warmCodexSourceHistories(ctx context.Context) {

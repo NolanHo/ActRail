@@ -25,12 +25,14 @@ import (
 )
 
 type helperReplayScript struct {
-	AfterOffset iod.WALOffset
-	SkipReplay  bool
-	Items       []iod.ReplayItemPacket
-	Done        iod.ReplayDonePacket
-	LivePackets []any
-	History     *iod.SessionHistoryResponsePacket
+	AfterOffset        iod.WALOffset
+	AllowReplayRequest bool
+	SkipReplay         bool
+	Items              []iod.ReplayItemPacket
+	Done               iod.ReplayDonePacket
+	DoneFunc           func(iod.WALOffset) iod.ReplayDonePacket
+	LivePackets        []any
+	History            *iod.SessionHistoryResponsePacket
 }
 
 func TestHelperDiscovery(t *testing.T) {
@@ -562,7 +564,7 @@ func TestRuntimeLauncherAttachesExistingIODBeforeStartingNewHelper(t *testing.T)
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
-	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{AllowReplayRequest: true})
 	defer cleanup()
 
 	launcher := processRuntimeLauncher{
@@ -602,7 +604,7 @@ func TestRuntimeLauncherAttachesExistingCodexIODWithoutCurrentBinding(t *testing
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
-	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{AllowReplayRequest: true})
 	defer cleanup()
 
 	launcher := processRuntimeLauncher{
@@ -647,7 +649,7 @@ func TestPersistentStubAdoptsUnboundCodexIODOnRestart(t *testing.T) {
 	generationID := mustHelperGenerationID(t, "g_codex_unbound_adopt")
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
-	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{AllowReplayRequest: true})
 	defer cleanup()
 
 	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
@@ -1736,7 +1738,7 @@ func TestCodexReattachToleratesReplayGap(t *testing.T) {
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		SkipReplay: true,
+		AllowReplayRequest: true,
 	})
 	defer cleanup()
 
@@ -1803,10 +1805,16 @@ func TestCodexReattachUsesSavedReplayCursorWhenSourceBindingExists(t *testing.T)
 	if err := svc.Close(); err != nil {
 		t.Fatalf("Close(before replay cursor reattach) error = %v", err)
 	}
-	replayDone := mustReplayDonePacket(t, sessionID, generationID, 5, 5)
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{Warmed: true, Complete: true})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
 		AfterOffset: 5,
-		Done:        replayDone,
+		DoneFunc: func(afterOffset iod.WALOffset) iod.ReplayDonePacket {
+			return mustReplayDonePacket(t, sessionID, generationID, afterOffset, 5)
+		},
+		History: &packet,
 	})
 	defer cleanup()
 
@@ -1814,6 +1822,7 @@ func TestCodexReattachUsesSavedReplayCursorWhenSourceBindingExists(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
 	}
+	defer func() { _ = rehydrated.Close() }()
 	attachment, ok := rehydrated.helpers.Attachment(sessionID)
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
@@ -1846,7 +1855,7 @@ func TestCodexReattachToleratesReplayFailure(t *testing.T) {
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		SkipReplay: true,
+		AllowReplayRequest: true,
 	})
 	defer cleanup()
 
@@ -2244,12 +2253,48 @@ func serveReplayHelperConn(conn net.Conn, manifest iod.GenerationManifest, scrip
 	if err := enc.Encode(hello); err != nil {
 		return err
 	}
-	if !script.SkipReplay {
-		var replayReq iod.ReplayRequestPacket
-		if err := dec.Decode(&replayReq); err != nil {
+	writeHistory := func() error {
+		response := script.History
+		if response == nil {
+			packet, err := iod.NewSessionHistoryResponsePacket(manifest.SessionID, manifest.GenerationID, iod.SessionHistorySnapshot{Warmed: true, Complete: true})
+			if err != nil {
+				return err
+			}
+			response = &packet
+		}
+		if err := enc.Encode(*response); err != nil {
+			if helperConnClosed(err) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
+	if !script.SkipReplay || script.AllowReplayRequest {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
 			if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
 				return nil
 			}
+			return err
+		}
+		var peek struct {
+			Kind iod.PacketKind `json:"kind"`
+		}
+		if err := json.Unmarshal(raw, &peek); err != nil {
+			return err
+		}
+		if peek.Kind != iod.PacketReplayRequest {
+			if peek.Kind == iod.PacketSessionHistoryRequest {
+				return writeHistory()
+			}
+			if err := writeAcceptedCommandResponse(enc, manifest, raw, peek.Kind); err == nil {
+				return nil
+			}
+			return fmt.Errorf("unexpected helper packet kind %q", peek.Kind)
+		}
+		var replayReq iod.ReplayRequestPacket
+		if err := json.Unmarshal(raw, &replayReq); err != nil {
 			return err
 		}
 		if replayReq.SessionID != manifest.SessionID || replayReq.GenerationID != manifest.GenerationID {
@@ -2266,7 +2311,11 @@ func serveReplayHelperConn(conn net.Conn, manifest iod.GenerationManifest, scrip
 				return err
 			}
 		}
-		if err := enc.Encode(script.Done); err != nil {
+		done := script.Done
+		if script.DoneFunc != nil {
+			done = script.DoneFunc(replayReq.AfterOffset)
+		}
+		if err := enc.Encode(done); err != nil {
 			if helperConnClosed(err) {
 				return nil
 			}
@@ -2288,13 +2337,47 @@ func serveReplayHelperConn(conn net.Conn, manifest iod.GenerationManifest, scrip
 			if err := json.Unmarshal(raw, &peek); err != nil {
 				return err
 			}
-			if peek.Kind != iod.PacketSessionHistoryRequest {
-				return fmt.Errorf("unexpected helper packet kind %q", peek.Kind)
+			if peek.Kind == iod.PacketSessionHistoryRequest {
+				if err := writeHistory(); err != nil {
+					return err
+				}
+				continue
 			}
-			if err := enc.Encode(*script.History); err != nil {
-				if helperConnClosed(err) {
+			if err := writeAcceptedCommandResponse(enc, manifest, raw, peek.Kind); err != nil {
+				return err
+			}
+		}
+	}
+	if len(script.LivePackets) == 0 {
+		for {
+			var raw json.RawMessage
+			if err := dec.Decode(&raw); err != nil {
+				if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
 					return nil
 				}
+				return err
+			}
+			var peek struct {
+				Kind iod.PacketKind `json:"kind"`
+			}
+			if err := json.Unmarshal(raw, &peek); err != nil {
+				return err
+			}
+			if peek.Kind == "" {
+				var fallback struct {
+					Kind iod.PacketKind `json:"Kind"`
+				}
+				if err := json.Unmarshal(raw, &fallback); err == nil {
+					peek.Kind = fallback.Kind
+				}
+			}
+			if peek.Kind == iod.PacketSessionHistoryRequest {
+				if err := writeHistory(); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := writeAcceptedCommandResponse(enc, manifest, raw, peek.Kind); err != nil {
 				return err
 			}
 		}
@@ -2316,7 +2399,69 @@ func serveReplayHelperConn(conn net.Conn, manifest iod.GenerationManifest, scrip
 				}
 				return err
 			}
+			var peek struct {
+				Kind iod.PacketKind `json:"kind"`
+			}
+			if err := json.Unmarshal(raw, &peek); err != nil {
+				return err
+			}
+			if peek.Kind == "" {
+				var fallback struct {
+					Kind iod.PacketKind `json:"Kind"`
+				}
+				if err := json.Unmarshal(raw, &fallback); err == nil {
+					peek.Kind = fallback.Kind
+				}
+			}
+			if peek.Kind == iod.PacketSessionHistoryRequest {
+				if err := writeHistory(); err != nil {
+					return err
+				}
+				continue
+			}
+			if peek.Kind == iod.PacketCommandSend || peek.Kind == iod.PacketCommandEnqueue || peek.Kind == iod.PacketCommandInterrupt || peek.Kind == iod.PacketCommandUIResponseSubmit {
+				if err := writeAcceptedCommandResponse(enc, manifest, raw, peek.Kind); err != nil {
+					return err
+				}
+				continue
+			}
+			return fmt.Errorf("unexpected helper packet kind %q", peek.Kind)
 		}
+	}
+	return nil
+}
+
+func writeAcceptedCommandResponse(enc *json.Encoder, manifest iod.GenerationManifest, raw json.RawMessage, kind iod.PacketKind) error {
+	if kind == "" {
+		var fallback struct {
+			Kind iod.PacketKind `json:"Kind"`
+		}
+		if err := json.Unmarshal(raw, &fallback); err == nil {
+			kind = fallback.Kind
+		}
+	}
+	switch kind {
+	case iod.PacketCommandSend, iod.PacketCommandEnqueue, iod.PacketCommandInterrupt, iod.PacketCommandUIResponseSubmit:
+	default:
+		return fmt.Errorf("unexpected helper packet kind %q", kind)
+	}
+	var command iod.CommandPacket
+	if err := json.Unmarshal(raw, &command); err != nil {
+		return err
+	}
+	outcome, err := iod.NewCommandOutcome(command.CommandID, 1, false, nil)
+	if err != nil {
+		return err
+	}
+	accepted, err := iod.NewCommandAcceptedPacket(manifest.SessionID, manifest.GenerationID, outcome)
+	if err != nil {
+		return err
+	}
+	if err := enc.Encode(accepted); err != nil {
+		if helperConnClosed(err) {
+			return nil
+		}
+		return err
 	}
 	return nil
 }

@@ -662,21 +662,28 @@ func (s *Stub) reattachHelper(ctx context.Context, backend session.Backend, bind
 	}
 
 	updatedBinding := binding
+	if s != nil && updatedBinding.LastReplayOffset == 0 && s.helperBindings.root != "" {
+		if stored, err := s.helperBindings.Load(); err == nil {
+			if saved, ok := stored[binding.SessionID]; ok && saved.GenerationID == binding.GenerationID {
+				updatedBinding.LastReplayOffset = saved.LastReplayOffset
+			}
+		}
+	}
 	replayFailed := false
 	replayReason := helperFenceReason("")
 	if s != nil {
-		replayAfterOffset := binding.LastReplayOffset
-		if record, ok := s.registry.Lookup(binding.SessionID); ok {
-			replayAfterOffset = helperReplayAfterOffset(record, binding)
+		replayAfterOffset := updatedBinding.LastReplayOffset
+		if record, ok := s.registry.Lookup(updatedBinding.SessionID); ok {
+			replayAfterOffset = helperReplayAfterOffset(record, updatedBinding)
 		}
 		replayState := newHelperReplayState(replayAfterOffset, func(packet iod.ReplayItemPacket) error {
-			record, ok := s.registry.Lookup(binding.SessionID)
+			record, ok := s.registry.Lookup(updatedBinding.SessionID)
 			if !ok {
-				return fmt.Errorf("session %q not found while replaying helper WAL", binding.SessionID)
+				return fmt.Errorf("session %q not found while replaying helper WAL", updatedBinding.SessionID)
 			}
-			return s.applyRuntimeHelperPacketTrusted(binding.SessionID, record.identity.Backend(), binding.GenerationID, packet)
+			return s.applyRuntimeHelperPacketTrusted(updatedBinding.SessionID, record.identity.Backend(), updatedBinding.GenerationID, packet)
 		})
-		request, err := iod.NewReplayRequestPacket(binding.SessionID, binding.GenerationID, replayAfterOffset)
+		request, err := iod.NewReplayRequestPacket(updatedBinding.SessionID, updatedBinding.GenerationID, replayAfterOffset)
 		if err != nil {
 			_ = client.Close()
 			return attachedHelper{}, binding, helperFenceReplayFailed, err
@@ -737,6 +744,9 @@ func redialHelper(ctx context.Context, manifest iod.GenerationManifest, dialer i
 }
 
 func helperReplayAfterOffset(record sessionRecord, binding helperGenerationBinding) iod.WALOffset {
+	if record.identity.Backend() == session.BackendCodex && codexRecordHasTrustedSourceBinding(record, binding) {
+		return binding.LastReplayOffset
+	}
 	if record.identity.Backend() == session.BackendCodex {
 		runtime := record.runtime
 		if strings.TrimSpace(record.importedBackendSessionID) != "" {
@@ -760,6 +770,19 @@ func helperReplayAfterOffset(record sessionRecord, binding helperGenerationBindi
 		return binding.LastReplayOffset
 	}
 	return 0
+}
+
+func codexRecordHasTrustedSourceBinding(record sessionRecord, binding helperGenerationBinding) bool {
+	if binding.LastReplayOffset == 0 || record.identity.Backend() != session.BackendCodex {
+		return false
+	}
+	if strings.TrimSpace(record.importedBackendSessionID) != "" {
+		return true
+	}
+	if strings.TrimSpace(record.importedSourcePath) != "" {
+		return true
+	}
+	return strings.TrimSpace(record.transport.GenerationID) == binding.GenerationID.String()
 }
 
 type helperReplayState struct {
