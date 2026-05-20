@@ -32,6 +32,10 @@ const (
 	codexCommandCancelled   codexCommandAxis = "cancelled"
 )
 
+func (s codexCommandAxis) String() string {
+	return string(s)
+}
+
 type codexHistoryAxis string
 
 const (

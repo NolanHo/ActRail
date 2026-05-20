@@ -16,6 +16,7 @@ import (
 
 type sessionStore interface {
 	UpsertSessionSnapshot(context.Context, sqlitestore.SessionSnapshotRow) error
+	UpsertSessionSnapshotWithCodexCommand(context.Context, sqlitestore.SessionSnapshotRow, sqlitestore.CodexSessionCommandRow) error
 	UpsertSessionSourceRef(context.Context, sqlitestore.SessionSourceRefRow) error
 	UpsertCodexRuntimeClaim(context.Context, sqlitestore.CodexRuntimeClaimRow) error
 	DeleteCodexRuntimeClaim(context.Context, string) error
@@ -120,6 +121,25 @@ func durableSessionSnapshotFromRecord(record sessionRecord) sqlitestore.SessionS
 			HistoryItems: history,
 		},
 		Live: durableLiveStateFromRecord(record),
+	}
+}
+
+func durableCodexSendCommandFromRecord(record sessionRecord, item message.CommittedMessage, runtimeID session.RuntimeID) sqlitestore.CodexSessionCommandRow {
+	now := record.updatedAt.UTC()
+	messageID := ""
+	if item.Seq().Uint64() != 0 {
+		messageID = fmt.Sprintf("seq:%d", item.Seq().Uint64())
+	}
+	return sqlitestore.CodexSessionCommandRow{
+		CommandID: fmt.Sprintf("%s:%s", record.identity.SessionID(), messageID),
+		SessionID: record.identity.SessionID().String(),
+		RuntimeID: runtimeID.String(),
+		Kind:      "send",
+		Text:      item.Text(),
+		MessageID: messageID,
+		State:     codexCommandPending.String(),
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 }
 
@@ -359,6 +379,13 @@ func (r *sessionRegistry) persistLocked(record sessionRecord) error {
 	}
 	if err := r.store.UpsertSessionSnapshot(context.Background(), durableSessionSnapshotFromRecord(record)); err != nil {
 		return err
+	}
+	return r.persistCodexSourceAndClaimLocked(record)
+}
+
+func (r *sessionRegistry) persistCodexSourceAndClaimLocked(record sessionRecord) error {
+	if r == nil || r.store == nil {
+		return nil
 	}
 	if strings.TrimSpace(record.importedSourcePath) != "" || strings.TrimSpace(record.importedBackendSessionID) != "" {
 		if err := r.store.UpsertSessionSourceRef(context.Background(), sqlitestore.SessionSourceRefRow{

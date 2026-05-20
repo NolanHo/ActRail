@@ -17,6 +17,7 @@ import (
 	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/iodclient"
 	"actrail/internal/adapters/process"
+	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
 	"actrail/internal/domain/codex"
 	"actrail/internal/domain/session"
@@ -810,6 +811,80 @@ func TestSendAllowsWhenCodexHistoryActiveButThreadProbeIdle(t *testing.T) {
 	if !slices.Contains(sent, "thread/read") || !slices.Contains(sent, "turn/start") {
 		t.Fatalf("sent methods = %#v, want thread/read and turn/start", sent)
 	}
+}
+
+func TestAsyncCodexSendPersistsCommandLedgerWithUserMessage(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	svc.asyncSQLiteActions = true
+	sessionID := mustSessionID(t, "s_codex_ledger")
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-ledger")
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_codex_ledger", "t_codex_ledger", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	blockSend := make(chan struct{})
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: mustHelperGenerationID(t, "g_codex_ledger"),
+			commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+				<-blockSend
+				return nil
+			},
+		},
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              t.TempDir(),
+		Title:            "codex ledger",
+		BackendSessionID: "thread-ledger",
+		Runtime:          runtime,
+		Transport:        SessionTransportSnapshot{GenerationID: "g_codex_ledger", State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create(codex ledger) error = %v", err)
+	}
+
+	response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "persist me"})
+	if err != nil {
+		close(blockSend)
+		t.Fatalf("Send() error = %v", err)
+	}
+	if response.Message.Text != "persist me" || !response.Busy {
+		close(blockSend)
+		t.Fatalf("Send() = %+v, want committed busy prompt", response)
+	}
+	store, ok := svc.appStore.(*sqlitestore.SessionCatalog)
+	if !ok {
+		close(blockSend)
+		t.Fatalf("appStore = %T, want sqlite catalog", svc.appStore)
+	}
+	open, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+	if err != nil {
+		close(blockSend)
+		t.Fatalf("ListOpenCodexSessionCommands() error = %v", err)
+	}
+	if len(open) != 1 {
+		close(blockSend)
+		t.Fatalf("len(open commands) = %d, want 1: %+v", len(open), open)
+	}
+	wantMessageID := fmt.Sprintf("seq:%d", response.Message.Seq)
+	if open[0].State != codexCommandPending.String() || open[0].Text != "persist me" || open[0].MessageID != wantMessageID {
+		close(blockSend)
+		t.Fatalf("open command = %+v, want pending send command for %s", open[0], wantMessageID)
+	}
+	close(blockSend)
 }
 
 func mustDecodeCodexProjection(t *testing.T, raw string) codex.Projection {

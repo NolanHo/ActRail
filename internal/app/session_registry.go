@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -588,6 +589,14 @@ func (r *sessionRegistry) ActivateSend(sessionID session.SessionID, text string)
 }
 
 func (r *sessionRegistry) ActivateSendWithBusy(sessionID session.SessionID, text string, busy bool) (message.CommittedMessage, session.State, *SessionUIRequestSnapshot, bool, error) {
+	return r.activateSendWithBusy(sessionID, text, busy, false, "")
+}
+
+func (r *sessionRegistry) ActivateCodexSendWithCommand(sessionID session.SessionID, text string, busy bool, runtimeID session.RuntimeID) (message.CommittedMessage, session.State, *SessionUIRequestSnapshot, bool, error) {
+	return r.activateSendWithBusy(sessionID, text, busy, true, runtimeID)
+}
+
+func (r *sessionRegistry) activateSendWithBusy(sessionID session.SessionID, text string, busy bool, writeCodexCommand bool, runtimeID session.RuntimeID) (message.CommittedMessage, session.State, *SessionUIRequestSnapshot, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	record, ok := r.sessions[sessionID]
@@ -605,7 +614,16 @@ func (r *sessionRegistry) ActivateSendWithBusy(sessionID session.SessionID, text
 		return message.CommittedMessage{}, session.State{}, nil, true, err
 	}
 	cp := copySessionRecord(record)
-	if err := r.persistLocked(cp); err != nil {
+	if writeCodexCommand {
+		if r.store != nil {
+			if err := r.store.UpsertSessionSnapshotWithCodexCommand(context.Background(), durableSessionSnapshotFromRecord(cp), durableCodexSendCommandFromRecord(cp, item, runtimeID)); err != nil {
+				return message.CommittedMessage{}, session.State{}, nil, true, err
+			}
+			if err := r.persistCodexSourceAndClaimLocked(cp); err != nil {
+				return message.CommittedMessage{}, session.State{}, nil, true, err
+			}
+		}
+	} else if err := r.persistLocked(cp); err != nil {
 		return message.CommittedMessage{}, session.State{}, nil, true, err
 	}
 	r.sessions[sessionID] = cp

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	sqlitestore "actrail/internal/adapters/sqlite"
+	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
 )
 
@@ -166,7 +167,18 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		recordAtCommit = record
 		expectedRuntimeID, _ = record.identity.RuntimeID()
 		busyOnSend := true
-		item, state, uiRequest, ok, err := s.registry.ActivateSendWithBusy(req.SessionID, text, busyOnSend)
+		var (
+			item      message.CommittedMessage
+			state     session.State
+			uiRequest *SessionUIRequestSnapshot
+			ok        bool
+			err       error
+		)
+		if record.identity.Backend() == session.BackendCodex {
+			item, state, uiRequest, ok, err = s.registry.ActivateCodexSendWithCommand(req.SessionID, text, busyOnSend, expectedRuntimeID)
+		} else {
+			item, state, uiRequest, ok, err = s.registry.ActivateSendWithBusy(req.SessionID, text, busyOnSend)
+		}
 		if err != nil {
 			return err
 		}
