@@ -131,7 +131,7 @@ func durableCodexSendCommandFromRecord(record sessionRecord, item message.Commit
 		messageID = fmt.Sprintf("seq:%d", item.Seq().Uint64())
 	}
 	return sqlitestore.CodexSessionCommandRow{
-		CommandID: fmt.Sprintf("%s:%s", record.identity.SessionID(), messageID),
+		CommandID: codexSendCommandID(record.identity.SessionID(), item.Seq().Uint64()),
 		SessionID: record.identity.SessionID().String(),
 		RuntimeID: runtimeID.String(),
 		Kind:      "send",
@@ -141,6 +141,10 @@ func durableCodexSendCommandFromRecord(record sessionRecord, item message.Commit
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+}
+
+func codexSendCommandID(sessionID session.SessionID, seq uint64) string {
+	return fmt.Sprintf("%s:seq:%d", sessionID.String(), seq)
 }
 
 func sessionRecordFromDurableSnapshot(snapshot sqlitestore.SessionSnapshotRow) (sessionRecord, error) {

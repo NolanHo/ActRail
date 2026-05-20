@@ -831,6 +831,7 @@ func TestAsyncCodexSendPersistsCommandLedgerWithUserMessage(t *testing.T) {
 		t.Fatalf("NewLiveIdentity() error = %v", err)
 	}
 	blockSend := make(chan struct{})
+	sendStarted := make(chan struct{}, 1)
 	runtime := sessionRuntime{
 		protocol: runtimeProtocolCodexRPC,
 		codex:    runtimeState,
@@ -839,6 +840,10 @@ func TestAsyncCodexSendPersistsCommandLedgerWithUserMessage(t *testing.T) {
 			sessionID:    sessionID,
 			generationID: mustHelperGenerationID(t, "g_codex_ledger"),
 			commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+				select {
+				case sendStarted <- struct{}{}:
+				default:
+				}
 				<-blockSend
 				return nil
 			},
@@ -884,7 +889,107 @@ func TestAsyncCodexSendPersistsCommandLedgerWithUserMessage(t *testing.T) {
 		close(blockSend)
 		t.Fatalf("open command = %+v, want pending send command for %s", open[0], wantMessageID)
 	}
+	select {
+	case <-sendStarted:
+	case <-time.After(time.Second):
+		close(blockSend)
+		t.Fatal("async Codex send did not start")
+	}
+	open, err = store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+	if err != nil {
+		close(blockSend)
+		t.Fatalf("ListOpenCodexSessionCommands(dispatching) error = %v", err)
+	}
+	if len(open) != 1 || open[0].State != codexCommandDispatching.String() || open[0].AttemptCount != 1 {
+		close(blockSend)
+		t.Fatalf("open command while send blocked = %+v, want dispatching attempt 1", open)
+	}
 	close(blockSend)
+	waitForTestCondition(t, func() bool {
+		open, err = store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+		return err == nil && len(open) == 1 && open[0].State == codexCommandAccepted.String()
+	})
+}
+
+func TestAsyncCodexSendMarksCommandLedgerFailed(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	svc.asyncSQLiteActions = true
+	sessionID := mustSessionID(t, "s_codex_ledger_failed")
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-ledger-failed")
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_codex_ledger_failed", "t_codex_ledger_failed", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	sendErr := errors.New("runtime send failed")
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: mustHelperGenerationID(t, "g_codex_ledger_failed"),
+			commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+				return sendErr
+			},
+		},
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              t.TempDir(),
+		Title:            "codex ledger failed",
+		BackendSessionID: "thread-ledger-failed",
+		Runtime:          runtime,
+		Transport:        SessionTransportSnapshot{GenerationID: "g_codex_ledger_failed", State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create(codex ledger failed) error = %v", err)
+	}
+
+	response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "fail me"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	store, ok := svc.appStore.(*sqlitestore.SessionCatalog)
+	if !ok {
+		t.Fatalf("appStore = %T, want sqlite catalog", svc.appStore)
+	}
+	waitForTestCondition(t, func() bool {
+		open, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+		if err != nil || len(open) != 0 {
+			return false
+		}
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.RuntimeState == string(codexRuntimePhaseFailed)
+	})
+	commands, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands() error = %v", err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("open commands = %+v, want none after failed terminal state", commands)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	foundPrompt := false
+	for _, item := range messages.Items {
+		if item.Role == "user" && item.Text == response.Message.Text {
+			foundPrompt = true
+			break
+		}
+	}
+	if !foundPrompt {
+		t.Fatalf("SessionMessages() = %+v, want committed failed prompt visible", messages.Items)
+	}
 }
 
 func mustDecodeCodexProjection(t *testing.T, raw string) codex.Projection {

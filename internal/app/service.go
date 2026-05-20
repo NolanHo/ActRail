@@ -102,6 +102,7 @@ type Stub struct {
 	waitBlockers        map[string]waitBlocker
 	supervisorStore     supervisorStore
 	schedulerStore      schedulerStore
+	sessionCommandStore sessionCommandStore
 	deferredInputMu     sync.Mutex
 	teams               *teamRegistry
 	runtimeAgentMu      sync.RWMutex
@@ -172,6 +173,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		waitBlockers:        map[string]waitBlocker{},
 		supervisorStore:     newMemorySupervisorStore(),
 		schedulerStore:      newMemorySchedulerStore(),
+		sessionCommandStore: nil,
 		teams:               newTeamRegistry(now),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		codexOutboundPrompt: map[session.SessionID]string{},

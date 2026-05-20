@@ -67,6 +67,7 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		waitBlockers:        map[string]waitBlocker{},
 		supervisorStore:     catalog,
 		schedulerStore:      catalog,
+		sessionCommandStore: catalog,
 		teams:               newTeamRegistry(now, catalog),
 		runtimeAgentRunning: map[session.SessionID]bool{},
 		piRPCStates:         map[session.SessionID]piRPCStateCache{},
