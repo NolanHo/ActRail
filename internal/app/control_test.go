@@ -911,6 +911,85 @@ func TestAsyncCodexSendPersistsCommandLedgerWithUserMessage(t *testing.T) {
 	})
 }
 
+func TestAsyncCodexCommandLedgerReflectsAndCompletesFromLiveEvents(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	svc.asyncSQLiteActions = true
+	sessionID := mustSessionID(t, "s_codex_ledger_live")
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-ledger-live")
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: mustHelperGenerationID(t, "g_codex_ledger_live"),
+			commandFunc:  func(context.Context, iod.CommandName, json.RawMessage) error { return nil },
+		},
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_codex_ledger_live", "t_codex_ledger_live", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              t.TempDir(),
+		Title:            "codex ledger live",
+		BackendSessionID: "thread-ledger-live",
+		Runtime:          runtime,
+		Transport:        SessionTransportSnapshot{GenerationID: "g_codex_ledger_live", State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "reflect me"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	store, ok := svc.appStore.(*sqlitestore.SessionCatalog)
+	if !ok {
+		t.Fatalf("appStore = %T, want sqlite catalog", svc.appStore)
+	}
+	waitForTestCondition(t, func() bool {
+		open, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+		return err == nil && len(open) == 1 && open[0].State == codexCommandAccepted.String()
+	})
+	if err := svc.applyRuntimeProjection(sessionID, runtimeProjectionFromCodex(mustDecodeCodexProjection(t, `{"method":"item/completed","params":{"threadId":"thread-ledger-live","turnId":"turn-ledger-live","item":{"type":"userMessage","id":"user-live-1","text":"reflect me"}}}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(user) error = %v", err)
+	}
+	open, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands(reflected) error = %v", err)
+	}
+	if len(open) != 1 || open[0].State != codexCommandReflected.String() {
+		t.Fatalf("open command after user reflection = %+v, want reflected", open)
+	}
+	if prompt := svc.codexOutboundPromptText(sessionID); prompt != "" {
+		t.Fatalf("codex outbound prompt = %q, want cleared after reflection", prompt)
+	}
+	if err := svc.applyRuntimeProjection(sessionID, runtimeProjectionFromCodex(mustDecodeCodexProjection(t, `{"method":"turn/completed","params":{"threadId":"thread-ledger-live","turn":{"id":"turn-ledger-live","status":"completed","error":null}}}`))); err != nil {
+		t.Fatalf("applyRuntimeProjection(turn completed) error = %v", err)
+	}
+	waitForTestCondition(t, func() bool {
+		open, err = store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+		if err != nil || len(open) != 0 {
+			return false
+		}
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.RuntimeState == string(codexRuntimePhaseIdle)
+	})
+	if response.Message.Text != "reflect me" {
+		t.Fatalf("Send() message = %+v, want reflect me", response.Message)
+	}
+}
+
 func TestAsyncCodexSendMarksCommandLedgerFailed(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

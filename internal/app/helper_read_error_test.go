@@ -53,7 +53,7 @@ func TestStaleHelperReadErrorDoesNotBreakCurrentCodexGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.GenerationID != newGeneration.String() || state.Transport.ResetRequired {
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState() after stale read error = %+v, want current generation attached", state)
 	}
 	if state.RuntimeState != string(codexRuntimePhaseIdle) {
@@ -159,7 +159,7 @@ func TestCurrentHelperReadErrorRedialsLiveCodexHelper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState() after live redial = %+v, want attached current generation", state.Transport)
 	}
 	if state.RuntimeState == string(codexRuntimePhaseFailed) {
@@ -219,7 +219,7 @@ func TestSessionStateReconcilesStaleAttachLostWhenCodexHelperIsLive(t *testing.T
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want attached live helper", state.Transport)
 	}
 	if state.RuntimeState == string(codexRuntimePhaseFailed) {
@@ -291,7 +291,7 @@ func TestFreshHelperReadErrorRedialsFromRuntimeManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState() after fresh helper redial = %+v, want attached current generation", state.Transport)
 	}
 	if state.RuntimeState == string(codexRuntimePhaseFailed) {
@@ -470,7 +470,7 @@ func TestFreshHelperEOFRedialsFromRuntimeManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState() after fresh helper EOF redial = %+v, want attached current generation", state.Transport)
 	}
 }
@@ -523,7 +523,7 @@ func TestStaleHelperReadLoopDoesNotBreakRestartedSameGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want current helper still attached", state.Transport)
 	}
 }
@@ -654,7 +654,7 @@ func TestBrokenAttachLostCanRedialLiveCodexHelper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
 	}
 	if state.RuntimeState == string(codexRuntimePhaseFailed) {
@@ -713,7 +713,7 @@ func TestBrokenAttachLostCanRedialLiveCodexHelperFromManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
 	}
 	if _, ok := svc.helpers.Attachment(sessionID); !ok {

@@ -301,6 +301,136 @@ func TestRecoverOpenCodexCommandFailsStaleDispatchingWithoutResend(t *testing.T)
 	}
 }
 
+func TestRecoverOpenCodexCommandCompletesAcceptedFromSessionFile(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_recover_accepted_file")
+	threadID := "thread-recover-accepted-file"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-recover-accepted-file","cwd":"/tmp/recover-accepted","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"already done"}}`,
+		`{"timestamp":"2026-05-08T15:58:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"done","phase":"final_answer"}}`,
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_recover_accepted_file", "t_recover_accepted_file", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/recover-accepted",
+		Title:            "recover accepted file",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)},
+		Transport:        SessionTransportSnapshot{State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	item, _, _, ok, err := svc.registry.ActivateCodexSendWithCommand(sessionID, "already done", true, "r_recover_accepted_file")
+	if err != nil || !ok {
+		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
+	}
+	commandID := codexSendCommandID(sessionID, item.Seq().Uint64())
+	svc.updateCodexSendCommandState(commandID, codexCommandAccepted, "r_recover_accepted_file", "")
+
+	svc.recoverOpenCodexSessionCommands(context.Background())
+	store, ok := svc.appStore.(*sqlitestore.SessionCatalog)
+	if !ok {
+		t.Fatalf("appStore = %T, want sqlite catalog", svc.appStore)
+	}
+	open, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands() error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("open commands after accepted recovery = %+v, want completed none", open)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy {
+		t.Fatalf("SessionState().Busy = true, want idle after completed recovery: %+v", state)
+	}
+}
+
+func TestRecoverOpenCodexCommandLeavesReflectedIdleUnblocked(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_recover_reflected_idle")
+	threadID := "thread-recover-reflected-idle"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-recover-reflected-idle","cwd":"/tmp/recover-reflected","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"reflected only"}}`,
+	})
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	runtimeState := newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)
+	runtimeState.markInitialized()
+	sendCount := 0
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: mustHelperGenerationID(t, "g_recover_reflected_idle"),
+			commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+				sendCount++
+				return nil
+			},
+		},
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_recover_reflected_idle", "t_recover_reflected_idle", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/recover-reflected",
+		Title:            "recover reflected idle",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          runtime,
+		Transport:        SessionTransportSnapshot{GenerationID: "g_recover_reflected_idle", State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	item, _, _, ok, err := svc.registry.ActivateCodexSendWithCommand(sessionID, "reflected only", true, "r_recover_reflected_idle")
+	if err != nil || !ok {
+		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
+	}
+	commandID := codexSendCommandID(sessionID, item.Seq().Uint64())
+	svc.updateCodexSendCommandState(commandID, codexCommandReflected, "r_recover_reflected_idle", "")
+	if _, _, err := svc.registry.SetBusy(sessionID, false); err != nil {
+		t.Fatalf("SetBusy(false) error = %v", err)
+	}
+
+	svc.recoverOpenCodexSessionCommands(context.Background())
+	response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "new prompt"})
+	if err != nil {
+		t.Fatalf("Send() after reflected recovery error = %v", err)
+	}
+	if response.Message.Text != "new prompt" {
+		t.Fatalf("Send() = %+v, want new prompt committed", response)
+	}
+	if sendCount == 0 {
+		t.Fatal("sendCount = 0, want direct send to reach runtime")
+	}
+}
+
 func TestAsyncSQLiteSendRejectsUnavailableRuntimeInputBeforeCommit(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	svc, err := newPersistentStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})

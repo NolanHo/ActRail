@@ -18,6 +18,7 @@ import (
 	"actrail/internal/domain/codex"
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -754,13 +755,16 @@ func (s *Stub) reconcilePIAuthoritativeFinal(record sessionRecord, items []Sessi
 }
 
 func (s *Stub) reconcileCodexSessionFileFinal(record sessionRecord, items []SessionMessage) {
-	s.reconcileCodexSessionFileCompletion(record, codexSessionMessagesHaveAuthoritativeCompletion(items))
+	complete := codexSessionMessagesHaveAuthoritativeCompletion(items)
+	s.reconcileOpenCodexCommandsFromMessages(record.identity.SessionID(), items, complete)
+	s.reconcileCodexSessionFileCompletion(record, complete)
 }
 
 func (s *Stub) reconcileCodexSessionFileCompletion(record sessionRecord, complete bool) {
 	if s == nil || !codexRecordNeedsAuthoritativeFinalReconcile(record) || !complete {
 		return
 	}
+	s.reconcileOpenCodexCommands(record.identity.SessionID(), codexCommandReconcileState{Completed: true}, "")
 	s.completeCodexRuntimeFromAuthoritativeSource(record.identity.SessionID())
 }
 
@@ -773,21 +777,45 @@ func (s *Stub) reconcileCodexSessionFileFinalForState(record sessionRecord) sess
 	}
 	packet, ok := s.cachedCodexIODHistorySnapshot(record)
 	if !ok {
+		if codexLiveRuntimePrimary(record) && !s.codexTrustedSessionFileTailTerminal(record) {
+			return record
+		}
 		return s.reconcileCodexSessionFileFinalFromSourceTail(record)
 	}
 	if codexIODHistoryPacketNeedsAuthoritativeFinalReconcile(packet) {
+		if codexLiveRuntimePrimary(record) && !packet.TaskComplete {
+			return record
+		}
 		return s.reconcileCodexSessionFileFinalFromCachedIODPacket(record, packet)
 	}
 	if s.codexTrustedSessionFileTailComplete(record) {
+		if codexLiveRuntimePrimary(record) && !s.codexTrustedSessionFileTailTerminal(record) {
+			return record
+		}
 		return s.reconcileCodexSessionFileFinalFromSourceTail(record)
 	}
 	return record
+}
+
+func codexLiveRuntimePrimary(record sessionRecord) bool {
+	if record.identity.Backend() != session.BackendCodex || record.identity.Historical() {
+		return false
+	}
+	if record.runtime.helper == nil || record.runtime.codex == nil {
+		return false
+	}
+	transport := sessionTransportSnapshot(record)
+	if transport.State != SessionTransportStateAttached || transport.ResetRequired {
+		return false
+	}
+	return record.runtime.codex.activity().Busy
 }
 
 func (s *Stub) reconcileCodexSessionFileFinalFromSourceTail(record sessionRecord) sessionRecord {
 	if s == nil || !s.codexTrustedSessionFileTailComplete(record) {
 		return record
 	}
+	s.recordCodexReducerEvent(record.identity.SessionID(), codexReducerSourceSessionFile, "trusted_tail_complete")
 	s.reconcileCodexSessionFileCompletion(record, true)
 	if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
 		updated.runtime = s.runtimeForRecord(updated)
@@ -805,6 +833,11 @@ func (s *Stub) reconcileCodexSessionFileFinalFromIODPacketLines(record sessionRe
 		return record
 	}
 	complete := codexIODHistoryMessagesHaveAuthoritativeCompletion(completionMessages) || packet.TaskComplete
+	s.recordCodexReducerEvent(record.identity.SessionID(), codexReducerSourceSessionFile, "iod_packet_reconcile",
+		attribute.Bool("codex.session_file.complete", complete),
+		attribute.Int("codex.session_file.projection_lines", len(projectionLines)),
+		attribute.Int("codex.session_file.messages", len(completionMessages)),
+	)
 	_ = s.reconcileCodexSessionFileRuntimeProjection(record.identity.SessionID(), projectionLines)
 	if !complete {
 		if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
@@ -815,6 +848,7 @@ func (s *Stub) reconcileCodexSessionFileFinalFromIODPacketLines(record sessionRe
 	}
 	items := sessionMessagesFromIODHistory(packet.Messages)
 	if len(items) > 0 {
+		s.reconcileOpenCodexCommandsFromMessages(record.identity.SessionID(), items, complete)
 		go s.emitCodexSessionFileLiveCommits(record.identity.SessionID(), items)
 	}
 	s.reconcileCodexSessionFileCompletion(record, complete)
@@ -876,6 +910,9 @@ func (s *Stub) reconcileCodexSessionFileRuntimeProjection(sessionID session.Sess
 		}
 		projection = mergeRuntimeProjection(projection, runtimeProjectionFromCodex(decoded))
 	}
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceSessionFile, "runtime_projection",
+		attribute.Int("codex.session_file.projection_lines", len(lines)),
+	)
 	return s.applyRuntimeProjection(sessionID, projection)
 }
 
@@ -963,6 +1000,7 @@ func (s *Stub) completeCodexRuntimeFromAuthoritativeSource(sessionID session.Ses
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
 		_, _ = state.applyProtocolBusy(false)
 	})
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceSessionFile, "authoritative_complete")
 	if record, ok := s.registry.Lookup(sessionID); ok {
 		transport := sessionTransportSnapshot(record)
 		if transport.State == SessionTransportStateStarting {
@@ -1061,6 +1099,7 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 				return SessionMessagesResponse{}, false, nil
 			}
 			s.rememberCodexThreadBindingFromIODHistory(record, packet)
+			s.reconcileOpenCodexCommandsFromMessages(sessionID, response.Items, complete)
 			s.reconcileCodexSessionFileCompletion(record, complete)
 			return response, true, nil
 		}
@@ -1080,6 +1119,7 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 		}
 	}
 	s.rememberCodexThreadBindingFromIODHistory(record, packet)
+	s.reconcileOpenCodexCommandsFromMessages(sessionID, items, complete)
 	s.reconcileCodexSessionFileCompletion(record, complete)
 	if record.transcript.Len() == 0 {
 		s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
@@ -1106,6 +1146,7 @@ func (s *Stub) loadCodexSourceFileHistoryPage(ctx context.Context, record sessio
 		return SessionMessagesResponse{}, false, nil
 	}
 	if complete {
+		s.reconcileOpenCodexCommandsFromMessages(record.identity.SessionID(), response.Items, true)
 		s.reconcileCodexSessionFileCompletion(record, true)
 	}
 	s.rememberCodexThreadBinding(record, threadID, path)
@@ -1148,6 +1189,7 @@ func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRec
 			items[i].Seq = uint64(i + 1)
 		}
 	}
+	s.reconcileOpenCodexCommandsFromMessages(sessionID, items, complete)
 	s.reconcileCodexSessionFileCompletion(record, complete)
 	s.rememberCodexThreadBinding(record, threadID, path)
 	if !hasLocalTranscript {
@@ -1312,6 +1354,24 @@ func (s *Stub) forceCodexIODHistoryRefresh(sessionID session.SessionID) {
 		}
 		s.emitSessionState(sessionID)
 	}()
+}
+
+func (s *Stub) forceCodexSessionFileReconcile(sessionID session.SessionID) {
+	if s == nil {
+		return
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok || record.identity.Backend() != session.BackendCodex {
+		return
+	}
+	record.runtime = s.runtimeForRecord(record)
+	if record.runtime.helper != nil {
+		s.forceCodexIODHistoryRefresh(sessionID)
+		return
+	}
+	s.invalidateSessionHistoryCaches(sessionID)
+	updated := s.reconcileCodexSessionFileFinalForState(record)
+	s.emitSessionState(updated.identity.SessionID())
 }
 
 func (s *Stub) storeCodexIODHistoryPacketLocked(sessionID session.SessionID, packet iod.SessionHistoryResponsePacket) {
@@ -1571,6 +1631,14 @@ func (s *Stub) codexTrustedSessionFileTailComplete(record sessionRecord) bool {
 	}
 	complete, ok := codexSessionFileTailHasAuthoritativeCompletion(context.Background(), path)
 	return ok && complete
+}
+
+func (s *Stub) codexTrustedSessionFileTailTerminal(record sessionRecord) bool {
+	path := s.codexTrustedSessionFilePath(record)
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	return codexSessionFileHasTaskComplete(context.Background(), path)
 }
 
 func codexIODHistoryCacheKey(packet iod.SessionHistoryResponsePacket) string {

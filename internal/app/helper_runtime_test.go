@@ -80,8 +80,8 @@ func TestHelperDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.GenerationID != generationID.String() {
-		t.Fatalf("SessionState().Transport = %+v, want attached generation %q", state.Transport, generationID)
+	if state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState().Transport = %+v, want attached", state.Transport)
 	}
 }
 
@@ -107,8 +107,8 @@ func TestStartupHealthMarksMissingHelperEnded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.GenerationID != generationID.String() {
-		t.Fatalf("SessionState().Transport = %+v, want ended missing helper generation %q", state.Transport, generationID)
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" {
+		t.Fatalf("SessionState().Transport = %+v, want ended missing helper", state.Transport)
 	}
 }
 
@@ -139,8 +139,8 @@ func TestStartupHealthMarksUndialableHelperEnded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.GenerationID != generationID.String() {
-		t.Fatalf("SessionState().Transport = %+v, want ended undialable helper generation %q", state.Transport, generationID)
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" {
+		t.Fatalf("SessionState().Transport = %+v, want ended undialable helper", state.Transport)
 	}
 }
 
@@ -181,8 +181,8 @@ func TestStartupHealthMarksCodexMissingHelperWithLiveChildBroken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
-		t.Fatalf("SessionState().Transport = %+v, want orphan cleanup reconciled to ended helper_not_running generation %q", state.Transport, generationID)
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want orphan cleanup reconciled to ended helper_not_running", state.Transport)
 	}
 	assertEventuallyPIDGone(t, childPID)
 }
@@ -435,7 +435,7 @@ func TestServerReattach(t *testing.T) {
 	}
 }
 
-func TestCodexReattachReplaysWALAndProjectsLiveOutput(t *testing.T) {
+func TestCodexReattachSkipsWALAndProjectsLiveOutput(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	generationID := mustHelperGenerationID(t, "g_codex_reattach")
@@ -453,17 +453,6 @@ func TestCodexReattachReplaysWALAndProjectsLiveOutput(t *testing.T) {
 	if _, _, err := svc.registry.SetRuntimeTransportMemory(sessionID, sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeState(session.BackendCodex)}, SessionTransportSnapshot{State: SessionTransportStateStarting, GenerationID: generationID.String(), Reason: "codex_initializing"}); err != nil {
 		t.Fatalf("SetRuntimeTransportMemory(codex missing thread) error = %v", err)
 	}
-	projectionProbe := runtimeEventDecoder{backend: session.BackendCodex}
-	replayItem := mustReplayOutputPacket(t, sessionID, generationID, 1, 1,
-		"{\"id\":\"initialize-1\",\"result\":{\"userAgent\":\"actrail-test\"}}\n"+
-			"{\"id\":\"thread-resume-2\",\"result\":{\"thread\":{\"id\":\"thread-codex-reattach-1\",\"status\":{\"type\":\"idle\"},\"turns\":[]}}}\n")
-	projection, err := projectionProbe.decodeHelperPacket(replayItem)
-	if err != nil {
-		t.Fatalf("decodeHelperPacket(replayItem) error = %v", err)
-	}
-	if !projection.codexInitialized || projection.codexThreadID != "thread-codex-reattach-1" {
-		t.Fatalf("decodeHelperPacket(replayItem) = %+v, want initialized thread", projection)
-	}
 	if err := svc.Close(); err != nil {
 		t.Fatalf("Close(before reattach) error = %v", err)
 	}
@@ -474,9 +463,7 @@ func TestCodexReattachReplaysWALAndProjectsLiveOutput(t *testing.T) {
 			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turnId\":\"turn-codex-reattach-1\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-reattach-1\",\"text\":\"Replay and live Codex projection works.\"}}}\n"+
 			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-reattach-1\",\"turn\":{\"id\":\"turn-codex-reattach-1\",\"status\":\"completed\",\"error\":null}}}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Items:       []iod.ReplayItemPacket{replayItem},
-		Done:        mustReplayDonePacket(t, sessionID, generationID, 0, 1),
+		SkipReplay:  true,
 		LivePackets: []any{livePacket},
 	})
 	defer cleanup()
@@ -492,22 +479,19 @@ func TestCodexReattachReplaysWALAndProjectsLiveOutput(t *testing.T) {
 	if attachment.Binding.GenerationID != generationID {
 		t.Fatalf("attachment generation id = %q, want %q", attachment.Binding.GenerationID, generationID)
 	}
-	if attachment.Binding.LastReplayOffset != 1 {
-		t.Fatalf("attachment last replay offset = %d, want replay cursor 1", attachment.Binding.LastReplayOffset)
+	if attachment.ReplayFailed || attachment.Binding.LastReplayOffset != 0 {
+		t.Fatalf("attachment = %+v, want attached without Codex WAL replay", attachment)
 	}
 	record, err := rehydrated.lookupSession(sessionID)
 	if err != nil {
 		t.Fatalf("lookupSession() error = %v", err)
 	}
 	if record.runtime.codex == nil {
-		t.Fatalf("codex runtime nil after replay, runtime = %+v", record.runtime)
-	}
-	if record.importedBackendSessionID != "thread-codex-reattach-1" {
-		t.Fatalf("importedBackendSessionID after replay = %q, want thread-codex-reattach-1", record.importedBackendSessionID)
+		t.Fatalf("codex runtime nil after reattach, runtime = %+v", record.runtime)
 	}
 	initialized, threadID, turnID := record.runtime.codex.snapshot()
-	if !initialized || threadID != "thread-codex-reattach-1" || turnID != "" {
-		t.Fatalf("codex runtime state after replay = (initialized:%v thread=%q turn=%q activity=%+v), want initialized thread-codex-reattach-1 idle", initialized, threadID, turnID, record.runtime.codex.activity())
+	if initialized || threadID != "" || turnID != "" {
+		t.Fatalf("codex runtime state after reattach = (initialized:%v thread=%q turn=%q), want empty until live UDS", initialized, threadID, turnID)
 	}
 	if err := rehydrated.applyRuntimeHelperPacket(sessionID, session.BackendCodex, generationID, livePacket); err != nil {
 		t.Fatalf("applyRuntimeHelperPacket(livePacket) error = %v", err)
@@ -552,8 +536,88 @@ func TestCodexReattachReplaysWALAndProjectsLiveOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helperBindings.Load() error = %v", err)
 	}
-	if bindings[sessionID].GenerationID != generationID || bindings[sessionID].LastReplayOffset != 1 {
-		t.Fatalf("saved binding = %+v, want generation %q offset 1", bindings[sessionID], generationID)
+	if bindings[sessionID].GenerationID != generationID || bindings[sessionID].LastReplayOffset != 0 {
+		t.Fatalf("saved binding = %+v, want generation %q offset 0", bindings[sessionID], generationID)
+	}
+}
+
+func TestCodexLiveUDSRemainsPrimaryOverSessionFile(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_live_primary")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	threadID := "thread-codex-live-primary"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), "thread-codex-live-stale-file", []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-codex-live-primary","cwd":"/tmp/codex-live-primary","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"old file prompt"}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"old file final","phase":"final_answer"}}`,
+	})
+	if _, _, err := svc.registry.SetSourceBinding(sessionID, threadID, sourcePath, sourceConfidenceExact); err != nil {
+		t.Fatalf("SetSourceBinding() error = %v", err)
+	}
+	if _, _, err := svc.registry.SetRuntimeTransportMemory(sessionID, sessionRuntime{
+		protocol:      runtimeProtocolCodexRPC,
+		codex:         newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID),
+		helper:        &runtimeIODHelper{sessionID: sessionID, generationID: generationID},
+		helperBinding: &RuntimeHelperBinding{GenerationID: generationID},
+	}, SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached}); err != nil {
+		t.Fatalf("SetRuntimeTransportMemory() error = %v", err)
+	}
+	if record, err := svc.lookupSession(sessionID); err != nil {
+		t.Fatalf("lookupSession(before live) error = %v", err)
+	} else if record.runtime.codex == nil {
+		t.Fatal("runtime.codex nil before live")
+	} else {
+		record.runtime.codex.attachInitializedThread(threadID)
+		if _, _, err := svc.registry.SetRuntimeMemory(sessionID, record.runtime); err != nil {
+			t.Fatalf("SetRuntimeMemory(initialized) error = %v", err)
+		}
+	}
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok || record.runtime.codex == nil {
+		t.Fatalf("registry.Lookup(%q) = (_, %v), want codex runtime", sessionID, ok)
+	}
+	record.runtime.codex.attachInitializedThread(threadID)
+	if _, _, err := svc.registry.SetRuntimeTransportMemory(sessionID, record.runtime, record.transport); err != nil {
+		t.Fatalf("SetRuntimeTransportMemory(initialized thread) error = %v", err)
+	}
+	record, err = svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession(live primary) error = %v", err)
+	}
+	record.runtime.codex.attachInitializedThread(threadID)
+	_, _ = record.runtime.codex.applyProtocolBusy(true)
+	if _, _, err := svc.registry.SetRuntimeMemory(sessionID, record.runtime); err != nil {
+		t.Fatalf("SetRuntimeMemory(live primary) error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	record, err = svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession(before reconcile) error = %v", err)
+	}
+	if !codexLiveRuntimePrimary(record) {
+		t.Fatalf("codexLiveRuntimePrimary() = false for live busy record")
+	}
+	reconciled := svc.reconcileCodexSessionFileFinalForState(record)
+	if !codexLiveRuntimePrimary(reconciled) {
+		t.Fatal("reconcileCodexSessionFileFinalForState() cleared live UDS primary state")
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy || state.RuntimeState != string(codexRuntimePhaseRunning) {
+		t.Fatalf("SessionState() = %+v, want live UDS running state to remain primary over stale session file", state)
 	}
 }
 
@@ -677,8 +741,8 @@ func TestPersistentStubAdoptsUnboundCodexIODOnRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateAttached || state.Transport.GenerationID != generationID.String() {
-		t.Fatalf("SessionState().Transport = %+v, want attached generation %q", state.Transport, generationID)
+	if state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState().Transport = %+v, want attached", state.Transport)
 	}
 }
 
@@ -718,6 +782,10 @@ func TestRuntimeLauncherAttachedCodexIODKnownThreadSkipsInitializeBootstrap(t *t
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	manifest.CodexThreadID = "thread-existing"
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
 	defer cleanup()
 	launcher := processRuntimeLauncher{
@@ -795,6 +863,77 @@ func TestRuntimeLauncherReusesCodexIODByThreadAcrossSession(t *testing.T) {
 	initialized, threadID, _ := runtime.codex.snapshot()
 	if !initialized || threadID != "thread-singleton" {
 		t.Fatalf("runtime codex snapshot initialized/thread = %v/%q, want true/thread-singleton", initialized, threadID)
+	}
+}
+
+func TestCodexReattachUsesThreadBindingAcrossActRailSessionID(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	shortDataDir, err := os.MkdirTemp("/tmp", "ar-singleton-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(shortDataDir) })
+	cfg.Storage.DataDir = shortDataDir
+	now := time.Unix(1760000000, 0).UTC()
+	ownerSessionID := mustSessionID(t, "s_survived_helper_owner")
+	generationID := mustHelperGenerationID(t, "g_survived_helper_singleton")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-singleton"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	requestSessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetSourceBinding(requestSessionID, "thread-survived-singleton", "", "trusted"); err != nil || !ok {
+		t.Fatalf("SetSourceBinding() = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
+	if err := svc.bindCurrentGeneration(helperGenerationBinding{
+		SessionID:        requestSessionID,
+		HelperSessionID:  ownerSessionID,
+		GenerationID:     generationID,
+		LastReplayOffset: 3,
+	}); err != nil {
+		t.Fatalf("bindCurrentGeneration() error = %v", err)
+	}
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), ownerSessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, ownerSessionID, generationID, 1760000006)
+	manifest.CodexThreadID = "thread-survived-singleton"
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
+	}
+	if err := rehydrated.reattachSurvivingHelpers(context.Background()); err != nil {
+		t.Fatalf("reattachSurvivingHelpers() error = %v", err)
+	}
+	attachment, ok := rehydrated.helpers.Attachment(requestSessionID)
+	if !ok {
+		t.Fatalf("helper attachment for %q not found", requestSessionID)
+	}
+	if attachment.Binding.SessionID != requestSessionID || attachment.Binding.HelperSessionID != ownerSessionID || attachment.Binding.GenerationID != generationID {
+		t.Fatalf("attachment binding = %+v, want requester %q owner %q generation %q", attachment.Binding, requestSessionID, ownerSessionID, generationID)
+	}
+	record, ok := rehydrated.registry.Lookup(requestSessionID)
+	if !ok {
+		t.Fatalf("registry.Lookup(%q) = false", requestSessionID)
+	}
+	if record.runtime.helper == nil || record.runtime.helper.sessionID != ownerSessionID {
+		t.Fatalf("runtime.helper = %+v, want owner session %q", record.runtime.helper, ownerSessionID)
+	}
+	if state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: requestSessionID}); err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	} else if state.Transport.State != SessionTransportStateAttached || state.Transport.GenerationID != "" {
+		t.Fatalf("SessionState().Transport = %+v, want attached without generation", state.Transport)
 	}
 }
 
@@ -1373,7 +1512,6 @@ func TestCodexReattachIgnoresProjectionError(t *testing.T) {
 	sessionID := mustSessionID(t, created.Session.SessionID)
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000007)
-	replayDone := mustReplayDonePacket(t, sessionID, generationID, 0, 0)
 	livePartial := mustStateOutputPacket(t, sessionID, generationID, 1,
 		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-projection-error\"}}}\n"+
 			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turn\":{\"id\":\"turn-codex-projection-error\",\"status\":\"inProgress\",\"error\":null}}}\n"+
@@ -1385,8 +1523,7 @@ func TestCodexReattachIgnoresProjectionError(t *testing.T) {
 			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turnId\":\"turn-codex-projection-error\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-projection-error\",\"text\":\"Recovered after projection error.\"}}}\n"+
 			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-projection-error\",\"turn\":{\"id\":\"turn-codex-projection-error\",\"status\":\"completed\",\"error\":null}}}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Done:        replayDone,
+		SkipReplay:  true,
 		LivePackets: []any{livePartial, liveToolDuringPartial, liveFinal},
 	})
 	defer cleanup()
@@ -1399,8 +1536,8 @@ func TestCodexReattachIgnoresProjectionError(t *testing.T) {
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
 	}
-	if attachment.Binding.LastReplayOffset != 0 {
-		t.Fatalf("attachment last replay offset = %d, want replayed cursor 0", attachment.Binding.LastReplayOffset)
+	if attachment.ReplayFailed || attachment.Binding.LastReplayOffset != 5 {
+		t.Fatalf("attachment = %+v, want clean attach preserving cursor without replay", attachment)
 	}
 	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
 	if err != nil {
@@ -1437,7 +1574,6 @@ func TestCodexLiveHelperIgnoresProjectionError(t *testing.T) {
 	sessionID := mustSessionID(t, created.Session.SessionID)
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000007)
-	replayDone := mustReplayDonePacket(t, sessionID, generationID, 0, 0)
 	livePartial := mustStateOutputPacket(t, sessionID, generationID, 1,
 		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-codex-live-projection-error\"}}}\n"+
 			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turn\":{\"id\":\"turn-codex-live-projection-error\",\"status\":\"inProgress\",\"error\":null}}}\n"+
@@ -1449,8 +1585,7 @@ func TestCodexLiveHelperIgnoresProjectionError(t *testing.T) {
 			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turnId\":\"turn-codex-live-projection-error\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-codex-live-projection-error\",\"text\":\"Recovered after live projection error.\"}}}\n"+
 			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-codex-live-projection-error\",\"turn\":{\"id\":\"turn-codex-live-projection-error\",\"status\":\"completed\",\"error\":null}}}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Done:        replayDone,
+		SkipReplay:  true,
 		LivePackets: []any{livePartial, liveToolDuringPartial, liveFinal},
 	})
 	defer cleanup()
@@ -1537,7 +1672,6 @@ func TestReattachRebuildsEmptyTranscript(t *testing.T) {
 	sessionID := mustSessionID(t, created.Session.SessionID)
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000009)
-	replayDone := mustReplayDonePacket(t, sessionID, generationID, 0, 0)
 	liveFinal := mustStateOutputPacket(t, sessionID, generationID, 1,
 		"{\"method\":\"thread/started\",\"params\":{\"thread\":{\"id\":\"thread-rebuild-empty\"}}}\n"+
 			"{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-rebuild-empty\",\"turn\":{\"id\":\"turn-rebuild-empty\",\"status\":\"inProgress\",\"error\":null}}}\n"+
@@ -1545,8 +1679,7 @@ func TestReattachRebuildsEmptyTranscript(t *testing.T) {
 			"{\"method\":\"item/completed\",\"params\":{\"threadId\":\"thread-rebuild-empty\",\"turnId\":\"turn-rebuild-empty\",\"item\":{\"type\":\"agentMessage\",\"id\":\"item-rebuild-empty\",\"text\":\"Rebuilt from saved cursor.\"}}}\n"+
 			"{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-rebuild-empty\",\"turn\":{\"id\":\"turn-rebuild-empty\",\"status\":\"completed\",\"error\":null}}}\n")
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 0,
-		Done:        replayDone,
+		SkipReplay:  true,
 		LivePackets: []any{liveFinal},
 	})
 	defer cleanup()
@@ -1559,8 +1692,8 @@ func TestReattachRebuildsEmptyTranscript(t *testing.T) {
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
 	}
-	if attachment.Binding.LastReplayOffset != 0 {
-		t.Fatalf("attachment last replay offset = %d, want replayed cursor 0", attachment.Binding.LastReplayOffset)
+	if attachment.ReplayFailed || attachment.Binding.LastReplayOffset != 8 {
+		t.Fatalf("attachment = %+v, want clean attach preserving cursor without replay", attachment)
 	}
 	var messages SessionMessagesResponse
 	waitForTestCondition(t, func() bool {
@@ -1722,7 +1855,7 @@ func TestReplayCursorNotAdvancedOnReplayGap(t *testing.T) {
 	assertReplayCursorPreserved(t, rehydrated, sessionID, generationID, 5, helperFenceReplayGap)
 }
 
-func TestCodexReattachToleratesReplayGap(t *testing.T) {
+func TestCodexReattachDoesNotDependOnReplayWAL(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	generationID := mustHelperGenerationID(t, "g_codex_replay_gap")
@@ -1738,7 +1871,7 @@ func TestCodexReattachToleratesReplayGap(t *testing.T) {
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AllowReplayRequest: true,
+		SkipReplay: true,
 	})
 	defer cleanup()
 
@@ -1750,8 +1883,8 @@ func TestCodexReattachToleratesReplayGap(t *testing.T) {
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
 	}
-	if !attachment.ReplayFailed || attachment.ReplayReason != helperFenceReplayFailed {
-		t.Fatalf("attachment replay = failed:%v reason:%q, want tolerated replay failure", attachment.ReplayFailed, attachment.ReplayReason)
+	if attachment.ReplayFailed || attachment.Binding.LastReplayOffset != 5 {
+		t.Fatalf("attachment = %+v, want clean attach preserving saved cursor without replay", attachment)
 	}
 	if hasFenceReason(rehydrated.helpers.Fenced(), generationID, helperFenceReplayGap) {
 		t.Fatalf("fenced helpers = %+v, want no codex replay gap fence", rehydrated.helpers.Fenced())
@@ -1763,8 +1896,8 @@ func TestCodexReattachToleratesReplayGap(t *testing.T) {
 	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
 	}
-	if state.Transport.Reason != "codex_replay_failed:"+string(helperFenceReplayFailed) {
-		t.Fatalf("SessionState().Transport.Reason = %q, want codex replay failure marker", state.Transport.Reason)
+	if state.Transport.Reason != "" {
+		t.Fatalf("SessionState().Transport.Reason = %q, want clean attached transport", state.Transport.Reason)
 	}
 	bindings, err := rehydrated.helperBindings.Load()
 	if err != nil {
@@ -1772,6 +1905,53 @@ func TestCodexReattachToleratesReplayGap(t *testing.T) {
 	}
 	if bindings[sessionID].LastReplayOffset != 5 {
 		t.Fatalf("saved binding = %+v, want last replay offset preserved", bindings[sessionID])
+	}
+}
+
+func TestCodexReattachWithCorruptReplayWALStillAttaches(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	root, err := os.MkdirTemp("/tmp", "arcodex-corrupt-wal-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp(/tmp/arcodex-corrupt-wal-*) error = %v", err)
+	}
+	cfg.Storage.DataDir = root
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_corrupt_wal")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID, LastReplayOffset: 5}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-corrupt-wal"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	if err := os.WriteFile(manifest.WALPath, []byte("{not-json\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", manifest.WALPath, err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	attachment, ok := rehydrated.helpers.Attachment(sessionID)
+	if !ok {
+		t.Fatalf("helper attachment for %q not found", sessionID)
+	}
+	if attachment.ReplayFailed || attachment.Binding.LastReplayOffset != 5 {
+		t.Fatalf("attachment = %+v, want clean attach preserving cursor despite corrupt WAL", attachment)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.Reason != "" {
+		t.Fatalf("SessionState().Transport = %+v, want clean attached transport", state.Transport)
 	}
 }
 
@@ -1810,11 +1990,8 @@ func TestCodexReattachUsesSavedReplayCursorWhenSourceBindingExists(t *testing.T)
 		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
 	}
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AfterOffset: 5,
-		DoneFunc: func(afterOffset iod.WALOffset) iod.ReplayDonePacket {
-			return mustReplayDonePacket(t, sessionID, generationID, afterOffset, 5)
-		},
-		History: &packet,
+		SkipReplay: true,
+		History:    &packet,
 	})
 	defer cleanup()
 
@@ -1839,8 +2016,14 @@ func TestCodexReattachUsesSavedReplayCursorWhenSourceBindingExists(t *testing.T)
 	}
 }
 
-func TestCodexReattachToleratesReplayFailure(t *testing.T) {
+func TestCodexReattachWithMissingReplayWALStillAttaches(t *testing.T) {
 	cfg := persistentTestConfig(t)
+	root, err := os.MkdirTemp("/tmp", "arcodex-missing-wal-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp(/tmp/arcodex-missing-wal-*) error = %v", err)
+	}
+	cfg.Storage.DataDir = root
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	now := time.Unix(1760000000, 0).UTC()
 	generationID := mustHelperGenerationID(t, "g_codex_replay_failure")
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID, LastReplayOffset: 5}))
@@ -1855,7 +2038,7 @@ func TestCodexReattachToleratesReplayFailure(t *testing.T) {
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
 	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
 	cleanup := startReplayHelper(t, manifest, helperReplayScript{
-		AllowReplayRequest: true,
+		SkipReplay: true,
 	})
 	defer cleanup()
 
@@ -1867,8 +2050,8 @@ func TestCodexReattachToleratesReplayFailure(t *testing.T) {
 	if !ok {
 		t.Fatalf("helper attachment for %q not found", sessionID)
 	}
-	if !attachment.ReplayFailed || attachment.ReplayReason != helperFenceReplayFailed {
-		t.Fatalf("attachment replay = failed:%v reason:%q, want tolerated replay failure", attachment.ReplayFailed, attachment.ReplayReason)
+	if attachment.ReplayFailed || attachment.Binding.LastReplayOffset != 5 {
+		t.Fatalf("attachment = %+v, want clean attach preserving saved cursor without replay", attachment)
 	}
 	if hasFenceReason(rehydrated.helpers.Fenced(), generationID, helperFenceReplayCorruptTail) {
 		t.Fatalf("fenced helpers = %+v, want no codex replay failure fence", rehydrated.helpers.Fenced())
@@ -1880,8 +2063,8 @@ func TestCodexReattachToleratesReplayFailure(t *testing.T) {
 	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired {
 		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
 	}
-	if state.Transport.Reason != "codex_replay_failed:"+string(helperFenceReplayFailed) {
-		t.Fatalf("SessionState().Transport.Reason = %q, want codex replay failure marker", state.Transport.Reason)
+	if state.Transport.Reason != "" {
+		t.Fatalf("SessionState().Transport.Reason = %q, want clean attached transport", state.Transport.Reason)
 	}
 	bindings, err := rehydrated.helperBindings.Load()
 	if err != nil {
@@ -1904,8 +2087,8 @@ func assertReplayCursorPreserved(t *testing.T, rehydrated *Stub, sessionID sessi
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.State != SessionTransportStateBroken || state.Transport.GenerationID != generationID.String() {
-		t.Fatalf("SessionState().Transport = %+v, want broken generation %q", state.Transport, generationID)
+	if state.Transport.State != SessionTransportStateBroken {
+		t.Fatalf("SessionState().Transport = %+v, want broken", state.Transport)
 	}
 	bindings, err := rehydrated.helperBindings.Load()
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"actrail/internal/domain/message"
 	"actrail/internal/domain/pi"
 	"actrail/internal/domain/session"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 func (s *Stub) applyPIEvents(sessionID session.SessionID, events []pi.Event) error {
@@ -24,6 +25,11 @@ func (s *Stub) applyPIEvents(sessionID session.SessionID, events []pi.Event) err
 func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 	s.invalidateSessionHistoryCachesForRuntimeMutation(sessionID)
 	forceHistoryRefreshAfterApply := codexRuntimeEventShouldForceHistoryRefresh(event)
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceLiveUDS, "input",
+		attribute.String("runtime.event.kind", string(event.Kind)),
+		attribute.String("runtime.event.raw_type", strings.TrimSpace(event.RawType)),
+		attribute.Bool("codex.session_file.refresh_after_apply", forceHistoryRefreshAfterApply),
+	)
 	if !s.codexRuntimeEventInMainThread(sessionID, event) && !codexSubagentMessageEvent(event) {
 		s.emitSessionState(sessionID)
 		return nil
@@ -51,7 +57,10 @@ func (s *Stub) applyPIEvent(sessionID session.SessionID, event pi.Event) error {
 		err = s.applyPIBoundary(sessionID, event)
 	}
 	if err == nil && forceHistoryRefreshAfterApply {
-		s.forceCodexIODHistoryRefresh(sessionID)
+		s.recordCodexReducerEvent(sessionID, codexReducerSourceSessionFile, "refresh_triggered",
+			attribute.String("runtime.event.kind", string(event.Kind)),
+		)
+		s.forceCodexSessionFileReconcile(sessionID)
 	}
 	return err
 }
@@ -75,10 +84,10 @@ func codexSubagentMessageEvent(event pi.Event) bool {
 
 func (s *Stub) markRuntimeActiveFromPIEvent(sessionID session.SessionID) error {
 	record, ok := s.registry.Lookup(sessionID)
-	if !ok || record.identity.Backend() != session.BackendPI {
+	if !ok {
 		return nil
 	}
-	if record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
+	if record.identity.Backend() == session.BackendPI && record.runtime.protocol == runtimeProtocolPIRPC && record.runtime.helper != nil {
 		s.holdPIRPCBusy(sessionID, record.runtime.helper.generationID)
 		s.kickPIRPCStateProbe(sessionID, record.runtime.helper.generationID)
 	}
@@ -170,10 +179,12 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 			return nil
 		}
 		if s.codexOutboundPromptMatches(sessionID, event.Message.Text) {
+			s.reconcileOpenCodexCommandsFromRuntimeEvent(sessionID, event)
 			s.emitSessionState(sessionID)
 			return nil
 		}
 		if s.duplicateRuntimeUserMessage(sessionID, event.Message.Text) {
+			s.reconcileOpenCodexCommandsFromRuntimeEvent(sessionID, event)
 			s.emitSessionState(sessionID)
 			return nil
 		}
@@ -184,6 +195,7 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 		committed.EventID = piMessageEventID(event)
 		committed.ParentEventID = piParentEventID(event)
 		s.emitMessageCommit(sessionID, runtimeTurnID(event), committed)
+		s.reconcileOpenCodexCommandsFromRuntimeEvent(sessionID, event)
 		s.emitSessionState(sessionID)
 		return nil
 	}
@@ -252,6 +264,7 @@ func (s *Stub) applyPIMessage(sessionID session.SessionID, event pi.Event) error
 	committed.ParentEventID = piParentEventID(event)
 	s.emitMessageCommit(sessionID, turnID, committed)
 	if assistantFinal {
+		s.reconcileOpenCodexCommandsFromRuntimeEvent(sessionID, event)
 		s.emitAssistantFinalNotification(sessionID, committed)
 	}
 	s.emitSessionState(sessionID)
@@ -540,6 +553,7 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 		case pi.BoundaryKindTurnCompleted, pi.BoundaryKindTurnAborted:
 			partial, ok := record.transcript.PartialAssistantTurn()
 			if !ok {
+				s.completeOpenCodexCommandsFromTurnBoundary(sessionID)
 				if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
 					return err
 				}
@@ -549,6 +563,7 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 				return nil
 			}
 			if strings.TrimSpace(event.TurnID) != "" && partial.TurnID().String() != strings.TrimSpace(event.TurnID) {
+				s.completeOpenCodexCommandsFromTurnBoundary(sessionID)
 				if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
 					return err
 				}
@@ -558,6 +573,7 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 				return nil
 			}
 			if strings.TrimSpace(event.Boundary.Reason) == "turn_end" {
+				s.completeOpenCodexCommandsFromTurnBoundary(sessionID)
 				if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
 					return err
 				}
@@ -573,6 +589,7 @@ func (s *Stub) applyPIBoundary(sessionID session.SessionID, event pi.Event) erro
 			if err := s.setRuntimeAgentRunning(sessionID, false); err != nil {
 				return err
 			}
+			s.completeOpenCodexCommandsFromTurnBoundary(sessionID)
 			return s.syncCodexRuntimeActivity(sessionID, "turn_boundary_discard", true)
 		default:
 			return nil

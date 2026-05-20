@@ -147,6 +147,18 @@ func codexSendCommandID(sessionID session.SessionID, seq uint64) string {
 	return fmt.Sprintf("%s:seq:%d", sessionID.String(), seq)
 }
 
+func codexSendCommandSessionID(commandID string) (session.SessionID, bool) {
+	rawSessionID, _, ok := strings.Cut(strings.TrimSpace(commandID), ":seq:")
+	if !ok || strings.TrimSpace(rawSessionID) == "" {
+		return "", false
+	}
+	sessionID, err := session.ParseSessionID(rawSessionID)
+	if err != nil {
+		return "", false
+	}
+	return sessionID, true
+}
+
 func sessionRecordFromDurableSnapshot(snapshot sqlitestore.SessionSnapshotRow) (sessionRecord, error) {
 	identity, err := session.NewDetachedIdentity(snapshot.Session.SessionID, snapshot.Session.Backend)
 	if err != nil {

@@ -738,6 +738,7 @@ func (s *Stub) replaceSessionRuntimeSync(ctx context.Context, routeID session.Se
 		if previousBinding != nil {
 			_ = s.bindCurrentGeneration(helperGenerationBinding{
 				SessionID:        record.identity.SessionID(),
+				HelperSessionID:  previousBinding.HelperSessionID,
 				GenerationID:     previousBinding.GenerationID,
 				LastReplayOffset: previousBinding.LastReplayOffset,
 			})
@@ -814,6 +815,7 @@ func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, expec
 		if previousBinding != nil {
 			_ = s.bindCurrentGeneration(helperGenerationBinding{
 				SessionID:        sessionID,
+				HelperSessionID:  previousBinding.HelperSessionID,
 				GenerationID:     previousBinding.GenerationID,
 				LastReplayOffset: previousBinding.LastReplayOffset,
 			})

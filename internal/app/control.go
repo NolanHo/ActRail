@@ -10,6 +10,7 @@ import (
 	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // SessionController exposes command-side session control seams for HTTP and WebSocket wiring.
@@ -209,6 +210,10 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 	commandID := ""
 	if recordAtCommit.identity.Backend() == session.BackendCodex {
 		commandID = codexSendCommandID(recordAtCommit.identity.SessionID(), response.Message.Seq)
+		s.recordCodexReducerEvent(req.SessionID, codexReducerSourceCommandLedger, "command_created",
+			attribute.String("codex.command.state", codexCommandPending.String()),
+			attribute.Bool("codex.command.follow_up", followUp),
+		)
 	}
 	s.startAsyncRuntimeSend(req.SessionID, expectedRuntimeID, commandID, text, followUp, runtime, recordAtCommit)
 	return response, nil
@@ -535,11 +540,19 @@ func (s *Stub) handleAsyncRuntimeSendError(sessionID session.SessionID, expected
 	s.emitSessionState(sessionID)
 }
 
-func (s *Stub) updateCodexSendCommandState(commandID string, state codexCommandAxis, runtimeID session.RuntimeID, lastError string) {
+func (s *Stub) updateCodexSendCommandState(commandID string, state codexCommandAxis, runtimeID session.RuntimeID, lastError string) bool {
 	if s == nil || s.sessionCommandStore == nil || strings.TrimSpace(commandID) == "" {
-		return
+		return false
 	}
-	_, _ = s.sessionCommandStore.UpdateCodexSessionCommandState(context.Background(), commandID, state.String(), runtimeID.String(), lastError, time.Now().UTC())
+	updated, _ := s.sessionCommandStore.UpdateCodexSessionCommandState(context.Background(), commandID, state.String(), runtimeID.String(), lastError, time.Now().UTC())
+	if sessionID, ok := codexSendCommandSessionID(commandID); ok {
+		s.recordCodexReducerEvent(sessionID, codexReducerSourceCommandLedger, "command_state",
+			codexReducerBool(updated),
+			attribute.String("codex.command.state", state.String()),
+			attribute.Bool("codex.command.has_error", strings.TrimSpace(lastError) != ""),
+		)
+	}
+	return updated
 }
 
 func (s *Stub) sendIdlePrecondition(ctx context.Context, record sessionRecord) error {

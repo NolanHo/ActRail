@@ -1550,7 +1550,7 @@ func TestStaleHelperGenerationDoesNotOverwriteCurrentRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionState() error = %v", err)
 	}
-	if state.Transport.GenerationID != newGeneration.String() || state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) {
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) {
 		t.Fatalf("SessionState() after stale helper packet = %+v, want current generation idle", state)
 	}
 }

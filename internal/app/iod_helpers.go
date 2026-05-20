@@ -14,6 +14,7 @@ import (
 	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/iodclient"
 	"actrail/internal/domain/session"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type helperDialer = iodclient.Dialer
@@ -25,6 +26,7 @@ var (
 
 type helperGenerationBinding struct {
 	SessionID        session.SessionID `json:"session_id"`
+	HelperSessionID  session.SessionID `json:"helper_session_id,omitempty"`
 	GenerationID     iod.GenerationID  `json:"generation_id"`
 	LastReplayOffset iod.WALOffset     `json:"last_replay_offset,omitempty"`
 }
@@ -39,7 +41,22 @@ func (b helperGenerationBinding) Validate() error {
 	if err := b.GenerationID.Validate(); err != nil {
 		return err
 	}
+	if b.HelperSessionID != "" {
+		if err := b.HelperSessionID.Validate(); err != nil {
+			return err
+		}
+		if b.HelperSessionID.IsHistorical() {
+			return fmt.Errorf("helper session %q cannot bind a current generation", b.HelperSessionID)
+		}
+	}
 	return b.LastReplayOffset.ValidateState()
+}
+
+func (b helperGenerationBinding) ownerSessionID() session.SessionID {
+	if b.HelperSessionID != "" {
+		return b.HelperSessionID
+	}
+	return b.SessionID
 }
 
 type helperBindingStore struct {
@@ -247,6 +264,7 @@ func (s *Stub) bindRuntimeCurrentGeneration(sessionID session.SessionID, runtime
 	}
 	return s.bindCurrentGeneration(helperGenerationBinding{
 		SessionID:        sessionID,
+		HelperSessionID:  binding.HelperSessionID,
 		GenerationID:     binding.GenerationID,
 		LastReplayOffset: binding.LastReplayOffset,
 	})
@@ -268,23 +286,30 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 	for _, discovered := range manifests {
 		grouped[discovered.Manifest.SessionID] = append(grouped[discovered.Manifest.SessionID], discovered)
 	}
-	sessionIDs := make([]string, 0, len(grouped))
+	index := iodclient.NewManifestIndex(manifests)
+	sessionIDSet := make(map[session.SessionID]struct{})
+	for _, record := range s.registry.ListAll() {
+		sessionIDSet[record.identity.SessionID()] = struct{}{}
+	}
 	for sessionID := range grouped {
+		if _, claimed := bindings[sessionID]; claimed {
+			sessionIDSet[sessionID] = struct{}{}
+		}
+	}
+	sessionIDs := make([]string, 0, len(sessionIDSet))
+	for sessionID := range sessionIDSet {
 		sessionIDs = append(sessionIDs, sessionID.String())
 	}
 	sort.Strings(sessionIDs)
 	attachments := make(map[session.SessionID]attachedHelper)
 	fenced := make([]helperFence, 0)
+	consumed := make(map[string]struct{})
 	for _, rawSessionID := range sessionIDs {
 		sessionID, err := session.ParseSessionID(rawSessionID)
 		if err != nil {
 			return err
 		}
-		discovered := grouped[sessionID]
 		if _, ok := s.registry.Lookup(sessionID); !ok {
-			for _, item := range discovered {
-				fenced = append(fenced, helperFenceFrom(item, helperFenceUnknownSession))
-			}
 			continue
 		}
 		record, ok := s.registry.Lookup(sessionID)
@@ -292,6 +317,16 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 			return fmt.Errorf("session %q not found while reattaching helper", sessionID)
 		}
 		binding, hasBinding := bindings[sessionID]
+		discovered := grouped[sessionID]
+		if hasBinding {
+			discovered = grouped[binding.ownerSessionID()]
+		}
+		if record.identity.Backend() == session.BackendCodex && strings.TrimSpace(record.importedBackendSessionID) != "" {
+			threadCandidates := index.CodexThreadCandidates(record.importedBackendSessionID, nil)
+			if len(threadCandidates) > 0 {
+				discovered = threadCandidates
+			}
+		}
 		var preferred *iod.GenerationID
 		if hasBinding {
 			generationID := binding.GenerationID
@@ -300,12 +335,17 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 		bound := false
 		selectedGeneration := iod.GenerationID("")
 		fenceStart := len(fenced)
-		for _, item := range iodclient.NewManifestIndex(discovered).Candidates(sessionID, preferred) {
+		for _, item := range helperDiscoveryCandidates(discovered, preferred) {
+			if _, ok := consumed[item.Path]; ok {
+				fenced = append(fenced, helperFenceFrom(item, helperFenceDuplicateHelper))
+				continue
+			}
 			candidateBinding := binding
 			if !hasBinding || item.Manifest.GenerationID != binding.GenerationID {
 				candidateBinding = helperGenerationBinding{
-					SessionID:    sessionID,
-					GenerationID: item.Manifest.GenerationID,
+					SessionID:       sessionID,
+					HelperSessionID: item.Manifest.SessionID,
+					GenerationID:    item.Manifest.GenerationID,
 				}
 			}
 			if record.identity.Backend() != session.BackendCodex && !hasBinding {
@@ -322,10 +362,14 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 			}
 			attachment, updatedBinding, reason, err := s.reattachHelper(ctx, record.identity.Backend(), candidateBinding, item)
 			if err != nil {
+				s.recordCodexReducerEvent(sessionID, codexReducerSourceReattach, "helper_candidate_failed",
+					attribute.String("reattach.reason", string(reason)),
+				)
 				fenced = append(fenced, helperFenceFrom(item, reason))
 				continue
 			}
 			attachments[sessionID] = attachment
+			consumed[item.Path] = struct{}{}
 			if record.identity.Backend() == session.BackendCodex {
 				if err := s.applyReattachedCodexRuntime(sessionID, record, attachment); err != nil {
 					_ = attachment.Client.Close()
@@ -334,6 +378,9 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 				}
 			}
 			bound = true
+			s.recordCodexReducerEvent(sessionID, codexReducerSourceReattach, "helper_attached",
+				attribute.Bool("reattach.replay_failed", attachment.ReplayFailed),
+			)
 			selectedGeneration = updatedBinding.GenerationID
 			if !hasBinding || updatedBinding.GenerationID != binding.GenerationID || updatedBinding.LastReplayOffset != binding.LastReplayOffset {
 				if err := s.helperBindings.Save(updatedBinding); err != nil {
@@ -355,11 +402,50 @@ func (s *Stub) reattachSurvivingHelpers(ctx context.Context) error {
 			}
 		}
 	}
+	for _, item := range manifests {
+		if _, ok := consumed[item.Path]; ok {
+			continue
+		}
+		if _, ok := s.registry.Lookup(item.Manifest.SessionID); !ok {
+			fenced = append(fenced, helperFenceFrom(item, helperFenceUnknownSession))
+		}
+	}
 	s.helpers.replaceAll(attachments, fenced)
 	if err := s.applyStartupTransportHealth(bindings, attachments, fenced); err != nil {
 		return err
 	}
 	return nil
+}
+
+func helperDiscoveryCandidates(items []iodclient.DiscoveredManifest, preferred *iod.GenerationID) []iodclient.DiscoveredManifest {
+	out := append([]iodclient.DiscoveredManifest(nil), items...)
+	sort.Slice(out, func(i, j int) bool {
+		left := out[i]
+		right := out[j]
+		if left.Manifest.StartTS != right.Manifest.StartTS {
+			return left.Manifest.StartTS > right.Manifest.StartTS
+		}
+		if left.Manifest.GenerationID != right.Manifest.GenerationID {
+			return left.Manifest.GenerationID.String() > right.Manifest.GenerationID.String()
+		}
+		return left.Path > right.Path
+	})
+	if preferred == nil || strings.TrimSpace(preferred.String()) == "" {
+		return out
+	}
+	preferredID := *preferred
+	prioritized := make([]iodclient.DiscoveredManifest, 0, len(out))
+	for _, item := range out {
+		if item.Manifest.GenerationID == preferredID {
+			prioritized = append(prioritized, item)
+		}
+	}
+	for _, item := range out {
+		if item.Manifest.GenerationID != preferredID {
+			prioritized = append(prioritized, item)
+		}
+	}
+	return prioritized
 }
 
 func (s *Stub) applyReattachedCodexRuntime(sessionID session.SessionID, record sessionRecord, attachment attachedHelper) error {
@@ -374,7 +460,11 @@ func (s *Stub) applyReattachedCodexRuntime(sessionID session.SessionID, record s
 		if runtime.codex != nil && strings.TrimSpace(record.importedBackendSessionID) != "" {
 			runtime.codex.attachInitializedThread(record.importedBackendSessionID)
 		}
-		runtime.helperBinding = &RuntimeHelperBinding{GenerationID: attachment.Binding.GenerationID, LastReplayOffset: attachment.Binding.LastReplayOffset}
+		runtime.helperBinding = &RuntimeHelperBinding{
+			HelperSessionID:  attachment.Binding.HelperSessionID,
+			GenerationID:     attachment.Binding.GenerationID,
+			LastReplayOffset: attachment.Binding.LastReplayOffset,
+		}
 		runtime.helper = runtimeIODHelperFromAttachment(attachment, s.helperDialer)
 		runtime.attachedExistingIOD = true
 		binding := *runtime.helperBinding
@@ -390,6 +480,7 @@ func (s *Stub) applyReattachedCodexRuntime(sessionID session.SessionID, record s
 	if _, _, err := s.registry.SetRuntimeTransportMemory(sessionID, runtime, transport); err != nil {
 		return err
 	}
+	s.forceCodexSessionFileReconcile(sessionID)
 	return nil
 }
 
@@ -432,6 +523,10 @@ func (s *Stub) applyStartupTransportHealth(bindings map[session.SessionID]helper
 		} else if !ok {
 			return fmt.Errorf("session %q not found while setting startup transport", sessionID)
 		}
+		s.recordCodexReducerEvent(sessionID, codexReducerSourceRuntimeHealth, "startup_transport",
+			attribute.String("session.transport.state", string(transport.State)),
+			attribute.String("session.transport.reason", strings.TrimSpace(transport.Reason)),
+		)
 		if (transport.State == SessionTransportStateEnded || transport.State == SessionTransportStateBroken) && record.state.Busy() {
 			if _, ok, err := s.registry.MarkRuntimeCompleted(sessionID); err != nil {
 				return err
@@ -669,9 +764,12 @@ func (s *Stub) reattachHelper(ctx context.Context, backend session.Backend, bind
 			}
 		}
 	}
+	if updatedBinding.HelperSessionID == "" {
+		updatedBinding.HelperSessionID = discovered.Manifest.SessionID
+	}
 	replayFailed := false
 	replayReason := helperFenceReason("")
-	if s != nil {
+	if s != nil && backend != session.BackendCodex {
 		replayAfterOffset := updatedBinding.LastReplayOffset
 		if record, ok := s.registry.Lookup(updatedBinding.SessionID); ok {
 			replayAfterOffset = helperReplayAfterOffset(record, updatedBinding)
@@ -705,13 +803,6 @@ func (s *Stub) reattachHelper(ctx context.Context, backend session.Backend, bind
 			replayFailed = true
 		} else {
 			updatedBinding.LastReplayOffset = done.LastOffset
-		}
-		if replayFailed {
-			_ = client.Close()
-			client, hello, err = redialHelper(ctx, discovered.Manifest, s.helperDialer)
-			if err != nil {
-				return attachedHelper{}, binding, helperFenceAttachFailed, err
-			}
 		}
 	}
 

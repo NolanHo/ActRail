@@ -8,6 +8,7 @@ import (
 	"actrail/internal/domain/session"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func (s *Stub) applyCodexBusy(sessionID session.SessionID, busy bool) error {
@@ -22,6 +23,10 @@ func (s *Stub) applyCodexBusy(sessionID session.SessionID, busy bool) error {
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
 		_, changed = state.applyProtocolBusy(busy)
 	})
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceRuntimeHealth, "protocol_busy",
+		codexReducerBool(changed),
+		attribute.Bool("codex.runtime.protocol_busy", busy),
+	)
 	return s.syncCodexRuntimeActivity(sessionID, "protocol_busy", changed)
 }
 
@@ -50,6 +55,7 @@ func (s *Stub) noteCodexInitialized(sessionID session.SessionID) {
 		after := state.activity()
 		changed = before != after
 	})
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceLiveUDS, "initialized", codexReducerBool(changed))
 	_ = s.syncCodexRuntimeActivity(sessionID, "initialized", changed)
 	if record, ok := s.registry.Lookup(sessionID); ok {
 		runtime = record.runtime
@@ -85,6 +91,10 @@ func (s *Stub) noteCodexThreadID(sessionID session.SessionID, threadID string, s
 	if !accepted {
 		return
 	}
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceLiveUDS, "thread_id",
+		codexReducerBool(changed),
+		attribute.Bool("codex.reducer.accepted", accepted),
+	)
 	record, ok := s.registry.Lookup(sessionID)
 	if !ok || record.identity.Backend() != session.BackendCodex {
 		return
@@ -105,6 +115,7 @@ func (s *Stub) noteCodexRuntimeProgress(sessionID session.SessionID) {
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
 		state.markProgress()
 	})
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceLiveUDS, "progress")
 }
 
 func (s *Stub) noteCodexProtocolDesynced(sessionID session.SessionID) {
@@ -120,6 +131,7 @@ func (s *Stub) noteCodexProtocolDesynced(sessionID session.SessionID) {
 		after := state.activity()
 		changed = stateChanged || before != after
 	})
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceRuntimeHealth, "protocol_desynced", codexReducerBool(changed))
 	_ = s.syncCodexRuntimeActivity(sessionID, "protocol_desynced", changed)
 	if record, ok := s.registry.Lookup(sessionID); ok {
 		record.runtime = s.runtimeForRecord(record)
@@ -163,6 +175,7 @@ func (s *Stub) noteCodexTurnID(sessionID session.SessionID, turnID string) {
 		after := state.activity()
 		changed = before != after
 	})
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceLiveUDS, "turn_started", codexReducerBool(changed))
 	s.clearCodexOutboundPromptForSession(sessionID)
 	_ = s.syncCodexRuntimeActivity(sessionID, "turn_started", changed)
 }
@@ -190,6 +203,7 @@ func (s *Stub) clearCodexTurnID(sessionID session.SessionID, turnID string) {
 		after := state.activity()
 		changed = before != after
 	})
+	s.recordCodexReducerEvent(sessionID, codexReducerSourceLiveUDS, "turn_cleared", codexReducerBool(changed))
 	_ = s.syncCodexRuntimeActivity(sessionID, "turn_cleared", changed)
 }
 
@@ -215,6 +229,16 @@ func (s *Stub) transitionCodexRuntimeIfCurrent(sessionID session.SessionID, expe
 	s.withCodexRuntimeState(sessionID, func(state *codexRuntimeState) {
 		_, changed = state.transition(phase, reason)
 	})
+	source := codexReducerSourceRuntimeHealth
+	if strings.Contains(strings.TrimSpace(cause), "send") || phase == codexRuntimePhaseSending || phase == codexRuntimePhaseTurnStarting {
+		source = codexReducerSourceCommandLedger
+	}
+	s.recordCodexReducerEvent(sessionID, source, "runtime_transition",
+		codexReducerBool(changed),
+		attribute.String("codex.runtime.phase", string(phase)),
+		attribute.String("codex.runtime.reason", strings.TrimSpace(reason)),
+		attribute.String("codex.runtime.cause", strings.TrimSpace(cause)),
+	)
 	return s.syncCodexRuntimeActivity(sessionID, cause, changed)
 }
 
@@ -236,6 +260,7 @@ func (s *Stub) syncCodexRuntimeActivity(sessionID session.SessionID, cause strin
 	_ = ctx
 	span.SetAttributes(
 		attribute.String("session.id", sessionID.String()),
+		attribute.String("codex.reducer.source", codexReducerSourceRuntimeHealth),
 		attribute.String("codex.runtime.phase", string(visible.Phase)),
 		attribute.String("codex.runtime.reason", visible.Reason),
 		attribute.Bool("codex.runtime.busy", visible.Busy),
@@ -244,6 +269,11 @@ func (s *Stub) syncCodexRuntimeActivity(sessionID session.SessionID, cause strin
 		attribute.Int("session.queue.len", queueLen),
 		attribute.String("codex.runtime.cause", strings.TrimSpace(cause)),
 	)
+	span.AddEvent("codex.reducer.sync", trace.WithAttributes(
+		attribute.String("codex.reducer.source", codexReducerSourceRuntimeHealth),
+		attribute.String("codex.reducer.action", "sync_runtime_activity"),
+		attribute.Bool("codex.reducer.changed", forceEmit),
+	))
 	defer span.End()
 
 	if err := s.setRuntimeAgentRunning(sessionID, visible.Busy); err != nil {

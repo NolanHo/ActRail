@@ -979,7 +979,7 @@ func (s *Stub) markPIAgentGRPCStartupFailed(sessionID session.SessionID, err err
 func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
-	transport := s.sessionTransportSnapshot(record)
+	transport := s.publicSessionTransportSnapshot(record)
 	var supervisor *SessionSupervisorResponse
 	if supervisorBackendSupported(record.identity.Backend()) {
 		if config, err := s.sessionSupervisorConfig(context.Background(), record.identity.SessionID()); err == nil {
@@ -1062,7 +1062,7 @@ func (s *Stub) iodRuntimeSummary(record sessionRecord) *IODRuntimeSummary {
 func (s *Stub) createdSessionFromRecord(record sessionRecord) *CreatedSession {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
-	transport := sessionTransportSnapshot(record)
+	transport := s.publicSessionTransportSnapshot(record)
 	busy, busyReason := effectiveBusy(record)
 	runtimeState, runtimeStateReason := runtimeStateFields(record)
 	return &CreatedSession{

@@ -253,6 +253,66 @@ func TestStubListSessionsUsesAttachedHelperForTransportSnapshot(t *testing.T) {
 	}
 }
 
+func TestCodexSessionStateAndListHideGenerationID(t *testing.T) {
+	cfg := config.Load()
+	svc := newStub(cfg, time.Now)
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/docs"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_codex_ui_hidden")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.transport = SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached}
+		record.runtime = sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    newCodexRuntimeState(session.BackendCodex),
+			helper: &runtimeIODHelper{
+				sessionID:    sessionID,
+				generationID: generationID,
+			},
+			helperBinding: &RuntimeHelperBinding{
+				HelperSessionID: sessionID,
+				GenerationID:    generationID,
+			},
+			currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+				return &RuntimeHelperBinding{HelperSessionID: sessionID, GenerationID: generationID}, nil
+			},
+		}
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok=true err=nil", ok, err)
+	}
+
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if listed.Items[0].TransportState != SessionTransportStateAttached.String() || listed.Items[0].GenerationID != "" {
+		t.Fatalf("ListSessions().Items[0] transport = (%q, %q), want attached without generation", listed.Items[0].TransportState, listed.Items[0].GenerationID)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.GenerationID != "" {
+		t.Fatalf("SessionState().Transport = %+v, want attached without generation", state.Transport)
+	}
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatalf("registry.Lookup(%q) = false", sessionID)
+	}
+	if internal := svc.sessionTransportSnapshot(record); internal.GenerationID != generationID.String() {
+		t.Fatalf("internal transport generation = %q, want %q", internal.GenerationID, generationID)
+	}
+}
+
 func TestStubListSessionsUsesStablePagination(t *testing.T) {
 	cfg := config.Load()
 	now := time.Unix(1760000000, 0).UTC()

@@ -33,6 +33,7 @@ type runtimeLauncher interface {
 }
 
 type RuntimeHelperBinding struct {
+	HelperSessionID  session.SessionID
 	GenerationID     iod.GenerationID
 	LastReplayOffset iod.WALOffset
 }
@@ -40,6 +41,11 @@ type RuntimeHelperBinding struct {
 func (b RuntimeHelperBinding) Validate() error {
 	if err := b.GenerationID.Validate(); err != nil {
 		return err
+	}
+	if b.HelperSessionID != "" {
+		if err := b.HelperSessionID.Validate(); err != nil {
+			return err
+		}
 	}
 	return b.LastReplayOffset.ValidateState()
 }
@@ -525,7 +531,7 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 		startTS:      hello.StartTS,
 		runtimeDir:   paths.RuntimeDir,
 	}
-	binding := &RuntimeHelperBinding{GenerationID: generationID}
+	binding := &RuntimeHelperBinding{HelperSessionID: req.SessionID, GenerationID: generationID}
 	return sessionRuntime{
 		launchSpec:    childLaunchSpec,
 		handle:        handle,
@@ -555,13 +561,14 @@ func (l processRuntimeLauncher) attachExistingIODHelper(ctx context.Context, req
 	if preferred == nil && req.Backend != session.BackendCodex {
 		return sessionRuntime{}, false
 	}
-	if req.Backend == session.BackendCodex {
-		for _, discovered := range index.CodexThreadCandidates(req.CodexThreadID, codexSourcePathMatchesSessionID) {
+	if req.Backend == session.BackendCodex && strings.TrimSpace(req.CodexThreadID) != "" {
+		for _, discovered := range index.CodexThreadCandidates(req.CodexThreadID, nil) {
 			runtime, err := l.attachIODManifest(ctx, req, discovered)
 			if err == nil {
 				return runtime, true
 			}
 		}
+		return sessionRuntime{}, false
 	}
 	for _, discovered := range index.Candidates(req.SessionID, preferred) {
 		if req.Backend != session.BackendCodex && preferred != nil && discovered.Manifest.GenerationID != *preferred {
@@ -608,7 +615,7 @@ func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runti
 	if codex != nil && strings.TrimSpace(req.CodexThreadID) != "" {
 		codex.attachInitializedThread(req.CodexThreadID)
 	}
-	binding := &RuntimeHelperBinding{GenerationID: generationID}
+	binding := &RuntimeHelperBinding{HelperSessionID: discovered.Manifest.SessionID, GenerationID: generationID}
 	return sessionRuntime{
 		protocol:            runtimeProtocolForBackend(req.Backend),
 		codex:               codex,
@@ -1319,7 +1326,11 @@ func (s *Stub) runtimeForSession(sessionID session.SessionID, backend session.Ba
 	if !ok {
 		return runtime
 	}
-	binding := &RuntimeHelperBinding{GenerationID: attachment.Binding.GenerationID, LastReplayOffset: attachment.Binding.LastReplayOffset}
+	binding := &RuntimeHelperBinding{
+		HelperSessionID:  attachment.Binding.HelperSessionID,
+		GenerationID:     attachment.Binding.GenerationID,
+		LastReplayOffset: attachment.Binding.LastReplayOffset,
+	}
 	runtime.helperBinding = binding
 	runtime.helper = runtimeIODHelperFromAttachment(attachment, s.helperDialer)
 	runtime.attachedExistingIOD = true
@@ -1354,7 +1365,7 @@ func runtimeIODHelperFromAttachment(attachment attachedHelper, dialer iodclient.
 		streamClient: attachment.Client,
 		dialer:       dialer,
 		manifest:     attachment.Manifest,
-		sessionID:    attachment.Binding.SessionID,
+		sessionID:    attachment.Binding.ownerSessionID(),
 		generationID: attachment.Binding.GenerationID,
 		helperPID:    attachment.Hello.HelperPID,
 		childPID:     copyIntPtr(attachment.Hello.ChildPID),

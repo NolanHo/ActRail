@@ -769,8 +769,9 @@ func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request
 		attribute.Bool("messages.include_tool_events", body.IncludeToolEvents || body.IncludeToolEventsRaw),
 		attribute.String("messages.event_id", firstString(body.EventID, body.EventIDRaw)),
 		attribute.String("messages.tool_call_id", firstString(body.ToolCallID, body.ToolCallIDRaw)),
+		attribute.String("codex.reducer.source", "session_file"),
 	)
-	span.AddEvent("connect.request.decoded")
+	span.AddEvent("connect.request.decoded", trace.WithAttributes(attribute.String("codex.reducer.action", "session_messages_request")))
 	payload, err := h.controller.SessionMessages(ctx, app.SessionMessagesRequest{
 		SessionID:          sessionID,
 		AfterSeq:           firstUint64(body.AfterSeq, body.AfterSeqRaw),
@@ -792,7 +793,7 @@ func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request
 		return
 	}
 	span.SetAttributes(attribute.Int("messages.result_count", len(payload.Items)), attribute.Int64("connect.latency_ms", time.Since(started).Milliseconds()))
-	span.AddEvent("connect.response.encoded")
+	span.AddEvent("connect.response.encoded", trace.WithAttributes(attribute.String("codex.reducer.action", "session_messages_response")))
 	h.logConnect(req, "connect command", "SessionMessages", sessionID.String(), "", wireFormat, http.StatusOK, started, "", nil)
 	traceID := traceIDFromContext(req.Context())
 	if protoMode {

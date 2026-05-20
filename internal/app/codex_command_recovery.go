@@ -68,9 +68,10 @@ func (s *Stub) recoverCodexSessionCommands(ctx context.Context, sessionID sessio
 			}
 			s.failRecoveredCodexCommand(sessionID, command, codexCommandRecoveryRestartedBeforeAck)
 		case codexCommandAccepted.String(), codexCommandReflected.String():
-			if s.codexCommandRecoveryRuntimeActive(ctx, sessionID) {
-				_, _, _ = s.registry.SetBusy(sessionID, true)
-				s.emitSessionState(sessionID)
+			if handled, completed := s.reconcileRecoveredCodexCommandFromAuthoritativeState(ctx, sessionID, command); handled {
+				if completed {
+					return
+				}
 				return
 			}
 			s.failRecoveredCodexCommand(sessionID, command, "codex command was not reflected after runtime recovery")

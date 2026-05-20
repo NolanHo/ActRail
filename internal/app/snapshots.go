@@ -628,7 +628,7 @@ func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 		RuntimeState:         runtimeState,
 		RuntimeStateReason:   runtimeStateReason,
 		Queue:                queueSnapshotFromState(record.state),
-		Transport:            s.sessionTransportSnapshot(record),
+		Transport:            s.publicSessionTransportSnapshot(record),
 		UIRequest:            copySessionUIRequest(record.uiRequest),
 		PartialAssistantTurn: partial,
 		TailSeq:              tailSeq,

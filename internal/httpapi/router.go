@@ -17,6 +17,7 @@ import (
 	"actrail/internal/httpapi/authn"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Router struct {
@@ -650,7 +651,9 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 		attribute.Bool("messages.init", init),
 		attribute.Bool("messages.deferred", deferred),
 		attribute.Bool("messages.include_tool_events", includeToolEvents),
+		attribute.String("codex.reducer.source", "session_file"),
 	)
+	span.AddEvent("http.session_messages.request", trace.WithAttributes(attribute.String("codex.reducer.action", "session_messages_request")))
 	payload, err := r.app.SessionMessages(req.Context(), app.SessionMessagesRequest{
 		SessionID:          sessionID,
 		AfterSeq:           afterSeq,
@@ -668,6 +671,8 @@ func (r Router) sessionMessages(w http.ResponseWriter, req *http.Request) {
 		writeAppError(w, err)
 		return
 	}
+	span.SetAttributes(attribute.Int("messages.result_count", len(payload.Items)))
+	span.AddEvent("http.session_messages.response", trace.WithAttributes(attribute.String("codex.reducer.action", "session_messages_response")))
 	writeJSON(w, http.StatusOK, payload)
 }
 

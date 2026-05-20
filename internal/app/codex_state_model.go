@@ -95,7 +95,7 @@ func (s codexStateAxes) displayState() codexDerivedDisplayState {
 
 func codexCommandActive(state codexCommandAxis) bool {
 	switch state {
-	case codexCommandPending, codexCommandDispatching, codexCommandAccepted, codexCommandReflected:
+	case codexCommandPending, codexCommandDispatching, codexCommandAccepted:
 		return true
 	default:
 		return false

@@ -289,12 +289,17 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 			return helperReadErrorResult{}
 		}
 		attachment = attachedHelper{
-			Binding:      helperGenerationBinding{SessionID: sessionID, GenerationID: generationID},
+			Binding:      helperGenerationBinding{SessionID: sessionID, HelperSessionID: manifest.SessionID, GenerationID: generationID},
 			ManifestPath: manifestPath,
 			Manifest:     manifest,
 		}
 		if record, found := s.registry.Lookup(sessionID); found {
-			binding := helperGenerationBinding{SessionID: sessionID, GenerationID: generationID, LastReplayOffset: attachment.Binding.LastReplayOffset}
+			binding := helperGenerationBinding{
+				SessionID:        sessionID,
+				HelperSessionID:  attachment.Binding.HelperSessionID,
+				GenerationID:     generationID,
+				LastReplayOffset: attachment.Binding.LastReplayOffset,
+			}
 			if record.runtime.helperBinding != nil && record.runtime.helperBinding.GenerationID == generationID {
 				binding.LastReplayOffset = record.runtime.helperBinding.LastReplayOffset
 			}
@@ -350,7 +355,7 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 	runtime := sessionRuntime{
 		protocol:            runtimeProtocolCodexRPC,
 		helper:              runtimeIODHelperFromAttachment(nextAttachment, s.helperDialer),
-		helperBinding:       &RuntimeHelperBinding{GenerationID: nextAttachment.Binding.GenerationID, LastReplayOffset: nextAttachment.Binding.LastReplayOffset},
+		helperBinding:       &RuntimeHelperBinding{HelperSessionID: nextAttachment.Binding.HelperSessionID, GenerationID: nextAttachment.Binding.GenerationID, LastReplayOffset: nextAttachment.Binding.LastReplayOffset},
 		attachedExistingIOD: true,
 	}
 	if backend == session.BackendPI {
@@ -361,7 +366,11 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 		}
 	}
 	runtime.currentHelperBinding = func(session.SessionID) (*RuntimeHelperBinding, error) {
-		resolved := RuntimeHelperBinding{GenerationID: nextAttachment.Binding.GenerationID, LastReplayOffset: nextAttachment.Binding.LastReplayOffset}
+		resolved := RuntimeHelperBinding{
+			HelperSessionID:  nextAttachment.Binding.HelperSessionID,
+			GenerationID:     nextAttachment.Binding.GenerationID,
+			LastReplayOffset: nextAttachment.Binding.LastReplayOffset,
+		}
 		return &resolved, nil
 	}
 	if transport.GenerationID != "" && transport.GenerationID != generationID.String() {
@@ -411,7 +420,7 @@ func (s *Stub) helperAttachmentForRedial(sessionID session.SessionID, generation
 	if manifest.SessionID != sessionID || manifest.GenerationID != generationID {
 		return attachedHelper{}, false
 	}
-	binding := helperGenerationBinding{SessionID: sessionID, GenerationID: generationID}
+	binding := helperGenerationBinding{SessionID: sessionID, HelperSessionID: manifest.SessionID, GenerationID: generationID}
 	if record.runtime.helperBinding != nil && record.runtime.helperBinding.GenerationID == generationID {
 		binding.LastReplayOffset = record.runtime.helperBinding.LastReplayOffset
 	}
