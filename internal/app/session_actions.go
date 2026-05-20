@@ -774,9 +774,7 @@ func (s *Stub) replaceSessionRuntimeSync(ctx context.Context, routeID session.Se
 		record.runtime.CloseHelperStream()
 	} else {
 		_ = record.runtime.Kill(context.Background())
-		if record.runtime.helper != nil && s.helpers != nil {
-			s.helpers.Remove(record.identity.SessionID())
-		}
+		s.removeRuntimeHelperAttachment(record.identity.SessionID(), record.runtime)
 		_ = record.runtime.CleanupHelperArtifacts()
 	}
 	previousRuntimeID, _ := record.identity.RuntimeID()
@@ -845,12 +843,17 @@ func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, expec
 		previous.runtime.CloseHelperStream()
 	} else {
 		_ = previous.runtime.Kill(context.Background())
-		if previous.runtime.helper != nil && s.helpers != nil {
-			s.helpers.Remove(previous.identity.SessionID())
-		}
+		s.removeRuntimeHelperAttachment(previous.identity.SessionID(), previous.runtime)
 		_ = previous.runtime.CleanupHelperArtifacts()
 	}
 	s.emitSessionState(updated.identity.SessionID())
+}
+
+func (s *Stub) removeRuntimeHelperAttachment(sessionID session.SessionID, runtime sessionRuntime) {
+	if s == nil || s.helpers == nil || runtime.helper == nil {
+		return
+	}
+	s.helpers.RemoveIfGeneration(sessionID, runtime.helper.generationID)
 }
 
 func helperBindingSameGeneration(left, right *RuntimeHelperBinding) bool {

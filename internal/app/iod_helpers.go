@@ -216,6 +216,20 @@ func (r *helperRegistry) Remove(sessionID session.SessionID) {
 	}
 }
 
+func (r *helperRegistry) RemoveIfGeneration(sessionID session.SessionID, generationID iod.GenerationID) {
+	if generationID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	attachment, ok := r.attachments[sessionID]
+	if !ok || attachment.Binding.GenerationID != generationID {
+		return
+	}
+	_ = attachment.Client.Close()
+	delete(r.attachments, sessionID)
+}
+
 func (s *Stub) bindCurrentGeneration(binding helperGenerationBinding) error {
 	return s.helperBindings.Save(binding)
 }

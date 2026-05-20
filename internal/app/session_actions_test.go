@@ -1283,6 +1283,71 @@ func TestStubRestartSessionReplacesRuntimeAndPreservesSessionState(t *testing.T)
 	}
 }
 
+func TestAsyncRestartDoesNotRemoveReplacementHelperAttachment(t *testing.T) {
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	oldGeneration := mustHelperGenerationID(t, "g_restart_old")
+	newGeneration := mustHelperGenerationID(t, "g_restart_new")
+	oldClientConn, oldServerConn := net.Pipe()
+	newClientConn, newServerConn := net.Pipe()
+	defer oldServerConn.Close()
+	defer newServerConn.Close()
+	oldRuntime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		helper: &runtimeIODHelper{
+			streamClient: iodclient.NewClient(oldClientConn),
+			sessionID:    sessionID,
+			generationID: oldGeneration,
+			runtimeDir:   t.TempDir(),
+		},
+		helperBinding: &RuntimeHelperBinding{GenerationID: oldGeneration},
+		codex:         newCodexRuntimeState(session.BackendCodex),
+	}
+	newRuntime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		helper: &runtimeIODHelper{
+			streamClient: iodclient.NewClient(newClientConn),
+			sessionID:    sessionID,
+			generationID: newGeneration,
+			runtimeDir:   t.TempDir(),
+		},
+		helperBinding: &RuntimeHelperBinding{GenerationID: newGeneration},
+		codex:         newCodexRuntimeState(session.BackendCodex),
+	}
+	svc.helpers.Set(sessionID, attachedHelper{
+		Binding: helperGenerationBinding{SessionID: sessionID, GenerationID: newGeneration},
+		Client:  newRuntime.helper.streamClient,
+	})
+	oldIdentity, err := session.NewLiveIdentity(sessionID.String(), "r_restart_old", "t_restart", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity(old) error = %v", err)
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, oldIdentity, oldRuntime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(old) = (_, %v, %v), want ok", ok, err)
+	}
+	nextIdentity, err := session.NewLiveIdentity(sessionID.String(), "r_restart_new", "t_restart", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity(new) error = %v", err)
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, nextIdentity, newRuntime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(new) = (_, %v, %v), want ok", ok, err)
+	}
+
+	svc.removeRuntimeHelperAttachment(sessionID, oldRuntime)
+
+	attachment, ok := svc.helpers.Attachment(sessionID)
+	if !ok {
+		t.Fatal("replacement helper attachment removed while cleaning old runtime")
+	}
+	if attachment.Binding.GenerationID != newGeneration {
+		t.Fatalf("attachment generation = %q, want %q", attachment.Binding.GenerationID, newGeneration)
+	}
+}
+
 func TestStubRestartCodexSessionClearsControlCaches(t *testing.T) {
 	svc, _, sessionID, runtimeID := newSessionActionFixtureForBackend(t, "codex")
 	svc.codexIODHistoryMu.Lock()

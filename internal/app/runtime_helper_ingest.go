@@ -275,7 +275,19 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 	}
 	attachment, ok := s.helperAttachmentForRedial(sessionID, generationID)
 	if !ok {
-		return helperReadErrorResult{}
+		manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(s.cfg.Storage.DataDir), sessionID, generationID)
+		manifest, err := iod.ReadGenerationManifest(manifestPath)
+		if err != nil || manifest.SessionID != sessionID || manifest.GenerationID != generationID {
+			return helperReadErrorResult{}
+		}
+		attachment = attachedHelper{
+			Binding:      helperGenerationBinding{SessionID: sessionID, GenerationID: generationID},
+			ManifestPath: manifestPath,
+			Manifest:     manifest,
+		}
+		if record, found := s.registry.Lookup(sessionID); found && record.runtime.helperBinding != nil && record.runtime.helperBinding.GenerationID == generationID {
+			attachment.Binding.LastReplayOffset = record.runtime.helperBinding.LastReplayOffset
+		}
 	}
 	manifest := attachment.Manifest
 	if manifest.GenerationID != generationID || manifest.SessionID != sessionID {

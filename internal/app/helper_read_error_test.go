@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -655,6 +656,68 @@ func TestBrokenAttachLostCanRedialLiveCodexHelper(t *testing.T) {
 	}
 	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
 		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
+	}
+	if state.RuntimeState == string(codexRuntimePhaseFailed) {
+		t.Fatalf("SessionState().RuntimeState = %q, want non-failed", state.RuntimeState)
+	}
+}
+
+func TestBrokenAttachLostCanRedialLiveCodexHelperFromManifest(t *testing.T) {
+	var hello iod.HelloPacket
+	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer serverConn.Close()
+			_ = json.NewEncoder(serverConn).Encode(hello)
+		}()
+		return clientConn, nil
+	})
+	cfg := persistentTestConfig(t)
+	svc := newStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{IODDialer: dialer})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_broken_helper_manifest_redial")
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	proof, err := iod.NewHelloProof(os.Getpid(), nil, filepath.Join(filepath.Dir(manifestPath), "transport.wal"), filepath.Join(filepath.Dir(manifestPath), "io"), float64(time.Unix(1760000000, 0).UTC().Unix()))
+	if err != nil {
+		t.Fatalf("NewHelloProof() error = %v", err)
+	}
+	manifest, err := iod.NewGenerationManifest(sessionID, generationID, proof)
+	if err != nil {
+		t.Fatalf("NewGenerationManifest() error = %v", err)
+	}
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+	hello, err = iod.NewHelloPacket(sessionID, generationID, 1, proof)
+	if err != nil {
+		t.Fatalf("NewHelloPacket() error = %v", err)
+	}
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime = sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    newCodexRuntimeState(session.BackendCodex),
+		}
+		record.runtime.codex.markInitialized()
+		record.runtime.codex.setThreadID("thread-broken-manifest-redial")
+		record.transport = transportSnapshotBroken(generationID, iod.GenerationBreakAttachLost.String(), true)
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateAttached || state.Transport.ResetRequired || state.Transport.GenerationID != generationID.String() {
+		t.Fatalf("SessionState().Transport = %+v, want attached without reset", state.Transport)
+	}
+	if _, ok := svc.helpers.Attachment(sessionID); !ok {
+		t.Fatal("helper attachment missing after manifest redial")
 	}
 	if state.RuntimeState == string(codexRuntimePhaseFailed) {
 		t.Fatalf("SessionState().RuntimeState = %q, want non-failed", state.RuntimeState)
