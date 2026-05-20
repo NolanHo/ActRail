@@ -752,6 +752,44 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().runtimeStateBySessionId.s1).toBe("idle");
   });
 
+  it("does not keep generating alive from stale local flags or non-trailing streaming rows", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 1, busy: true, runtime_state: "running" },
+    });
+    liveStore.applyFrame({
+      type: "message.generating",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 2, turn_id: "turn-1", role: "assistant", active: true },
+    });
+    messagesStore.applyLive(
+      "s1",
+      [
+        { role: "assistant", text: "stale partial", streaming: true, stream_id: "turn-1", turn_id: "turn-1" },
+        { seq: 2, event_id: "evt-final-2", role: "assistant", text: "durable answer" },
+      ] as any,
+      { replace: true, offset: 2 },
+    );
+
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(true);
+
+    liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: { session_id: "s1", stream_seq: 3, busy: true, runtime_state: "running" },
+    });
+
+    expect(liveStore.getState().busyBySessionId.s1).toBe(true);
+    expect(liveStore.getState().generatingBySessionId.s1).toBe(false);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { seq: 2, event_id: "evt-final-2", role: "assistant", text: "durable answer" },
+    ]);
+  });
+
   it("does not become busy or append streaming output from assistant delta or generating frames after backend state reports idle", async () => {
     vi.useFakeTimers();
     try {

@@ -203,6 +203,19 @@ function eventCreatesConversationAnchor(event: MessageEvent | undefined): boolea
   return !MACHINE_TRACE_TYPES.has(type);
 }
 
+function hasTrailingStreamingAssistant(events: MessageEvent[]): boolean {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (isStreamingAssistantEvent(event)) {
+      return true;
+    }
+    if (eventCreatesConversationAnchor(event)) {
+      return false;
+    }
+  }
+  return false;
+}
+
 function duplicateDurableAssistant(a: MessageEvent, b: MessageEvent): boolean {
   return a.role === "assistant"
     && b.role === "assistant"
@@ -532,7 +545,7 @@ export function createMessagesStore(): MessagesStore {
   };
 
   const hasStreamingAssistant = (sessionId: string) =>
-    (state.bySessionId[sessionId] ?? []).some((event) => isStreamingAssistantEvent(event));
+    hasTrailingStreamingAssistant(state.bySessionId[sessionId] ?? []);
 
   return {
     getState: () => state,

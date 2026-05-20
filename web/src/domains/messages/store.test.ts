@@ -331,6 +331,33 @@ describe("createMessagesStore", () => {
     ]);
   });
 
+  it("only treats a trailing streaming assistant as active generation", () => {
+    const store = createMessagesStore();
+
+    store.applyLive(
+      "s1",
+      [
+        { role: "assistant", text: "old partial", streaming: true, stream_id: "turn-001", turn_id: "turn-001" },
+        { seq: 2, event_id: "evt-final-2", role: "assistant", text: "newer answer" },
+      ] as any,
+      { replace: true, offset: 2 },
+    );
+
+    expect(store.hasStreamingAssistant("s1")).toBe(false);
+
+    store.applyLive(
+      "s1",
+      [
+        { seq: 3, event_id: "evt-user-3", role: "user", text: "continue" },
+        { role: "assistant", text: "new partial", streaming: true, stream_id: "turn-002", turn_id: "turn-002" },
+        { type: "tool", event_id: "evt-tool-4", text: "running" },
+      ] as any,
+      { replace: false, offset: 4 },
+    );
+
+    expect(store.hasStreamingAssistant("s1")).toBe(true);
+  });
+
   it("drops duplicate durable assistant commits with different event ids", () => {
     const store = createMessagesStore();
 

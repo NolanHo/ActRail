@@ -313,8 +313,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
   let bufferAssistantOutput = false;
 
   const hasActiveAssistantOutput = (sessionId: string) => Boolean(
-    state.generatingBySessionId[sessionId]
-    || (streamingTextBySessionId.get(sessionId)?.size ?? 0) > 0
+    (streamingTextBySessionId.get(sessionId)?.size ?? 0) > 0
     || messagesStore.hasStreamingAssistant(sessionId),
   );
 
