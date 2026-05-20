@@ -2,6 +2,7 @@ import { create, toBinary } from "@bufbuild/protobuf";
 import { CommandResponseSchema } from "../../gen/actrail/v1/transport_pb";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connect, disconnect, sendRealtimeCommand, configureRealtimeClient } from "./client";
+import { fetchConnectListSessions, fetchConnectSessionState } from "./connect";
 
 const encoder = new TextEncoder();
 
@@ -52,6 +53,53 @@ describe("Connect realtime transport", () => {
       method: "POST",
       body: JSON.stringify({ session: { sessionId: "s_1" }, text: "hello" }),
     }));
+  });
+
+  it("decodes typed Connect JSON for ListSessions", async () => {
+    const payload = { sessions: [{ session_id: "s_1", busy: false }], total_count: 1 };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    await expect(fetchConnectListSessions({ basePath: "/api/connect", wireFormat: "json" })).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/ListSessions", expect.objectContaining({
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+    }));
+  });
+
+  it("keeps legacy payloadJson compatibility for ListSessions", async () => {
+    const payload = { sessions: [{ session_id: "s_legacy", busy: true }] };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      payloadJson: payloadJson(payload),
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await expect(fetchConnectListSessions({ basePath: "/api/connect", wireFormat: "json" })).resolves.toEqual(payload);
+  });
+
+  it("decodes typed Connect JSON for SessionState", async () => {
+    const payload = { ok: true, busy: true, tail_seq: 4, queue: { items: [] } };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    await expect(fetchConnectSessionState({ basePath: "/api/connect", wireFormat: "json" }, { sessionId: "s_1" })).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/SessionState", expect.objectContaining({
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ session: { session_id: "s_1" } }),
+    }));
+  });
+
+  it("keeps legacy payloadJson compatibility for SessionState", async () => {
+    const payload = { ok: true, busy: false, tail_seq: 2 };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      payloadJson: payloadJson(payload),
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    await expect(fetchConnectSessionState({ basePath: "/api/connect", wireFormat: "json" }, { sessionId: "s_legacy" })).resolves.toEqual(payload);
   });
 
   it("sends protobuf unary commands when Connect proto wire format is enabled", async () => {

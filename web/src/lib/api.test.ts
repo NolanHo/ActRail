@@ -10,13 +10,6 @@ vi.mock("../domains/realtime/client", () => ({
   sendRealtimeCommand: vi.fn(),
 }));
 
-function connectPayloadJson(value: unknown) {
-  const bytes = new TextEncoder().encode(JSON.stringify(value));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 describe("getJson", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -99,13 +92,13 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ payloadJson: connectPayloadJson({ sessions: [] }) }),
+      json: async () => ({ sessions: [], total_count: 0 }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await api.listSessions(undefined, signal);
 
-    expect(response).toEqual({ sessions: [] });
+    expect(response).toEqual({ sessions: [], total_count: 0 });
     expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/ListSessions", expect.objectContaining({
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -630,7 +623,7 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ payloadJson: connectPayloadJson(payload) }),
+      json: async () => payload,
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -654,7 +647,7 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ payloadJson: connectPayloadJson(payload) }),
+      json: async () => payload,
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -683,7 +676,7 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ payloadJson: connectPayloadJson(payload) }),
+      json: async () => payload,
     });
     vi.stubGlobal("fetch", fetchMock);
 

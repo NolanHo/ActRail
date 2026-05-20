@@ -86,6 +86,35 @@ func TestListSessionsProto(t *testing.T) {
 	}
 }
 
+func TestListSessionsJSONReturnsTypedPayload(t *testing.T) {
+	stub := &controllerStub{}
+	h := NewHandler(stub, NewBroker(100), nil)
+	req := httptest.NewRequest(http.MethodPost, connectBasePath+sessionCommandService+"/ListSessions", strings.NewReader(`{"group_key":"/work/docs","offset":5,"limit":50}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if stub.listReq.GroupKey != "/work/docs" || stub.listReq.Offset != 5 || stub.listReq.Limit != 50 {
+		t.Fatalf("list req = %+v", stub.listReq)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, ok := response["payloadJson"]; ok {
+		t.Fatalf("response still uses payloadJson envelope: %s", res.Body.String())
+	}
+	if got := response["total_count"]; got != float64(1) {
+		t.Fatalf("total_count = %#v, body = %s", got, res.Body.String())
+	}
+	items, ok := response["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items = %#v, body = %s", response["items"], res.Body.String())
+	}
+}
+
 func TestSessionCommandServiceSendMapsToController(t *testing.T) {
 	controller := &controllerStub{}
 	h := NewHandler(controller, NewBroker(10))
@@ -247,6 +276,34 @@ func TestSessionStateProto(t *testing.T) {
 	}
 	if !strings.Contains(string(response.GetPayloadJson()), `"tail_seq":3`) {
 		t.Fatalf("payload_json = %s", string(response.GetPayloadJson()))
+	}
+}
+
+func TestSessionStateJSONReturnsTypedPayload(t *testing.T) {
+	stub := &controllerStub{}
+	h := NewHandler(stub, NewBroker(100), nil)
+	req := httptest.NewRequest(http.MethodPost, connectBasePath+sessionCommandService+"/SessionState", strings.NewReader(`{"session":{"sessionId":"sess-1"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if stub.stateReq.SessionID.String() != "sess-1" {
+		t.Fatalf("state req = %+v", stub.stateReq)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, ok := response["payloadJson"]; ok {
+		t.Fatalf("response still uses payloadJson envelope: %s", res.Body.String())
+	}
+	if got := response["tail_seq"]; got != float64(3) {
+		t.Fatalf("tail_seq = %#v, body = %s", got, res.Body.String())
+	}
+	if got := response["busy"]; got != true {
+		t.Fatalf("busy = %#v, body = %s", got, res.Body.String())
 	}
 }
 

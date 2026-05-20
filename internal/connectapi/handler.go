@@ -262,7 +262,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(encoded, traceID))
 		return
 	}
-	writeConnectJSON(w, http.StatusOK, commandResponse{PayloadJSON: base64.StdEncoding.EncodeToString(encoded), TraceID: traceID})
+	writeConnectJSON(w, http.StatusOK, withConnectTraceID(payload, traceID))
 }
 
 func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method string) {
@@ -330,6 +330,13 @@ func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method
 	if protoMode {
 		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(payload, traceID))
 		return
+	}
+	if method == "SessionState" {
+		var state app.SessionStateResponse
+		if err := json.Unmarshal(payload, &state); err == nil {
+			writeConnectJSON(w, http.StatusOK, withConnectTraceID(state, traceID))
+			return
+		}
 	}
 	writeConnectJSON(w, http.StatusOK, commandResponse{PayloadJSON: base64.StdEncoding.EncodeToString(payload), TraceID: traceID})
 }

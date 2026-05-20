@@ -83,6 +83,13 @@ function decodePayloadJson(raw: unknown) {
   return json ? JSON.parse(json) as Record<string, unknown> : {};
 }
 
+function decodeTypedOrPayloadJson<T>(data: { payloadJson?: unknown } | T): T {
+  if (data && typeof data === "object" && typeof (data as { payloadJson?: unknown }).payloadJson === "string") {
+    return decodePayloadJson((data as { payloadJson?: unknown }).payloadJson) as T;
+  }
+  return data as T;
+}
+
 function decodePayloadBytes(raw: Uint8Array) {
   const json = raw.length ? textDecoder.decode(raw) : "";
   return json ? JSON.parse(json) as Record<string, unknown> : {};
@@ -299,7 +306,7 @@ export async function fetchConnectListSessions(config: ConnectTransportConfig, o
   if (!response.ok) {
     throw new HttpError(await response.text(), response.status);
   }
-  return decodePayloadJson((await readJson<{ payloadJson?: string }>(response)).payloadJson) as SessionsResponse;
+  return decodeTypedOrPayloadJson<SessionsResponse>(await readJson(response));
 }
 
 export interface ConnectMessagesOptions {
@@ -363,7 +370,7 @@ export async function fetchConnectSessionState(config: ConnectTransportConfig, o
   if (!response.ok) {
     throw new HttpError(await response.text(), response.status);
   }
-  return decodePayloadJson((await readJson<{ payloadJson?: string }>(response)).payloadJson) as LiveSessionResponse;
+  return decodeTypedOrPayloadJson<LiveSessionResponse>(await readJson(response));
 }
 
 export async function fetchConnectSessionMessages(config: ConnectTransportConfig, options: ConnectMessagesOptions): Promise<MessagesResponse> {
