@@ -1005,6 +1005,23 @@ func appendTranscriptMessages(items *[]SessionMessage, record sessionRecord) {
 	appendDedupedMessages(items, incoming)
 }
 
+func appendPendingTranscriptMessages(items *[]SessionMessage, record sessionRecord) bool {
+	if record.transcript.Len() == 0 || len(*items) == 0 {
+		return false
+	}
+	complete := codexSessionMessagesHaveAuthoritativeCompletion(*items)
+	incoming := make([]SessionMessage, 0, record.transcript.Len())
+	for _, item := range record.transcript.Items() {
+		if complete && item.Role().String() == "assistant" {
+			continue
+		}
+		incoming = append(incoming, sessionMessageFromCommitted(item))
+	}
+	before := len(*items)
+	appendDedupedMessages(items, incoming)
+	return len(*items) > before
+}
+
 func appendDedupedMessages(items *[]SessionMessage, incoming []SessionMessage) {
 	for _, item := range incoming {
 		item.Seq = 0
@@ -1038,13 +1055,15 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	}
 	sessionID := record.identity.SessionID()
 	cacheKey := codexIODHistoryCacheKey(packet)
-	if response, complete, ok := s.messageCache.GetPageWithCompletion(sessionID, cacheKey, req); ok {
-		if !codexSessionFileHistoryUsableStatus(record, response.TailSeq > 0, complete) {
-			return SessionMessagesResponse{}, false, nil
+	if record.transcript.Len() == 0 {
+		if response, complete, ok := s.messageCache.GetPageWithCompletion(sessionID, cacheKey, req); ok {
+			if !codexSessionFileHistoryUsableStatus(record, response.TailSeq > 0, complete) {
+				return SessionMessagesResponse{}, false, nil
+			}
+			s.rememberCodexThreadBindingFromIODHistory(record, packet)
+			s.reconcileCodexSessionFileCompletion(record, complete)
+			return response, true, nil
 		}
-		s.rememberCodexThreadBindingFromIODHistory(record, packet)
-		s.reconcileCodexSessionFileCompletion(record, complete)
-		return response, true, nil
 	}
 	items := sessionMessagesFromIODHistory(packet.Messages)
 	if len(items) == 0 {
@@ -1054,13 +1073,24 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 	if !codexSessionFileHistoryUsable(record, items, complete) {
 		return SessionMessagesResponse{}, false, nil
 	}
+	appendedPending := appendPendingTranscriptMessages(&items, record)
+	if appendedPending {
+		for i := range items {
+			items[i].Seq = uint64(i + 1)
+		}
+	}
 	s.rememberCodexThreadBindingFromIODHistory(record, packet)
 	s.reconcileCodexSessionFileCompletion(record, complete)
-	s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
+	if record.transcript.Len() == 0 {
+		s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
+	}
 	return paginateSessionMessagesForRequest(items, req), true, nil
 }
 
 func (s *Stub) loadCodexSourceFileHistoryPage(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
+	if record.transcript.Len() > 0 {
+		return SessionMessagesResponse{}, false, nil
+	}
 	path, threadID, err := s.codexSessionFileForRecord(record)
 	if err != nil {
 		return SessionMessagesResponse{}, true, err
@@ -1090,16 +1120,19 @@ func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRec
 	if strings.TrimSpace(path) == "" {
 		return SessionMessagesResponse{}, false, nil
 	}
+	hasLocalTranscript := record.transcript.Len() > 0
 	signature, ok := codexSessionFileSignature(path)
 	if !ok {
 		return SessionMessagesResponse{}, false, nil
 	}
 	sessionID := record.identity.SessionID()
 	cacheKey := "codex-source-file:" + signature
-	if items, complete, ok := s.messageCache.GetWithCompletion(sessionID, cacheKey); ok {
-		s.reconcileCodexSessionFileCompletion(record, complete)
-		s.rememberCodexThreadBinding(record, threadID, path)
-		return paginateSessionMessagesForRequest(items, req), true, nil
+	if !hasLocalTranscript {
+		if items, complete, ok := s.messageCache.GetWithCompletion(sessionID, cacheKey); ok {
+			s.reconcileCodexSessionFileCompletion(record, complete)
+			s.rememberCodexThreadBinding(record, threadID, path)
+			return paginateSessionMessagesForRequest(items, req), true, nil
+		}
 	}
 	items, err := codexSessionMessagesFromFile(ctx, path)
 	if err != nil {
@@ -1109,9 +1142,17 @@ func (s *Stub) loadCodexSourceFileHistory(ctx context.Context, record sessionRec
 		return SessionMessagesResponse{}, false, nil
 	}
 	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionFileHasTaskComplete(ctx, path)
+	appendedPending := appendPendingTranscriptMessages(&items, record)
+	if appendedPending {
+		for i := range items {
+			items[i].Seq = uint64(i + 1)
+		}
+	}
 	s.reconcileCodexSessionFileCompletion(record, complete)
 	s.rememberCodexThreadBinding(record, threadID, path)
-	s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
+	if !hasLocalTranscript {
+		s.messageCache.PutWithCompletion(sessionID, cacheKey, items, complete)
+	}
 	return paginateSessionMessagesForRequest(items, req), true, nil
 }
 

@@ -368,6 +368,7 @@ func (s *Stub) finishAsyncRuntimeSend(sessionID session.SessionID, expectedRunti
 		return nil
 	}); err != nil {
 		if errors.Is(err, errRuntimeChanged) {
+			s.retryAsyncRuntimeSendWithCurrent(sessionID, expectedRuntimeID, text, followUp)
 			return
 		}
 		s.handleAsyncRuntimeSendError(sessionID, expectedRuntimeID, text, runtime, record, err)
@@ -388,6 +389,7 @@ func (s *Stub) finishAsyncRuntimeSend(sessionID session.SessionID, expectedRunti
 		return !ok || currentRuntimeID != expectedRuntimeID
 	}); err != nil {
 		if errors.Is(err, errRuntimeChanged) {
+			s.retryAsyncRuntimeSendWithCurrent(sessionID, expectedRuntimeID, text, followUp)
 			return
 		}
 		s.handleAsyncRuntimeSendError(sessionID, expectedRuntimeID, text, runtime, record, err)
@@ -400,6 +402,82 @@ func (s *Stub) finishAsyncRuntimeSend(sessionID session.SessionID, expectedRunti
 				return
 			}
 		}
+	}
+	if runtime.protocol == runtimeProtocolCodexRPC {
+		_ = s.transitionCodexRuntimeIfCurrent(sessionID, expectedRuntimeID, codexRuntimePhaseTurnStarting, "codex_turn_starting", "turn_starting")
+		s.startCodexTurnStartWatch(sessionID, runtime)
+	}
+	if record.identity.Backend() == session.BackendPI {
+		if runtime.protocol == runtimeProtocolPIRPC && runtime.helper != nil {
+			s.holdPIRPCBusy(sessionID, runtime.helper.generationID)
+			s.kickPIRPCStateProbe(sessionID, runtime.helper.generationID)
+		}
+		s.startPIRPCStatePolling(sessionID, runtime)
+	}
+	s.emitSessionState(sessionID)
+}
+
+func (s *Stub) retryAsyncRuntimeSendWithCurrent(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, text string, followUp bool) {
+	var runtime sessionRuntime
+	var record sessionRecord
+	if err := s.withSessionInputLock(sessionID, func(current sessionRecord) error {
+		current.runtime = s.runtimeForRecord(current)
+		currentRuntimeID, ok := current.identity.RuntimeID()
+		if expectedRuntimeID != "" && (!ok || currentRuntimeID != expectedRuntimeID) {
+			return errRuntimeChanged
+		}
+		if err := preflightRuntimeSend(current.runtime); err != nil {
+			return err
+		}
+		if current.runtime.protocol == runtimeProtocolCodexRPC {
+			active, err := s.codexAuthoritativeActiveTurn(context.Background(), current)
+			if err != nil {
+				_ = s.emitRuntimeControlDiagnostic(sessionID, "async_retry_pre_send_codex_state", err)
+			}
+			if active {
+				_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseRunning, "codex_authoritative_running", "async_retry_pre_send_codex_state")
+				return Conflict("codex runtime is still running; use queue or interrupt")
+			}
+		}
+		if err := s.prepareRuntimeSend(context.Background(), sessionID, current.runtime); err != nil {
+			return err
+		}
+		runtime = current.runtime
+		record = current
+		return nil
+	}); err != nil {
+		if errors.Is(err, errRuntimeChanged) {
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "async_retry_send", err)
+			return
+		}
+		s.handleAsyncRuntimeSendError(sessionID, expectedRuntimeID, text, runtime, record, err)
+		return
+	}
+	sendRuntimePrompt := runtime.SendPromptWithStaleCheck
+	if followUp {
+		sendRuntimePrompt = func(ctx context.Context, text string, stale func() bool) error {
+			if stale != nil && stale() {
+				return errRuntimeChanged
+			}
+			return runtime.SendFollowUp(ctx, text)
+		}
+	}
+	if err := sendRuntimePrompt(context.Background(), text, func() bool {
+		current, err := s.lookupSession(sessionID)
+		if err == nil {
+			current.runtime = s.runtimeForRecord(current)
+		}
+		if err != nil || !sameRuntimeHandle(runtime, current.runtime) {
+			return true
+		}
+		if expectedRuntimeID == "" {
+			return false
+		}
+		currentRuntimeID, ok := current.identity.RuntimeID()
+		return !ok || currentRuntimeID != expectedRuntimeID
+	}); err != nil {
+		s.handleAsyncRuntimeSendError(sessionID, expectedRuntimeID, text, runtime, record, err)
+		return
 	}
 	if runtime.protocol == runtimeProtocolCodexRPC {
 		_ = s.transitionCodexRuntimeIfCurrent(sessionID, expectedRuntimeID, codexRuntimePhaseTurnStarting, "codex_turn_starting", "turn_starting")

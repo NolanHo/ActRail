@@ -387,6 +387,70 @@ func TestSendRetriesRuntimeChangedOnce(t *testing.T) {
 	}
 }
 
+func TestAsyncSQLiteSendRetriesCurrentRuntimeAfterStaleCommit(t *testing.T) {
+	svc, sessionID, _, pty := newControlFixture(t)
+	svc.asyncSQLiteActions = true
+	record, err := svc.lookupSession(sessionID)
+	if err != nil {
+		t.Fatalf("lookupSession() error = %v", err)
+	}
+	replacement := process.NewFakeHandle(process.LaunchSpec{})
+	replacementPTY := &fakePTY{}
+	replacement.SetPTY(replacementPTY)
+	originalRuntime := record.runtime
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_async_stale_original", "t_async_stale_original", session.BackendPI.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity(original) error = %v", err)
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, identity, originalRuntime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(original) = (%v, %v)", ok, err)
+	}
+	committed := make(chan struct{})
+	release := make(chan struct{})
+	originalRuntime.helper = &runtimeIODHelper{
+		streamClient: &iodclient.Client{},
+		commandFunc: func(context.Context, iod.CommandName, json.RawMessage) error {
+			close(committed)
+			<-release
+			return errRuntimeChanged
+		},
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, identity, originalRuntime, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(original helper) = (%v, %v)", ok, err)
+	}
+
+	response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "async retry after stale"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if response.Message.Text != "async retry after stale" || !response.Busy {
+		t.Fatalf("Send() = %+v, want optimistic busy user message", response)
+	}
+	select {
+	case <-committed:
+	case <-time.After(time.Second):
+		t.Fatal("async send did not reach original runtime")
+	}
+	if _, ok, err := svc.registry.SwapRuntime(sessionID, identity, sessionRuntime{protocol: runtimeProtocolTTY, handle: replacement}, ""); err != nil || !ok {
+		t.Fatalf("SwapRuntime(replacement) = (%v, %v)", ok, err)
+	}
+	close(release)
+	waitForTestCondition(t, func() bool {
+		writes := replacementPTY.Writes()
+		return len(writes) == 1 && strings.Contains(writes[0], "async retry after stale")
+	})
+	if writes := pty.Writes(); len(writes) != 0 {
+		t.Fatalf("old runtime writes = %#v, want none after stale async send", writes)
+	}
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 || messages.Items[0].Text != "async retry after stale" {
+		t.Fatalf("SessionMessages() = %+v, want one committed user message", messages.Items)
+	}
+}
+
 func TestSendRebindsRuntimeAfterMetadataRefresh(t *testing.T) {
 	svc, sessionID, _, _ := newControlFixture(t)
 	record, err := svc.lookupSession(sessionID)
