@@ -3,8 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -19,10 +21,18 @@ type SessionSourceRefRow struct {
 }
 
 type CodexRuntimeClaimRow struct {
-	SessionID        string
-	BackendSessionID string
-	SourcePath       string
-	UpdatedAt        time.Time
+	SessionID         string
+	BackendSessionID  string
+	SourcePath        string
+	RuntimeInstanceID string
+	HelperPID         int
+	ChildPID          int
+	ControlSocketPath string
+	ChildSocketPath   string
+	LastHelloAt       *time.Time
+	LastLiveEventAt   *time.Time
+	State             string
+	UpdatedAt         time.Time
 }
 
 type HiddenSessionKeyRow struct {
@@ -129,6 +139,8 @@ func (c *SessionCatalog) ReplaceImportBundle(ctx context.Context, bundle ImportB
 
 func clearImportBundleTx(ctx context.Context, tx execer) error {
 	statements := []string{
+		`DELETE FROM codex_session_commands`,
+		`DELETE FROM codex_runtime_claims`,
 		`DELETE FROM session_queue_items`,
 		`DELETE FROM session_workspace_open_paths`,
 		`DELETE FROM session_workspace_history_items`,
@@ -218,13 +230,136 @@ func (c *SessionCatalog) UpsertCodexRuntimeClaim(ctx context.Context, row CodexR
 	if c == nil || c.db == nil {
 		return fmt.Errorf("sqlite catalog is not initialized")
 	}
-	_, err := c.db.ExecContext(ctx, `INSERT INTO codex_runtime_claims(session_id, backend_session_id, source_path, updated_at) VALUES(?, ?, ?, ?)
-		ON CONFLICT(session_id) DO UPDATE SET backend_session_id=excluded.backend_session_id, source_path=excluded.source_path, updated_at=excluded.updated_at`,
-		row.SessionID, row.BackendSessionID, row.SourcePath, row.UpdatedAt.UTC().Format(tsLayout))
+	_, err := c.db.ExecContext(ctx, `INSERT INTO codex_runtime_claims(
+			session_id, backend_session_id, source_path, runtime_instance_id,
+			helper_pid, child_pid, control_socket_path, child_socket_path,
+			last_hello_at, last_live_event_at, state, updated_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			backend_session_id=excluded.backend_session_id,
+			source_path=excluded.source_path,
+			runtime_instance_id=excluded.runtime_instance_id,
+			helper_pid=excluded.helper_pid,
+			child_pid=excluded.child_pid,
+			control_socket_path=excluded.control_socket_path,
+			child_socket_path=excluded.child_socket_path,
+			last_hello_at=excluded.last_hello_at,
+			last_live_event_at=excluded.last_live_event_at,
+			state=excluded.state,
+			updated_at=excluded.updated_at`,
+		strings.TrimSpace(row.SessionID),
+		strings.TrimSpace(row.BackendSessionID),
+		strings.TrimSpace(row.SourcePath),
+		strings.TrimSpace(row.RuntimeInstanceID),
+		row.HelperPID,
+		row.ChildPID,
+		strings.TrimSpace(row.ControlSocketPath),
+		strings.TrimSpace(row.ChildSocketPath),
+		formatNullableTime(row.LastHelloAt),
+		formatNullableTime(row.LastLiveEventAt),
+		codexRuntimeClaimState(row.State),
+		formatTime(row.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("upsert codex runtime claim %q: %w", row.SessionID, err)
 	}
 	return nil
+}
+
+func (c *SessionCatalog) LookupCodexRuntimeClaimByThread(ctx context.Context, backendSessionID string) (CodexRuntimeClaimRow, bool, error) {
+	if c == nil || c.db == nil {
+		return CodexRuntimeClaimRow{}, false, fmt.Errorf("sqlite catalog is not initialized")
+	}
+	threadID := strings.TrimSpace(backendSessionID)
+	if threadID == "" {
+		return CodexRuntimeClaimRow{}, false, nil
+	}
+	row, ok, err := c.lookupCodexRuntimeClaim(ctx, `backend_session_id = ?`, threadID)
+	if err != nil {
+		return CodexRuntimeClaimRow{}, false, fmt.Errorf("lookup codex runtime claim for thread %q: %w", threadID, err)
+	}
+	return row, ok, nil
+}
+
+func (c *SessionCatalog) ListCodexRuntimeClaims(ctx context.Context) ([]CodexRuntimeClaimRow, error) {
+	if c == nil || c.db == nil {
+		return nil, fmt.Errorf("sqlite catalog is not initialized")
+	}
+	rows, err := c.db.QueryContext(ctx, `SELECT session_id, backend_session_id, source_path, runtime_instance_id, helper_pid, child_pid, control_socket_path, child_socket_path, last_hello_at, last_live_event_at, state, updated_at FROM codex_runtime_claims ORDER BY backend_session_id ASC, session_id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query codex runtime claims: %w", err)
+	}
+	defer rows.Close()
+	items := make([]CodexRuntimeClaimRow, 0)
+	for rows.Next() {
+		row, err := scanCodexRuntimeClaim(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate codex runtime claims: %w", err)
+	}
+	return items, nil
+}
+
+type codexRuntimeClaimScanner interface {
+	Scan(dest ...any) error
+}
+
+func (c *SessionCatalog) lookupCodexRuntimeClaim(ctx context.Context, where string, args ...any) (CodexRuntimeClaimRow, bool, error) {
+	query := `SELECT session_id, backend_session_id, source_path, runtime_instance_id, helper_pid, child_pid, control_socket_path, child_socket_path, last_hello_at, last_live_event_at, state, updated_at FROM codex_runtime_claims WHERE ` + where + ` LIMIT 1`
+	row, err := scanCodexRuntimeClaim(c.db.QueryRowContext(ctx, query, args...))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return CodexRuntimeClaimRow{}, false, nil
+		}
+		return CodexRuntimeClaimRow{}, false, err
+	}
+	return row, true, nil
+}
+
+func scanCodexRuntimeClaim(scanner codexRuntimeClaimScanner) (CodexRuntimeClaimRow, error) {
+	var (
+		row                       CodexRuntimeClaimRow
+		lastHelloRaw, lastLiveRaw sql.NullString
+		updatedAtRaw              string
+	)
+	if err := scanner.Scan(
+		&row.SessionID,
+		&row.BackendSessionID,
+		&row.SourcePath,
+		&row.RuntimeInstanceID,
+		&row.HelperPID,
+		&row.ChildPID,
+		&row.ControlSocketPath,
+		&row.ChildSocketPath,
+		&lastHelloRaw,
+		&lastLiveRaw,
+		&row.State,
+		&updatedAtRaw,
+	); err != nil {
+		return CodexRuntimeClaimRow{}, err
+	}
+	var err error
+	if row.LastHelloAt, err = parseNullableTime(lastHelloRaw); err != nil {
+		return CodexRuntimeClaimRow{}, err
+	}
+	if row.LastLiveEventAt, err = parseNullableTime(lastLiveRaw); err != nil {
+		return CodexRuntimeClaimRow{}, err
+	}
+	if row.UpdatedAt, err = parseTime(updatedAtRaw); err != nil {
+		return CodexRuntimeClaimRow{}, err
+	}
+	return row, nil
+}
+
+func codexRuntimeClaimState(raw string) string {
+	state := strings.TrimSpace(raw)
+	if state == "" {
+		return "unknown"
+	}
+	return state
 }
 
 func (c *SessionCatalog) DeleteCodexRuntimeClaim(ctx context.Context, sessionID string) error {

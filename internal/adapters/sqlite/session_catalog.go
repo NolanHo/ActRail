@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 
 const tsLayout = time.RFC3339Nano
 
@@ -504,6 +504,66 @@ var migrations = []migration{
 				}
 			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 12, time.Now().UTC().Format(tsLayout))
+			return err
+		},
+	},
+	{
+		version: 13,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`DROP INDEX IF EXISTS codex_runtime_claims_source_path_idx`,
+				`CREATE TABLE IF NOT EXISTS codex_session_commands (
+					command_id TEXT PRIMARY KEY,
+					session_id TEXT NOT NULL,
+					runtime_id TEXT NOT NULL DEFAULT '',
+					kind TEXT NOT NULL,
+					text TEXT NOT NULL DEFAULT '',
+					message_id TEXT NOT NULL DEFAULT '',
+					follow_up INTEGER NOT NULL DEFAULT 0,
+					state TEXT NOT NULL,
+					attempt_count INTEGER NOT NULL DEFAULT 0,
+					last_error TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL,
+					claimed_at TEXT,
+					accepted_at TEXT,
+					reflected_at TEXT,
+					completed_at TEXT,
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`CREATE INDEX IF NOT EXISTS codex_session_commands_session_state_idx ON codex_session_commands(session_id, state, created_at)`,
+				`CREATE INDEX IF NOT EXISTS codex_session_commands_open_idx ON codex_session_commands(state, created_at) WHERE state IN ('pending', 'dispatching', 'accepted', 'reflected')`,
+			}
+			for _, stmt := range statements {
+				if _, err := tx.ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+			if err := ensureColumnExists(ctx, tx, "codex_runtime_claims", "runtime_instance_id", `ALTER TABLE codex_runtime_claims ADD COLUMN runtime_instance_id TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "codex_runtime_claims", "helper_pid", `ALTER TABLE codex_runtime_claims ADD COLUMN helper_pid INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "codex_runtime_claims", "child_pid", `ALTER TABLE codex_runtime_claims ADD COLUMN child_pid INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "codex_runtime_claims", "control_socket_path", `ALTER TABLE codex_runtime_claims ADD COLUMN control_socket_path TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "codex_runtime_claims", "child_socket_path", `ALTER TABLE codex_runtime_claims ADD COLUMN child_socket_path TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "codex_runtime_claims", "last_hello_at", `ALTER TABLE codex_runtime_claims ADD COLUMN last_hello_at TEXT`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "codex_runtime_claims", "last_live_event_at", `ALTER TABLE codex_runtime_claims ADD COLUMN last_live_event_at TEXT`); err != nil {
+				return err
+			}
+			if err := ensureColumnExists(ctx, tx, "codex_runtime_claims", "state", `ALTER TABLE codex_runtime_claims ADD COLUMN state TEXT NOT NULL DEFAULT 'unknown'`); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 13, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},

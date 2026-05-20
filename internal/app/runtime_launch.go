@@ -555,6 +555,14 @@ func (l processRuntimeLauncher) attachExistingIODHelper(ctx context.Context, req
 	if preferred == nil && req.Backend != session.BackendCodex {
 		return sessionRuntime{}, false
 	}
+	if req.Backend == session.BackendCodex {
+		for _, discovered := range index.CodexThreadCandidates(req.CodexThreadID, codexSourcePathMatchesSessionID) {
+			runtime, err := l.attachIODManifest(ctx, req, discovered)
+			if err == nil {
+				return runtime, true
+			}
+		}
+	}
 	for _, discovered := range index.Candidates(req.SessionID, preferred) {
 		if req.Backend != session.BackendCodex && preferred != nil && discovered.Manifest.GenerationID != *preferred {
 			continue
@@ -568,7 +576,7 @@ func (l processRuntimeLauncher) attachExistingIODHelper(ctx context.Context, req
 }
 
 func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runtimeLaunchRequest, discovered iodclient.DiscoveredManifest) (sessionRuntime, error) {
-	if discovered.Manifest.SessionID != req.SessionID {
+	if discovered.Manifest.SessionID != req.SessionID && req.Backend != session.BackendCodex {
 		return sessionRuntime{}, fmt.Errorf("iod manifest session id = %q, want %q", discovered.Manifest.SessionID, req.SessionID)
 	}
 	if err := verifyCodexIODManifestForAttach(req, discovered.Manifest); err != nil {
@@ -583,7 +591,7 @@ func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runti
 		streamClient: client,
 		dialer:       l.dialer,
 		manifest:     discovered.Manifest,
-		sessionID:    req.SessionID,
+		sessionID:    discovered.Manifest.SessionID,
 		generationID: generationID,
 		helperPID:    hello.HelperPID,
 		childPID:     copyIntPtr(hello.ChildPID),
@@ -619,6 +627,10 @@ func verifyCodexIODManifestForAttach(req runtimeLaunchRequest, manifest iod.Gene
 		return nil
 	}
 	threadID := strings.TrimSpace(req.CodexThreadID)
+	manifestThreadID := strings.TrimSpace(manifest.CodexThreadID)
+	if threadID != "" && manifestThreadID != "" && manifestThreadID != threadID {
+		return fmt.Errorf("attached codex IOD thread %q does not match requested thread %q", manifestThreadID, threadID)
+	}
 	requestedPath := filepath.Clean(strings.TrimSpace(req.SessionPath))
 	manifestPath := filepath.Clean(strings.TrimSpace(manifest.SessionHistoryPath))
 	if threadID == "" && requestedPath == "." {

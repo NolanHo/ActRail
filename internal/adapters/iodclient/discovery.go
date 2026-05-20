@@ -126,6 +126,42 @@ func NewManifestIndex(items []DiscoveredManifest) ManifestIndex {
 	return index
 }
 
+func (idx ManifestIndex) CodexThreadCandidates(threadID string, historyPathMatches func(string, string) bool) []DiscoveredManifest {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil
+	}
+	if historyPathMatches == nil {
+		historyPathMatches = func(string, string) bool { return false }
+	}
+	items := make([]DiscoveredManifest, 0)
+	for _, sessionItems := range idx.BySession {
+		for _, item := range sessionItems {
+			manifestThreadID := strings.TrimSpace(item.Manifest.CodexThreadID)
+			if manifestThreadID != "" && manifestThreadID == threadID {
+				items = append(items, item)
+				continue
+			}
+			historyPath := strings.TrimSpace(item.Manifest.SessionHistoryPath)
+			if manifestThreadID == "" && historyPath != "" && historyPathMatches(historyPath, threadID) {
+				items = append(items, item)
+			}
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		if left.Manifest.StartTS != right.Manifest.StartTS {
+			return left.Manifest.StartTS > right.Manifest.StartTS
+		}
+		if left.Manifest.GenerationID != right.Manifest.GenerationID {
+			return left.Manifest.GenerationID.String() > right.Manifest.GenerationID.String()
+		}
+		return left.Path > right.Path
+	})
+	return items
+}
+
 func DiscoverManifestIndex(root string) (ManifestIndex, error) {
 	items, err := DiscoverManifests(root)
 	if err != nil {

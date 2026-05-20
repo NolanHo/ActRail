@@ -235,6 +235,15 @@ func (c *sessionHistoryCache) currentPath() string {
 	return c.path
 }
 
+func (c *sessionHistoryCache) currentCodexThreadID() string {
+	if c == nil {
+		return ""
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSpace(c.threadID)
+}
+
 func (c *sessionHistoryCache) discoverCodexPath(ctx context.Context) error {
 	if c == nil || !c.codex {
 		return nil

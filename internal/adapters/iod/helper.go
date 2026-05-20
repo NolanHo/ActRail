@@ -352,6 +352,7 @@ func (h *Helper) Run(ctx context.Context) error {
 	}
 	if h.history != nil {
 		manifest.SessionHistoryPath = h.history.path
+		manifest.CodexThreadID = h.history.currentCodexThreadID()
 	}
 	if err := WriteGenerationManifest(h.paths.ManifestPath, manifest); err != nil {
 		return err
@@ -1131,10 +1132,19 @@ func (h *Helper) persistSessionHistoryPath() {
 		return
 	}
 	path := h.history.currentPath()
-	if strings.TrimSpace(path) == "" || h.manifest.SessionHistoryPath == path {
+	threadID := h.history.currentCodexThreadID()
+	if strings.TrimSpace(path) == "" && strings.TrimSpace(threadID) == "" {
 		return
 	}
-	h.manifest.SessionHistoryPath = path
+	if h.manifest.SessionHistoryPath == path && strings.TrimSpace(h.manifest.CodexThreadID) == strings.TrimSpace(threadID) {
+		return
+	}
+	if strings.TrimSpace(path) != "" {
+		h.manifest.SessionHistoryPath = path
+	}
+	if strings.TrimSpace(threadID) != "" {
+		h.manifest.CodexThreadID = threadID
+	}
 	_ = WriteGenerationManifest(h.paths.ManifestPath, h.manifest)
 }
 

@@ -175,8 +175,15 @@ func TestSessionCatalogEnforcesUniqueCodexRuntimeClaims(t *testing.T) {
 		BackendSessionID: "thread-2",
 		SourcePath:       "/tmp/codex-session.jsonl",
 		UpdatedAt:        now,
-	}); err == nil {
-		t.Fatalf("UpsertCodexRuntimeClaim(duplicate source path) succeeded, want unique constraint error")
+	}); err != nil {
+		t.Fatalf("UpsertCodexRuntimeClaim(duplicate source path) error = %v, want source path as metadata", err)
+	}
+	claim, ok, err := catalog.LookupCodexRuntimeClaimByThread(context.Background(), "thread-2")
+	if err != nil {
+		t.Fatalf("LookupCodexRuntimeClaimByThread() error = %v", err)
+	}
+	if !ok || claim.SessionID != "s_2" || claim.SourcePath != "/tmp/codex-session.jsonl" {
+		t.Fatalf("LookupCodexRuntimeClaimByThread() = %+v, %v; want s_2 source metadata", claim, ok)
 	}
 	if err := catalog.DeleteCodexRuntimeClaim(context.Background(), "s_1"); err != nil {
 		t.Fatalf("DeleteCodexRuntimeClaim() error = %v", err)
@@ -188,6 +195,65 @@ func TestSessionCatalogEnforcesUniqueCodexRuntimeClaims(t *testing.T) {
 		UpdatedAt:        now,
 	}); err != nil {
 		t.Fatalf("UpsertCodexRuntimeClaim(after release) error = %v", err)
+	}
+}
+
+func TestSessionCatalogPersistsCodexSessionCommandLedger(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "actrail.db")
+	catalog, err := OpenSessionCatalog(path)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	defer func() { _ = catalog.Close() }()
+
+	now := time.Unix(1760000000, 0).UTC()
+	if err := catalog.UpsertSessionSnapshot(context.Background(), SessionSnapshotRow{
+		Session:   SessionRow{SessionID: "s_1", Backend: "codex", CWD: "/tmp/project", CreatedAt: now, UpdatedAt: now, ActivityAt: now},
+		Queue:     []QueueItemRow{},
+		Workspace: WorkspaceStateRow{OpenPaths: []string{}, HistoryItems: []WorkspaceHistoryItemRow{}},
+		Live:      LiveStateRow{UpdatedAt: now},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot() error = %v", err)
+	}
+	command := CodexSessionCommandRow{
+		CommandID: "cmd_1",
+		SessionID: "s_1",
+		Kind:      "send",
+		Text:      "continue",
+		State:     "pending",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := catalog.InsertCodexSessionCommand(context.Background(), command); err != nil {
+		t.Fatalf("InsertCodexSessionCommand() error = %v", err)
+	}
+	open, err := catalog.ListOpenCodexSessionCommands(context.Background(), "s_1")
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands() error = %v", err)
+	}
+	if len(open) != 1 || open[0].CommandID != "cmd_1" || open[0].State != "pending" {
+		t.Fatalf("open commands = %+v, want pending cmd_1", open)
+	}
+	ok, err := catalog.UpdateCodexSessionCommandState(context.Background(), "cmd_1", "dispatching", "rt_1", "", now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("UpdateCodexSessionCommandState(dispatching) error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("UpdateCodexSessionCommandState(dispatching) ok = false, want true")
+	}
+	ok, err = catalog.UpdateCodexSessionCommandState(context.Background(), "cmd_1", "completed", "", "", now.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("UpdateCodexSessionCommandState(completed) error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("UpdateCodexSessionCommandState(completed) ok = false, want true")
+	}
+	open, err = catalog.ListOpenCodexSessionCommands(context.Background(), "s_1")
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands(after completed) error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("open commands after completed = %+v, want none", open)
 	}
 }
 

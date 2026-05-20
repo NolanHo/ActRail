@@ -327,6 +327,7 @@ func (p HelloProof) Validate() error {
 type GenerationManifest struct {
 	SessionID          session.SessionID `json:"session_id"`
 	GenerationID       GenerationID      `json:"generation_id"`
+	CodexThreadID      string            `json:"codex_thread_id,omitempty"`
 	SessionHistoryPath string            `json:"session_history_path,omitempty"`
 	HelloProof
 }

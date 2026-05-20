@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -380,11 +381,67 @@ func (r *sessionRegistry) persistLocked(record sessionRecord) error {
 		return r.store.DeleteCodexRuntimeClaim(context.Background(), record.identity.SessionID().String())
 	}
 	return r.store.UpsertCodexRuntimeClaim(context.Background(), sqlitestore.CodexRuntimeClaimRow{
-		SessionID:        record.identity.SessionID().String(),
-		BackendSessionID: backendSessionID,
-		SourcePath:       sourcePath,
-		UpdatedAt:        record.updatedAt.UTC(),
+		SessionID:         record.identity.SessionID().String(),
+		BackendSessionID:  backendSessionID,
+		SourcePath:        sourcePath,
+		RuntimeInstanceID: codexRuntimeInstanceID(record),
+		HelperPID:         codexRuntimeHelperPID(record.runtime),
+		ChildPID:          codexRuntimeChildPID(record.runtime),
+		ControlSocketPath: codexRuntimeControlSocketPath(record.runtime),
+		ChildSocketPath:   codexRuntimeChildSocketPath(record.runtime),
+		State:             codexRuntimeClaimStateFromRecord(record),
+		UpdatedAt:         record.updatedAt.UTC(),
 	})
+}
+
+func codexRuntimeInstanceID(record sessionRecord) string {
+	runtimeID, _ := record.identity.RuntimeID()
+	if runtimeID.String() != "" {
+		return runtimeID.String()
+	}
+	return ""
+}
+
+func codexRuntimeChildPID(runtime sessionRuntime) int {
+	if runtime.helper == nil || runtime.helper.childPID == nil {
+		return 0
+	}
+	return *runtime.helper.childPID
+}
+
+func codexRuntimeHelperPID(runtime sessionRuntime) int {
+	if runtime.helper == nil {
+		return 0
+	}
+	return runtime.helper.helperPID
+}
+
+func codexRuntimeControlSocketPath(runtime sessionRuntime) string {
+	if runtime.helper == nil {
+		return ""
+	}
+	return strings.TrimSpace(runtime.helper.manifest.ControlSocketPath)
+}
+
+func codexRuntimeChildSocketPath(runtime sessionRuntime) string {
+	if runtime.helper == nil || strings.TrimSpace(runtime.helper.runtimeDir) == "" {
+		return ""
+	}
+	return strings.TrimSpace(filepath.Join(runtime.helper.runtimeDir, "child.sock"))
+}
+
+func codexRuntimeClaimStateFromRecord(record sessionRecord) string {
+	snapshot := sessionTransportSnapshot(record)
+	switch snapshot.State {
+	case SessionTransportStateAttached:
+		return "attached"
+	case SessionTransportStateStarting:
+		return "unknown"
+	case SessionTransportStateBroken, SessionTransportStateFailed, SessionTransportStateEnded, SessionTransportStateSilent, SessionTransportStateStalled:
+		return "unavailable"
+	default:
+		return "unknown"
+	}
 }
 
 func (r *sessionRegistry) PersistAll() error {

@@ -750,6 +750,90 @@ func TestRuntimeLauncherAttachedCodexIODKnownThreadSkipsInitializeBootstrap(t *t
 	}
 }
 
+func TestRuntimeLauncherReusesCodexIODByThreadAcrossSession(t *testing.T) {
+	ownerSessionID := mustSessionID(t, "s_codex_thread_owner")
+	requestSessionID := mustSessionID(t, "s_codex_thread_requester")
+	generationID := mustHelperGenerationID(t, "g_codex_thread_singleton")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, ownerSessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, ownerSessionID, generationID, 1760000006)
+	manifest.CodexThreadID = "thread-singleton"
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			t.Fatal("resolveIODHelperBinPath called; thread-matched Codex IOD should be reused before launching")
+			return "", nil
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return nil, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{
+		SessionID:     requestSessionID,
+		Backend:       session.BackendCodex,
+		CWD:           t.TempDir(),
+		CodexThreadID: "thread-singleton",
+	})
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	if runtime.helper == nil {
+		t.Fatal("runtime.helper = nil")
+	}
+	if runtime.helper.sessionID != ownerSessionID {
+		t.Fatalf("attached helper sessionID = %q, want owner %q", runtime.helper.sessionID, ownerSessionID)
+	}
+	initialized, threadID, _ := runtime.codex.snapshot()
+	if !initialized || threadID != "thread-singleton" {
+		t.Fatalf("runtime codex snapshot initialized/thread = %v/%q, want true/thread-singleton", initialized, threadID)
+	}
+}
+
+func TestRuntimeLauncherRejectsMismatchedCodexIODManifestThreadOnAttach(t *testing.T) {
+	sessionID := mustSessionID(t, "s_mismatched_codex_manifest_thread")
+	generationID := mustHelperGenerationID(t, "g_mismatched_codex_manifest_thread")
+	root := filepath.Join("/tmp", fmt.Sprintf("ariod-%d", time.Now().UnixNano()))
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	manifestPath := iodclient.GenerationManifestPath(root, sessionID, generationID)
+	manifest := writeHelperManifest(t, manifestPath, sessionID, generationID, 1760000006)
+	manifest.CodexThreadID = "thread-other"
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+	cleanup := startReplayHelper(t, manifest, helperReplayScript{SkipReplay: true})
+	defer cleanup()
+	wantErr := errors.New("new helper requested")
+	launcher := processRuntimeLauncher{
+		iodRuntimeRoot: root,
+		useIODHelper:   true,
+		resolveIODHelperBinPath: func() (string, error) {
+			return "", wantErr
+		},
+		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
+			return &RuntimeHelperBinding{GenerationID: generationID}, nil
+		},
+	}
+	runtime, err := launcher.Launch(context.Background(), runtimeLaunchRequest{
+		SessionID:     sessionID,
+		Backend:       session.BackendCodex,
+		CWD:           t.TempDir(),
+		CodexThreadID: "thread-wanted",
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Launch() error = %v, want new helper after mismatched manifest thread", err)
+	}
+	if runtime.helper != nil {
+		t.Fatalf("runtime.helper = %+v, want no mismatched attachment", runtime.helper)
+	}
+}
+
 func TestRuntimeLauncherRejectsMismatchedCodexIODHistoryOnAttach(t *testing.T) {
 	sessionID := mustSessionID(t, "s_mismatched_codex_attach")
 	generationID := mustHelperGenerationID(t, "g_mismatched_codex_attach")
