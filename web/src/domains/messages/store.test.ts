@@ -358,6 +358,60 @@ describe("createMessagesStore", () => {
     expect(store.hasStreamingAssistant("s1")).toBe(true);
   });
 
+  it("dedupes Codex subagent custom messages across live commits and durable snapshots", () => {
+    const store = createMessagesStore();
+
+    store.applyLive(
+      "s1",
+      [{
+        event_id: "pi:message:sub-assistant-1",
+        type: "custom_message",
+        text: "subagent result",
+        details: {
+          custom_type: "codex-subagent-message",
+          role: "assistant",
+          text: "subagent result",
+          thread_id: "sub-thread",
+          turn_id: "sub-turn",
+          item_id: "sub-assistant-1",
+        },
+      }] as any,
+      { replace: true, offset: 1 },
+    );
+
+    store.applySnapshot(
+      "s1",
+      [{
+        seq: 4,
+        type: "custom_message",
+        text: "subagent result",
+        details: {
+          custom_type: "codex-subagent-message",
+          role: "assistant",
+          text: "subagent result",
+          thread_id: "sub-thread",
+          turn_id: "sub-turn",
+          item_id: "sub-assistant-1",
+        },
+      }] as any,
+      { offset: 4 },
+    );
+
+    expect(store.getState().bySessionId.s1).toEqual([{
+      seq: 4,
+      type: "custom_message",
+      text: "subagent result",
+      details: {
+        custom_type: "codex-subagent-message",
+        role: "assistant",
+        text: "subagent result",
+        thread_id: "sub-thread",
+        turn_id: "sub-turn",
+        item_id: "sub-assistant-1",
+      },
+    }]);
+  });
+
   it("drops duplicate durable assistant commits with different event ids", () => {
     const store = createMessagesStore();
 

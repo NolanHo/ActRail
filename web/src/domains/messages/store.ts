@@ -76,9 +76,50 @@ function toolCallID(event: MessageEvent | undefined): string {
   return typeof details?.tool_call_id === "string" ? details.tool_call_id.trim() : "";
 }
 
+function objectDetails(event: MessageEvent | undefined): Record<string, unknown> | null {
+  return event?.details && typeof event.details === "object"
+    ? event.details as Record<string, unknown>
+    : null;
+}
+
+function detailString(details: Record<string, unknown> | null, field: string): string {
+  const value = details?.[field];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function codexSubagentMessageKey(event: MessageEvent | undefined): string {
+  if (!event) {
+    return "";
+  }
+  const type = typeof event.type === "string" ? event.type.trim() : typeof event.kind === "string" ? event.kind.trim() : "";
+  if (type !== "custom_message") {
+    return "";
+  }
+  const details = objectDetails(event);
+  if (detailString(details, "custom_type") !== "codex-subagent-message") {
+    return "";
+  }
+  const itemID = detailString(details, "item_id");
+  if (itemID) {
+    return `custom_message:codex-subagent:${itemID}`;
+  }
+  const threadID = detailString(details, "thread_id");
+  const turnID = detailString(details, "turn_id");
+  const role = detailString(details, "role");
+  const text = typeof event.text === "string" ? event.text.trim() : detailString(details, "text");
+  if (threadID && turnID && role && text) {
+    return `custom_message:codex-subagent:${threadID}:${turnID}:${role}:${text}`;
+  }
+  return "";
+}
+
 function semanticMessageKey(event: MessageEvent | undefined): string | null {
   if (!event) {
     return null;
+  }
+  const subagentKey = codexSubagentMessageKey(event);
+  if (subagentKey) {
+    return subagentKey;
   }
   const type = typeof event.type === "string" ? event.type.trim() : typeof event.kind === "string" ? event.kind.trim() : "";
   if (type === "tool" || type === "tool_result") {
