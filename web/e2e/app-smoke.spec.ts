@@ -11,22 +11,23 @@ const bootstrap = {
   ok: true,
   protocol_version: 1,
   capabilities: {
-    ws_realtime: true,
+    ws_realtime: false,
     voice: false,
     harness: false,
     notifications: false,
     workspace_read: true,
     workspace_write: true,
-    exp_connect_transport: false,
+    exp_connect_transport: true,
   },
   ws: {
-    url: "/api/ws",
-    heartbeat_interval_ms: 15000,
+    url: "",
+    heartbeat_interval_ms: 0,
   },
   transport: {
-    default: "ws",
-    experimental: [],
+    default: "connect",
+    experimental: ["connect-proto"],
     connect_path: "/api/connect",
+    wire_format: "json",
   },
   launch_defaults: {
     default_backend: "codex",
@@ -74,10 +75,6 @@ test.beforeEach(async ({ page }) => {
       contentType: "application/json",
       body: JSON.stringify({ payloadJson: JSON.stringify(emptySessions) }),
     });
-  });
-
-  await page.route("**/api/ws", async (route) => {
-    await route.abort();
   });
 
   await page.route("**/api/**", async (route) => {

@@ -5,8 +5,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type IDSource interface {
@@ -106,31 +104,6 @@ func streamSortKey(name StreamName) int {
 
 type frameWriter interface {
 	WriteFrames(frames ...Frame) error
-}
-
-type websocketFrameWriter struct {
-	mu    sync.Mutex
-	conn  *websocket.Conn
-	codec Codec
-}
-
-func newWebsocketFrameWriter(conn *websocket.Conn, codec Codec) *websocketFrameWriter {
-	return &websocketFrameWriter{conn: conn, codec: codec}
-}
-
-func (w *websocketFrameWriter) WriteFrames(frames ...Frame) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	for _, frame := range frames {
-		encoded, err := w.codec.Encode(frame)
-		if err != nil {
-			return err
-		}
-		if err := w.conn.WriteMessage(websocket.TextMessage, encoded); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 type ConnectionState struct {

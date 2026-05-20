@@ -48,10 +48,7 @@ describe("createSessionsStore", () => {
       cwdGroups: {},
       tmuxAvailable: false,
       realtimeTransport: {
-        active: "ws",
-        connectAvailable: false,
-        connectOptIn: false,
-        connectEligible: false,
+        active: "connect",
         connectPath: "/api/connect",
         wireFormat: "json",
       },
@@ -64,7 +61,7 @@ describe("createSessionsStore", () => {
       sessions: [{ session_id: "s1" }, { session_id: "s2" }],
     } as never);
     vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
-      capabilities: { ws_realtime: true, voice: false, harness: false, notifications: false },
+      capabilities: { voice: false, harness: false, notifications: false },
       ui: { deferred_features: ["voice", "harness", "notifications"] },
       recent_cwds: ["/tmp/project"],
       cwd_groups: { "/tmp/project": { label: "Project", collapsed: true } },
@@ -82,7 +79,7 @@ describe("createSessionsStore", () => {
       activeSessionId: "s2",
       loading: false,
       bootstrapLoaded: true,
-      bootstrapCapabilities: { ws_realtime: true, voice: false, harness: false, notifications: false },
+      bootstrapCapabilities: { voice: false, harness: false, notifications: false },
       deferredFeatures: ["voice", "harness", "notifications"],
       remainingCount: 0,
       newSessionDefaults: { default_backend: "pi" },
@@ -90,24 +87,19 @@ describe("createSessionsStore", () => {
       cwdGroups: { "/tmp/project": { label: "Project", collapsed: true } },
       tmuxAvailable: true,
       realtimeTransport: {
-        active: "ws",
-        connectAvailable: false,
-        connectOptIn: false,
-        connectEligible: false,
+        active: "connect",
         connectPath: "/api/connect",
         wireFormat: "json",
       },
     });
   });
 
-  it("uses Connect transport for opt-in with server capability", async () => {
-    window.localStorage.setItem("actrail.expTransport", "connect");
+  it("uses Connect transport with optional proto wire format", async () => {
     window.localStorage.setItem("actrail.expConnectWireFormat", "proto");
     vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
       protocol_version: 1,
-      capabilities: { ws_realtime: true, exp_connect_transport: true },
-      ws: { url: "/api/ws", heartbeat_interval_ms: 15000 },
-      transport: { default: "ws", experimental: ["connect"], connect_path: "/api/connect" },
+      capabilities: {},
+      transport: { default: "connect", experimental: ["connect-proto"], connect_path: "/api/connect", wire_format: "json" },
     } as never);
 
     const store = createSessionsStore();
@@ -115,41 +107,33 @@ describe("createSessionsStore", () => {
 
     expect(configureRealtimeClient).toHaveBeenCalledWith({
       protocolVersion: 1,
-      url: "/api/ws",
-      heartbeatIntervalMs: 15000,
-      transport: "connect",
       connectBasePath: "/api/connect",
       connectWireFormat: "proto",
     });
     expect(store.getState().realtimeTransport).toEqual({
       active: "connect",
-      connectAvailable: true,
-      connectOptIn: true,
-      connectEligible: true,
       connectPath: "/api/connect",
       wireFormat: "proto",
     });
   });
 
-  it("uses Connect transport on mobile when Connect is opted in", async () => {
+  it("uses Connect transport on mobile by default", async () => {
     const originalInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 480 });
-    window.localStorage.setItem("actrail.expTransport", "connect");
     vi.mocked(api.getSessionsBootstrap).mockResolvedValue({
-      capabilities: { ws_realtime: true, exp_connect_transport: true },
-      ws: { url: "/api/ws" },
-      transport: { connect_path: "/api/connect" },
+      capabilities: {},
+      transport: { default: "connect", connect_path: "/api/connect", wire_format: "json" },
     } as never);
 
     const store = createSessionsStore();
     await store.refreshBootstrap();
 
-    expect(configureRealtimeClient).toHaveBeenCalledWith(expect.objectContaining({ transport: "connect" }));
+    expect(configureRealtimeClient).toHaveBeenCalledWith(expect.objectContaining({
+      connectBasePath: "/api/connect",
+      connectWireFormat: "json",
+    }));
     expect(store.getState().realtimeTransport).toEqual({
       active: "connect",
-      connectAvailable: true,
-      connectOptIn: true,
-      connectEligible: true,
       connectPath: "/api/connect",
       wireFormat: "json",
     });

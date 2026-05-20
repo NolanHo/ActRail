@@ -10,6 +10,13 @@ vi.mock("../domains/realtime/client", () => ({
   sendRealtimeCommand: vi.fn(),
 }));
 
+function connectPayloadJson(value: unknown) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 describe("getJson", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -87,14 +94,12 @@ describe("api", () => {
     vi.clearAllMocks();
   });
 
-  it("loads sessions through Connect proto by default", async () => {
+  it("loads sessions through Connect JSON by default", async () => {
     const signal = new AbortController().signal;
-    const payload = new TextEncoder().encode(JSON.stringify({ sessions: [] }));
-    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, { payloadJson: payload }));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      json: async () => ({ payloadJson: connectPayloadJson({ sessions: [] }) }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -103,7 +108,7 @@ describe("api", () => {
     expect(response).toEqual({ sessions: [] });
     expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/ListSessions", expect.objectContaining({
       method: "POST",
-      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
       signal,
     }));
   });
@@ -379,7 +384,11 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.listSessions({ groupKey: "/work/docs", offset: 5, limit: 50, agentBackend: "pi", cwd: "/work/docs", title: "Docs" })).resolves.toEqual({ sessions: [{ session_id: "sess-6" }] });
+    await expect(api.listSessions(
+      { groupKey: "/work/docs", offset: 5, limit: 50, agentBackend: "pi", cwd: "/work/docs", title: "Docs" },
+      undefined,
+      { basePath: "/api/connect", wireFormat: "proto" },
+    )).resolves.toEqual({ sessions: [{ session_id: "sess-6" }] });
     const requestBody = fetchMock.mock.calls[0]?.[1]?.body as Uint8Array;
     const request = fromBinary(ListSessionsRequestSchema, requestBody);
     expect(request).toMatchObject({ groupKey: "/work/docs", offset: 5, limit: 50, agentBackend: "pi", cwd: "/work/docs", title: "Docs" });
@@ -489,15 +498,16 @@ describe("api", () => {
     });
   });
 
-  it("loads messages through Connect proto by default", async () => {
-    const body = toBinary(SessionMessagesResponseSchema, create(SessionMessagesResponseSchema, {
-      eventsJson: [new TextEncoder().encode(JSON.stringify({ seq: 1, role: "user", text: "hi" }))],
-      tailSeq: 1n,
-    }));
+  it("loads messages through Connect JSON by default", async () => {
+    const payload = {
+      events: [{ seq: 1, role: "user", text: "hi" }],
+      items: [{ seq: 1, role: "user", text: "hi" }],
+      tail_seq: 1,
+    };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      text: async () => JSON.stringify(payload),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -507,7 +517,7 @@ describe("api", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/SessionMessages", expect.objectContaining({
       method: "POST",
-      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
     }));
   });
 
@@ -523,7 +533,17 @@ describe("api", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.listMessages("session-1", false, undefined, 0, undefined, 200);
+    await api.listMessages(
+      "session-1",
+      false,
+      undefined,
+      0,
+      undefined,
+      200,
+      undefined,
+      false,
+      { basePath: "/api/connect", wireFormat: "proto" },
+    );
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const requestBody = init.body as Uint8Array;
@@ -598,7 +618,7 @@ describe("api", () => {
     });
   });
 
-  it("requests session state snapshots through Connect proto by default", async () => {
+  it("requests session state snapshots through Connect JSON by default", async () => {
     const payload: LiveSessionResponse = {
       ok: true,
       session_id: "session-1",
@@ -607,20 +627,17 @@ describe("api", () => {
       events: [{ id: "m2" }],
       requests: [{ id: "r1", method: "select" }],
     };
-    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, {
-      payloadJson: new TextEncoder().encode(JSON.stringify(payload)),
-    }));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      json: async () => ({ payloadJson: connectPayloadJson(payload) }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getLiveSession("session-1", 4)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith("api/connect/actrail.v1.SessionCommandService/SessionState", expect.objectContaining({
       method: "POST",
-      headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
     }));
   });
 
@@ -634,13 +651,10 @@ describe("api", () => {
       requests_version: "v1",
       requests: [{ id: "r1", method: "select" }],
     };
-    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, {
-      payloadJson: new TextEncoder().encode(JSON.stringify(payload)),
-    }));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      json: async () => ({ payloadJson: connectPayloadJson(payload) }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -649,7 +663,7 @@ describe("api", () => {
       "api/connect/actrail.v1.SessionCommandService/SessionState",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
       }),
     );
   });
@@ -666,13 +680,10 @@ describe("api", () => {
       requests_version: "v1",
       requests: [{ id: "r1", method: "select" }],
     };
-    const body = toBinary(CommandResponseSchema, create(CommandResponseSchema, {
-      payloadJson: new TextEncoder().encode(JSON.stringify(payload)),
-    }));
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      json: async () => ({ payloadJson: connectPayloadJson(payload) }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -681,7 +692,7 @@ describe("api", () => {
       "api/connect/actrail.v1.SessionCommandService/SessionState",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
       }),
     );
   });

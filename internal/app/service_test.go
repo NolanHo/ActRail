@@ -113,8 +113,8 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	if details.LastUpdatedTS != timestampSeconds(now) || details.LastActivityTS != timestampSeconds(now) {
 		t.Fatalf("SessionDetails() timestamps = (%v, %v), want (%v, %v)", details.LastUpdatedTS, details.LastActivityTS, timestampSeconds(now), timestampSeconds(now))
 	}
-	if !details.Capabilities.WSRealtime || !details.Capabilities.PIUI || !details.Capabilities.WorkspaceRead {
-		t.Fatalf("SessionDetails().Capabilities = %+v, want enabled ws/pi_ui/workspace_read", details.Capabilities)
+	if details.Capabilities.WSRealtime || !details.Capabilities.PIUI || !details.Capabilities.WorkspaceRead {
+		t.Fatalf("SessionDetails().Capabilities = %+v, want disabled ws and enabled pi_ui/workspace_read", details.Capabilities)
 	}
 
 	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})

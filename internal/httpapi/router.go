@@ -22,7 +22,6 @@ import (
 type Router struct {
 	cfg     config.Config
 	app     app.Service
-	ws      http.Handler
 	connect http.Handler
 }
 
@@ -90,15 +89,15 @@ type createSelfReminderRequest struct {
 	CreatedBy       string `json:"created_by"`
 }
 
-func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHandlers ...http.Handler) http.Handler {
+func New(cfg config.Config, svc app.Service, connectHandlers ...http.Handler) http.Handler {
 	var connectHandler http.Handler
 	if len(connectHandlers) > 0 {
-		connectHandler = connectHandlers[0]
+		connectHandler = connectHandlers[len(connectHandlers)-1]
 	}
 	if connectHandler == nil {
 		connectHandler = http.NotFoundHandler()
 	}
-	r := Router{cfg: cfg, app: svc, ws: wsHandler, connect: connectHandler}
+	r := Router{cfg: cfg, app: svc, connect: connectHandler}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", r.healthz)
@@ -167,7 +166,6 @@ func New(cfg config.Config, svc app.Service, wsHandler http.Handler, connectHand
 	mux.Handle("POST /api/sessions/{session_id}/delete", r.requireAuth(http.HandlerFunc(r.deleteSession)))
 	mux.Handle("POST /api/sessions/{session_id}/restart", r.requireAuth(http.HandlerFunc(r.restartSession)))
 	mux.Handle("POST /api/sessions/{session_id}/handoff", r.requireAuth(http.HandlerFunc(r.handoffSession)))
-	mux.Handle("GET /api/ws", r.requireAuth(r.ws))
 	mux.Handle("/api/connect/", r.requireAuth(r.connect))
 
 	return traceMiddleware(mux)

@@ -129,12 +129,19 @@ func NewHandler(controller app.SessionController, broker *Broker, opts ...Handle
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	requestID := connectRequestID(req)
+	wireFormat := connectWireFormat(req)
 	operation := req.Method + " " + req.URL.Path
 	ctx, span := otel.Tracer("actrail/connect").Start(req.Context(), operation, trace.WithAttributes(
 		attribute.String("http.request.method", req.Method),
 		attribute.String("url.path", req.URL.Path),
+		attribute.String("connect.wire_format", wireFormat),
 	))
 	defer span.End()
+	if requestID != "" {
+		span.SetAttributes(attribute.String("request.id", requestID))
+		w.Header().Set("X-Request-Id", requestID)
+	}
 	traceID := span.SpanContext().TraceID().String()
 	if traceID == "00000000000000000000000000000000" {
 		traceID = ""
@@ -176,14 +183,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 	started := time.Now()
 	span := trace.SpanFromContext(req.Context())
-	span.SetAttributes(attribute.String("rpc.method", "ListSessions"))
+	wireFormat := connectWireFormat(req)
+	span.SetAttributes(attribute.String("rpc.method", "ListSessions"), attribute.String("connect.wire_format", wireFormat))
 	if h.controller == nil {
 		span.SetStatus(codes.Error, "session controller unavailable")
 		span.AddEvent("connect.error", trace.WithAttributes(attribute.String("error.code", "unavailable")))
+		h.logConnect(req, "connect command", "ListSessions", "", "", wireFormat, http.StatusServiceUnavailable, started, "unavailable", errors.New("session controller unavailable"))
 		writeConnectError(w, http.StatusServiceUnavailable, "unavailable", "session controller unavailable")
 		return
 	}
-	protoMode := requestWantsProto(req.Header.Get("Content-Type"))
+	protoMode := wireFormat == "proto"
 	span.SetAttributes(attribute.Bool("connect.proto", protoMode))
 	var body listSessionsRequest
 	if protoMode {
@@ -191,6 +200,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			span.SetStatus(codes.Error, "invalid protobuf")
 			span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_protobuf")))
+			h.logConnect(req, "connect command", "ListSessions", "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
 			return
 		}
@@ -198,6 +208,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			span.SetStatus(codes.Error, "invalid protobuf")
 			span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_protobuf")))
+			h.logConnect(req, "connect command", "ListSessions", "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
 			return
 		}
@@ -205,6 +216,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 	} else if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		span.SetStatus(codes.Error, "invalid json")
 		span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_json")))
+		h.logConnect(req, "connect command", "ListSessions", "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid json")
 		return
 	}
@@ -229,7 +241,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 		status := statusForCommandError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.AddEvent("connect.error", trace.WithAttributes(attribute.Int("http.response.status_code", status), attribute.String("error.code", codeForCommandError(err))))
-		h.logger.Info("connect command", zap.String("method", "ListSessions"), zap.Int("status", status), zap.Int64("latency_ms", time.Since(started).Milliseconds()), zap.Error(err))
+		h.logConnect(req, "connect command", "ListSessions", "", "", wireFormat, status, started, codeForCommandError(err), err)
 		writeConnectError(w, status, codeForCommandError(err), err.Error())
 		return
 	}
@@ -237,12 +249,13 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.AddEvent("connect.error", trace.WithAttributes(attribute.String("error.code", "internal")))
+		h.logConnect(req, "connect command", "ListSessions", "", "", wireFormat, http.StatusInternalServerError, started, "internal", err)
 		writeConnectError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	span.SetAttributes(attribute.Int("sessions.result_count", len(payload.Items)), attribute.Int("connect.response_bytes", len(encoded)), attribute.Int64("connect.latency_ms", time.Since(started).Milliseconds()))
 	span.AddEvent("connect.response.encoded")
-	h.logger.Info("connect command", zap.String("method", "ListSessions"), zap.Int("status", http.StatusOK), zap.Int64("latency_ms", time.Since(started).Milliseconds()))
+	h.logConnect(req, "connect command", "ListSessions", "", "", wireFormat, http.StatusOK, started, "", nil)
 	traceID := traceIDFromContext(req.Context())
 	if protoMode {
 		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(encoded, traceID))
@@ -254,21 +267,24 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, req *http.Request) {
 func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method string) {
 	started := time.Now()
 	span := trace.SpanFromContext(req.Context())
-	span.SetAttributes(attribute.String("rpc.method", method))
+	wireFormat := connectWireFormat(req)
+	span.SetAttributes(attribute.String("rpc.method", method), attribute.String("connect.wire_format", wireFormat))
 	if h.controller == nil {
 		span.SetStatus(codes.Error, "session controller unavailable")
 		span.AddEvent("connect.error", trace.WithAttributes(attribute.String("error.code", "unavailable")))
+		h.logConnect(req, "connect command", method, "", "", wireFormat, http.StatusServiceUnavailable, started, "unavailable", errors.New("session controller unavailable"))
 		writeConnectError(w, http.StatusServiceUnavailable, "unavailable", "session controller unavailable")
 		return
 	}
-	proto := requestWantsProto(req.Header.Get("Content-Type"))
-	span.SetAttributes(attribute.Bool("connect.proto", proto))
+	protoMode := wireFormat == "proto"
+	span.SetAttributes(attribute.Bool("connect.proto", protoMode))
 	var body commandRequest
-	if proto {
+	if protoMode {
 		data, err := readProtoBody(req.Body)
 		if err != nil {
 			span.SetStatus(codes.Error, "invalid protobuf")
 			span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_protobuf")))
+			h.logConnect(req, "connect command", method, "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
 			return
 		}
@@ -276,12 +292,14 @@ func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method
 		if err != nil {
 			span.SetStatus(codes.Error, "invalid protobuf")
 			span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_protobuf")))
+			h.logConnect(req, "connect command", method, "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
 			return
 		}
 	} else if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		span.SetStatus(codes.Error, "invalid json")
 		span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_json")))
+		h.logConnect(req, "connect command", method, "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid json")
 		return
 	}
@@ -289,6 +307,7 @@ func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_session_id")))
+		h.logConnect(req, "connect command", method, "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return
 	}
@@ -299,15 +318,15 @@ func (h *Handler) handleCommand(w http.ResponseWriter, req *http.Request, method
 		status := statusForCommandError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.AddEvent("connect.error", trace.WithAttributes(attribute.Int("http.response.status_code", status), attribute.String("error.code", codeForCommandError(err))))
-		h.logger.Info("connect command", zap.String("method", method), zap.Int("status", status), zap.Int64("latency_ms", time.Since(started).Milliseconds()), zap.Error(err))
+		h.logConnect(req, "connect command", method, sessionID.String(), "", wireFormat, status, started, codeForCommandError(err), err)
 		writeConnectError(w, status, codeForCommandError(err), err.Error())
 		return
 	}
 	span.SetAttributes(attribute.Int("connect.response_bytes", len(payload)), attribute.Int64("connect.latency_ms", time.Since(started).Milliseconds()))
 	span.AddEvent("connect.response.encoded")
-	h.logger.Info("connect command", zap.String("method", method), zap.Int("status", http.StatusOK), zap.Int64("latency_ms", time.Since(started).Milliseconds()))
+	h.logConnect(req, "connect command", method, sessionID.String(), "", wireFormat, http.StatusOK, started, "", nil)
 	traceID := traceIDFromContext(req.Context())
-	if proto {
+	if protoMode {
 		writeConnectProto(w, http.StatusOK, encodeCommandResponseProto(payload, traceID))
 		return
 	}
@@ -344,24 +363,40 @@ func (h *Handler) dispatchCommand(ctx context.Context, method string, sessionID 
 }
 
 func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method string) {
+	started := time.Now()
+	span := trace.SpanFromContext(req.Context())
+	wireFormat := connectWireFormat(req)
+	span.SetAttributes(attribute.String("rpc.method", method), attribute.String("connect.wire_format", wireFormat))
 	if method != "Subscribe" {
+		span.SetStatus(codes.Error, "unknown event method")
+		span.AddEvent("connect.error", trace.WithAttributes(attribute.String("error.code", "unimplemented")))
+		h.logConnect(req, "connect stream", method, "", "", wireFormat, http.StatusNotFound, started, "unimplemented", fmt.Errorf("unknown event method %q", method))
 		writeConnectError(w, http.StatusNotFound, "unimplemented", "unknown event method")
 		return
 	}
-	proto := requestWantsProto(req.Header.Get("Content-Type"))
+	protoMode := wireFormat == "proto"
 	var body subscribeRequest
-	if proto {
+	if protoMode {
 		data, err := readProtoBody(req.Body)
 		if err != nil {
+			span.SetStatus(codes.Error, "invalid protobuf")
+			span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_protobuf")))
+			h.logConnect(req, "connect stream", method, "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
 			return
 		}
 		body, err = decodeSubscribeRequestProto(data)
 		if err != nil {
+			span.SetStatus(codes.Error, "invalid protobuf")
+			span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_protobuf")))
+			h.logConnect(req, "connect stream", method, "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 			writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid protobuf")
 			return
 		}
 	} else if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		span.SetStatus(codes.Error, "invalid json")
+		span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_json")))
+		h.logConnect(req, "connect stream", method, "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid json")
 		return
 	}
@@ -369,7 +404,8 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 	if after == 0 {
 		after = body.AfterEventIDRaw
 	}
-	if proto {
+	span.SetAttributes(attribute.Int64("connect.stream.after_event_id", int64(after)))
+	if protoMode {
 		w.Header().Set("Content-Type", "application/connect+proto")
 	} else {
 		w.Header().Set("Content-Type", "application/connect+json")
@@ -379,12 +415,28 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 	flusher, _ := w.(http.Flusher)
 	writeEvent := func(event EventEnvelope) bool {
 		var err error
-		if proto {
+		eventSessionID := sessionIDFromStream(event.Stream)
+		eventLagMS := h.now().UnixMilli() - event.UnixMillis
+		if eventLagMS < 0 {
+			eventLagMS = 0
+		}
+		span.AddEvent("connect.stream.event", trace.WithAttributes(
+			attribute.Int64("event.id", int64(event.ID)),
+			attribute.String("event.type", event.Type),
+			attribute.String("event.stream", event.Stream),
+			attribute.Int64("event.lag_ms", eventLagMS),
+			attribute.String("session.id", eventSessionID),
+		))
+		h.logConnectEvent(req, method, eventSessionID, event.Stream, wireFormat, event.ID, event.Type, eventLagMS, started)
+		if protoMode {
 			err = writeConnectProtoEnvelope(w, event)
 		} else {
 			err = writeConnectEnvelope(w, event)
 		}
 		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			span.AddEvent("connect.error", trace.WithAttributes(attribute.String("error.code", "stream_write"), attribute.String("connect.stream.name", event.Stream), attribute.String("session.id", eventSessionID)))
+			h.logConnect(req, "connect stream", method, eventSessionID, event.Stream, wireFormat, http.StatusInternalServerError, started, "stream_write", err)
 			return false
 		}
 		if flusher != nil {
@@ -403,8 +455,14 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 	for {
 		select {
 		case <-req.Context().Done():
+			h.logConnect(req, "connect stream closed", method, "", "", wireFormat, http.StatusOK, started, "", nil)
 			return
-		case event := <-ch:
+		case event, ok := <-ch:
+			if !ok {
+				span.AddEvent("connect.stream.closed", trace.WithAttributes(attribute.String("error.code", "subscriber_slow")))
+				h.logConnect(req, "connect stream closed", method, "", "", wireFormat, http.StatusOK, started, "subscriber_slow", nil)
+				return
+			}
 			if !writeEvent(event) {
 				return
 			}
@@ -536,6 +594,83 @@ func writeConnectError(w http.ResponseWriter, status int, code, message string) 
 	writeConnectJSON(w, status, connectError{Code: code, Message: message, TraceID: w.Header().Get("X-Trace-Id")})
 }
 
+func connectWireFormat(req *http.Request) string {
+	if requestWantsProto(req.Header.Get("Content-Type")) {
+		return "proto"
+	}
+	return "json"
+}
+
+func connectRequestID(req *http.Request) string {
+	for _, name := range []string{"X-Request-Id", "X-Request-ID", "X-Correlation-Id"} {
+		if value := strings.TrimSpace(req.Header.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func sessionIDFromStream(stream string) string {
+	if !strings.HasPrefix(stream, "session:") {
+		return ""
+	}
+	rest := strings.TrimPrefix(stream, "session:")
+	if idx := strings.IndexByte(rest, ':'); idx >= 0 {
+		rest = rest[:idx]
+	}
+	return strings.TrimSpace(rest)
+}
+
+func (h *Handler) logConnect(req *http.Request, message, method, sessionID, stream, wireFormat string, status int, started time.Time, errorCode string, err error) {
+	fields := []zap.Field{
+		zap.String("rpc.method", method),
+		zap.String("connect.wire_format", wireFormat),
+		zap.Int("http.response.status_code", status),
+		zap.Int64("connect.latency_ms", time.Since(started).Milliseconds()),
+	}
+	if requestID := connectRequestID(req); requestID != "" {
+		fields = append(fields, zap.String("request.id", requestID))
+	}
+	if traceID := traceIDFromContext(req.Context()); traceID != "" {
+		fields = append(fields, zap.String("trace_id", traceID))
+	}
+	if sessionID != "" {
+		fields = append(fields, zap.String("session.id", sessionID))
+	}
+	if stream != "" {
+		fields = append(fields, zap.String("event.stream", stream))
+	}
+	if errorCode != "" {
+		fields = append(fields, zap.String("error.code", errorCode))
+	}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	h.logger.Info(message, fields...)
+}
+
+func (h *Handler) logConnectEvent(req *http.Request, method, sessionID, stream, wireFormat string, eventID uint64, eventType string, eventLagMS int64, started time.Time) {
+	fields := []zap.Field{
+		zap.String("rpc.method", method),
+		zap.String("connect.wire_format", wireFormat),
+		zap.Int64("connect.latency_ms", time.Since(started).Milliseconds()),
+		zap.Uint64("event.id", eventID),
+		zap.String("event.type", eventType),
+		zap.String("event.stream", stream),
+		zap.Int64("event.lag_ms", eventLagMS),
+	}
+	if requestID := connectRequestID(req); requestID != "" {
+		fields = append(fields, zap.String("request.id", requestID))
+	}
+	if traceID := traceIDFromContext(req.Context()); traceID != "" {
+		fields = append(fields, zap.String("trace_id", traceID))
+	}
+	if sessionID != "" {
+		fields = append(fields, zap.String("session.id", sessionID))
+	}
+	h.logger.Info("connect stream event", fields...)
+}
+
 func traceIDFromContext(ctx context.Context) string {
 	span := trace.SpanContextFromContext(ctx)
 	if !span.IsValid() {
@@ -583,18 +718,25 @@ func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request
 	ctx, span := otel.Tracer("actrail/connect").Start(req.Context(), "connect.SessionMessages")
 	defer span.End()
 	started := time.Now()
+	wireFormat := connectWireFormat(req)
+	if requestID := connectRequestID(req); requestID != "" {
+		span.SetAttributes(attribute.String("request.id", requestID))
+	}
+	span.SetAttributes(attribute.String("rpc.method", "SessionMessages"), attribute.String("connect.wire_format", wireFormat))
 	if h.controller == nil {
 		span.SetStatus(codes.Error, "session controller unavailable")
 		span.AddEvent("connect.error", trace.WithAttributes(attribute.String("error.code", "unavailable")))
+		h.logConnect(req, "connect command", "SessionMessages", "", "", wireFormat, http.StatusServiceUnavailable, started, "unavailable", errors.New("session controller unavailable"))
 		writeConnectError(w, http.StatusServiceUnavailable, "unavailable", "session controller unavailable")
 		return
 	}
-	protoMode := requestWantsProto(req.Header.Get("Content-Type"))
+	protoMode := wireFormat == "proto"
 	span.SetAttributes(attribute.Bool("connect.proto", protoMode))
 	body, err := decodeSessionMessagesRequest(req, protoMode)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "session_messages")))
+		h.logConnect(req, "connect command", "SessionMessages", "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return
 	}
@@ -602,6 +744,7 @@ func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.AddEvent("connect.decode_error", trace.WithAttributes(attribute.String("error.type", "invalid_session_id")))
+		h.logConnect(req, "connect command", "SessionMessages", "", "", wireFormat, http.StatusBadRequest, started, "invalid_argument", err)
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return
 	}
@@ -632,11 +775,13 @@ func (h *Handler) handleSessionMessages(w http.ResponseWriter, req *http.Request
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.AddEvent("connect.error", trace.WithAttributes(attribute.Int("http.response.status_code", statusForCommandError(err)), attribute.String("error.code", codeForCommandError(err))))
+		h.logConnect(req, "connect command", "SessionMessages", sessionID.String(), "", wireFormat, statusForCommandError(err), started, codeForCommandError(err), err)
 		writeConnectError(w, statusForCommandError(err), codeForCommandError(err), err.Error())
 		return
 	}
 	span.SetAttributes(attribute.Int("messages.result_count", len(payload.Items)), attribute.Int64("connect.latency_ms", time.Since(started).Milliseconds()))
 	span.AddEvent("connect.response.encoded")
+	h.logConnect(req, "connect command", "SessionMessages", sessionID.String(), "", wireFormat, http.StatusOK, started, "", nil)
 	traceID := traceIDFromContext(req.Context())
 	if protoMode {
 		writeConnectProto(w, http.StatusOK, encodeSessionMessagesResponseProto(payload, traceID))

@@ -1,7 +1,7 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import { CommandResponseSchema } from "../../gen/actrail/v1/transport_pb";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connect, sendRealtimeCommand, configureRealtimeClient } from "./client";
+import { connect, disconnect, sendRealtimeCommand, configureRealtimeClient } from "./client";
 
 const encoder = new TextEncoder();
 
@@ -18,16 +18,17 @@ function payloadJson(value: unknown) {
 
 describe("Connect realtime transport", () => {
   afterEach(() => {
+    disconnect();
     vi.restoreAllMocks();
-    configureRealtimeClient({ transport: "ws", url: null });
+    configureRealtimeClient({ connectBasePath: "/api/connect", connectWireFormat: "json" });
   });
 
   it("opens the Connect EventService stream and reconnects when the base path changes", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockReturnValue(new Promise(() => undefined) as never);
-    configureRealtimeClient({ transport: "connect", connectBasePath: "/api/connect-a" });
+    configureRealtimeClient({ connectBasePath: "/api/connect-a" });
 
     await connect();
-    configureRealtimeClient({ transport: "connect", connectBasePath: "/api/connect-b" });
+    configureRealtimeClient({ connectBasePath: "/api/connect-b" });
     await Promise.resolve();
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, "api/connect-a/actrail.v1.EventService/Subscribe", expect.objectContaining({ method: "POST" }));
@@ -38,7 +39,7 @@ describe("Connect realtime transport", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       payloadJson: payloadJson({ busy: true }),
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    configureRealtimeClient({ transport: "connect", connectBasePath: "/api/connect" });
+    configureRealtimeClient({ connectBasePath: "/api/connect" });
 
     const response = await sendRealtimeCommand({
       type: "send",
@@ -58,7 +59,7 @@ describe("Connect realtime transport", () => {
       status: 200,
       headers: { "Content-Type": "application/connect+proto" },
     }));
-    configureRealtimeClient({ transport: "connect", connectBasePath: "/api/connect", connectWireFormat: "proto" });
+    configureRealtimeClient({ connectBasePath: "/api/connect", connectWireFormat: "proto" });
 
     const response = await sendRealtimeCommand({
       type: "send",

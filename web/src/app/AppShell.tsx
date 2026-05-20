@@ -19,7 +19,7 @@ import { useAppShellAudio } from "./app-shell/useAppShellAudio";
 import { useAppShellEvents } from "./app-shell/useAppShellEvents";
 import { useAppShellNotifications } from "./app-shell/useAppShellNotifications";
 import { useAppShellSessionEffects } from "./app-shell/useAppShellSessionEffects";
-import { setConnectTransportOptIn, setConnectWireFormat } from "../domains/sessions/store";
+import { setConnectWireFormat } from "../domains/sessions/store";
 import {
   shallowEqual,
   useLiveSessionStoreApi,
@@ -973,10 +973,6 @@ export function AppShell() {
             onChangeNarrationEnabled={setNarrationEnabledDraft}
             onChangeReplySoundEnabled={setReplySoundEnabled}
             onChangeThemeMode={setThemeMode}
-            onChangeTransportOptIn={(enabled) => {
-              setConnectTransportOptIn(enabled);
-              void sessionsStoreApi.refreshBootstrap();
-            }}
             onChangeConnectWireFormat={(value) => {
               setConnectWireFormat(value);
               void sessionsStoreApi.refreshBootstrap();

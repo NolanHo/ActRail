@@ -36,7 +36,6 @@ interface VoiceSettingsDialogProps {
   onChangeNarrationEnabled(value: boolean): void;
   onChangeReplySoundEnabled(value: boolean): void;
   onChangeThemeMode(value: ThemeMode): void;
-  onChangeTransportOptIn?(value: boolean): void;
   onChangeConnectWireFormat?(value: ConnectWireFormat): void;
   onChangeSupervisorProviderApiKey(value: string): void;
   onChangeSupervisorProviderBaseUrl(value: string): void;
@@ -74,7 +73,6 @@ export function VoiceSettingsDialog({
   onChangeNarrationEnabled,
   onChangeReplySoundEnabled,
   onChangeThemeMode,
-  onChangeTransportOptIn,
   onChangeConnectWireFormat,
   onChangeSupervisorProviderApiKey,
   onChangeSupervisorProviderBaseUrl,
@@ -286,36 +284,20 @@ export function VoiceSettingsDialog({
 
             <TabsContent value="status" className="space-y-4">
               <div className="fieldBlock toggleField">
-                <span className="fieldLabel">Experimental transport</span>
-                <label className="checkField">
-                  <input
-                    type="checkbox"
-                    checked={transportStatus?.connectOptIn === true}
-                    onChange={(event) => onChangeTransportOptIn?.(event.currentTarget.checked)}
-                  />
-                  <span>Use ConnectRPC transport on this device</span>
-                </label>
-                <span className="fieldHint">Requires backend capability and desktop layout. Applies after bootstrap refresh.</span>
-              </div>
-              <div className="fieldBlock toggleField">
                 <span className="fieldLabel">ConnectRPC wire format</span>
                 <label className="checkField">
                   <input
                     type="checkbox"
                     checked={transportStatus?.wireFormat === "proto"}
-                    disabled={transportStatus?.connectOptIn !== true}
                     onChange={(event) => onChangeConnectWireFormat?.(event.currentTarget.checked ? "proto" : "json")}
                   />
                   <span>Use protobuf envelopes</span>
                 </label>
-                <span className="fieldHint">Applies to ConnectRPC command calls and event streaming.</span>
+                <span className="fieldHint">JSON is the default. Protobuf remains available as an optional wire format.</span>
               </div>
               <div className="voiceSettingsMeta fieldHint">
-                <span>Realtime transport: {transportStatus?.active === "connect" ? "ConnectRPC experimental" : "WebSocket"}</span>
-                <span>Connect opt-in: {transportStatus?.connectOptIn ? "on" : "off"}</span>
+                <span>Realtime transport: ConnectRPC</span>
                 <span>Connect wire format: {transportStatus?.wireFormat || "json"}</span>
-                <span>Connect capability: {transportStatus?.connectAvailable ? "available" : "unavailable"}</span>
-                <span>Connect eligible: {transportStatus?.connectEligible ? "yes" : "no"}</span>
                 <span>Connect path: {transportStatus?.connectPath || "/api/connect"}</span>
                 <span>Listeners: {audioMeta.listeners}</span>
                 <span>Queue: {audioMeta.queue}</span>

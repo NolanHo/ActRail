@@ -8,8 +8,8 @@ ActRail currently provides:
 
 - session creation for `pi` and `codex` backends
 - session listing, focus, rename, delete, and metadata edits
-- live transcript and session-state streaming over WebSocket
-- prompt send, queue replace, interrupt, and UI-response commands over WebSocket
+- live transcript and session-state streaming over Connect
+- prompt send, queue replace, interrupt, and UI-response commands over Connect
 - HTTP bootstrap, auth, health, session snapshots, and other one-shot actions
 - read-only workspace browsing and file reads for a session CWD
 - Git file-history lookup for files inside the session workspace
@@ -19,11 +19,11 @@ The backend keeps session state in memory. It creates the configured data direct
 
 ## Transport model
 
-Realtime transport uses WebSocket at `/api/ws`.
+Realtime transport uses Connect at `/api/connect`. Connect JSON is the default wire format. Connect proto is available as an explicit wire-format option and should be promoted separately only after live verification.
 
 HTTP is used for bootstrap and snapshot-style reads such as `/api/bootstrap`, `/api/sessions`, `/api/sessions/{id}/messages`, workspace reads, Git file-version lookups, auth, and one-shot mutations such as rename, focus, delete, restart, and handoff requests.
 
-In practice: use HTTP to discover state, then keep the UI current through WebSocket subscriptions and realtime commands.
+In practice: use HTTP to discover state, then keep the UI current through Connect event streaming and Connect unary realtime commands.
 
 ## Deferred or partial features
 
@@ -42,7 +42,7 @@ These areas are present as config flags, UI placeholders, or stubbed API shapes,
 ## Repository layout
 
 - `cmd/actrail-server/` - Go entrypoint
-- `internal/` - application, adapters, HTTP API, WebSocket transport, and domain logic
+- `internal/` - application, adapters, HTTP API, Connect transport, and domain logic
 - `web/` - Preact frontend
 - `scripts/tmux/` - local tmux launcher scripts for backend and frontend
 
@@ -141,7 +141,7 @@ Core runtime settings:
 | --- | --- | --- |
 | `ACTRAIL_PORT` | `8080` | Backend listen port. |
 | `ACTRAIL_AUTH_USERNAME` | unset | Required username when password auth is enabled. |
-| `ACTRAIL_AUTH_PASSWORD` | unset | When set, enables username/password auth and requires login to access protected HTTP and WebSocket routes. When unset, ActRail runs in local no-password mode. |
+| `ACTRAIL_AUTH_PASSWORD` | unset | When set, enables username/password auth and requires login to access protected HTTP and Connect routes. When unset, ActRail runs in local no-password mode. |
 | `ACTRAIL_DATA_DIR` | `./data` | Data directory created on startup. Relative paths are resolved from the backend process working directory, so the default becomes `./data` under wherever you start the server. |
 
 Other useful backend settings:
@@ -154,7 +154,6 @@ Other useful backend settings:
 | `ACTRAIL_AVAILABLE_MODELS` | unset | Optional model list exposed in launch defaults. |
 | `ACTRAIL_DEFAULT_BACKEND` | `pi` | Default backend in launch defaults. |
 | `ACTRAIL_CODEX_DANGEROUS_BYPASS` | `true` | Adds `--dangerously-bypass-approvals-and-sandbox` before `app-server` for Codex launches. Set to `false` to disable. |
-| `ACTRAIL_WS_PATH` | `/api/ws` | WebSocket endpoint advertised by bootstrap. |
 | `ACTRAIL_IOD_BIN` | unset | Optional explicit path to the `actrail-iod` helper binary used for session launch. |
 
 ## Notes on persistence

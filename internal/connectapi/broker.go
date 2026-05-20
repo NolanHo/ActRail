@@ -56,6 +56,8 @@ func (b *Broker) ObserveEvent(event realtime.Event) {
 		select {
 		case ch <- envelope:
 		default:
+			delete(b.subscribers, ch)
+			close(ch)
 		}
 	}
 	b.mu.Unlock()

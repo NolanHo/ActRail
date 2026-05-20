@@ -257,7 +257,7 @@ function int32Option(value: unknown) {
 
 export async function fetchConnectListSessions(config: ConnectTransportConfig, options: ConnectListSessionsOptions = {}): Promise<SessionsResponse> {
   const basePath = config.basePath || "/api/connect";
-  const wireFormat = config.wireFormat === "json" ? "json" : "proto";
+  const wireFormat = config.wireFormat === "proto" ? "proto" : "json";
   const url = servicePath(basePath, COMMAND_SERVICE, "ListSessions");
   if (wireFormat === "proto") {
     const body = toBinary(ListSessionsRequestSchema, create(ListSessionsRequestSchema, {
@@ -339,7 +339,7 @@ export interface ConnectSessionStateOptions {
 
 export async function fetchConnectSessionState(config: ConnectTransportConfig, options: ConnectSessionStateOptions): Promise<LiveSessionResponse> {
   const basePath = config.basePath || "/api/connect";
-  const wireFormat = config.wireFormat === "json" ? "json" : "proto";
+  const wireFormat = config.wireFormat === "proto" ? "proto" : "json";
   const url = servicePath(basePath, COMMAND_SERVICE, "SessionState");
   if (wireFormat === "proto") {
     const body = toBinary(SessionStateRequestSchema, create(SessionStateRequestSchema, { session: { sessionId: options.sessionId } }));
@@ -368,7 +368,7 @@ export async function fetchConnectSessionState(config: ConnectTransportConfig, o
 
 export async function fetchConnectSessionMessages(config: ConnectTransportConfig, options: ConnectMessagesOptions): Promise<MessagesResponse> {
   const basePath = config.basePath || "/api/connect";
-  const wireFormat = config.wireFormat === "json" ? "json" : "proto";
+  const wireFormat = config.wireFormat === "proto" ? "proto" : "json";
   const url = servicePath(basePath, COMMAND_SERVICE, "SessionMessages");
   if (wireFormat === "proto") {
     const body = toBinary(SessionMessagesRequestSchema, create(SessionMessagesRequestSchema, {

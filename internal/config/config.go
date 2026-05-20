@@ -20,7 +20,6 @@ const (
 	defaultIdleTimeout       = 60 * time.Second
 	defaultShutdownTimeout   = 10 * time.Second
 	defaultCookieName        = "actrail_auth"
-	defaultWSPath            = "/api/ws"
 	defaultDataDir           = "./data"
 	defaultSQLiteDir         = "sqlite"
 	defaultSQLiteFilename    = "actrail.db"
@@ -51,7 +50,6 @@ type Server struct {
 
 type Protocol struct {
 	Version           int
-	WebSocketPath     string
 	HeartbeatInterval time.Duration
 	ResumeBuffer      int
 }
@@ -70,13 +68,12 @@ const (
 )
 
 type Features struct {
-	WebSocketRealtime bool
-	Voice             bool
-	Harness           bool
-	Notifications     bool
-	PIUI              bool
-	WorkspaceRead     bool
-	WorkspaceWrite    bool
+	Voice          bool
+	Harness        bool
+	Notifications  bool
+	PIUI           bool
+	WorkspaceRead  bool
+	WorkspaceWrite bool
 }
 
 type Launch struct {
@@ -103,7 +100,6 @@ func Load() Config {
 		},
 		Protocol: Protocol{
 			Version:           envInt("ACTRAIL_PROTOCOL_VERSION", defaultProtocolVersion),
-			WebSocketPath:     envString("ACTRAIL_WS_PATH", defaultWSPath),
 			HeartbeatInterval: envDuration("ACTRAIL_WS_HEARTBEAT_INTERVAL", defaultHeartbeatInterval),
 			ResumeBuffer:      envInt("ACTRAIL_WS_RESUME_BUFFER", defaultResumeBuffer),
 		},
@@ -113,13 +109,12 @@ func Load() Config {
 			Password:   envString("ACTRAIL_AUTH_PASSWORD", ""),
 		},
 		Features: Features{
-			WebSocketRealtime: true,
-			Voice:             false,
-			Harness:           false,
-			Notifications:     true,
-			PIUI:              true,
-			WorkspaceRead:     true,
-			WorkspaceWrite:    false,
+			Voice:          false,
+			Harness:        false,
+			Notifications:  true,
+			PIUI:           true,
+			WorkspaceRead:  true,
+			WorkspaceWrite: false,
 		},
 		Launch: Launch{
 			DefaultBackend:       envString("ACTRAIL_DEFAULT_BACKEND", "codex"),

@@ -40,26 +40,19 @@ export interface BackendCapabilitySnapshot {
 }
 
 export interface BootstrapCapabilities {
-  ws_realtime?: boolean;
   voice?: boolean;
   harness?: boolean;
   notifications?: boolean;
   pi_ui?: boolean;
   workspace_read?: boolean;
   workspace_write?: boolean;
-  exp_connect_transport?: boolean;
 }
 
 export interface BootstrapTransportConfig {
   default?: string;
   experimental?: string[];
   connect_path?: string;
-}
-
-export interface BootstrapWebSocketConfig {
-  url?: string;
-  heartbeat_interval_ms?: number;
-  resume_buffer_events?: number;
+  wire_format?: "json" | "proto" | string;
 }
 
 export interface AppBootstrapUi {
@@ -355,7 +348,6 @@ export interface SessionBootstrapResponse {
   trace_id?: string;
   protocol_version?: number;
   capabilities?: BootstrapCapabilities;
-  ws?: BootstrapWebSocketConfig;
   transport?: BootstrapTransportConfig;
   launch_defaults?: {
     default_backend?: string;
@@ -371,7 +363,6 @@ export interface SessionBootstrapResponse {
 }
 
 export interface SessionCapabilitySnapshot {
-  ws_realtime?: boolean;
   voice?: boolean;
   harness?: boolean;
   notifications?: boolean;

@@ -164,7 +164,7 @@ export const api = {
   login(username: string, password: string, signal?: AbortSignal) {
     return postJson<LoginResponse>("/api/login", { username, password }, signal);
   },
-  listSessions(options?: { groupKey?: string; offset?: number; limit?: number; groupOffset?: number; groupLimit?: number; agentBackend?: string; cwd?: string; title?: string }, signal?: AbortSignal, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }) {
+  listSessions(options?: { groupKey?: string; offset?: number; limit?: number; groupOffset?: number; groupLimit?: number; agentBackend?: string; cwd?: string; title?: string }, signal?: AbortSignal, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "json" }) {
     const query = new URLSearchParams();
     if (options?.groupKey) {
       query.set("group_key", options.groupKey);
@@ -220,7 +220,7 @@ export const api = {
     const response = await getJson<SessionDetailsResponse & { session?: Record<string, unknown> | null }>(`/api/sessions/${routeId}/details`, signal);
     return normalizeSessionDetailsResponse(response);
   },
-  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null, deferred = false, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }, activeTurnStartSeq = 0, includeToolDetails = false, eventId = "", toolCallId = "", includeToolEvents = false) {
+  listMessages(sessionId: string, init = false, signal?: AbortSignal, after?: number, before?: number, limit?: number, runtimeId?: string | null, deferred = false, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "json" }, activeTurnStartSeq = 0, includeToolDetails = false, eventId = "", toolCallId = "", includeToolEvents = false) {
     const query = new URLSearchParams();
     if (init) {
       query.set("init", "1");
@@ -287,7 +287,7 @@ export const api = {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return postJson<WaitLifecycleResponse>(`/api/sessions/${routeId}/waits/${encodeURIComponent(waitId)}/cancel`, {});
   },
-  getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "proto" }) {
+  getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "json" }) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     if (connectConfig !== false && connectConfig !== null) {
       return fetchConnectSessionState(connectConfig, { sessionId: routeId, signal });

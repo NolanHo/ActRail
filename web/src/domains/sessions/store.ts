@@ -9,10 +9,7 @@ export interface UpsertSessionOptions {
 }
 
 export interface RealtimeTransportStatus {
-  active: "ws" | "connect";
-  connectAvailable: boolean;
-  connectOptIn: boolean;
-  connectEligible: boolean;
+  active: "connect";
   connectPath: string;
   wireFormat: ConnectWireFormat;
 }
@@ -54,43 +51,19 @@ export interface SessionsStore {
 const PAGE_SIZE = 50;
 const NEW_SESSION_DEFAULTS_CACHE_KEY = "actrail.newSessionDefaults.v1";
 const SESSION_READ_CACHE_KEY = "actrail.sessionReadAssistantTs.v1";
-export const EXP_TRANSPORT_KEY = "actrail.expTransport";
 export const EXP_CONNECT_WIRE_FORMAT_KEY = "actrail.expConnectWireFormat";
 const DEFAULT_REALTIME_TRANSPORT: RealtimeTransportStatus = {
-  active: "ws",
-  connectAvailable: false,
-  connectOptIn: false,
-  connectEligible: false,
+  active: "connect",
   connectPath: "/api/connect",
   wireFormat: "json",
 };
 
-function readConnectOptIn() {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(EXP_TRANSPORT_KEY) === "connect";
-  } catch {
-    return false;
-  }
-}
-
-export function setConnectTransportOptIn(enabled: boolean) {
-  if (typeof window === "undefined") return;
-  try {
-    if (enabled) {
-      window.localStorage.setItem(EXP_TRANSPORT_KEY, "connect");
-    } else {
-      window.localStorage.removeItem(EXP_TRANSPORT_KEY);
-    }
-  } catch {
-    // Browser storage policy blocked the opt-in; bootstrap will keep WebSocket.
-  }
-}
-
 function readConnectWireFormat(): ConnectWireFormat {
   if (typeof window === "undefined") return "json";
   try {
-    return window.localStorage.getItem(EXP_CONNECT_WIRE_FORMAT_KEY) === "proto" ? "proto" : "json";
+    const stored = window.localStorage.getItem(EXP_CONNECT_WIRE_FORMAT_KEY);
+    if (stored === "proto") return "proto";
+    return "json";
   } catch {
     return "json";
   }
@@ -102,7 +75,7 @@ export function setConnectWireFormat(value: ConnectWireFormat) {
     if (value === "proto") {
       window.localStorage.setItem(EXP_CONNECT_WIRE_FORMAT_KEY, "proto");
     } else {
-      window.localStorage.removeItem(EXP_CONNECT_WIRE_FORMAT_KEY);
+      window.localStorage.setItem(EXP_CONNECT_WIRE_FORMAT_KEY, "json");
     }
   } catch {
     // Browser storage policy blocked the setting; bootstrap will use JSON.
@@ -110,16 +83,10 @@ export function setConnectWireFormat(value: ConnectWireFormat) {
 }
 
 function getRealtimeTransportStatus(data: SessionBootstrapResponse): RealtimeTransportStatus {
-  const connectAvailable = data.capabilities?.exp_connect_transport === true;
-  const connectEligible = connectAvailable;
-  const connectOptIn = readConnectOptIn();
   const connectPath = String(data.transport?.connect_path || DEFAULT_REALTIME_TRANSPORT.connectPath).trim() || DEFAULT_REALTIME_TRANSPORT.connectPath;
   const wireFormat = readConnectWireFormat();
   return {
-    active: connectEligible && connectOptIn ? "connect" : "ws",
-    connectAvailable,
-    connectOptIn,
-    connectEligible,
+    active: "connect",
     connectPath,
     wireFormat,
   };
@@ -508,9 +475,6 @@ export function createSessionsStore(): SessionsStore {
       const realtimeTransport = getRealtimeTransportStatus(data);
       configureRealtimeClient({
         protocolVersion: data.protocol_version,
-        url: data.capabilities?.ws_realtime === false ? null : data.ws?.url,
-        heartbeatIntervalMs: data.ws?.heartbeat_interval_ms,
-        transport: realtimeTransport.active,
         connectBasePath: realtimeTransport.connectPath,
         connectWireFormat: realtimeTransport.wireFormat,
       });

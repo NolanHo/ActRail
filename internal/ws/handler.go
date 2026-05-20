@@ -1,3 +1,6 @@
+//go:build websocket_legacy
+// +build websocket_legacy
+
 package ws
 
 import (

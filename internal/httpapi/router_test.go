@@ -15,7 +15,6 @@ import (
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
 	"actrail/internal/httpapi/authn"
-	"actrail/internal/ws"
 )
 
 type serviceStub struct {
@@ -396,7 +395,7 @@ func (s *fixtureService) Bootstrap(_ context.Context, _ app.BootstrapRequest) ap
 	return app.BootstrapSnapshot{
 		ProtocolVersion: 1,
 		Capabilities: app.Capabilities{
-			WSRealtime:          true,
+			WSRealtime:          false,
 			Voice:               false,
 			Harness:             false,
 			Notifications:       false,
@@ -406,9 +405,14 @@ func (s *fixtureService) Bootstrap(_ context.Context, _ app.BootstrapRequest) ap
 			ExpConnectTransport: true,
 		},
 		WS: app.WSConfig{
-			URL:                 "/api/ws",
+			URL:                 "",
 			HeartbeatIntervalMS: 15000,
 			ResumeBufferEvents:  500,
+		},
+		Transport: app.TransportConfig{
+			Default:     "connect",
+			ConnectPath: "/api/connect",
+			WireFormat:  "json",
 		},
 		LaunchDefaults: app.LaunchConfig{
 			DefaultBackend:    "pi",
@@ -931,7 +935,7 @@ func (s *fixtureService) CancelSelfReminder(_ context.Context, req app.CancelSel
 }
 
 func newTestRouter(cfg config.Config, svc app.Service) http.Handler {
-	return New(cfg, svc, ws.NewHandler(cfg))
+	return New(cfg, svc)
 }
 
 func TestSupervisorRoutesReturnProviderAndSessionConfig(t *testing.T) {
@@ -1043,9 +1047,17 @@ func TestBootstrapRoute(t *testing.T) {
 
 	var body struct {
 		ProtocolVersion int `json:"protocol_version"`
-		WS              struct {
+		Capabilities    struct {
+			WSRealtime bool `json:"ws_realtime"`
+		} `json:"capabilities"`
+		WS struct {
 			URL string `json:"url"`
 		} `json:"ws"`
+		Transport struct {
+			Default     string `json:"default"`
+			ConnectPath string `json:"connect_path"`
+			WireFormat  string `json:"wire_format"`
+		} `json:"transport"`
 		RecentCwds []string                    `json:"recent_cwds"`
 		CwdGroups  map[string]app.CwdGroupMeta `json:"cwd_groups"`
 	}
@@ -1053,8 +1065,14 @@ func TestBootstrapRoute(t *testing.T) {
 	if body.ProtocolVersion != 1 {
 		t.Fatalf("expected protocol version 1, got %d", body.ProtocolVersion)
 	}
-	if body.WS.URL != "/api/ws" {
-		t.Fatalf("expected websocket path /api/ws, got %q", body.WS.URL)
+	if body.Capabilities.WSRealtime {
+		t.Fatal("expected websocket realtime capability to be disabled")
+	}
+	if body.WS.URL != "" {
+		t.Fatalf("expected websocket path to be empty, got %q", body.WS.URL)
+	}
+	if body.Transport.Default != "connect" || body.Transport.ConnectPath != "/api/connect" || body.Transport.WireFormat != "json" {
+		t.Fatalf("bootstrap transport = %+v", body.Transport)
 	}
 	if len(body.RecentCwds) != 2 || body.RecentCwds[0] != "/root/code/ActRail" {
 		t.Fatalf("bootstrap recent_cwds = %#v", body.RecentCwds)
@@ -1506,7 +1524,6 @@ func TestProtectedRoutesRequireAuthCookieInPasswordMode(t *testing.T) {
 		{name: "delete", method: http.MethodPost, target: "/api/sessions/s_123/delete"},
 		{name: "restart", method: http.MethodPost, target: "/api/sessions/s_123/restart"},
 		{name: "handoff", method: http.MethodPost, target: "/api/sessions/s_123/handoff"},
-		{name: "websocket", method: http.MethodGet, target: "/api/ws"},
 	}
 
 	for _, tc := range tests {

@@ -69,8 +69,7 @@ describe("VoiceSettingsDialog", () => {
     expect(saveButton?.className).not.toContain("primaryButton");
   });
 
-  it("shows and toggles experimental transport state in the status tab", async () => {
-    const onChangeTransportOptIn = vi.fn();
+  it("shows and toggles the optional Connect wire format in the status tab", async () => {
     const onChangeConnectWireFormat = vi.fn();
     root = document.createElement("div");
     document.body.appendChild(root);
@@ -86,9 +85,6 @@ describe("VoiceSettingsDialog", () => {
         themeMode="light"
         transportStatus={{
           active: "connect",
-          connectAvailable: true,
-          connectOptIn: true,
-          connectEligible: true,
           connectPath: "/api/connect",
           wireFormat: "json",
         }}
@@ -102,7 +98,6 @@ describe("VoiceSettingsDialog", () => {
         onChangeNarrationEnabled={() => undefined}
         onChangeReplySoundEnabled={() => undefined}
         onChangeThemeMode={() => undefined}
-        onChangeTransportOptIn={onChangeTransportOptIn}
         onChangeConnectWireFormat={onChangeConnectWireFormat}
         onChangeSupervisorProviderApiKey={() => undefined}
         onChangeSupervisorProviderBaseUrl={() => undefined}
@@ -121,18 +116,9 @@ describe("VoiceSettingsDialog", () => {
       Array.from(root!.querySelectorAll("button")).find((button) => button.textContent === "Status")?.click();
     });
 
-    expect(root.textContent).toContain("Realtime transport: ConnectRPC experimental");
-    expect(root.textContent).toContain("Connect opt-in: on");
+    expect(root.textContent).toContain("Realtime transport: ConnectRPC");
     expect(root.textContent).toContain("Connect wire format: json");
-    expect(root.textContent).toContain("Connect capability: available");
-    expect(root.textContent).toContain("Connect eligible: yes");
     expect(root.textContent).toContain("Connect path: /api/connect");
-    const transportToggle = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
-      .find((input) => input.parentElement?.textContent?.includes("Use ConnectRPC transport on this device"));
-    expect(transportToggle?.checked).toBe(true);
-    transportToggle!.checked = false;
-    transportToggle!.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(onChangeTransportOptIn).toHaveBeenCalledWith(false);
     const protoToggle = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
       .find((input) => input.parentElement?.textContent?.includes("Use protobuf envelopes"));
     expect(protoToggle?.checked).toBe(false);

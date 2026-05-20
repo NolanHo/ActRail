@@ -53,7 +53,7 @@ func main() {
 	}()
 	replay, err := ws.NewReplayBuffer(cfg.Protocol.ResumeBuffer)
 	if err != nil {
-		logger.Error("invalid websocket replay buffer", zap.Error(err))
+		logger.Error("invalid realtime replay buffer", zap.Error(err))
 		os.Exit(1)
 	}
 	registry := ws.NewRegistry()
@@ -61,11 +61,7 @@ func main() {
 	publisher := ws.NewPublisher(registry, replay, ws.WithEventObserver(connectBroker))
 	bridge := ws.NewAppBridge(service, service, publisher)
 	service.SetRuntimeEventSink(bridge)
-	handler := httpapi.New(cfg, service, ws.NewHandler(cfg,
-		ws.WithRegistry(registry),
-		ws.WithReplayBuffer(replay),
-		ws.WithCommandTarget(bridge),
-	), connectapi.NewHandler(service, connectBroker, connectapi.WithLogger(logger)))
+	handler := httpapi.New(cfg, service, connectapi.NewHandler(service, connectBroker, connectapi.WithLogger(logger)))
 	server := &http.Server{
 		Addr:         cfg.Addr(),
 		Handler:      observability.Handler("actrail.http", handler),
