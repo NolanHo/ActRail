@@ -1,2 +1,3 @@
-export const INITIAL_HISTORY_PAGE_SIZE = 200;
+export const INITIAL_HISTORY_PAGE_SIZE = 60;
+export const DELTA_HISTORY_PAGE_SIZE = 200;
 export const OLDER_HISTORY_PAGE_SIZE = 150;

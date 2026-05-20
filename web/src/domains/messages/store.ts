@@ -1,6 +1,6 @@
 import { api } from "../../lib/api";
 import type { MessageEvent } from "../../lib/types";
-import { INITIAL_HISTORY_PAGE_SIZE, OLDER_HISTORY_PAGE_SIZE } from "./history";
+import { DELTA_HISTORY_PAGE_SIZE, INITIAL_HISTORY_PAGE_SIZE, OLDER_HISTORY_PAGE_SIZE } from "./history";
 
 const MACHINE_TRACE_TYPES = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 
@@ -296,7 +296,8 @@ export function createMessagesStore(): MessagesStore {
         const after = init ? undefined : state.offsetsBySessionId[sessionId];
         const activeSeq = init ? 0 : activeTurnStartSeq(state.bySessionId[sessionId] ?? []);
         const safeAfter = typeof after === "number" && Number.isFinite(after) && after > 0 ? after : undefined;
-        const data = normalizeMessagePage(await api.listMessages(sessionId, init || safeAfter === undefined, undefined, safeAfter, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true, undefined, activeSeq));
+        const pageSize = init || safeAfter === undefined ? INITIAL_HISTORY_PAGE_SIZE : DELTA_HISTORY_PAGE_SIZE;
+        const data = normalizeMessagePage(await api.listMessages(sessionId, init || safeAfter === undefined, undefined, safeAfter, undefined, pageSize, undefined, true, undefined, activeSeq));
         if (loadId !== currentLoadIds[sessionId]) {
           return;
         }

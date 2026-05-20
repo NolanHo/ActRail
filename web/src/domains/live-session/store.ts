@@ -9,7 +9,7 @@ import type {
   SessionUiRequest,
   TurnTimingPayload,
 } from "../../lib/types";
-import { INITIAL_HISTORY_PAGE_SIZE } from "../messages/history";
+import { DELTA_HISTORY_PAGE_SIZE, INITIAL_HISTORY_PAGE_SIZE } from "../messages/history";
 import type { MessagesStore } from "../messages/store";
 
 const EMPTY_INITIAL_HISTORY_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
@@ -526,9 +526,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           }
           const currentOffset = state.offsetsBySessionId[sessionId];
           const safeAfter = currentOffset > 0 ? currentOffset : undefined;
+          const pageSize = safeAfter === undefined ? INITIAL_HISTORY_PAGE_SIZE : DELTA_HISTORY_PAGE_SIZE;
           const messagePayload = runtimeId
-            ? await api.listMessages(sessionId, safeAfter === undefined, undefined, safeAfter, undefined, INITIAL_HISTORY_PAGE_SIZE, runtimeId, true)
-            : await api.listMessages(sessionId, safeAfter === undefined, undefined, safeAfter, undefined, INITIAL_HISTORY_PAGE_SIZE, undefined, true);
+            ? await api.listMessages(sessionId, safeAfter === undefined, undefined, safeAfter, undefined, pageSize, runtimeId, true)
+            : await api.listMessages(sessionId, safeAfter === undefined, undefined, safeAfter, undefined, pageSize, undefined, true);
           applySnapshot(sessionId, messagePayload, statePayload, false);
           return;
         }

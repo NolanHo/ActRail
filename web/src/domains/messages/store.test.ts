@@ -31,7 +31,7 @@ describe("createMessagesStore", () => {
 
     await store.loadInitial("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 60, undefined, true, undefined, 0);
     expect(snapshots).toEqual([
       { loading: true, messages: [] },
       { loading: false, messages: [{ id: "m1" }, { id: "m2" }] },
@@ -82,8 +82,8 @@ describe("createMessagesStore", () => {
     await store.loadInitial("s2");
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
-    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenNthCalledWith(1, "s1", true, undefined, undefined, undefined, 60, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenNthCalledWith(2, "s2", true, undefined, undefined, undefined, 60, undefined, true, undefined, 0);
     expect(api.listMessages).toHaveBeenNthCalledWith(3, "s1", false, undefined, 1, undefined, 200, undefined, true, undefined, 0);
     expect(store.getState()).toEqual({
       bySessionId: {
@@ -168,7 +168,7 @@ describe("createMessagesStore", () => {
     const pollPromise = store.poll("s1");
 
     expect(api.listMessages).toHaveBeenCalledTimes(1);
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 60, undefined, true, undefined, 0);
 
     resolveFirst!({ events: [{ id: "m1" }], offset: 1 });
     await Promise.all([initialPromise, pollPromise]);
@@ -183,7 +183,7 @@ describe("createMessagesStore", () => {
 
     await store.poll("s1");
 
-    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 200, undefined, true, undefined, 0);
+    expect(api.listMessages).toHaveBeenCalledWith("s1", true, undefined, undefined, undefined, 60, undefined, true, undefined, 0);
     expect(store.getState().bySessionId.s1).toEqual([{ id: "m5", seq: 5 }]);
     expect(store.getState().offsetsBySessionId.s1).toBe(5);
   });
