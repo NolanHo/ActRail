@@ -410,7 +410,7 @@ func newLiveBridgeServer(t *testing.T, runner *process.FakeRunner) (*app.Stub, c
 
 func dialBridgeWebSocket(t *testing.T, baseURL string, cfg config.Config, cookie *http.Cookie) *websocket.Conn {
 	t.Helper()
-	url := strings.Replace(baseURL, "http://", "ws://", 1) + cfg.Protocol.WebSocketPath
+	url := strings.Replace(baseURL, "http://", "ws://", 1) + "/api/ws"
 	headers := http.Header{}
 	headers.Add("Cookie", cookie.String())
 	conn, _, err := websocket.DefaultDialer.Dial(url, headers)

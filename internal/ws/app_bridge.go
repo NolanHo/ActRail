@@ -348,7 +348,7 @@ func (b *AppBridge) PublishWaitsUpdated(event app.WaitsUpdatedEvent) {
 		return
 	}
 	frame := Frame{Type: FrameTypeWaitsUpdated, ID: b.frameIDs.Next(), TS: UnixTS(b.now()), Stream: SystemStream.String(), Payload: waitsUpdatedPayload{Waits: event.Waits}}
-	_, _ = b.publisher.Publish(0, frame)
+	_, _ = b.publisher.Broadcast(frame)
 }
 
 func (b *AppBridge) PublishGenerationBroken(event app.GenerationBrokenEvent) {
@@ -378,7 +378,7 @@ func (b *AppBridge) PublishNotification(event app.NotificationEvent) {
 		return
 	}
 	frame := Frame{Type: FrameTypeNotification, ID: b.frameIDs.Next(), TS: UnixTS(b.now()), Stream: SystemStream.String(), Payload: notificationPayload{SessionID: event.SessionID, Title: event.Title, Body: event.Body, MessageID: event.MessageID, Kind: event.Kind}}
-	_, _ = b.publisher.Publish(0, frame)
+	_, _ = b.publisher.Broadcast(frame)
 }
 
 func waitFrameType(raw string) FrameType {

@@ -8,6 +8,7 @@ import (
 
 	"actrail/internal/app"
 	"actrail/internal/domain/session"
+	"actrail/internal/realtime"
 )
 
 type timeoutSessionController struct {
@@ -46,5 +47,38 @@ func TestAppBridgeHandleSendUsesCommandDeadline(t *testing.T) {
 		}
 	default:
 		t.Fatal("Send() was not called")
+	}
+}
+
+type captureObserver struct {
+	events []realtime.Event
+}
+
+func (o *captureObserver) ObserveEvent(event realtime.Event) {
+	o.events = append(o.events, event)
+}
+
+func TestAppBridgeBroadcastsSystemEventsToObserver(t *testing.T) {
+	observer := &captureObserver{}
+	publisher := NewPublisher(NewRegistry(), nil, WithEventObserver(observer))
+	bridge := NewAppBridge(nil, nil, publisher)
+
+	bridge.PublishWaitsUpdated(app.WaitsUpdatedEvent{Waits: []app.ActiveWaitSummary{{
+		WaitID:    "wait_1",
+		ThreadID:  "thread_1",
+		SessionID: "s_123",
+		State:     app.WaitPendingUnread,
+		Question:  "approve?",
+	}}})
+	bridge.PublishNotification(app.NotificationEvent{SessionID: "s_123", Title: "done", Body: "ready"})
+
+	if len(observer.events) != 2 {
+		t.Fatalf("observer events = %+v, want 2 events", observer.events)
+	}
+	if observer.events[0].Type != string(FrameTypeWaitsUpdated) || observer.events[0].Stream != SystemStream.String() {
+		t.Fatalf("waits.updated event = %+v", observer.events[0])
+	}
+	if observer.events[1].Type != string(FrameTypeNotification) || observer.events[1].Stream != SystemStream.String() {
+		t.Fatalf("notification event = %+v", observer.events[1])
 	}
 }

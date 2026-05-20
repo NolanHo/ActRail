@@ -24,14 +24,19 @@ type Broker struct {
 	limit       int
 	nextID      uint64
 	events      []EventEnvelope
-	subscribers map[chan EventEnvelope]struct{}
+	subscribers map[*brokerSubscriber]struct{}
+}
+
+type brokerSubscriber struct {
+	ch     chan EventEnvelope
+	closed bool
 }
 
 func NewBroker(limit int) *Broker {
 	if limit < 1 {
 		limit = defaultBrokerLimit
 	}
-	return &Broker{limit: limit, subscribers: map[chan EventEnvelope]struct{}{}}
+	return &Broker{limit: limit, subscribers: map[*brokerSubscriber]struct{}{}}
 }
 
 func (b *Broker) ObserveEvent(event realtime.Event) {
@@ -52,12 +57,11 @@ func (b *Broker) ObserveEvent(event realtime.Event) {
 	}
 	b.events = append(b.events, envelope)
 	b.trimLocked()
-	for ch := range b.subscribers {
+	for subscriber := range b.subscribers {
 		select {
-		case ch <- envelope:
+		case subscriber.ch <- envelope:
 		default:
-			delete(b.subscribers, ch)
-			close(ch)
+			b.closeSubscriberLocked(subscriber)
 		}
 	}
 	b.mu.Unlock()
@@ -69,6 +73,32 @@ func (b *Broker) Replay(after uint64) ([]EventEnvelope, bool) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.replayLocked(after)
+}
+
+func (b *Broker) Subscribe() (<-chan EventEnvelope, func()) {
+	replay, ch, unsubscribe := b.SubscribeAfter(0)
+	_ = replay
+	return ch, unsubscribe
+}
+
+func (b *Broker) SubscribeAfter(after uint64) ([]EventEnvelope, <-chan EventEnvelope, func()) {
+	if b == nil {
+		return nil, nil, func() {}
+	}
+	subscriber := &brokerSubscriber{ch: make(chan EventEnvelope, 256)}
+	b.mu.Lock()
+	replay, _ := b.replayLocked(after)
+	b.subscribers[subscriber] = struct{}{}
+	b.mu.Unlock()
+	return replay, subscriber.ch, func() {
+		b.mu.Lock()
+		b.closeSubscriberLocked(subscriber)
+		b.mu.Unlock()
+	}
+}
+
+func (b *Broker) replayLocked(after uint64) ([]EventEnvelope, bool) {
 	if len(b.events) == 0 {
 		return nil, false
 	}
@@ -85,16 +115,14 @@ func (b *Broker) Replay(after uint64) ([]EventEnvelope, bool) {
 	return out, false
 }
 
-func (b *Broker) Subscribe() (<-chan EventEnvelope, func()) {
-	ch := make(chan EventEnvelope, 256)
-	b.mu.Lock()
-	b.subscribers[ch] = struct{}{}
-	b.mu.Unlock()
-	return ch, func() {
-		b.mu.Lock()
-		delete(b.subscribers, ch)
-		close(ch)
-		b.mu.Unlock()
+func (b *Broker) closeSubscriberLocked(subscriber *brokerSubscriber) {
+	if subscriber == nil {
+		return
+	}
+	delete(b.subscribers, subscriber)
+	if !subscriber.closed {
+		subscriber.closed = true
+		close(subscriber.ch)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"actrail/internal/config"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
@@ -58,18 +59,24 @@ func Setup(ctx context.Context, cfg Config) (*zap.Logger, ShutdownFunc, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	shutdowns := []ShutdownFunc{func(context.Context) error { return logger.Sync() }}
+	shutdowns := []ShutdownFunc{}
 	if logFile != nil {
 		shutdowns = append(shutdowns, func(context.Context) error { return logFile.Close() })
 	}
+	shutdowns = append(shutdowns, func(context.Context) error { return syncZapLogger(logger) })
 
 	endpoint := strings.TrimSpace(cfg.Endpoint)
 	if endpoint == "" {
 		return logger, joinShutdowns(shutdowns...), nil
 	}
+	protocol := strings.ToLower(strings.TrimSpace(cfg.Protocol))
+	if protocol != "" && protocol != "grpc" {
+		_ = joinShutdowns(shutdowns...)(ctx)
+		return nil, nil, fmt.Errorf("unsupported otel protocol %q: only grpc is supported", cfg.Protocol)
+	}
 	otelCfg, err := parseOTLPEndpoint(endpoint, cfg.Insecure)
 	if err != nil {
-		_ = logger.Sync()
+		_ = syncZapLogger(logger)
 		if logFile != nil {
 			_ = logFile.Close()
 		}
@@ -80,7 +87,7 @@ func Setup(ctx context.Context, cfg Config) (*zap.Logger, ShutdownFunc, error) {
 		attribute.String("telemetry.sdk.language", "go"),
 	))
 	if err != nil {
-		_ = logger.Sync()
+		_ = syncZapLogger(logger)
 		if logFile != nil {
 			_ = logFile.Close()
 		}
@@ -122,7 +129,7 @@ func Setup(ctx context.Context, cfg Config) (*zap.Logger, ShutdownFunc, error) {
 	logger = logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		return zapcore.NewTee(core, otelzap.NewCore(instrumentation, otelzap.WithLoggerProvider(loggerProvider)))
 	}))
-	shutdowns[0] = func(context.Context) error { return logger.Sync() }
+	shutdowns[len(shutdowns)-1] = func(context.Context) error { return syncZapLogger(logger) }
 	shutdowns = append(shutdowns, loggerProvider.Shutdown)
 
 	otel.SetTextMapPropagator(propagation.TraceContext{})
@@ -197,6 +204,17 @@ func (e otlpEndpoint) logOptions() []otlploggrpc.Option {
 		opts = append(opts, otlploggrpc.WithInsecure())
 	}
 	return opts
+}
+
+func syncZapLogger(logger *zap.Logger) error {
+	if logger == nil {
+		return nil
+	}
+	err := logger.Sync()
+	if err == nil || errors.Is(err, syscall.EINVAL) {
+		return nil
+	}
+	return err
 }
 
 func joinShutdowns(shutdowns ...ShutdownFunc) ShutdownFunc {

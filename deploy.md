@@ -105,7 +105,7 @@ stdout_logfile_backups=3
 stderr_logfile=/var/lib/actrail/actrail-backend.supervisor.stderr.log
 stderr_logfile_maxbytes=10MB
 stderr_logfile_backups=3
-environment=ACTRAIL_HOST="0.0.0.0",ACTRAIL_PORT="8743",ACTRAIL_DATA_DIR="/root/code/ActRail/data",ACTRAIL_IOD_BIN="/root/code/ActRail/data/bin/actrail-iod",ACTRAIL_AUTH_USERNAME="nolan",ACTRAIL_AUTH_PASSWORD="<password>",ACTRAIL_OTEL_PROTOCOL="grpc",ACTRAIL_OTEL_INSECURE="true",PATH="/root/.pi/agent/bin:/usr/local/go/bin:/root/.pi/agent-stable/bin:/root/.npm-global/bin:/vePFS-Mindverse/user/nolanho/code/pi-agent/node_modules/.bin:/vePFS-Mindverse/user/nolanho/code/pi/fork/pi-stack-2026-03-27/runtime/bin:/vePFS-Mindverse/user/nolanho/cache/go/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+environment=ACTRAIL_HOST="127.0.0.1",ACTRAIL_PORT="8743",ACTRAIL_DATA_DIR="/root/code/ActRail/data",ACTRAIL_IOD_BIN="/root/code/ActRail/data/bin/actrail-iod",ACTRAIL_AUTH_USERNAME="nolan",ACTRAIL_AUTH_PASSWORD="<password>",ACTRAIL_OTEL_ENDPOINT="192.168.4.70:14317",ACTRAIL_OTEL_PROTOCOL="grpc",ACTRAIL_OTEL_INSECURE="true",PATH="/root/.pi/agent/bin:/usr/local/go/bin:/root/.pi/agent-stable/bin:/root/.npm-global/bin:/vePFS-Mindverse/user/nolanho/code/pi-agent/node_modules/.bin:/vePFS-Mindverse/user/nolanho/code/pi/fork/pi-stack-2026-03-27/runtime/bin:/vePFS-Mindverse/user/nolanho/cache/go/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 [program:actrail-frontend]
 command=/root/code/ActRail/data/bin/caddy run --config /root/code/ActRail/data/caddy/Caddyfile --adapter caddyfile
@@ -184,6 +184,7 @@ Backend environment variables:
 - `ACTRAIL_IOD_BIN`
 - `ACTRAIL_AUTH_USERNAME`
 - `ACTRAIL_AUTH_PASSWORD`
+- `ACTRAIL_OTEL_ENDPOINT` (OTLP gRPC collector endpoint, host:port)
 - `ACTRAIL_OTEL_PROTOCOL`
 - `ACTRAIL_OTEL_INSECURE`
 

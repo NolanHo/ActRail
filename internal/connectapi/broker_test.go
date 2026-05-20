@@ -46,3 +46,47 @@ func TestBrokerReplayGapEmitsResync(t *testing.T) {
 		t.Fatalf("resync payload = %+v", payload)
 	}
 }
+
+func TestBrokerSubscribeAfterAtomicallyReplaysAndSubscribes(t *testing.T) {
+	broker := NewBroker(10)
+	broker.ObserveEvent(realtime.Event{Type: "session.state", UnixMillis: 10_000, Stream: "session:s_1", Payload: map[string]any{"i": 1}})
+
+	replay, ch, unsubscribe := broker.SubscribeAfter(0)
+	defer unsubscribe()
+	if len(replay) != 1 || replay[0].ID != 1 {
+		t.Fatalf("SubscribeAfter() replay = %+v, want event id 1", replay)
+	}
+
+	broker.ObserveEvent(realtime.Event{Type: "message.commit", UnixMillis: 11_000, Stream: "session:s_1", Payload: map[string]any{"i": 2}})
+	select {
+	case event := <-ch:
+		if event.ID != 2 || event.Type != "message.commit" {
+			t.Fatalf("live event = %+v, want message.commit id 2", event)
+		}
+	default:
+		t.Fatal("live event not delivered after SubscribeAfter")
+	}
+}
+
+func TestBrokerUnsubscribeIsIdempotentAfterSlowSubscriberClose(t *testing.T) {
+	broker := NewBroker(300)
+	ch, unsubscribe := broker.Subscribe()
+
+	for i := 0; i < 257; i++ {
+		broker.ObserveEvent(realtime.Event{Type: "session.state", UnixMillis: 10_000, Stream: "session:s_1", Payload: map[string]any{"i": i}})
+	}
+	closed := false
+	for i := 0; i < 258; i++ {
+		_, ok := <-ch
+		if !ok {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		t.Fatal("slow subscriber channel still open after draining buffered events")
+	}
+
+	unsubscribe()
+	unsubscribe()
+}

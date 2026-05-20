@@ -27,6 +27,7 @@ const (
 	connectBasePath       = "/api/connect/"
 	sessionCommandService = "actrail.v1.SessionCommandService"
 	eventService          = "actrail.v1.EventService"
+	streamHeartbeatEvery  = 15 * time.Second
 )
 
 type Handler struct {
@@ -405,6 +406,7 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 		after = body.AfterEventIDRaw
 	}
 	span.SetAttributes(attribute.Int64("connect.stream.after_event_id", int64(after)))
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	if protoMode {
 		w.Header().Set("Content-Type", "application/connect+proto")
 	} else {
@@ -435,7 +437,7 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 		}
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
-			span.AddEvent("connect.error", trace.WithAttributes(attribute.String("error.code", "stream_write"), attribute.String("connect.stream.name", event.Stream), attribute.String("session.id", eventSessionID)))
+			span.AddEvent("connect.error", trace.WithAttributes(attribute.String("error.code", "stream_write"), attribute.String("event.stream", event.Stream), attribute.String("connect.stream.name", event.Stream), attribute.String("session.id", eventSessionID)))
 			h.logConnect(req, "connect stream", method, eventSessionID, event.Stream, wireFormat, http.StatusInternalServerError, started, "stream_write", err)
 			return false
 		}
@@ -444,14 +446,15 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 		}
 		return true
 	}
-	replay, _ := h.broker.Replay(after)
+	replay, ch, unsubscribe := h.broker.SubscribeAfter(after)
+	defer unsubscribe()
+	heartbeat := time.NewTicker(streamHeartbeatEvery)
+	defer heartbeat.Stop()
 	for _, event := range replay {
 		if !writeEvent(event) {
 			return
 		}
 	}
-	ch, unsubscribe := h.broker.Subscribe()
-	defer unsubscribe()
 	for {
 		select {
 		case <-req.Context().Done():
@@ -464,6 +467,15 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 				return
 			}
 			if !writeEvent(event) {
+				return
+			}
+		case <-heartbeat.C:
+			if !writeEvent(EventEnvelope{
+				Type:        "stream.heartbeat",
+				Stream:      "system",
+				UnixMillis:  h.now().UnixMilli(),
+				PayloadJSON: base64.StdEncoding.EncodeToString([]byte(`{}`)),
+			}) {
 				return
 			}
 		}
