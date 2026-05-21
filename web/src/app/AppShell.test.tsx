@@ -280,6 +280,7 @@ function renderAppShell({
       turnTimingBySessionId: {},
       runtimeStateBySessionId: liveRuntimeStateBySessionId ?? Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state])),
       runtimeStateReasonBySessionId: Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state_reason])),
+      transportBySessionId: {},
     },
     {
       loadInitial: vi.fn().mockResolvedValue(undefined),
@@ -1200,6 +1201,37 @@ describe("AppShell", () => {
     const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
     expect(runtimeChip?.textContent).toContain("failed");
     expect(runtimeChip?.textContent).not.toContain("idle");
+  });
+
+  it("prefers live attached transport over stale broken session list state", async () => {
+    const { liveSessionStore } = renderAppShell({
+      items: [{
+        session_id: "sess-1",
+        alias: "Codex recovered",
+        agent_backend: "codex",
+        busy: true,
+        runtime_state: "running",
+        transport_state: "broken",
+        reset_required: true,
+      }],
+      liveBusyBySessionId: { "sess-1": true },
+      liveRuntimeStateBySessionId: { "sess-1": "running" },
+    });
+    act(() => {
+      liveSessionStore.setState({
+        transportBySessionId: {
+          ...liveSessionStore.getState().transportBySessionId,
+          "sess-1": { state: "attached", reset_required: false },
+        },
+      });
+    });
+    await flush();
+
+    const runtimeChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Runtime"));
+    const transportChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Transport"));
+    expect(runtimeChip?.textContent).toContain("running");
+    expect(runtimeChip?.textContent).not.toContain("broken");
+    expect(transportChip?.textContent).toContain("attached");
   });
 
   it("does not allow stale live busy state to interrupt a terminal codex runtime", async () => {

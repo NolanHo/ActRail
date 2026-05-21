@@ -200,18 +200,21 @@ export function AppShell() {
         generating: undefined,
         hasBusy: false,
         runtimeState: undefined,
+        transport: undefined,
       };
     }
     const busyBySessionId = state.busyBySessionId ?? {};
     const contextUsageBySessionId = state.contextUsageBySessionId ?? {};
     const generatingBySessionId = state.generatingBySessionId ?? {};
     const runtimeStateBySessionId = state.runtimeStateBySessionId ?? {};
+    const transportBySessionId = state.transportBySessionId ?? {};
     return {
       busy: busyBySessionId[activeSessionId],
       contextUsage: contextUsageBySessionId[activeSessionId] ?? null,
       generating: generatingBySessionId[activeSessionId],
       hasBusy: Object.prototype.hasOwnProperty.call(busyBySessionId, activeSessionId),
       runtimeState: runtimeStateBySessionId[activeSessionId],
+      transport: transportBySessionId[activeSessionId],
     };
   }, shallowEqual);
   const monitoredFinalResponseSignatures = useMessagesStoreSelector((state) => {
@@ -372,8 +375,15 @@ export function AppShell() {
   const activeRuntimeState = listedRuntimeState === "failed" || listedRuntimeState === "ended"
     ? listedRuntimeState
     : liveRuntimeState || listedRuntimeState;
-  const activeTransportState = typeof activeSession?.transport_state === "string" ? activeSession.transport_state.trim() : "";
-  const activeSessionTransportUnavailable = activeSession?.reset_required === true || ["broken", "failed", "ended"].includes(activeTransportState);
+  const liveTransport = liveActiveSessionState.transport ?? null;
+  const liveTransportState = typeof liveTransport?.state === "string" ? liveTransport.state.trim() : "";
+  const liveTransportResetRequired = liveTransport?.reset_required === true;
+  const listedTransportState = typeof activeSession?.transport_state === "string" ? activeSession.transport_state.trim() : "";
+  const activeTransportState = liveTransportState || listedTransportState;
+  const activeTransportResetRequired = liveTransportState
+    ? liveTransportResetRequired
+    : activeSession?.reset_required === true;
+  const activeSessionTransportUnavailable = activeTransportResetRequired || ["broken", "failed", "ended"].includes(activeTransportState);
   const activeSessionTerminalRuntime = activeRuntimeState === "failed" || activeRuntimeState === "ended";
   const activeSessionHasLiveBusy = Boolean(activeSessionId && liveActiveSessionState.hasBusy);
   const activeSessionLiveBusy = Boolean(activeSessionId && !activeSessionTransportUnavailable && !activeSessionTerminalRuntime && liveActiveSessionState.busy === true);
@@ -399,14 +409,14 @@ export function AppShell() {
       return [];
     }
     const items: ConversationStatusItem[] = [];
-    if (activeSession.reset_required === true || activeSession.transport_state === "broken") {
+    if (activeTransportResetRequired || activeTransportState === "broken") {
       items.push({ label: "Runtime", value: "broken", tone: "error" });
-    } else if (activeSession.transport_state === "failed") {
+    } else if (activeTransportState === "failed") {
       items.push({ label: "Runtime", value: "failed", tone: "error" });
-    } else if (activeSession.transport_state === "ended") {
+    } else if (activeTransportState === "ended") {
       items.push({ label: "Runtime", value: "ended", tone: "error" });
-    } else if (activeSession.transport_state === "silent" || activeSession.transport_state === "stalled") {
-      items.push({ label: "Runtime", value: activeSession.transport_state, tone: "error" });
+    } else if (activeTransportState === "silent" || activeTransportState === "stalled") {
+      items.push({ label: "Runtime", value: activeTransportState, tone: "error" });
     } else if (activeRuntimeState === "failed" || activeRuntimeState === "ended") {
       items.push({ label: "Runtime", value: activeRuntimeState, tone: "error" });
     } else if (activeSessionGenerating) {
@@ -418,9 +428,9 @@ export function AppShell() {
     } else {
       items.push({ label: "Runtime", value: activeRuntimeState || "idle", tone: "success" });
     }
-    const transportState = typeof activeSession.transport_state === "string" ? activeSession.transport_state.trim() : "";
+    const transportState = activeTransportState;
     if (transportState) {
-      const transportTone: ConversationStatusItem["tone"] = activeSession.reset_required === true || ["broken", "failed", "ended", "silent", "stalled"].includes(transportState)
+      const transportTone: ConversationStatusItem["tone"] = activeTransportResetRequired || ["broken", "failed", "ended", "silent", "stalled"].includes(transportState)
         ? "error"
         : transportState === "starting"
           ? "attention"

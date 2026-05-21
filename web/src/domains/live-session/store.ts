@@ -31,6 +31,7 @@ export interface LiveSessionState {
   turnTimingBySessionId: Record<string, TurnTimingPayload | null>;
   runtimeStateBySessionId: Record<string, string | undefined>;
   runtimeStateReasonBySessionId: Record<string, string | undefined>;
+  transportBySessionId: Record<string, SessionTransportSnapshot | null | undefined>;
 }
 
 export interface LiveSessionStore {
@@ -302,6 +303,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     turnTimingBySessionId: {},
     runtimeStateBySessionId: {},
     runtimeStateReasonBySessionId: {},
+    transportBySessionId: {},
   };
   const listeners = new Set<() => void>();
   const inFlightBySessionId: Record<string, Promise<void> | undefined> = {};
@@ -441,6 +443,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       runtimeStateReasonBySessionId: {
         ...state.runtimeStateReasonBySessionId,
         [sessionId]: normalizedRuntimeStateReason(statePayload),
+      },
+      transportBySessionId: {
+        ...state.transportBySessionId,
+        [sessionId]: transportSnapshotFromPayload(statePayload),
       },
     };
     emit();
@@ -898,6 +904,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.runtimeStateBySessionId,
             [sessionId]: "failed",
           },
+          transportBySessionId: {
+            ...state.transportBySessionId,
+            [sessionId]: {
+              state: "broken",
+              reason: typeof payload?.reason === "string" ? payload.reason : undefined,
+              reset_required: false,
+            },
+          },
         };
         emit();
         return {};
@@ -933,6 +947,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.runtimeStateBySessionId,
             [sessionId]: "failed",
           },
+          transportBySessionId: {
+            ...state.transportBySessionId,
+            [sessionId]: {
+              state: "broken",
+              reason: typeof payload?.reason === "string" ? payload.reason : undefined,
+              reset_required: true,
+            },
+          },
         };
         emit();
         return {};
@@ -967,6 +989,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         },
         runtimeStateReasonBySessionId: {
           ...state.runtimeStateReasonBySessionId,
+          [sessionId]: undefined,
+        },
+        transportBySessionId: {
+          ...state.transportBySessionId,
           [sessionId]: undefined,
         },
       };
