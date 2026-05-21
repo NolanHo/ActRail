@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -1024,7 +1025,7 @@ func TestStubEditSessionSwitchesIODMode(t *testing.T) {
 	}
 }
 
-func TestStubRestartSessionWaitsForInputLock(t *testing.T) {
+func TestStubRestartSessionTimesOutWhenInputLockIsBusy(t *testing.T) {
 	svc, _, sessionID, _ := newSessionActionFixtureForBackend(t, "codex")
 	record, err := svc.lookupSession(sessionID)
 	if err != nil {
@@ -1041,13 +1042,14 @@ func TestStubRestartSessionWaitsForInputLock(t *testing.T) {
 	<-started
 	select {
 	case err := <-done:
-		t.Fatalf("RestartSession returned before input lock released: %v", err)
-	case <-time.After(50 * time.Millisecond):
+		var appErr *Error
+		if !errors.As(err, &appErr) || appErr.Code != "conflict" || !strings.Contains(appErr.Message, "session input is busy") {
+			t.Fatalf("RestartSession() error = %#v, want busy conflict", err)
+		}
+	case <-time.After(sessionInputLockTimeout + time.Second):
+		t.Fatal("RestartSession did not time out while input lock was held")
 	}
 	record.inputMu.Unlock()
-	if err := <-done; err != nil {
-		t.Fatalf("RestartSession() error = %v", err)
-	}
 }
 
 func TestStubRestartSessionDefaultsPIToGRPC(t *testing.T) {

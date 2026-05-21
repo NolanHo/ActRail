@@ -631,6 +631,83 @@ func TestAsyncSQLiteRestartIgnoresStaleLaunchFailure(t *testing.T) {
 	})
 }
 
+func TestAsyncSQLiteRestartLaunchFailureClearsBusyState(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	releaseInitial := make(chan struct{})
+	restartStarted := make(chan struct{}, 1)
+	var launchSeq int
+	var launchMu sync.Mutex
+	runner := startFuncRunner{start: func(ctx context.Context, spec process.LaunchSpec) (process.Handle, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := spec.Validate(); err != nil {
+			return nil, err
+		}
+		launchMu.Lock()
+		seq := launchSeq
+		launchSeq++
+		launchMu.Unlock()
+		switch seq {
+		case 0:
+			<-releaseInitial
+		case 1:
+			restartStarted <- struct{}{}
+			return nil, fmt.Errorf("restart launch failed")
+		}
+		handle := process.NewFakeHandle(spec)
+		handle.SetPID(321 + seq)
+		return handle, nil
+	}}
+	svc, err := newPersistentStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntime() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+		AgentBackend: "pi",
+		PIAgentGRPC:  boolPtr(false),
+		CWD:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	close(releaseInitial)
+	waitForTestCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		return ok && record.runtime.handle != nil
+	})
+	restarted, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+	select {
+	case <-restartStarted:
+	case <-time.After(time.Second):
+		t.Fatal("restart async launch did not start")
+	}
+	waitForTestCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		if !ok {
+			return false
+		}
+		runtimeID, ok := record.identity.RuntimeID()
+		return ok && runtimeID.String() == restarted.RuntimeID && record.transport.State == SessionTransportStateFailed
+	})
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	record, ok := svc.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("session missing after failed restart")
+	}
+	if state.Busy || record.runtimeAgentRunning || state.RuntimeState == "running" {
+		t.Fatalf("SessionState() after failed restart = %+v, want not busy/running", state)
+	}
+}
+
 func TestAsyncSQLiteSendFailureAfterRestartDoesNotClearCurrentBusy(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	initialPTY := &fakePTY{}

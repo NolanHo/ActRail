@@ -571,7 +571,7 @@ func (s *Stub) finishAsyncSessionDeleteCleanup(sessionID session.SessionID, reco
 func (s *Stub) RestartSession(ctx context.Context, req RestartSessionRequest) (RestartSessionResponse, error) {
 	var updated sessionRecord
 	var previousRuntimeID session.RuntimeID
-	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
+	if err := s.withSessionInputLockTimeout(req.SessionID, sessionInputLockTimeout, func(record sessionRecord) error {
 		if record.identity.Historical() {
 			return Unsupported("historical sessions cannot be restarted")
 		}

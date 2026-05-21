@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"actrail/internal/domain/session"
 )
+
+const sessionInputLockTimeout = 2 * time.Second
 
 func (s *Stub) scheduleQueuedDispatch(sessionID session.SessionID) {
 	if s == nil {
@@ -131,6 +135,10 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 }
 
 func (s *Stub) withSessionInputLock(sessionID session.SessionID, fn func(sessionRecord) error) error {
+	return s.withSessionInputLockTimeout(sessionID, 0, fn)
+}
+
+func (s *Stub) withSessionInputLockTimeout(sessionID session.SessionID, timeout time.Duration, fn func(sessionRecord) error) error {
 	record, err := s.lookupSession(sessionID)
 	if err != nil {
 		return err
@@ -142,7 +150,9 @@ func (s *Stub) withSessionInputLock(sessionID session.SessionID, fn func(session
 		}
 		return fn(record)
 	}
-	record.inputMu.Lock()
+	if !lockSessionInput(record.inputMu, timeout) {
+		return Conflict("session input is busy; retry shortly")
+	}
 	defer record.inputMu.Unlock()
 	record, err = s.lookupSession(sessionID)
 	if err != nil {
@@ -153,6 +163,23 @@ func (s *Stub) withSessionInputLock(sessionID session.SessionID, fn func(session
 		return err
 	}
 	return fn(record)
+}
+
+func lockSessionInput(mu *sync.Mutex, timeout time.Duration) bool {
+	if timeout <= 0 {
+		mu.Lock()
+		return true
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if mu.TryLock() {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (s *Stub) materializeInputRuntime(record sessionRecord) (sessionRecord, error) {
