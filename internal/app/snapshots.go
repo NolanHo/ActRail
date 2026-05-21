@@ -329,13 +329,13 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		return SessionMessagesResponse{TailSeq: record.transcript.TailSeq().Uint64()}, nil
 	}
 	if response, ok, err := s.loadPIAuthoritativeHistory(ctx, record, s.cfg.Storage.DataDir, req); ok {
-		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
+		return s.finalizeSessionMessages(ctx, record, response), err
 	}
 	if response, ok, err := s.loadDetachedImportedPIHistory(ctx, record, req); ok {
-		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
+		return s.finalizeSessionMessages(ctx, record, response), err
 	}
 	if response, ok, err := s.loadCodexSessionFileHistory(ctx, record, req); ok {
-		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), err
+		return s.finalizeSessionMessages(ctx, record, response), err
 	}
 	activeTurnStartSeq := req.ActiveTurnStartSeq
 	if req.Deferred && activeTurnStartSeq == 0 {
@@ -358,7 +358,7 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 			response.Items = annotateHiddenToolActivitySummaries(response.Items, sessionMessagesFromCommittedItems(record.transcript.Items()))
 		}
 		response.Items, response.HasMore, response.NextBeforeSeq = limitSessionMessagesAfterPage(response.Items, req.Limit)
-		return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
+		return s.finalizeSessionMessages(ctx, record, response), nil
 	}
 	page := visibleTranscriptHistory(record.transcript, req)
 	items := page.Items()
@@ -379,7 +379,41 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		value := nextBefore.Uint64()
 		response.NextBeforeSeq = &value
 	}
-	return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response), nil
+	return s.finalizeSessionMessages(ctx, record, response), nil
+}
+
+func (s *Stub) finalizeSessionMessages(ctx context.Context, record sessionRecord, response SessionMessagesResponse) SessionMessagesResponse {
+	response = filterRecoveredTransportDiagnostics(record, response)
+	return s.annotateSupervisorRuns(ctx, record.identity.SessionID(), response)
+}
+
+func filterRecoveredTransportDiagnostics(record sessionRecord, response SessionMessagesResponse) SessionMessagesResponse {
+	transport := sessionTransportSnapshot(record)
+	if transport.State != SessionTransportStateAttached || transport.ResetRequired || len(response.Items) == 0 {
+		return response
+	}
+	filtered := response.Items[:0]
+	for _, item := range response.Items {
+		if sessionMessageIsRecoveredTransportDiagnostic(item) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	response.Items = filtered
+	return response
+}
+
+func sessionMessageIsRecoveredTransportDiagnostic(item SessionMessage) bool {
+	if item.Type != "pi_event" && item.Kind != "pi_event" {
+		return false
+	}
+	if rawType, _ := item.Details["raw_type"].(string); rawType == "iod_transport_diagnostic" {
+		eventType, _ := item.Details["event_type"].(string)
+		return eventType == "generation_broken" || eventType == "transport_reset_required"
+	}
+	text := strings.TrimSpace(item.Text)
+	return strings.HasPrefix(text, "IOD generation broken: ") ||
+		strings.HasPrefix(text, "IOD transport reset required: ")
 }
 
 func visibleTranscriptHistory(transcript message.Transcript, req SessionMessagesRequest) message.HistoryPage {

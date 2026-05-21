@@ -812,9 +812,57 @@ func TestIODTransportResetRequiredEmitsDiagnosticMessage(t *testing.T) {
 	if len(messages.Items) != 1 || messages.Items[0].Type != "pi_event" || messages.Items[0].Text != "IOD transport reset required: attach_lost" {
 		t.Fatalf("SessionMessages() = %+v, want iod diagnostic event", messages.Items)
 	}
+	if err := svc.setSessionTransportAttached(sessionID, generationID); err != nil {
+		t.Fatalf("setSessionTransportAttached() error = %v", err)
+	}
+	recovered, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() after recovery error = %v", err)
+	}
+	if len(recovered.Items) != 0 {
+		t.Fatalf("SessionMessages() after recovery = %+v, want recovered iod diagnostic hidden", recovered.Items)
+	}
 	snapshot := sink.snapshot()
 	if len(snapshot.commits) != 1 || snapshot.commits[0].Message.Details["raw_type"] != "iod_transport_diagnostic" {
 		t.Fatalf("runtime commits = %+v, want iod transport diagnostic", snapshot.commits)
+	}
+}
+
+func TestRecoveredIODGenerationBrokenDiagnosticHiddenFromSessionMessages(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_rpc_generation_diag")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	if err := svc.markSessionGenerationBroken(sessionID, generationID, iod.GenerationBreakHelperExit.String()); err != nil {
+		t.Fatalf("markSessionGenerationBroken() error = %v", err)
+	}
+	broken, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() while broken error = %v", err)
+	}
+	if len(broken.Items) != 1 || broken.Items[0].Type != "pi_event" || broken.Items[0].Text != "IOD generation broken: helper_exit" {
+		t.Fatalf("SessionMessages() while broken = %+v, want generation broken diagnostic", broken.Items)
+	}
+	if err := svc.setSessionTransportAttached(sessionID, generationID); err != nil {
+		t.Fatalf("setSessionTransportAttached() error = %v", err)
+	}
+	recovered, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() after recovery error = %v", err)
+	}
+	if len(recovered.Items) != 0 {
+		t.Fatalf("SessionMessages() after recovery = %+v, want recovered generation diagnostic hidden", recovered.Items)
 	}
 }
 
