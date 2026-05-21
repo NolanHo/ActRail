@@ -911,6 +911,69 @@ func TestAsyncCodexSendPersistsCommandLedgerWithUserMessage(t *testing.T) {
 	})
 }
 
+func TestAsyncCodexSendIgnoresDuplicateCommandLedgerRow(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	svc.asyncSQLiteActions = true
+	sessionID := mustSessionID(t, "s_codex_ledger_duplicate")
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-ledger-duplicate")
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_codex_ledger_duplicate", "t_codex_ledger_duplicate", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              t.TempDir(),
+		Title:            "codex duplicate ledger",
+		BackendSessionID: "thread-ledger-duplicate",
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    runtimeState,
+			helper: &runtimeIODHelper{
+				streamClient: &iodclient.Client{},
+				sessionID:    sessionID,
+				generationID: mustHelperGenerationID(t, "g_codex_ledger_duplicate"),
+				commandFunc:  func(context.Context, iod.CommandName, json.RawMessage) error { return nil },
+			},
+		},
+		Transport: SessionTransportSnapshot{GenerationID: "g_codex_ledger_duplicate", State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create(codex duplicate ledger) error = %v", err)
+	}
+	store, ok := svc.appStore.(*sqlitestore.SessionCatalog)
+	if !ok {
+		t.Fatalf("appStore = %T, want sqlite catalog", svc.appStore)
+	}
+	if err := store.InsertCodexSessionCommand(context.Background(), sqlitestore.CodexSessionCommandRow{
+		CommandID: codexSendCommandID(sessionID, 2),
+		SessionID: sessionID.String(),
+		Kind:      "send",
+		Text:      "persist me",
+		MessageID: "seq:2",
+		State:     codexCommandPending.String(),
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("preload duplicate command row error = %v", err)
+	}
+
+	response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "persist me"})
+	if err != nil {
+		t.Fatalf("Send() error = %v, want duplicate command ledger row to be idempotent", err)
+	}
+	if response.Message.Seq != 2 || response.Message.Text != "persist me" || !response.Busy {
+		t.Fatalf("Send() = %+v, want committed seq 2 busy prompt", response)
+	}
+}
+
 func TestAsyncCodexCommandLedgerReflectsAndCompletesFromLiveEvents(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

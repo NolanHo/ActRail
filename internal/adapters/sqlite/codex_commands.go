@@ -32,7 +32,7 @@ func (c *SessionCatalog) InsertCodexSessionCommand(ctx context.Context, row Code
 	if c == nil || c.db == nil {
 		return fmt.Errorf("sqlite catalog is not initialized")
 	}
-	if err := insertCodexSessionCommandTx(ctx, c.db, row); err != nil {
+	if err := upsertCodexSessionCommandTx(ctx, c.db, row); err != nil {
 		return fmt.Errorf("insert codex session command %q: %w", row.CommandID, err)
 	}
 	return nil
@@ -62,7 +62,7 @@ func (c *SessionCatalog) UpsertSessionSnapshotWithCodexCommand(ctx context.Conte
 		_ = tx.Rollback()
 		return err
 	}
-	if err := insertCodexSessionCommandTx(ctx, tx, command); err != nil {
+	if err := upsertCodexSessionCommandTx(ctx, tx, command); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -144,55 +144,93 @@ type codexSessionCommandScanner interface {
 
 type codexSessionCommandExecer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func insertCodexSessionCommandTx(ctx context.Context, tx codexSessionCommandExecer, row CodexSessionCommandRow) error {
-	commandID := strings.TrimSpace(row.CommandID)
-	sessionID := strings.TrimSpace(row.SessionID)
-	if commandID == "" {
-		return fmt.Errorf("command_id is required")
+func upsertCodexSessionCommandTx(ctx context.Context, tx codexSessionCommandExecer, row CodexSessionCommandRow) error {
+	row, err := normalizeCodexSessionCommandRow(row)
+	if err != nil {
+		return err
 	}
-	if sessionID == "" {
-		return fmt.Errorf("session_id is required")
-	}
-	state := strings.TrimSpace(row.State)
-	if state == "" {
-		state = "pending"
-	}
-	kind := strings.TrimSpace(row.Kind)
-	if kind == "" {
-		kind = "send"
-	}
-	createdAt := row.CreatedAt
-	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
-	}
-	updatedAt := row.UpdatedAt
-	if updatedAt.IsZero() {
-		updatedAt = createdAt
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO codex_session_commands(
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO codex_session_commands(
 			command_id, session_id, runtime_id, kind, text, message_id, follow_up,
 			state, attempt_count, last_error, created_at, updated_at,
 			claimed_at, accepted_at, reflected_at, completed_at
 		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		commandID,
-		sessionID,
-		strings.TrimSpace(row.RuntimeID),
-		kind,
+		row.CommandID,
+		row.SessionID,
+		row.RuntimeID,
+		row.Kind,
 		row.Text,
-		strings.TrimSpace(row.MessageID),
+		row.MessageID,
 		boolToInt(row.FollowUp),
-		state,
+		row.State,
 		row.AttemptCount,
-		strings.TrimSpace(row.LastError),
-		formatTime(createdAt),
-		formatTime(updatedAt),
+		row.LastError,
+		formatTime(row.CreatedAt),
+		formatTime(row.UpdatedAt),
 		formatNullableTime(row.ClaimedAt),
 		formatNullableTime(row.AcceptedAt),
 		formatNullableTime(row.ReflectedAt),
 		formatNullableTime(row.CompletedAt))
-	return err
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err == nil && affected > 0 {
+		return nil
+	}
+	if err := ensureCodexSessionCommandDuplicateMatches(ctx, tx, row); err != nil {
+		return err
+	}
+	return nil
+}
+
+func normalizeCodexSessionCommandRow(row CodexSessionCommandRow) (CodexSessionCommandRow, error) {
+	row.CommandID = strings.TrimSpace(row.CommandID)
+	row.SessionID = strings.TrimSpace(row.SessionID)
+	if row.CommandID == "" {
+		return CodexSessionCommandRow{}, fmt.Errorf("command_id is required")
+	}
+	if row.SessionID == "" {
+		return CodexSessionCommandRow{}, fmt.Errorf("session_id is required")
+	}
+	row.State = strings.TrimSpace(row.State)
+	if row.State == "" {
+		row.State = "pending"
+	}
+	row.Kind = strings.TrimSpace(row.Kind)
+	if row.Kind == "" {
+		row.Kind = "send"
+	}
+	row.RuntimeID = strings.TrimSpace(row.RuntimeID)
+	row.MessageID = strings.TrimSpace(row.MessageID)
+	row.LastError = strings.TrimSpace(row.LastError)
+	if row.CreatedAt.IsZero() {
+		row.CreatedAt = time.Now().UTC()
+	}
+	if row.UpdatedAt.IsZero() {
+		row.UpdatedAt = row.CreatedAt
+	}
+	return row, nil
+}
+
+func ensureCodexSessionCommandDuplicateMatches(ctx context.Context, tx codexSessionCommandExecer, row CodexSessionCommandRow) error {
+	var (
+		sessionID string
+		kind      string
+		text      string
+		messageID string
+		followUp  int
+	)
+	if err := tx.QueryRowContext(ctx, `SELECT session_id, kind, text, message_id, follow_up
+		FROM codex_session_commands
+		WHERE command_id = ?`, row.CommandID).Scan(&sessionID, &kind, &text, &messageID, &followUp); err != nil {
+		return fmt.Errorf("lookup duplicate codex session command %q: %w", row.CommandID, err)
+	}
+	if sessionID != row.SessionID || kind != row.Kind || text != row.Text || messageID != row.MessageID || (followUp != 0) != row.FollowUp {
+		return fmt.Errorf("codex session command %q conflicts with existing ledger row", row.CommandID)
+	}
+	return nil
 }
 
 func scanCodexSessionCommand(scanner codexSessionCommandScanner) (CodexSessionCommandRow, error) {

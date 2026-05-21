@@ -227,6 +227,9 @@ func TestSessionCatalogPersistsCodexSessionCommandLedger(t *testing.T) {
 	if err := catalog.InsertCodexSessionCommand(context.Background(), command); err != nil {
 		t.Fatalf("InsertCodexSessionCommand() error = %v", err)
 	}
+	if err := catalog.InsertCodexSessionCommand(context.Background(), command); err != nil {
+		t.Fatalf("InsertCodexSessionCommand(duplicate) error = %v", err)
+	}
 	open, err := catalog.ListOpenCodexSessionCommands(context.Background(), "s_1")
 	if err != nil {
 		t.Fatalf("ListOpenCodexSessionCommands() error = %v", err)
@@ -254,6 +257,21 @@ func TestSessionCatalogPersistsCodexSessionCommandLedger(t *testing.T) {
 	}
 	if len(open) != 0 {
 		t.Fatalf("open commands after completed = %+v, want none", open)
+	}
+	if err := catalog.InsertCodexSessionCommand(context.Background(), command); err != nil {
+		t.Fatalf("InsertCodexSessionCommand(duplicate completed) error = %v", err)
+	}
+	open, err = catalog.ListOpenCodexSessionCommands(context.Background(), "s_1")
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands(after duplicate completed) error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("open commands after duplicate completed = %+v, want none", open)
+	}
+	conflicting := command
+	conflicting.Text = "different"
+	if err := catalog.InsertCodexSessionCommand(context.Background(), conflicting); err == nil {
+		t.Fatalf("InsertCodexSessionCommand(conflicting duplicate) error = nil, want error")
 	}
 }
 
