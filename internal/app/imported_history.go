@@ -402,10 +402,19 @@ func previousConversationAnchorIndex(items []SessionMessage, start int) int {
 	if start <= 0 || start > len(items) {
 		return start
 	}
+	firstAssistant := -1
 	for idx := start - 1; idx >= 0; idx-- {
-		if items[idx].Role == "user" || items[idx].Role == "assistant" {
+		switch items[idx].Role {
+		case "user":
 			return idx
+		case "assistant":
+			if firstAssistant < 0 {
+				firstAssistant = idx
+			}
 		}
+	}
+	if firstAssistant >= 0 {
+		return firstAssistant
 	}
 	return start
 }

@@ -214,6 +214,36 @@ func TestSessionMessagesFastPaginationAnnotatesWindowedToolActivity(t *testing.T
 	}
 }
 
+func TestSessionMessagesFastPaginationAnchorsLatestLongTurnAtUser(t *testing.T) {
+	items := make([]SessionMessage, 0, 1300)
+	for i := 1; i <= 1100; i++ {
+		role := "assistant"
+		if i%2 == 1 {
+			role = "user"
+		}
+		items = append(items, SessionMessage{Seq: uint64(i), Role: role, Kind: "message", Text: "older history"})
+	}
+	items = append(items, SessionMessage{Seq: 1101, Role: "user", Kind: "message", Text: "latest prompt"})
+	for i := 1102; i <= 1299; i++ {
+		items = append(items, SessionMessage{Seq: uint64(i), Kind: "tool_result", Type: "tool_result", Text: "hidden tool output"})
+	}
+	items = append(items, SessionMessage{Seq: 1300, Kind: "custom_message", Type: "custom_message", Text: "subagent update"})
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Limit: 20})
+	if len(response.Items) != 2 {
+		t.Fatalf("response.Items = %+v, want latest user plus compact activity", response.Items)
+	}
+	if response.Items[0].Seq != 1101 || response.Items[0].Role != "user" || response.Items[0].Text != "latest prompt" {
+		t.Fatalf("first item = %+v, want latest user prompt", response.Items[0])
+	}
+	if response.Items[1].Seq != 1300 || response.Items[1].Kind != "custom_message" {
+		t.Fatalf("second item = %+v, want latest visible activity at tail", response.Items[1])
+	}
+	if response.TailSeq != 1300 {
+		t.Fatalf("TailSeq = %d, want 1300", response.TailSeq)
+	}
+}
+
 func TestSessionMessagesByIDReturnsDeferredToolDetails(t *testing.T) {
 	items := []SessionMessage{
 		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},
