@@ -1248,6 +1248,71 @@ func TestSessionStateDoesNotWaitForDeferredRuntimeRestore(t *testing.T) {
 	}
 }
 
+func TestDeferredRuntimeRestoreMarksRecoverableCodexTerminalStateStarting(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_deferred_restore_starting")
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/deferred-restore-starting"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	if _, _, err := svc.registry.SetSourceBinding(sessionID, "thread-deferred-restore", "/tmp/codex-deferred-restore.jsonl", sourceConfidenceExact); err != nil {
+		t.Fatalf("SetSourceBinding() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID:  generationID.String(),
+		State:         SessionTransportStateBroken,
+		ResetRequired: true,
+		Reason:        "attach_lost",
+	}); err != nil || !ok {
+		t.Fatalf("SetTransport() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	rehydrated, err := newPersistentStubWithRuntimeOptions(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{}, persistentStubOptions{DeferRuntimeRestore: true})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntimeOptions(rehydrate) error = %v", err)
+	}
+	defer func() { _ = rehydrated.Close() }()
+
+	listed, err := rehydrated.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
+	}
+	if listed.Items[0].TransportState != SessionTransportStateStarting.String() || !listed.Items[0].PendingStartup {
+		t.Fatalf("ListSessions().Items[0] transport = (%q, pending=%v), want starting pending", listed.Items[0].TransportState, listed.Items[0].PendingStartup)
+	}
+	if listed.Items[0].RuntimeState != string(codexRuntimePhaseInitializing) || !listed.Items[0].Busy {
+		t.Fatalf("ListSessions().Items[0] runtime = (%q, busy=%v), want initializing busy", listed.Items[0].RuntimeState, listed.Items[0].Busy)
+	}
+	if err := rehydrated.Close(); err != nil {
+		t.Fatalf("Close(rehydrated) error = %v", err)
+	}
+
+	reloaded, err := newPersistentStubWithRuntimeOptions(cfg, func() time.Time { return now.Add(2 * time.Hour) }, RuntimeConfig{}, persistentStubOptions{DeferRuntimeRestore: true})
+	if err != nil {
+		t.Fatalf("newPersistentStubWithRuntimeOptions(reload) error = %v", err)
+	}
+	defer func() { _ = reloaded.Close() }()
+	record, ok := reloaded.registry.Lookup(sessionID)
+	if !ok {
+		t.Fatal("reloaded session missing")
+	}
+	if record.transport.State != SessionTransportStateStarting || record.transport.ResetRequired {
+		t.Fatalf("persisted transport = %+v, want starting without reset", record.transport)
+	}
+}
+
 func TestPersistentStubMarksUnavailablePIAgentGRPCEndedOnRehydrate(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

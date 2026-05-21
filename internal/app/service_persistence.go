@@ -93,6 +93,12 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		_ = catalog.Close()
 		return nil, err
 	}
+	if options.DeferRuntimeRestore {
+		if err := stub.markDeferredCodexRuntimeRestoreStarting(); err != nil {
+			_ = catalog.Close()
+			return nil, err
+		}
+	}
 	for _, record := range records {
 		if record.runtimeAgentRunning {
 			stub.runtimeAgentRunning[record.identity.SessionID()] = true
@@ -106,6 +112,52 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		return nil, err
 	}
 	return stub, nil
+}
+
+func (s *Stub) markDeferredCodexRuntimeRestoreStarting() error {
+	if s == nil || s.registry == nil {
+		return nil
+	}
+	for _, record := range s.registry.ListAll() {
+		if !recordNeedsDeferredCodexRuntimeRestoreMarker(record) {
+			continue
+		}
+		transport := SessionTransportSnapshot{
+			GenerationID: strings.TrimSpace(record.transport.GenerationID),
+			State:        SessionTransportStateStarting,
+			Reason:       "codex_initializing",
+		}
+		if _, ok, err := s.registry.SetStartupTransport(record.identity.SessionID(), transport); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("session %q not found while marking deferred runtime restore", record.identity.SessionID())
+		}
+	}
+	return nil
+}
+
+func recordNeedsDeferredCodexRuntimeRestoreMarker(record sessionRecord) bool {
+	if record.identity.Historical() || record.identity.Backend() != session.BackendCodex {
+		return false
+	}
+	transport := record.transport
+	if transport.State == SessionTransportStateAttached || transport.State == SessionTransportStateStarting {
+		return false
+	}
+	if strings.TrimSpace(transport.GenerationID) != "" {
+		return true
+	}
+	if record.runtimeAgentRunning {
+		return true
+	}
+	if strings.TrimSpace(record.importedBackendSessionID) != "" || strings.TrimSpace(record.importedSourcePath) != "" {
+		return transport.State == SessionTransportStateBroken ||
+			transport.State == SessionTransportStateFailed ||
+			transport.State == SessionTransportStateEnded ||
+			transport.State == SessionTransportStateSilent ||
+			transport.State == SessionTransportStateStalled
+	}
+	return false
 }
 
 func (s *Stub) RestoreSurvivingRuntimes(ctx context.Context) error {
