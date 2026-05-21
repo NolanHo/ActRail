@@ -2799,14 +2799,85 @@ button.conversationStatusChip {
   border-color: var(--message-card-team-border);
 }
 
-.messageCard.codexSubagentMessage {
-  background: color-mix(in srgb, var(--card) 94%, #f0fdfa);
-  border-color: color-mix(in srgb, var(--border) 70%, #0f766e);
-}
-
 .messageCard.todo_snapshot {
   background: var(--message-card-todo-bg);
   border-color: var(--message-card-todo-border);
+}
+
+.messageCard.codex_subagent,
+.messageCard.codexSubagentMessage {
+  max-width: 46rem;
+  border-color: var(--message-card-subagent-border);
+  background: var(--message-card-subagent-bg);
+  box-shadow: none;
+}
+
+.codexSubagentContent {
+  padding: 10px 12px;
+}
+
+.codexSubagentHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.codexSubagentIcon {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--message-card-subagent-accent);
+}
+
+.codexSubagentIcon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.codexSubagentTitle {
+  font-weight: 650;
+}
+
+.codexSubagentRole {
+  border: 1px solid color-mix(in srgb, var(--message-card-subagent-border) 72%, transparent);
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--control-surface) 78%, transparent);
+  color: var(--message-card-subagent-accent);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.codexSubagentThread,
+.codexSubagentTime {
+  min-width: 0;
+  color: var(--legacy-muted);
+  font-size: 0.75rem;
+}
+
+.codexSubagentThread {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codexSubagentTime {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.codexSubagentBody {
+  margin-top: 7px;
+  color: color-mix(in srgb, var(--text) 90%, var(--legacy-muted));
+  font-size: 0.9rem;
+  line-height: 1.42;
 }
 
 .messageCard.system,

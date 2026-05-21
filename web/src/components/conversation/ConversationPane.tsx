@@ -147,6 +147,7 @@ const EVENT_LABELS: Record<string, string> = {
   team: "Team",
   todo_snapshot: "Todo Progress",
   custom_message: "Custom Message",
+  codex_subagent: "Subagent",
   pi_session: "Session",
   pi_model_change: "Model Change",
   pi_thinking_level_change: "Thinking Level",
@@ -868,6 +869,7 @@ function surfaceBadgeVariant(kind: string): "default" | "secondary" | "outline" 
     case "assistant":
     case "tool_result":
     case "todo_snapshot":
+    case "codex_subagent":
       return "secondary";
     default:
       return "outline";
@@ -1585,6 +1587,17 @@ function ProcessUpdateIcon() {
       <path d="M8 13h4" />
       <path d="M19 9v6" />
       <path d="m16.5 11.5 2.5-2.5 2.5 2.5" />
+    </svg>
+  );
+}
+
+function SubagentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 4.5 17.5 8v6.5L12 18l-5.5-3.5V8L12 4.5Z" />
+      <path d="M12 11.5v6.5" />
+      <path d="M6.75 8.25 12 11.5l5.25-3.25" />
+      <path d="M7.5 19.5h9" />
     </svg>
   );
 }
@@ -3108,15 +3121,21 @@ function renderCustomMessageCard(event: MessageEvent, options: MarkdownRenderOpt
   if (isCodexSubagentMessage(event)) {
     const role = firstNonEmptyText(details?.role, event.summary, "message");
     const threadID = firstNonEmptyText(details?.thread_id);
-    const title = role.toLowerCase() === "user" ? "Codex Subagent Prompt" : "Codex Subagent";
+    const roleLabel = role.toLowerCase() === "user" ? "Prompt" : "Result";
     return (
-      <MessageSurface kind="custom_message" className="codexSubagentMessage">
-        {renderCardHeader("custom_message", title, threadID ? `thread ${threadID}` : "subagent", event.ts)}
-        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
-          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Role</span>
-          <strong>{role}</strong>
+      <MessageSurface kind="codex_subagent" className="codexSubagentMessage" contentClassName="codexSubagentContent">
+        <div className="codexSubagentHeader">
+          <span className="codexSubagentIcon" aria-hidden="true"><SubagentIcon /></span>
+          <span className="codexSubagentTitle">Codex Subagent</span>
+          <span className="codexSubagentRole">{roleLabel}</span>
+          {threadID ? <span className="codexSubagentThread">thread {threadID}</span> : null}
+          {isDisplayableEpochTs(event.ts) ? (
+            <time className="codexSubagentTime" dateTime={new Date(event.ts * 1000).toISOString()}>
+              {formatMessageTimestamp(event.ts)}
+            </time>
+          ) : null}
         </div>
-        {event.text ? renderRichText(event.text, "messageBody", options) : null}
+        {event.text ? renderRichText(event.text, "messageBody codexSubagentBody", options) : null}
       </MessageSurface>
     );
   }

@@ -192,14 +192,17 @@ describe("ConversationPane", () => {
     );
 
     expect(root.querySelectorAll("[data-testid='message-surface'][data-kind='user']")).toHaveLength(1);
-    const subagentCards = root.querySelectorAll("[data-testid='message-surface'][data-kind='custom_message'].codexSubagentMessage");
+    const subagentCards = root.querySelectorAll("[data-testid='message-surface'][data-kind='codex_subagent'].codexSubagentMessage");
     expect(subagentCards).toHaveLength(2);
     const text = root.textContent || "";
-    expect(text).toContain("Codex Subagent Prompt");
     expect(text).toContain("Codex Subagent");
+    expect(text).toContain("Prompt");
+    expect(text).toContain("Result");
     expect(text).toContain("Subagent prompt");
     expect(text).toContain("Subagent result");
     expect(text).toContain("thread sub-thread-1");
+    expect(text).not.toContain("Custom Message");
+    expect(text).not.toContain("ROLE");
   });
 
   it("does not re-render the timeline when draft text changes without pending messages", () => {

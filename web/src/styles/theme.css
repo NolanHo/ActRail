@@ -90,6 +90,9 @@
   --message-card-team-border: color-mix(in srgb, #cdbdff 52%, var(--legacy-border));
   --message-card-todo-bg: color-mix(in srgb, #f3f7e8 82%, white);
   --message-card-todo-border: color-mix(in srgb, #c7d8a7 52%, var(--legacy-border));
+  --message-card-subagent-bg: color-mix(in srgb, #eef8f6 86%, white);
+  --message-card-subagent-border: color-mix(in srgb, #9cc8c1 50%, var(--legacy-border));
+  --message-card-subagent-accent: #0f766e;
   --todo-card-shell: var(--message-card-todo-bg);
   --todo-card-border: var(--message-card-todo-border);
   --todo-card-pill-fg: hsl(84 42% 30%);
@@ -208,6 +211,9 @@
   --message-card-team-border: color-mix(in srgb, hsl(216 28% 52%) 28%, var(--chrome-border));
   --message-card-todo-bg: color-mix(in srgb, var(--message-card-base) 96%, var(--success));
   --message-card-todo-border: color-mix(in srgb, var(--success) 24%, var(--chrome-border));
+  --message-card-subagent-bg: color-mix(in srgb, var(--message-card-base) 94%, hsl(174 56% 34%));
+  --message-card-subagent-border: color-mix(in srgb, hsl(174 44% 48%) 34%, var(--chrome-border));
+  --message-card-subagent-accent: hsl(174 52% 62%);
   --todo-card-shell: var(--message-card-todo-bg);
   --todo-card-border: var(--message-card-todo-border);
   --todo-card-pill-fg: hsl(144 44% 72%);
