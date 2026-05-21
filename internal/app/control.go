@@ -129,6 +129,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 	var runtime sessionRuntime
 	var recordAtCommit sessionRecord
 	var expectedRuntimeID session.RuntimeID
+	var committedItem message.CommittedMessage
 	if err := s.withSessionInputLock(req.SessionID, func(record sessionRecord) error {
 		record.runtime = s.runtimeForRecord(record)
 		if reconciled, ok := s.reconcileClearedCodexMissingChildTransport(record); ok {
@@ -193,6 +194,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 			Queue:   queueSnapshotFromState(state),
 			UI:      copySessionUIRequest(uiRequest),
 		}
+		committedItem = item
 		if record.identity.Backend() == session.BackendCodex {
 			s.trackCodexOutboundPrompt(req.SessionID, text)
 			if trackCapacityRetry {
@@ -209,7 +211,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 	s.emitSessionState(req.SessionID)
 	commandID := ""
 	if recordAtCommit.identity.Backend() == session.BackendCodex {
-		commandID = codexSendCommandID(recordAtCommit.identity.SessionID(), response.Message.Seq)
+		commandID = codexSendCommandIDForMessage(recordAtCommit.identity.SessionID(), committedItem)
 		s.recordCodexReducerEvent(req.SessionID, codexReducerSourceCommandLedger, "command_created",
 			attribute.String("codex.command.state", codexCommandPending.String()),
 			attribute.Bool("codex.command.follow_up", followUp),

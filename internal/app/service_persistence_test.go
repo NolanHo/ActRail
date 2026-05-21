@@ -207,7 +207,7 @@ func TestRecoverOpenCodexCommandDispatchesPendingSend(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
 	}
-	commandID := codexSendCommandID(record.identity.SessionID(), item.Seq().Uint64())
+	commandID := codexSendCommandIDForMessage(record.identity.SessionID(), item)
 
 	svc.recoverOpenCodexSessionCommands(context.Background())
 	select {
@@ -274,7 +274,7 @@ func TestRecoverOpenCodexCommandFailsStaleDispatchingWithoutResend(t *testing.T)
 	if err != nil || !ok {
 		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
 	}
-	commandID := codexSendCommandID(sessionID, item.Seq().Uint64())
+	commandID := codexSendCommandIDForMessage(sessionID, item)
 	svc.updateCodexSendCommandState(commandID, codexCommandDispatching, "r_recover_dispatching", "")
 
 	svc.recoverOpenCodexSessionCommands(context.Background())
@@ -337,7 +337,7 @@ func TestRecoverOpenCodexCommandCompletesAcceptedFromSessionFile(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
 	}
-	commandID := codexSendCommandID(sessionID, item.Seq().Uint64())
+	commandID := codexSendCommandIDForMessage(sessionID, item)
 	svc.updateCodexSendCommandState(commandID, codexCommandAccepted, "r_recover_accepted_file", "")
 
 	svc.recoverOpenCodexSessionCommands(context.Background())
@@ -412,7 +412,7 @@ func TestRecoverOpenCodexCommandLeavesReflectedIdleUnblocked(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
 	}
-	commandID := codexSendCommandID(sessionID, item.Seq().Uint64())
+	commandID := codexSendCommandIDForMessage(sessionID, item)
 	svc.updateCodexSendCommandState(commandID, codexCommandReflected, "r_recover_reflected_idle", "")
 	if _, _, err := svc.registry.SetBusy(sessionID, false); err != nil {
 		t.Fatalf("SetBusy(false) error = %v", err)

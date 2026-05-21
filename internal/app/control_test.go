@@ -911,7 +911,7 @@ func TestAsyncCodexSendPersistsCommandLedgerWithUserMessage(t *testing.T) {
 	})
 }
 
-func TestAsyncCodexSendIgnoresDuplicateCommandLedgerRow(t *testing.T) {
+func TestAsyncCodexSendUsesTimestampedCommandIDWhenSeqWasAlreadyUsed(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
@@ -956,21 +956,37 @@ func TestAsyncCodexSendIgnoresDuplicateCommandLedgerRow(t *testing.T) {
 		CommandID: codexSendCommandID(sessionID, 2),
 		SessionID: sessionID.String(),
 		Kind:      "send",
-		Text:      "persist me",
+		Text:      "old prompt on reused seq",
 		MessageID: "seq:2",
-		State:     codexCommandPending.String(),
+		State:     codexCommandCompleted.String(),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {
-		t.Fatalf("preload duplicate command row error = %v", err)
+		t.Fatalf("preload reused seq command row error = %v", err)
 	}
 
 	response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "persist me"})
 	if err != nil {
-		t.Fatalf("Send() error = %v, want duplicate command ledger row to be idempotent", err)
+		t.Fatalf("Send() error = %v, want reused transcript seq to get distinct command id", err)
 	}
 	if response.Message.Seq != 2 || response.Message.Text != "persist me" || !response.Busy {
 		t.Fatalf("Send() = %+v, want committed seq 2 busy prompt", response)
+	}
+	open, err := store.ListOpenCodexSessionCommands(context.Background(), sessionID.String())
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands() error = %v", err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("open commands = %+v, want one new command", open)
+	}
+	if open[0].CommandID == codexSendCommandID(sessionID, 2) {
+		t.Fatalf("open command reused old command id %q", open[0].CommandID)
+	}
+	if !strings.HasPrefix(open[0].CommandID, codexSendCommandID(sessionID, 2)+":ts:") {
+		t.Fatalf("open command id = %q, want timestamped seq command id", open[0].CommandID)
+	}
+	if open[0].Text != "persist me" || open[0].MessageID != "seq:2" {
+		t.Fatalf("open command = %+v, want new prompt with seq message id", open[0])
 	}
 }
 
