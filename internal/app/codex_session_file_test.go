@@ -542,6 +542,63 @@ func TestSessionMessagesCodexSourcePageAppendsPendingTranscriptWithoutWaitingFor
 	}
 }
 
+func TestSessionMessagesCodexSourcePageKeepsPendingTranscriptWithinLimit(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_page_pending_limit")
+	threadID := "019e2107-ca2f-7e73-994d-8726965f8c8f"
+	lines := makeLargeCodexSessionLines(threadID, "/tmp/codex-pending-limit")
+	lines = append(lines,
+		`{"timestamp":"2026-05-13T04:10:19.000Z","type":"session_meta","payload":{"id":"019e2107-ca2f-7e73-994d-8726965f8c8f","cwd":"/tmp/codex-pending-limit","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-13T04:10:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"source prompt"}}`,
+		`{"timestamp":"2026-05-13T04:11:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"source answer","phase":"final_answer"}}`,
+	)
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, lines)
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_page_pending_limit", "t_page_pending_limit", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-pending-limit",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID),
+		},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	for i := 0; i < 50; i++ {
+		if _, err := svc.AppendSessionMessage(sessionID, "system", "reasoning", fmt.Sprintf("pending trace %02d %s", i, strings.Repeat("x", 1024))); err != nil {
+			t.Fatalf("AppendSessionMessage(%d) error = %v", i, err)
+		}
+	}
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10, Deferred: true})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) > 10 {
+		t.Fatalf("len(messages.Items) = %d, want <= 10", len(messages.Items))
+	}
+	if !messages.HasMore || messages.NextBeforeSeq == nil {
+		t.Fatalf("paging = hasMore:%v next:%v, want older cursor after trimming pending transcript", messages.HasMore, messages.NextBeforeSeq)
+	}
+	got := messageRolesAndText(messages.Items)
+	if !strings.Contains(strings.Join(got, "\n"), "pending trace 49") {
+		t.Fatalf("messages = %#v, want latest pending transcript retained", got)
+	}
+}
+
 func makeLargeCodexSessionLines(threadID string, cwd string) []string {
 	lines := []string{
 		`{"timestamp":"2026-05-13T04:00:00.000Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":"` + cwd + `","originator":"actrail"}}`,

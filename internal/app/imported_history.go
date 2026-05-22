@@ -1069,10 +1069,12 @@ func appendPendingTranscriptMessages(items *[]SessionMessage, record sessionReco
 	return len(*items) > before
 }
 
-func appendPendingTranscriptMessagesToPage(response *SessionMessagesResponse, record sessionRecord, complete bool) bool {
+func appendPendingTranscriptMessagesToPage(response *SessionMessagesResponse, record sessionRecord, req SessionMessagesRequest, complete bool) bool {
 	if response == nil || record.transcript.Len() == 0 || len(response.Items) == 0 {
 		return false
 	}
+	originalHasMore := response.HasMore
+	originalNextBeforeSeq := response.NextBeforeSeq
 	before := len(response.Items)
 	for _, item := range record.transcript.Items() {
 		if complete && item.Role().String() == "assistant" {
@@ -1097,6 +1099,28 @@ func appendPendingTranscriptMessagesToPage(response *SessionMessagesResponse, re
 		response.Items[i].Seq = nextSeq
 	}
 	response.TailSeq = nextSeq
+	response.Items = filterSessionMessagesForRequest(response.Items, req)
+	if req.Deferred {
+		activeTurnStartSeq := req.ActiveTurnStartSeq
+		if activeTurnStartSeq == 0 {
+			activeTurnStartSeq = activeTurnStartSeqForMessages(response.Items)
+		}
+		for i := range response.Items {
+			response.Items[i] = deferSessionMessageForRequest(response.Items[i], req, response.TailSeq, activeTurnStartSeq)
+		}
+	}
+	if req.Limit > 0 && len(response.Items) > req.Limit {
+		start := len(response.Items) - req.Limit
+		response.Items = append([]SessionMessage(nil), response.Items[start:]...)
+		response.HasMore = true
+		if len(response.Items) > 0 {
+			next := response.Items[0].Seq
+			response.NextBeforeSeq = &next
+		}
+		return true
+	}
+	response.HasMore = originalHasMore
+	response.NextBeforeSeq = originalNextBeforeSeq
 	return true
 }
 
@@ -1183,7 +1207,7 @@ func (s *Stub) loadCodexSourceFileHistoryPage(ctx context.Context, record sessio
 		return SessionMessagesResponse{}, false, nil
 	}
 	if req.BeforeSeq == nil {
-		appendPendingTranscriptMessagesToPage(&response, record, complete)
+		appendPendingTranscriptMessagesToPage(&response, record, req, complete)
 	}
 	if complete {
 		s.reconcileOpenCodexCommandsFromMessages(record.identity.SessionID(), response.Items, true)
