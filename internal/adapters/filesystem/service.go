@@ -231,7 +231,7 @@ func (s Service) readPath(ctx context.Context, abs string, displayPath string, d
 	}
 	result.Kind = workspace.ContentKindText
 	result.Encoding = "utf-8"
-	result.Text = string(data)
+	result.Text = browserText(data)
 	return result, nil
 }
 
@@ -307,12 +307,8 @@ func isImageMime(mimeType string) bool {
 
 func looksLikeText(data []byte, mimeType string) bool {
 	typeRoot := strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0]))
-	if strings.HasPrefix(typeRoot, "text/") {
-		return utf8.Valid(data)
-	}
-	switch typeRoot {
-	case "application/json", "application/xml", "application/javascript", "application/x-yaml", "image/svg+xml":
-		return utf8.Valid(data)
+	if isTextMime(typeRoot) {
+		return !bytesContainNUL(data)
 	}
 	sample := data
 	if len(sample) > sniffBytes {
@@ -322,6 +318,26 @@ func looksLikeText(data []byte, mimeType string) bool {
 		return false
 	}
 	return utf8.Valid(sample)
+}
+
+func isTextMime(typeRoot string) bool {
+	if strings.HasPrefix(typeRoot, "text/") {
+		return true
+	}
+	switch typeRoot {
+	case "application/json", "application/xml", "application/javascript", "application/x-yaml", "image/svg+xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func browserText(data []byte) string {
+	value := string(data)
+	if utf8.ValidString(value) {
+		return value
+	}
+	return strings.ToValidUTF8(value, "\uFFFD")
 }
 
 func bytesContainNUL(data []byte) bool {

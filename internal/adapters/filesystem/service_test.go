@@ -75,6 +75,8 @@ func TestListSearchTraversesAndTruncates(t *testing.T) {
 func TestReadClassifiesTextImageAndBinary(t *testing.T) {
 	rootDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(rootDir, "note.txt"), "hello")
+	mustWriteFile(t, filepath.Join(rootDir, "report_zh.md"), "# 报告\n\n今晚完成了 ABCDE closeout。\n")
+	mustWriteBytes(t, filepath.Join(rootDir, "legacy.md"), []byte("# legacy\n\nlatin1: caf\xe9\n"))
 	mustWriteBytes(t, filepath.Join(rootDir, "pixel.png"), []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
 	mustWriteBytes(t, filepath.Join(rootDir, "blob.bin"), []byte{0x00, 0x01, 0x02, 0x03})
 	root, err := workspace.NewRoot(rootDir)
@@ -93,6 +95,22 @@ func TestReadClassifiesTextImageAndBinary(t *testing.T) {
 	if text.Kind != workspace.ContentKindText || text.Text != "hello" || text.Encoding != "utf-8" {
 		t.Fatalf("unexpected text payload: %+v", text)
 	}
+	markdownPath, _ := workspace.ParseRelPath("report_zh.md")
+	markdown, err := svc.Read(context.Background(), root, markdownPath)
+	if err != nil {
+		t.Fatalf("read markdown: %v", err)
+	}
+	if markdown.Kind != workspace.ContentKindText || !strings.Contains(markdown.Text, "今晚完成了") {
+		t.Fatalf("unexpected markdown payload: %+v", markdown)
+	}
+	legacyPath, _ := workspace.ParseRelPath("legacy.md")
+	legacy, err := svc.Read(context.Background(), root, legacyPath)
+	if err != nil {
+		t.Fatalf("read legacy markdown: %v", err)
+	}
+	if legacy.Kind != workspace.ContentKindText || !strings.Contains(legacy.Text, "\uFFFD") {
+		t.Fatalf("unexpected legacy markdown payload: %+v", legacy)
+	}
 	imagePath, _ := workspace.ParseRelPath("pixel.png")
 	image, err := svc.Read(context.Background(), root, imagePath)
 	if err != nil {
@@ -108,6 +126,23 @@ func TestReadClassifiesTextImageAndBinary(t *testing.T) {
 	}
 	if binary.Kind != workspace.ContentKindUnsupported || binary.UnsupportedReason == "" {
 		t.Fatalf("unexpected binary payload: %+v", binary)
+	}
+}
+
+func TestReadAbsoluteMarkdownWithUnicode(t *testing.T) {
+	rootDir := t.TempDir()
+	path := filepath.Join(rootDir, "报告.md")
+	mustWriteFile(t, path, "# 标题\n\n中文 markdown 应该可以预览。\n")
+	svc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	result, err := svc.ReadAbsolute(context.Background(), path)
+	if err != nil {
+		t.Fatalf("read absolute: %v", err)
+	}
+	if result.Kind != workspace.ContentKindText || result.Path != filepath.Clean(path) || result.DownloadName != "报告.md" || !strings.Contains(result.Text, "中文 markdown") {
+		t.Fatalf("unexpected absolute markdown payload: %+v", result)
 	}
 }
 
