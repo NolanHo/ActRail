@@ -1373,6 +1373,35 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("settings saved; restart or handoff the session to apply them to the runtime");
   });
 
+  it("shows backend default model and reasoning effort in the session status bar", async () => {
+    renderAppShell({
+      items: [{
+        session_id: "sess-1",
+        alias: "Codex defaults",
+        agent_backend: "codex",
+        busy: false,
+      }],
+      newSessionDefaults: {
+        backends: {
+          codex: {
+            provider_choice: "crs",
+            model: "gpt-5.5",
+            reasoning_effort: "high",
+          },
+        },
+        backend_capabilities: {
+          codex: { runtime_probe: true, launch_reasoning_effort: false },
+        },
+      },
+    });
+    await flush();
+
+    const modelChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Model"));
+    const effortChip = Array.from(getRoot().querySelectorAll(".conversationStatusChip")).find((chip) => chip.textContent?.includes("Effort"));
+    expect(modelChip?.textContent).toContain("gpt-5.5");
+    expect(effortChip?.textContent).toContain("high");
+  });
+
   it("does not expose reasoning effort for codex runtime settings", async () => {
     renderAppShell({
       items: [{

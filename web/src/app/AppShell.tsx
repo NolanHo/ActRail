@@ -43,7 +43,8 @@ import {
 import { getSessionRuntimeId } from "../lib/session-identity";
 import { getSessionDisplayName } from "../lib/session-display";
 import { applyUserDisplaySettings, readUserDisplaySettings, writeUserDisplaySettings } from "../lib/user-settings";
-import { backendCapability } from "../lib/launch";
+import { backendCapability, normalizeLaunchBackend } from "../lib/launch";
+import { defaultModelFor, defaultProviderFor, defaultReasoningFor } from "../lib/launch-options";
 import type { SwitchSessionModelResponse } from "../lib/types";
 
 type WorkspaceTab = "metadata";
@@ -398,8 +399,16 @@ export function AppShell() {
     ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
     : "No session selected";
   const activeCodexSessionCwd = activeSession?.cwd || DEFAULT_CODEX_SESSION_CWD;
-  const activeModel = typeof activeSession?.model === "string" ? activeSession.model.trim() : "";
-  const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "";
+  const activeBackend = normalizeLaunchBackend(activeSession?.agent_backend);
+  const activeBackendDefaults = newSessionDefaults?.backends?.[activeBackend] || {};
+  const activeProviderChoice = typeof activeSession?.provider_choice === "string" ? activeSession.provider_choice.trim() : "";
+  const activeDefaultProvider = activeProviderChoice || defaultProviderFor(activeBackendDefaults);
+  const activeModel = activeSession
+    ? (typeof activeSession.model === "string" ? activeSession.model.trim() : "") || defaultModelFor(activeBackendDefaults, activeBackend, activeDefaultProvider)
+    : "";
+  const activeReasoningEffort = activeSession
+    ? (typeof activeSession.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "") || defaultReasoningFor(activeBackendDefaults, activeBackend)
+    : "";
   const activeContextUsageLabel = activeSessionId ? contextUsageStatusLabel(liveActiveSessionState.contextUsage) : "";
   const activeQueueCount = typeof activeSession?.queue_len === "number" && Number.isFinite(activeSession.queue_len)
     ? Math.max(0, Math.round(activeSession.queue_len))
