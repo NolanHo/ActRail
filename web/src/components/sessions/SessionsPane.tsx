@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { shallowEqual, useComposerStoreApi, useSessionsStoreApi, useSessionsStoreSelector } from "../../app/providers";
 import { api } from "../../lib/api";
-import { backendSupportsReasoningEffort, normalizeLaunchBackend } from "../../lib/launch";
+import { backendDisplayName, backendSupportsReasoningEffort, normalizeLaunchBackend } from "../../lib/launch";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary } from "../../lib/types";
@@ -51,7 +51,7 @@ function sessionBackendUnavailable(session: SessionSummary) {
 }
 
 function restartSessionActionLabel(session: SessionSummary) {
-  const backend = normalizeLaunchBackend(session.agent_backend) === "pi" ? "Pi" : "Codex";
+  const backend = backendDisplayName(session.agent_backend);
   return sessionBackendUnavailable(session) ? `Start ${backend}` : `Restart ${backend}`;
 }
 
@@ -63,7 +63,7 @@ function restartSessionConfirmText(session: SessionSummary) {
 }
 
 function restartSessionProgressLabel(session: SessionSummary) {
-  const backend = normalizeLaunchBackend(session.agent_backend) === "pi" ? "Pi" : "Codex";
+  const backend = backendDisplayName(session.agent_backend);
   return sessionBackendUnavailable(session) ? `Starting ${backend}...` : `Restarting ${backend}...`;
 }
 

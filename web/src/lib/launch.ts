@@ -4,6 +4,10 @@ export function normalizeLaunchBackend(backend: string | null | undefined) {
   return String(backend || "codex").trim().toLowerCase() === "pi" ? "pi" : "codex";
 }
 
+export function backendDisplayName(backend: string | null | undefined) {
+  return normalizeLaunchBackend(backend) === "pi" ? "Pi (deprecated)" : "Codex";
+}
+
 export function backendCapability(defaults: NewSessionDefaults | null | undefined, backend: string | null | undefined): BackendCapabilitySnapshot | null {
   const normalizedBackend = normalizeLaunchBackend(backend);
   return defaults?.backend_capabilities?.[normalizedBackend] ?? null;

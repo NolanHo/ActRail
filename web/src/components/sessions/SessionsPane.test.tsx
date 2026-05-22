@@ -162,7 +162,7 @@ describe("SessionsPane", () => {
     expect(root?.querySelectorAll("[data-testid='session-card']")).toHaveLength(1);
     expect(root?.querySelector("[data-testid='session-card'][aria-current='true']")).not.toBeNull();
     expect(root?.textContent).toContain("Inbox cleanup");
-    expect(root?.textContent).toContain("pi");
+    expect(root?.textContent).toContain("Pi (deprecated)");
     expect(root?.textContent).not.toContain("web");
   });
 

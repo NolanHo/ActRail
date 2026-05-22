@@ -31,7 +31,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Launch.DefaultBackend != "codex" {
 		t.Fatalf("expected default backend codex, got %q", cfg.Launch.DefaultBackend)
 	}
-	if !reflect.DeepEqual(cfg.Launch.AvailableBackends, []string{"pi", "codex"}) {
+	if !reflect.DeepEqual(cfg.Launch.AvailableBackends, []string{"codex"}) {
 		t.Fatalf("unexpected default backends: %#v", cfg.Launch.AvailableBackends)
 	}
 	if !cfg.Launch.CodexDangerousBypass {

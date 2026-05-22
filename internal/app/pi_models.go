@@ -303,7 +303,6 @@ func (s *Stub) newSessionDefaults(ctx context.Context, req BootstrapRequest) New
 		addBackend(backend)
 	}
 	if len(backends) == 0 {
-		addBackend("pi")
 		addBackend("codex")
 	}
 	addBackend(s.cfg.Launch.DefaultBackend)

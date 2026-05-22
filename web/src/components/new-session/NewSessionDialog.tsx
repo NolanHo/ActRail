@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
-import { backendCapability, backendSupportsReasoningEffort } from "../../lib/launch";
+import { backendCapability, backendDisplayName, backendSupportsReasoningEffort } from "../../lib/launch";
 import {
   defaultModelFor,
   defaultProviderFor,
@@ -189,7 +189,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const submittingRef = useRef(false);
 
   const backendNames = useMemo(
-    () => Object.keys(newSessionDefaults?.backends || { codex: {}, pi: {} }),
+    () => Object.keys(newSessionDefaults?.backends || { codex: {} }),
     [newSessionDefaults?.backends],
   );
   const backendDefaults = newSessionDefaults?.backends?.[backend] || {};
@@ -521,7 +521,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   <p className="text-sm text-muted-foreground">Launch a backend in a project directory.</p>
                 </div>
                 <div className="newSessionMeta flex flex-wrap gap-2">
-                  <Badge variant="secondary" className="capitalize">{backend}</Badge>
+                  <Badge variant="secondary">{backendDisplayName(backend)}</Badge>
                   {supportsFast ? <Badge variant="outline">Fast available</Badge> : null}
                   {supportsTmux ? <Badge variant="outline">tmux ready</Badge> : null}
                 </div>
@@ -533,10 +533,10 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                     type="button"
                     variant={backend === backendName ? "default" : "ghost"}
                     data-testid={`backend-tab-${backendName}`}
-                    className="backendOptionButton h-11 rounded-[1rem] capitalize"
+                    className="backendOptionButton h-11 rounded-[1rem]"
                     onClick={() => applyBackend(backendName)}
                   >
-                    {backendName}
+                    {backendDisplayName(backendName)}
                   </Button>
                 ))}
               </div>

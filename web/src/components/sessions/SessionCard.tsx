@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { memo } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { backendDisplayName } from "../../lib/launch";
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary } from "../../lib/types";
 
@@ -188,7 +189,7 @@ function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit
   const showActions = hasActions && (active || desktopActions);
   const accessibilityParts = [
     title,
-    session.agent_backend || "codex",
+    backendDisplayName(session.agent_backend),
     isHistorical ? "historical" : session.busy ? "busy" : "idle",
     !isHistorical ? healthLabel : null,
     !isHistorical && session.focused ? "focused" : null,
@@ -257,7 +258,7 @@ function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit
               <div className="sessionCardHeaderAside">
                 <div className="sessionMetaBadges flex items-center justify-end gap-1">
                   {!isHistorical ? <span className={cn("stateDot", health)} title={healthLabel} aria-label={healthLabel} /> : null}
-                  <Badge variant="secondary" className="backendBadge">{session.agent_backend || "codex"}</Badge>
+                  <Badge variant="secondary" className="backendBadge">{backendDisplayName(session.agent_backend)}</Badge>
                   {isHistorical ? <Badge variant="outline" className="ownerBadge">history</Badge> : null}
                   {!isHistorical && session.queue_len ? <Badge className="queueBadge">{session.queue_len}</Badge> : null}
                   {!isHistorical && supervisorLabel ? <Badge variant="outline" className="ownerBadge supervisorBadge">{supervisorLabel}</Badge> : null}

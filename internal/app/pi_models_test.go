@@ -86,7 +86,9 @@ func TestBootstrapRefreshPIModelsDiscoversAndCachesProviderModels(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	stub := NewStubForTest(config.Load(), func() time.Time { return time.Unix(1770000000, 0) }, RuntimeConfig{})
+	cfg := config.Load()
+	cfg.Launch.AvailableBackends = []string{"codex", "pi"}
+	stub := NewStubForTest(cfg, func() time.Time { return time.Unix(1770000000, 0) }, RuntimeConfig{})
 	initial := stub.Bootstrap(context.Background(), BootstrapRequest{})
 	if models := initial.NewSessionDefaults.Backends["pi"].ProviderModels["openai"]; len(models) != 0 {
 		t.Fatalf("initial provider models = %#v, want none before refresh", models)
@@ -115,7 +117,9 @@ func TestBootstrapRefreshPIModelsDiscoversAndCachesProviderModels(t *testing.T) 
 }
 
 func TestBootstrapIncludesBackendCapabilityMatrix(t *testing.T) {
-	stub := NewStubForTest(config.Load(), func() time.Time { return time.Unix(1770000000, 0) }, RuntimeConfig{})
+	cfg := config.Load()
+	cfg.Launch.AvailableBackends = []string{"codex", "pi"}
+	stub := NewStubForTest(cfg, func() time.Time { return time.Unix(1770000000, 0) }, RuntimeConfig{})
 	bootstrap := stub.Bootstrap(context.Background(), BootstrapRequest{})
 
 	codex := bootstrap.NewSessionDefaults.BackendCapabilities["codex"]

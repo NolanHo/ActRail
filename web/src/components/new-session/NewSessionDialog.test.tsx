@@ -734,12 +734,6 @@ describe("NewSessionDialog", () => {
     });
     await flush();
 
-    const piTab = root.querySelector('[data-testid="backend-tab-pi"]') as HTMLButtonElement;
-    await act(async () => {
-      piTab.click();
-      await Promise.resolve();
-    });
-
     act(() => {
       sessionsStore.setState({
         ...sessionsStore.getState(),
@@ -754,9 +748,8 @@ describe("NewSessionDialog", () => {
     });
     await flush();
 
-    expect((root.querySelector('input[name="model"]') as HTMLInputElement).value).toBe("gpt-5.4");
-    expect((root.querySelector('select[name="providerChoice"]') as HTMLSelectElement).value).toBe("macaron");
-    expect((root.querySelector('select[name="reasoningEffort"]') as HTMLSelectElement).value).toBe("high");
+    expect((root.querySelector('input[name="model"]') as HTMLInputElement).value).toBe("gpt-5");
+    expect((root.querySelector('select[name="providerChoice"]') as HTMLSelectElement).value).toBe("chatgpt");
 
     const modelInput = root.querySelector('input[name="model"]') as HTMLInputElement;
     await setInputValue(modelInput, "custom-model");
@@ -766,10 +759,10 @@ describe("NewSessionDialog", () => {
       sessionsStore.setState({
         ...sessionsStore.getState(),
         newSessionDefaults: {
-          default_backend: "pi",
+          default_backend: "codex",
           backends: {
             pi: { provider_choice: "other", model: "replacement", reasoning_effort: "low" },
-            codex: { provider_choice: "chatgpt" },
+            codex: { provider_choice: "openai-api", model: "replacement" },
           },
         },
       });

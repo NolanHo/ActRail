@@ -97,6 +97,8 @@ func (e UnsupportedOptionError) Error() string {
 	return message + ": " + e.Reason
 }
 
+// piAdapter is deprecated with BackendPI. It remains registered so existing
+// Pi sessions and explicit operator overrides keep working.
 type piAdapter struct{}
 
 func (piAdapter) Backend() session.Backend {

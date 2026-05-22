@@ -9,6 +9,8 @@ import (
 type Backend string
 
 const (
+	// BackendPI is deprecated. Keep support for legacy sessions and explicit
+	// operator overrides, but do not extend Pi-specific launch/runtime paths.
 	BackendPI    Backend = "pi"
 	BackendCodex Backend = "codex"
 )

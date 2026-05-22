@@ -118,7 +118,7 @@ func Load() Config {
 		},
 		Launch: Launch{
 			DefaultBackend:       envString("ACTRAIL_DEFAULT_BACKEND", "codex"),
-			AvailableBackends:    csvEnv("ACTRAIL_AVAILABLE_BACKENDS", []string{"pi", "codex"}),
+			AvailableBackends:    csvEnv("ACTRAIL_AVAILABLE_BACKENDS", []string{"codex"}),
 			Providers:            csvEnv("ACTRAIL_AVAILABLE_PROVIDERS", nil),
 			Models:               csvEnv("ACTRAIL_AVAILABLE_MODELS", nil),
 			CodexDangerousBypass: envBool("ACTRAIL_CODEX_DANGEROUS_BYPASS", true),

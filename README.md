@@ -1,12 +1,14 @@
 # ActRail
 
-ActRail is a local control rail for CLI coding-agent sessions. It launches `pi` and `codex` runtimes, tracks live sessions in one place, and exposes a Go API plus a Preact UI for monitoring, prompt dispatch, queue control, and workspace inspection.
+ActRail is a local control rail for CLI coding-agent sessions. It launches Codex runtimes, tracks live sessions in one place, and exposes a Go API plus a Preact UI for monitoring, prompt dispatch, queue control, and workspace inspection.
+
+The `pi` backend is deprecated. Its code remains for legacy sessions and explicit operator overrides, but new runtime work should target Codex.
 
 ## Current scope
 
 ActRail currently provides:
 
-- session creation for `pi` and `codex` backends
+- session creation for Codex backends, with deprecated `pi` support retained for legacy sessions
 - session listing, focus, rename, delete, and metadata edits
 - live transcript and session-state streaming over Connect
 - prompt send, queue replace, interrupt, and UI-response commands over Connect
@@ -149,10 +151,10 @@ Other useful backend settings:
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `ACTRAIL_HOST` | `127.0.0.1` | Backend listen host. |
-| `ACTRAIL_AVAILABLE_BACKENDS` | `pi,codex` | Backend choices exposed to the launch UI. |
+| `ACTRAIL_AVAILABLE_BACKENDS` | `codex` | Backend choices exposed to the launch UI. Include `pi` only for deprecated legacy/operator workflows. |
 | `ACTRAIL_AVAILABLE_PROVIDERS` | unset | Optional provider list exposed in launch defaults. |
 | `ACTRAIL_AVAILABLE_MODELS` | unset | Optional model list exposed in launch defaults. |
-| `ACTRAIL_DEFAULT_BACKEND` | `pi` | Default backend in launch defaults. |
+| `ACTRAIL_DEFAULT_BACKEND` | `codex` | Default backend in launch defaults. |
 | `ACTRAIL_CODEX_DANGEROUS_BYPASS` | `true` | Adds `--dangerously-bypass-approvals-and-sandbox` before `app-server` for Codex launches. Set to `false` to disable. |
 | `ACTRAIL_IOD_BIN` | unset | Optional explicit path to the `actrail-iod` helper binary used for session launch. |
 
