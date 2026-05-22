@@ -317,6 +317,90 @@ func TestStartupHealthReconcilesPersistedCodexMissingChildBrokenAfterCleanup(t *
 	assertEventuallyPIDGone(t, childPID)
 }
 
+func TestStartupHealthCleansLiveHelperWhenControlSocketFileMissing(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_missing_control_socket")
+	helperPID, childPID, stop := startLiveHelperProcessGroupForCommand(t, fmt.Sprintf("python3 -c 'import time; time.sleep(60)' app-server --listen unix://%s", filepath.Join(t.TempDir(), "child.sock")))
+	defer stop()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-missing-control-socket"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, helperPID, 1760000000)
+	manifest.ChildPID = &childPID
+	manifest.ControlSocketPath = filepath.Join(t.TempDir(), "missing", "io")
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want ended helper_not_running after missing control socket cleanup", state.Transport)
+	}
+	assertEventuallyProcessStopped(t, helperPID)
+	assertEventuallyProcessStopped(t, childPID)
+}
+
+func TestStartupHealthCleansPersistedBrokenHelperWhenControlSocketFileMissing(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	generationID := mustHelperGenerationID(t, "g_codex_broken_missing_control_socket")
+	helperPID, childPID, stop := startLiveHelperProcessGroupForCommand(t, fmt.Sprintf("python3 -c 'import time; time.sleep(60)' app-server --listen unix://%s", filepath.Join(t.TempDir(), "child.sock")))
+	defer stop()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, fakeRuntimeConfigWithHelperBinding(RuntimeHelperBinding{GenerationID: generationID}))
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(create) error = %v", err)
+	}
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/tmp/codex-broken-missing-control-socket"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(cfg.Storage.DataDir), sessionID, generationID)
+	manifest := writeHelperManifestWithPID(t, manifestPath, sessionID, generationID, helperPID, 1760000000)
+	manifest.ChildPID = &childPID
+	manifest.ControlSocketPath = filepath.Join(t.TempDir(), "missing", "io")
+	if err := iodclient.WriteGenerationManifest(manifestPath, manifest); err != nil {
+		t.Fatalf("WriteGenerationManifest(%q) error = %v", manifestPath, err)
+	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID:  generationID.String(),
+		State:         SessionTransportStateBroken,
+		ResetRequired: true,
+		Reason:        helperMissingChildAliveReason,
+	}); err != nil || !ok {
+		t.Fatalf("SetTransport() ok=%v err=%v", ok, err)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(restart) error = %v", err)
+	}
+	state, err := rehydrated.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateEnded || state.Transport.Reason != "helper_not_running" || state.Transport.ResetRequired {
+		t.Fatalf("SessionState().Transport = %+v, want ended helper_not_running after persisted missing control socket cleanup", state.Transport)
+	}
+	assertEventuallyProcessStopped(t, helperPID)
+	assertEventuallyProcessStopped(t, childPID)
+}
+
 func TestCleanupOrphanChildFromManifestKillsDeadHelperProcessGroup(t *testing.T) {
 	helperPID, childPID := startOrphanedChildProcessGroup(t)
 	sessionID := mustSessionID(t, "s_cleanup_orphan_child")
@@ -2233,6 +2317,20 @@ func assertEventuallyPIDGone(t *testing.T, pid int) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("pid %d is still alive", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func assertEventuallyProcessStopped(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if !appProcessRunning(pid) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pid %d is still running", pid)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

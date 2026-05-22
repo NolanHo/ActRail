@@ -568,6 +568,9 @@ func (s *Stub) cleanupStartupCodexOrphans(sessionID session.SessionID, record se
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
 	defer cancel()
+	if cleanupMissingControlSocketHelper(cleanupCtx, manifest) {
+		return transportSnapshotEnded(helperGenerationID, "helper_not_running"), true, nil
+	}
 	_, _ = cleanupOrphanChildFromManifest(cleanupCtx, manifest)
 	_, _ = cleanupOrphanChildrenForSocket(cleanupCtx, childSocketPathForManifest(manifest), manifest.HelperPID)
 	if startupCodexBrokenChildGone(record.transport, manifest) {
@@ -599,7 +602,12 @@ func (s *Stub) reconcileClearedCodexMissingChildTransport(record sessionRecord) 
 	}
 	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(s.cfg.Storage.DataDir), record.identity.SessionID(), helperGenerationID)
 	manifest, err := iod.ReadGenerationManifest(manifestPath)
-	if err != nil || !startupCodexBrokenChildGone(transport, manifest) {
+	if err != nil {
+		return record, false
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), helperStopTimeout)
+	defer cancel()
+	if !startupCodexBrokenChildGone(transport, manifest) && !cleanupMissingControlSocketHelper(cleanupCtx, manifest) {
 		return record, false
 	}
 	updatedTransport, ok, err := s.registry.SetTransport(record.identity.SessionID(), transportSnapshotEnded(helperGenerationID, "helper_not_running"))
@@ -670,7 +678,7 @@ func startupTransportForSession(sessionID session.SessionID, bindings map[sessio
 func (s *Stub) startupTransportForSession(sessionID session.SessionID, record sessionRecord, bindings map[session.SessionID]helperGenerationBinding, attachments map[session.SessionID]attachedHelper, fences []helperFence) (SessionTransportSnapshot, *iod.GenerationManifest) {
 	transport := startupTransportForSession(sessionID, bindings, attachments, fences)
 	if transport.State == SessionTransportStateEnded && transport.Reason == "helper_not_running" && record.identity.Backend() == session.BackendCodex {
-		if replacement, manifest, ok := s.helperMissingCodexChildTransportWithGeneration(sessionID, strings.TrimSpace(transport.GenerationID)); ok {
+		if replacement, manifest, ok := s.helperMissingCodexChildTransportWithGeneration(context.Background(), sessionID, strings.TrimSpace(transport.GenerationID)); ok {
 			return replacement, manifest
 		}
 	}
@@ -694,11 +702,11 @@ func (s *Stub) helperMissingCodexChildTransport(record sessionRecord) (SessionTr
 			generationID = binding.GenerationID.String()
 		}
 	}
-	transport, _, ok := s.helperMissingCodexChildTransportWithGeneration(record.identity.SessionID(), generationID)
+	transport, _, ok := s.helperMissingCodexChildTransportWithGeneration(context.Background(), record.identity.SessionID(), generationID)
 	return transport, ok
 }
 
-func (s *Stub) helperMissingCodexChildTransportWithGeneration(sessionID session.SessionID, generationID string) (SessionTransportSnapshot, *iod.GenerationManifest, bool) {
+func (s *Stub) helperMissingCodexChildTransportWithGeneration(ctx context.Context, sessionID session.SessionID, generationID string) (SessionTransportSnapshot, *iod.GenerationManifest, bool) {
 	if s == nil || strings.TrimSpace(generationID) == "" {
 		return SessionTransportSnapshot{}, nil, false
 	}
@@ -718,6 +726,9 @@ func (s *Stub) helperMissingCodexChildTransportWithGeneration(sessionID session.
 	if manifest.SessionID != sessionID || manifest.GenerationID != helperGenerationID || manifest.ChildPID == nil {
 		return SessionTransportSnapshot{}, nil, false
 	}
+	if cleanupMissingControlSocketHelper(ctx, manifest) {
+		return SessionTransportSnapshot{}, nil, false
+	}
 	if !processPIDAlive(*manifest.ChildPID) {
 		return SessionTransportSnapshot{}, nil, false
 	}
@@ -727,6 +738,32 @@ func (s *Stub) helperMissingCodexChildTransportWithGeneration(sessionID session.
 		ResetRequired: true,
 		Reason:        helperMissingChildAliveReason,
 	}, &manifest, true
+}
+
+func cleanupMissingControlSocketHelper(ctx context.Context, manifest iod.GenerationManifest) bool {
+	if manifest.HelperPID <= 0 || strings.TrimSpace(manifest.ControlSocketPath) == "" {
+		return false
+	}
+	if !processPIDAlive(manifest.HelperPID) {
+		return false
+	}
+	if _, err := os.Stat(manifest.ControlSocketPath); err == nil {
+		return false
+	} else if !os.IsNotExist(err) {
+		return false
+	}
+	cleanupCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		cleanupCtx, cancel = context.WithTimeout(ctx, helperStopTimeout)
+		defer cancel()
+	}
+	_ = shutdownRuntimeGenerationPID(cleanupCtx, manifest.HelperPID)
+	if manifest.ChildPID != nil && *manifest.ChildPID > 0 && processPIDAlive(*manifest.ChildPID) {
+		_, _ = cleanupOrphanChildFromManifest(cleanupCtx, manifest)
+		_, _ = cleanupOrphanChildrenForSocket(cleanupCtx, childSocketPathForManifest(manifest), manifest.HelperPID)
+	}
+	return true
 }
 
 func startupTransportFromFences(generationID iod.GenerationID, fences []helperFence) (SessionTransportSnapshot, bool) {

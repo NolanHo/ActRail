@@ -678,6 +678,106 @@ func TestRuntimeLauncherShutsDownStaleStableGenerationManifestBeforeReuse(t *tes
 	}
 }
 
+func TestRuntimeGenerationProcessMatchesStableSlot(t *testing.T) {
+	sessionID := mustSessionID(t, "s_match_stable_generation")
+	generationID, err := defaultRuntimeGenerationID(sessionID)
+	if err != nil {
+		t.Fatalf("defaultRuntimeGenerationID() error = %v", err)
+	}
+	runtimeRoot := filepath.Join(t.TempDir(), "runtime", "iod")
+	args := []string{
+		"/tmp/actrail-iod",
+		helperFlagSessionID, sessionID.String(),
+		helperFlagGenerationID, generationID.String(),
+		helperFlagRuntimeRoot, runtimeRoot,
+		"--",
+		"/tmp/codex",
+	}
+
+	if !runtimeGenerationProcessMatches(args, runtimeRoot, sessionID, generationID) {
+		t.Fatalf("runtimeGenerationProcessMatches() = false, want true for same stable slot")
+	}
+	if runtimeGenerationProcessMatches(args, runtimeRoot, mustSessionID(t, "s_other_stable_generation"), generationID) {
+		t.Fatalf("runtimeGenerationProcessMatches() = true, want false for different session")
+	}
+	if runtimeGenerationProcessMatches(args, runtimeRoot, sessionID, mustHelperGenerationID(t, "g_other_stable_generation")) {
+		t.Fatalf("runtimeGenerationProcessMatches() = true, want false for different generation")
+	}
+	if runtimeGenerationProcessMatches(args, filepath.Join(t.TempDir(), "other", "iod"), sessionID, generationID) {
+		t.Fatalf("runtimeGenerationProcessMatches() = true, want false for different runtime root")
+	}
+}
+
+func TestRuntimeGenerationProcessMatchesSymlinkedRuntimeRoot(t *testing.T) {
+	sessionID := mustSessionID(t, "s_match_symlink_generation")
+	generationID, err := defaultRuntimeGenerationID(sessionID)
+	if err != nil {
+		t.Fatalf("defaultRuntimeGenerationID() error = %v", err)
+	}
+	realRoot := filepath.Join(t.TempDir(), "real", "iod")
+	if err := os.MkdirAll(realRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", realRoot, err)
+	}
+	linkRoot := filepath.Join(t.TempDir(), "link-iod")
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Fatalf("Symlink(%q, %q) error = %v", realRoot, linkRoot, err)
+	}
+	args := []string{
+		"/tmp/actrail-iod",
+		helperFlagSessionID, sessionID.String(),
+		helperFlagGenerationID, generationID.String(),
+		helperFlagRuntimeRoot, linkRoot,
+	}
+
+	if !runtimeGenerationProcessMatches(args, realRoot, sessionID, generationID) {
+		t.Fatalf("runtimeGenerationProcessMatches() = false, want true for symlinked runtime root")
+	}
+}
+
+func TestRuntimeGenerationProcessPIDsReadsProcCmdline(t *testing.T) {
+	sessionID := mustSessionID(t, "s_proc_stable_generation")
+	generationID, err := defaultRuntimeGenerationID(sessionID)
+	if err != nil {
+		t.Fatalf("defaultRuntimeGenerationID() error = %v", err)
+	}
+	runtimeRoot := filepath.Join(t.TempDir(), "runtime", "iod")
+	procRoot := t.TempDir()
+	matchingPID := "101"
+	otherPID := "102"
+	if err := os.MkdirAll(filepath.Join(procRoot, matchingPID), 0o755); err != nil {
+		t.Fatalf("MkdirAll(matching proc) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(procRoot, otherPID), 0o755); err != nil {
+		t.Fatalf("MkdirAll(other proc) error = %v", err)
+	}
+	matchingCmdline := strings.Join([]string{
+		"/tmp/actrail-iod",
+		helperFlagSessionID, sessionID.String(),
+		helperFlagGenerationID, generationID.String(),
+		helperFlagRuntimeRoot, runtimeRoot,
+	}, "\x00") + "\x00"
+	otherCmdline := strings.Join([]string{
+		"/tmp/actrail-iod",
+		helperFlagSessionID, "s_other_proc_generation",
+		helperFlagGenerationID, generationID.String(),
+		helperFlagRuntimeRoot, runtimeRoot,
+	}, "\x00") + "\x00"
+	if err := os.WriteFile(filepath.Join(procRoot, matchingPID, "cmdline"), []byte(matchingCmdline), 0o644); err != nil {
+		t.Fatalf("WriteFile(matching cmdline) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(procRoot, otherPID, "cmdline"), []byte(otherCmdline), 0o644); err != nil {
+		t.Fatalf("WriteFile(other cmdline) error = %v", err)
+	}
+
+	pids, err := runtimeGenerationProcessPIDs(procRoot, runtimeRoot, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("runtimeGenerationProcessPIDs() error = %v", err)
+	}
+	if !reflect.DeepEqual(pids, []int{101}) {
+		t.Fatalf("runtimeGenerationProcessPIDs() = %#v, want [101]", pids)
+	}
+}
+
 func TestDefaultRuntimeBinPathFindsCodexFromNVM(t *testing.T) {
 	home := t.TempDir()
 	codexPath := filepath.Join(home, ".nvm", "versions", "node", "v25.9.0", "bin", "codex")

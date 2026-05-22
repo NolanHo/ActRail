@@ -486,6 +486,9 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 	if err != nil {
 		return sessionRuntime{}, err
 	}
+	if err := shutdownRuntimeGenerationProcesses(ctx, runtimeRoot, req.SessionID, generationID); err != nil {
+		return sessionRuntime{}, err
+	}
 	if err := shutdownRuntimeGenerationFromManifest(ctx, paths.ManifestPath, req.SessionID, generationID); err != nil {
 		return sessionRuntime{}, err
 	}

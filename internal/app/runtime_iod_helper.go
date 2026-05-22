@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -462,6 +463,143 @@ func shutdownRuntimeGenerationFromManifest(ctx context.Context, manifestPath str
 	}
 	_ = shutdownIODManifest(ctx, manifest)
 	return nil
+}
+
+func shutdownRuntimeGenerationProcesses(ctx context.Context, runtimeRoot string, sessionID session.SessionID, generationID iod.GenerationID) error {
+	pids, err := runtimeGenerationProcessPIDs("/proc", runtimeRoot, sessionID, generationID)
+	if err != nil {
+		return err
+	}
+	for _, pid := range pids {
+		if pid == os.Getpid() {
+			continue
+		}
+		if err := shutdownRuntimeGenerationPID(ctx, pid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runtimeGenerationProcessPIDs(procRoot string, runtimeRoot string, sessionID session.SessionID, generationID iod.GenerationID) ([]int, error) {
+	trimmedProcRoot := strings.TrimSpace(procRoot)
+	if trimmedProcRoot == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(trimmedProcRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read proc root %q: %w", trimmedProcRoot, err)
+	}
+	pids := make([]int, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(trimmedProcRoot, entry.Name(), "cmdline"))
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		if runtimeGenerationProcessMatches(splitProcCmdline(raw), runtimeRoot, sessionID, generationID) {
+			pids = append(pids, pid)
+		}
+	}
+	sort.Ints(pids)
+	return pids, nil
+}
+
+func runtimeGenerationProcessMatches(args []string, runtimeRoot string, sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if len(args) == 0 {
+		return false
+	}
+	argSessionID, ok := argValue(args, helperFlagSessionID)
+	if !ok || argSessionID != sessionID.String() {
+		return false
+	}
+	argGenerationID, ok := argValue(args, helperFlagGenerationID)
+	if !ok || argGenerationID != generationID.String() {
+		return false
+	}
+	argRuntimeRoot, ok := argValue(args, helperFlagRuntimeRoot)
+	if !ok || !runtimeRootMatches(argRuntimeRoot, runtimeRoot) {
+		return false
+	}
+	return true
+}
+
+func splitProcCmdline(raw []byte) []string {
+	parts := bytes.Split(bytes.TrimRight(raw, "\x00"), []byte{0})
+	args := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if len(part) == 0 {
+			continue
+		}
+		args = append(args, string(part))
+	}
+	return args
+}
+
+func argValue(args []string, flag string) (string, bool) {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+func runtimeRootMatches(left, right string) bool {
+	left = filepath.Clean(strings.TrimSpace(left))
+	right = filepath.Clean(strings.TrimSpace(right))
+	if left == "" || right == "" {
+		return false
+	}
+	if left == right {
+		return true
+	}
+	resolvedLeft, leftErr := filepath.EvalSymlinks(left)
+	resolvedRight, rightErr := filepath.EvalSymlinks(right)
+	return leftErr == nil && rightErr == nil && filepath.Clean(resolvedLeft) == filepath.Clean(resolvedRight)
+}
+
+func shutdownRuntimeGenerationPID(ctx context.Context, pid int) error {
+	if pid <= 0 || !processPIDAlive(pid) {
+		return nil
+	}
+	shutdownCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		shutdownCtx, cancel = context.WithTimeout(ctx, helperStopTimeout)
+		defer cancel()
+	}
+	if err := signalHelperPID(pid, syscall.SIGINT); err != nil {
+		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		return fmt.Errorf("signal stale iod helper pid %d: %w", pid, err)
+	}
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !processPIDAlive(pid) {
+			cleanupHelperProcessGroup(pid)
+			return nil
+		}
+		select {
+		case <-shutdownCtx.Done():
+			if err := signalHelperPID(pid, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+				return fmt.Errorf("kill stale iod helper pid %d: %w", pid, err)
+			}
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func removeRuntimeGenerationArtifacts(runtimeDir string) error {
