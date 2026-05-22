@@ -21,6 +21,12 @@ type ReplayResult struct {
 	CorruptTail bool
 }
 
+type walTailSummary struct {
+	LastOffset  WALOffset
+	LastSeq     EventSeq
+	CorruptTail bool
+}
+
 // WAL owns append ordering and checksum verification for one generation file.
 type WAL struct {
 	mu           sync.Mutex
@@ -53,15 +59,13 @@ func OpenWAL(path string, sessionID session.SessionID, generationID GenerationID
 	if err != nil {
 		return nil, fmt.Errorf("open wal: %w", err)
 	}
-	replay, err := ReplayWAL(trimmed, sessionID, generationID, 0)
+	summary, err := SummarizeWAL(trimmed, sessionID, generationID)
 	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	lastSeq := EventSeq(0)
-	for _, record := range replay.Records {
-		if record.Header.Seq != nil && record.Header.Seq.Uint64() > lastSeq.Uint64() {
-			lastSeq = *record.Header.Seq
+		if os.IsNotExist(err) {
+			summary = walTailSummary{}
+		} else {
+			_ = file.Close()
+			return nil, err
 		}
 	}
 	return &WAL{
@@ -69,8 +73,8 @@ func OpenWAL(path string, sessionID session.SessionID, generationID GenerationID
 		sessionID:    sessionID,
 		generationID: generationID,
 		file:         file,
-		lastOffset:   replay.LastOffset,
-		lastSeq:      lastSeq,
+		lastOffset:   summary.LastOffset,
+		lastSeq:      summary.LastSeq,
 	}, nil
 }
 
@@ -144,6 +148,15 @@ func (w *WAL) Replay(afterOffset WALOffset) (ReplayResult, error) {
 	if w == nil {
 		return ReplayResult{}, fmt.Errorf("wal is required")
 	}
+	w.mu.Lock()
+	lastOffset := w.lastOffset
+	w.mu.Unlock()
+	if afterOffset > lastOffset {
+		return ReplayResult{}, fmt.Errorf("replay cursor after offset %d exceeds wal last offset %d", afterOffset, lastOffset)
+	}
+	if afterOffset == lastOffset {
+		return ReplayResult{LastOffset: lastOffset}, nil
+	}
 	return ReplayWAL(w.path, w.sessionID, w.generationID, afterOffset)
 }
 
@@ -159,6 +172,22 @@ func ReplayWAL(path string, sessionID session.SessionID, generationID Generation
 	}
 	if err := afterOffset.ValidateState(); err != nil {
 		return ReplayResult{}, err
+	}
+	summary, err := SummarizeWAL(path, sessionID, generationID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if afterOffset != 0 {
+				return ReplayResult{}, fmt.Errorf("replay cursor after offset %d exceeds empty wal", afterOffset)
+			}
+			return ReplayResult{}, nil
+		}
+		return ReplayResult{}, err
+	}
+	if afterOffset > summary.LastOffset {
+		return ReplayResult{}, fmt.Errorf("replay cursor after offset %d exceeds wal last offset %d", afterOffset, summary.LastOffset)
+	}
+	if afterOffset == summary.LastOffset {
+		return ReplayResult{LastOffset: summary.LastOffset, CorruptTail: summary.CorruptTail}, nil
 	}
 	file, err := os.Open(filepath.Clean(path))
 	if err != nil {
@@ -234,6 +263,139 @@ func ReplayWAL(path string, sessionID session.SessionID, generationID Generation
 		return ReplayResult{}, fmt.Errorf("replay cursor after offset %d exceeds wal last offset %d", afterOffset, result.LastOffset)
 	}
 	return result, nil
+}
+
+func SummarizeWAL(path string, sessionID session.SessionID, generationID GenerationID) (walTailSummary, error) {
+	if err := sessionID.Validate(); err != nil {
+		return walTailSummary{}, err
+	}
+	if sessionID.IsHistorical() {
+		return walTailSummary{}, fmt.Errorf("session id %q cannot use historical replay identity", sessionID)
+	}
+	if err := generationID.Validate(); err != nil {
+		return walTailSummary{}, err
+	}
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return walTailSummary{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return walTailSummary{}, fmt.Errorf("stat wal: %w", err)
+	}
+	size := info.Size()
+	if size == 0 {
+		return walTailSummary{}, nil
+	}
+	logicalEnd := size
+	summary := walTailSummary{}
+	var last [1]byte
+	if _, err := file.ReadAt(last[:], size-1); err != nil {
+		return walTailSummary{}, fmt.Errorf("read wal tail: %w", err)
+	}
+	if last[0] != '\n' {
+		summary.CorruptTail = true
+		newline, ok, err := findLastWALNewline(file, size-1)
+		if err != nil {
+			return walTailSummary{}, err
+		}
+		if !ok {
+			return summary, nil
+		}
+		logicalEnd = newline + 1
+	}
+
+	const chunkSize int64 = 64 * 1024
+	pos := logicalEnd
+	var suffix []byte
+	for pos > 0 && (summary.LastOffset == 0 || summary.LastSeq == 0) {
+		n := chunkSize
+		if pos < n {
+			n = pos
+		}
+		pos -= n
+		buf := make([]byte, n)
+		if _, err := file.ReadAt(buf, pos); err != nil {
+			return walTailSummary{}, fmt.Errorf("read wal summary chunk: %w", err)
+		}
+		data := append(buf, suffix...)
+		lines := bytes.Split(data, []byte{'\n'})
+		suffix = append(suffix[:0], lines[0]...)
+		for i := len(lines) - 1; i >= 1; i-- {
+			record, ok, err := parseWALSummaryLine(lines[i], sessionID, generationID)
+			if err != nil {
+				continue
+			}
+			if !ok {
+				continue
+			}
+			if summary.LastOffset == 0 {
+				summary.LastOffset = record.Header.Offset
+			}
+			if summary.LastSeq == 0 && record.Header.Seq != nil {
+				summary.LastSeq = *record.Header.Seq
+			}
+			if summary.LastOffset != 0 && summary.LastSeq != 0 {
+				return summary, nil
+			}
+		}
+	}
+	if len(suffix) != 0 && (summary.LastOffset == 0 || summary.LastSeq == 0) {
+		record, ok, err := parseWALSummaryLine(suffix, sessionID, generationID)
+		if err == nil && ok {
+			if summary.LastOffset == 0 {
+				summary.LastOffset = record.Header.Offset
+			}
+			if summary.LastSeq == 0 && record.Header.Seq != nil {
+				summary.LastSeq = *record.Header.Seq
+			}
+		}
+	}
+	return summary, nil
+}
+
+func findLastWALNewline(file *os.File, endExclusive int64) (int64, bool, error) {
+	const chunkSize int64 = 64 * 1024
+	pos := endExclusive
+	for pos > 0 {
+		n := chunkSize
+		if pos < n {
+			n = pos
+		}
+		pos -= n
+		buf := make([]byte, n)
+		if _, err := file.ReadAt(buf, pos); err != nil {
+			return 0, false, fmt.Errorf("read wal tail newline chunk: %w", err)
+		}
+		if idx := bytes.LastIndexByte(buf, '\n'); idx >= 0 {
+			return pos + int64(idx), true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+func parseWALSummaryLine(line []byte, sessionID session.SessionID, generationID GenerationID) (WALRecord, bool, error) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return WALRecord{}, false, nil
+	}
+	var record WALRecord
+	if err := json.Unmarshal(line, &record); err != nil {
+		return WALRecord{}, false, err
+	}
+	if record.Header.SessionID != sessionID || record.Header.GenerationID != generationID {
+		return WALRecord{}, false, fmt.Errorf("wal summary identity mismatch")
+	}
+	if err := record.Validate(); err != nil {
+		return WALRecord{}, false, err
+	}
+	if ok, err := walRecordChecksumOK(record); err != nil {
+		return WALRecord{}, false, err
+	} else if !ok {
+		return WALRecord{}, false, fmt.Errorf("wal summary checksum mismatch")
+	}
+	return record, true, nil
 }
 
 func marshalPayload(payload any) (json.RawMessage, error) {

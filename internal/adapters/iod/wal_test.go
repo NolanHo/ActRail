@@ -2,6 +2,8 @@ package iod
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -244,6 +246,105 @@ func TestWalReplay(t *testing.T) {
 			t.Fatal("NewReplayDonePacket(last_offset<after_offset) error = nil, want error")
 		}
 	})
+}
+
+func TestWALSummaryFastPaths(t *testing.T) {
+	sessionID := mustSessionID(t, "s_wal_summary")
+	generationID := mustGenerationID(t, "g_wal_summary")
+	path := filepath.Join(t.TempDir(), "transport.wal")
+	wal, err := OpenWAL(path, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("OpenWAL() error = %v", err)
+	}
+	if _, err := wal.Append(WALRecordHelperStart, helperStartPayload{ProtocolVersion: 1, HelperPID: 101, ChildPID: intPtr(202), WALPath: path, SocketPath: "io", StartTS: 1760000000.0}); err != nil {
+		t.Fatalf("Append(helper_start) error = %v", err)
+	}
+	if _, err := wal.Append(WALRecordOutputDelta, terminalOutputPayload{Stream: "pty", Data: "one"}); err != nil {
+		t.Fatalf("Append(output_delta one) error = %v", err)
+	}
+	if _, err := wal.Append(WALRecordCommandAccepted, commandFactPayload{CommandID: mustCommandID(t, "cmd_1"), CommandKind: PacketCommandSend}); err != nil {
+		t.Fatalf("Append(command_accepted) error = %v", err)
+	}
+	if _, err := wal.Append(WALRecordOutputDelta, terminalOutputPayload{Stream: "pty", Data: "two"}); err != nil {
+		t.Fatalf("Append(output_delta two) error = %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	summary, err := SummarizeWAL(path, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("SummarizeWAL() error = %v", err)
+	}
+	if summary.LastOffset != 4 || summary.LastSeq != 2 || summary.CorruptTail {
+		t.Fatalf("SummarizeWAL() = %+v, want last offset 4 last seq 2 clean", summary)
+	}
+
+	reopened, err := OpenWAL(path, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("OpenWAL(reopen) error = %v", err)
+	}
+	record, err := reopened.Append(WALRecordOutputDelta, terminalOutputPayload{Stream: "pty", Data: "three"})
+	if err != nil {
+		t.Fatalf("Append(after reopen) error = %v", err)
+	}
+	if record.Header.Offset != 5 || record.Header.Seq == nil || *record.Header.Seq != 3 {
+		t.Fatalf("append after reopen header = %+v, want offset 5 seq 3", record.Header)
+	}
+	liveReplay, err := reopened.Replay(5)
+	if err != nil {
+		t.Fatalf("WAL.Replay(after live tail) error = %v", err)
+	}
+	if liveReplay.LastOffset != 5 || len(liveReplay.Records) != 0 || liveReplay.CorruptTail {
+		t.Fatalf("WAL.Replay(after live tail) = %+v, want empty replay at last offset 5", liveReplay)
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("Close(reopened) error = %v", err)
+	}
+
+	replay, err := ReplayWAL(path, sessionID, generationID, 5)
+	if err != nil {
+		t.Fatalf("ReplayWAL(after tail) error = %v", err)
+	}
+	if replay.LastOffset != 5 || len(replay.Records) != 0 || replay.CorruptTail {
+		t.Fatalf("ReplayWAL(after tail) = %+v, want empty replay at last offset 5", replay)
+	}
+}
+
+func TestReplayWALFastPathPreservesCorruptTail(t *testing.T) {
+	sessionID := mustSessionID(t, "s_wal_corrupt_tail")
+	generationID := mustGenerationID(t, "g_wal_corrupt_tail")
+	path := filepath.Join(t.TempDir(), "transport.wal")
+	wal, err := OpenWAL(path, sessionID, generationID)
+	if err != nil {
+		t.Fatalf("OpenWAL() error = %v", err)
+	}
+	if _, err := wal.Append(WALRecordHelperStart, helperStartPayload{ProtocolVersion: 1, HelperPID: 101, ChildPID: intPtr(202), WALPath: path, SocketPath: "io", StartTS: 1760000000.0}); err != nil {
+		t.Fatalf("Append(helper_start) error = %v", err)
+	}
+	if _, err := wal.Append(WALRecordOutputDelta, terminalOutputPayload{Stream: "pty", Data: "one"}); err != nil {
+		t.Fatalf("Append(output_delta) error = %v", err)
+	}
+	if err := wal.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatalf("OpenFile(append corrupt tail) error = %v", err)
+	}
+	if _, err := file.WriteString("{not-json"); err != nil {
+		t.Fatalf("WriteString(corrupt tail) error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close(corrupt tail) error = %v", err)
+	}
+	replay, err := ReplayWAL(path, sessionID, generationID, 2)
+	if err != nil {
+		t.Fatalf("ReplayWAL(after tail with corrupt suffix) error = %v", err)
+	}
+	if replay.LastOffset != 2 || len(replay.Records) != 0 || !replay.CorruptTail {
+		t.Fatalf("ReplayWAL(after tail with corrupt suffix) = %+v, want empty replay with corrupt tail", replay)
+	}
 }
 
 func TestGenerationBreak(t *testing.T) {
