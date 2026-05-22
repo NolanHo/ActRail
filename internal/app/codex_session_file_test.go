@@ -463,6 +463,85 @@ func TestSessionMessagesCodexSourcePageSupportsBeforeSeq(t *testing.T) {
 	}
 }
 
+func TestSessionMessagesCodexSourcePageAppendsPendingTranscriptWithoutWaitingForIOD(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_page_pending")
+	generationID := mustHelperGenerationID(t, "g_codex_file_page_pending")
+	threadID := "019e2107-ca2f-7e73-994d-8726965f8c8e"
+	lines := []string{
+		`{"timestamp":"2026-05-13T04:00:00.000Z","type":"session_meta","payload":{"id":"019e2107-ca2f-7e73-994d-8726965f8c8e","cwd":"/tmp/codex-pending","originator":"actrail"}}`,
+	}
+	padding := strings.Repeat("x", 2048)
+	for i := 0; i < 700; i++ {
+		lines = append(lines, fmt.Sprintf(`{"timestamp":"2026-05-13T04:00:01.000Z","type":"response_item","payload":{"type":"function_call","name":"padding","call_id":"padding-%03d","arguments":"%s-%03d"}}`, i, padding, i))
+	}
+	lines = append(lines,
+		`{"timestamp":"2026-05-13T04:10:19.000Z","type":"session_meta","payload":{"id":"019e2107-ca2f-7e73-994d-8726965f8c8e","cwd":"/tmp/codex-pending","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-13T04:10:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"source prompt"}}`,
+		`{"timestamp":"2026-05-13T04:11:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"source answer","phase":"final_answer"}}`,
+	)
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, lines)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_page_pending", "t_page_pending", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-pending",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID),
+			helper: &runtimeIODHelper{
+				sessionID:    sessionID,
+				generationID: generationID,
+				historyFunc: func(ctx context.Context) (iod.SessionHistoryResponsePacket, error) {
+					select {
+					case <-release:
+						return iod.SessionHistoryResponsePacket{}, nil
+					case <-ctx.Done():
+						return iod.SessionHistoryResponsePacket{}, ctx.Err()
+					}
+				},
+			},
+		},
+		Transport: SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, err := svc.AppendSessionMessage(sessionID, "user", "message", "pending prompt"); err != nil {
+		t.Fatalf("AppendSessionMessage() error = %v", err)
+	}
+
+	start := time.Now()
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 3})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
+		t.Fatalf("SessionMessages() elapsed = %s, want local source page plus pending transcript without waiting for helper", elapsed)
+	}
+	got := messageRolesAndText(messages.Items)
+	want := []string{"user:source prompt", "assistant:source answer", "user:pending prompt"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	if messages.TailSeq <= messages.Items[1].Seq {
+		t.Fatalf("TailSeq = %d, want pending transcript to advance beyond source tail %d", messages.TailSeq, messages.Items[1].Seq)
+	}
+}
+
 func makeLargeCodexSessionLines(threadID string, cwd string) []string {
 	lines := []string{
 		`{"timestamp":"2026-05-13T04:00:00.000Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":"` + cwd + `","originator":"actrail"}}`,
@@ -2206,6 +2285,53 @@ func TestListSessionsCodexFinalAnswerTailClearsStaleRunning(t *testing.T) {
 	}
 	if svc.isRuntimeAgentRunning(sessionID) {
 		t.Fatal("runtimeAgentRunning = true, want false after trusted final source tail")
+	}
+}
+
+func TestListSessionsCodexTailTerminalDoesNotScanWholeSourceFile(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_file_list_tail_only")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-list","originator":"actrail"}}`,
+		strings.Repeat("x", codexSessionFileCompletionMaxChunk+1024),
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_list_tail", "t_list_tail", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-list",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          sessionRuntime{protocol: runtimeProtocolCodexRPC, codex: newCodexRuntimeStateWithResumeThread(session.BackendCodex, threadID)},
+		Transport:        SessionTransportSnapshot{State: SessionTransportStateStarting, Reason: "codex_thread_resuming"},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{AgentBackend: session.BackendCodex.String()})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
+	}
+	if listed.Items[0].Busy || listed.Items[0].RuntimeState != string(codexRuntimePhaseIdle) {
+		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want tail terminal source to clear stale running", listed.Items[0].Busy, listed.Items[0].RuntimeState)
 	}
 }
 

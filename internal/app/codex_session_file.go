@@ -237,6 +237,14 @@ func codexSessionMessagesPageFromFile(ctx context.Context, path string, req Sess
 }
 
 func codexSessionFileTailHasAuthoritativeCompletion(ctx context.Context, path string) (bool, bool) {
+	return codexSessionFileTailCheck(ctx, path, codexSessionLineAuthoritativeCompletion)
+}
+
+func codexSessionFileTailHasTerminalLifecycle(ctx context.Context, path string) (bool, bool) {
+	return codexSessionFileTailCheck(ctx, path, codexSessionLineTerminalLifecycle)
+}
+
+func codexSessionFileTailCheck(ctx context.Context, path string, check func(string) (bool, bool)) (bool, bool) {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
 		return false, false
@@ -266,7 +274,7 @@ func codexSessionFileTailHasAuthoritativeCompletion(ctx context.Context, path st
 		}
 		lines := codexSessionFileLinesFromWindow(buf, lower, lower == 0, upper == info.Size())
 		for i := len(lines) - 1; i >= 0; i-- {
-			complete, relevant := codexSessionLineAuthoritativeCompletion(string(lines[i].Text))
+			complete, relevant := check(string(lines[i].Text))
 			if relevant {
 				return complete, true
 			}
@@ -475,6 +483,32 @@ func codexSessionLineAuthoritativeCompletion(raw string) (bool, bool) {
 			}
 			return false, true
 		case "function_call", "function_call_output", "reasoning", "custom_tool_call", "custom_tool_call_output":
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func codexSessionLineTerminalLifecycle(raw string) (bool, bool) {
+	line := strings.TrimSpace(raw)
+	if line == "" {
+		return false, false
+	}
+	var entry codexSessionLine
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return false, false
+	}
+	switch strings.TrimSpace(entry.Type) {
+	case "event_msg":
+		switch strings.TrimSpace(stringValue(entry.Payload["type"])) {
+		case "task_complete", "turn_aborted":
+			return true, true
+		case "task_started", "user_message", "agent_message":
+			return false, true
+		}
+	case "response_item":
+		switch strings.TrimSpace(stringValue(entry.Payload["type"])) {
+		case "message", "function_call", "function_call_output", "reasoning", "custom_tool_call", "custom_tool_call_output":
 			return false, true
 		}
 	}

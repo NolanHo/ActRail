@@ -1069,6 +1069,37 @@ func appendPendingTranscriptMessages(items *[]SessionMessage, record sessionReco
 	return len(*items) > before
 }
 
+func appendPendingTranscriptMessagesToPage(response *SessionMessagesResponse, record sessionRecord, complete bool) bool {
+	if response == nil || record.transcript.Len() == 0 || len(response.Items) == 0 {
+		return false
+	}
+	before := len(response.Items)
+	for _, item := range record.transcript.Items() {
+		if complete && item.Role().String() == "assistant" {
+			continue
+		}
+		msg := sessionMessageFromCommitted(item)
+		msg.Seq = 0
+		if duplicateWALMessage(response.Items, msg) {
+			continue
+		}
+		response.Items = append(response.Items, msg)
+	}
+	if len(response.Items) == before {
+		return false
+	}
+	nextSeq := response.TailSeq
+	if nextSeq == 0 && before > 0 {
+		nextSeq = response.Items[before-1].Seq
+	}
+	for i := before; i < len(response.Items); i++ {
+		nextSeq++
+		response.Items[i].Seq = nextSeq
+	}
+	response.TailSeq = nextSeq
+	return true
+}
+
 func appendDedupedMessages(items *[]SessionMessage, incoming []SessionMessage) {
 	for _, item := range incoming {
 		item.Seq = 0
@@ -1137,9 +1168,6 @@ func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, re
 }
 
 func (s *Stub) loadCodexSourceFileHistoryPage(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
-	if record.transcript.Len() > 0 {
-		return SessionMessagesResponse{}, false, nil
-	}
 	path, threadID, err := s.codexSessionFileForRecord(record)
 	if err != nil {
 		return SessionMessagesResponse{}, true, err
@@ -1153,6 +1181,9 @@ func (s *Stub) loadCodexSourceFileHistoryPage(ctx context.Context, record sessio
 	}
 	if !codexSourceFileHistoryPageUsable(record, threadID, path, response.TailSeq > 0) {
 		return SessionMessagesResponse{}, false, nil
+	}
+	if req.BeforeSeq == nil {
+		appendPendingTranscriptMessagesToPage(&response, record, complete)
 	}
 	if complete {
 		s.reconcileOpenCodexCommandsFromMessages(record.identity.SessionID(), response.Items, true)
@@ -1647,7 +1678,8 @@ func (s *Stub) codexTrustedSessionFileTailTerminal(record sessionRecord) bool {
 	if strings.TrimSpace(path) == "" {
 		return false
 	}
-	return codexSessionFileHasTaskComplete(context.Background(), path)
+	complete, ok := codexSessionFileTailHasTerminalLifecycle(context.Background(), path)
+	return ok && complete
 }
 
 func codexIODHistoryCacheKey(packet iod.SessionHistoryResponsePacket) string {
