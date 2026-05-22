@@ -1625,7 +1625,7 @@ func (s *Stub) warmCodexSourceHistories(ctx context.Context) {
 func sessionMessagesFromIODHistory(messages []iod.SessionHistoryMessage) []SessionMessage {
 	items := make([]SessionMessage, 0, len(messages))
 	for _, msg := range messages {
-		items = append(items, SessionMessage{
+		item := SessionMessage{
 			Seq:         msg.Seq,
 			Role:        msg.Role,
 			Kind:        msg.Kind,
@@ -1639,7 +1639,11 @@ func sessionMessagesFromIODHistory(messages []iod.SessionHistoryMessage) []Sessi
 			ToolCallID:  msg.ToolCallID,
 			IsError:     msg.IsError,
 			Details:     msg.Details,
-		})
+		}
+		if payload, ok := decodeCodexSubagentNotification(item.Text); ok {
+			item = codexSubagentNotificationMessageFromPayload(item, payload)
+		}
+		items = append(items, item)
 	}
 	return items
 }

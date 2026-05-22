@@ -931,6 +931,10 @@ func codexHistoryMessageFromLine(raw string, lineNo int) (SessionHistoryMessage,
 			if text == "" {
 				return SessionHistoryMessage{}, false, nil
 			}
+			if msg, ok := codexSubagentNotificationHistoryMessage(text, lineNo, ts); ok {
+				msg.EventID = fmt.Sprintf("codex:event:subagent-notification:%06d", lineNo)
+				return msg, true, nil
+			}
 			return SessionHistoryMessage{
 				Seq:         uint64(lineNo),
 				Role:        "user",
@@ -972,6 +976,10 @@ func codexHistoryMessageFromLine(raw string, lineNo int) (SessionHistoryMessage,
 			}
 			if text == "" {
 				return SessionHistoryMessage{}, false, nil
+			}
+			if msg, ok := codexSubagentNotificationHistoryMessage(text, lineNo, ts); ok {
+				msg.EventID = fmt.Sprintf("codex:item:subagent-notification:%06d", lineNo)
+				return msg, true, nil
 			}
 			kind := "message"
 			if codexHistoryResponseItemIsInjectedPrompt(role, text) {
@@ -1052,6 +1060,105 @@ func codexHistoryMessageFromLine(raw string, lineNo int) (SessionHistoryMessage,
 		}
 	}
 	return SessionHistoryMessage{}, false, nil
+}
+
+func codexSubagentNotificationHistoryMessage(text string, lineNo int, ts float64) (SessionHistoryMessage, bool) {
+	payload, ok := decodeCodexHistorySubagentNotification(text)
+	if !ok {
+		return SessionHistoryMessage{}, false
+	}
+	result := strings.TrimSpace(payload.Text)
+	if result == "" {
+		return SessionHistoryMessage{}, false
+	}
+	return SessionHistoryMessage{
+		Seq:         uint64(lineNo),
+		Kind:        "custom_message",
+		Type:        "custom_message",
+		Text:        result,
+		TS:          ts,
+		SourceOrder: fmt.Sprintf("codex:%06d", lineNo),
+		Name:        "Codex Subagent",
+		Summary:     strings.TrimSpace(payload.Role),
+		Details: map[string]any{
+			"custom_type": "codex-subagent-message",
+			"role":        strings.TrimSpace(payload.Role),
+			"text":        result,
+			"thread_id":   strings.TrimSpace(payload.ThreadID),
+		},
+	}, true
+}
+
+type codexHistorySubagentNotification struct {
+	AgentPath string                     `json:"agent_path"`
+	Status    map[string]json.RawMessage `json:"status"`
+}
+
+type codexHistorySubagentMessage struct {
+	Role     string
+	Text     string
+	ThreadID string
+}
+
+func decodeCodexHistorySubagentNotification(text string) (codexHistorySubagentMessage, bool) {
+	const start = "<subagent_notification>"
+	const end = "</subagent_notification>"
+	raw := strings.TrimSpace(text)
+	if !strings.HasPrefix(raw, start) || !strings.HasSuffix(raw, end) {
+		return codexHistorySubagentMessage{}, false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(raw, start), end))
+	if body == "" {
+		return codexHistorySubagentMessage{}, false
+	}
+	var notification codexHistorySubagentNotification
+	if err := json.Unmarshal([]byte(body), &notification); err != nil {
+		return codexHistorySubagentMessage{}, false
+	}
+	result := codexHistorySubagentNotificationStatusText(notification.Status)
+	if result == "" {
+		return codexHistorySubagentMessage{}, false
+	}
+	return codexHistorySubagentMessage{
+		Role:     "assistant",
+		Text:     result,
+		ThreadID: strings.TrimSpace(notification.AgentPath),
+	}, true
+}
+
+func codexHistorySubagentNotificationStatusText(status map[string]json.RawMessage) string {
+	if len(status) == 0 {
+		return ""
+	}
+	for _, key := range []string{"completed", "failed", "cancelled", "error", "message"} {
+		if raw, ok := status[key]; ok {
+			if text := codexHistorySubagentNotificationJSONText(raw); text != "" {
+				return text
+			}
+		}
+	}
+	for _, raw := range status {
+		if text := codexHistorySubagentNotificationJSONText(raw); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func codexHistorySubagentNotificationJSONText(raw json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(encoded))
 }
 
 func codexHistoryTimestamp(raw string) float64 {

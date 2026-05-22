@@ -565,6 +565,10 @@ func sessionMessageFromCodexSessionEntry(entry codexSessionLine, lineNo int) (Se
 			if text == "" {
 				return SessionMessage{}, false
 			}
+			if msg, ok := codexSubagentNotificationSessionMessage(text, lineNo, ts); ok {
+				msg.EventID = fmt.Sprintf("codex:event:subagent-notification:%06d", lineNo)
+				return msg, true
+			}
 			return SessionMessage{
 				Seq:         uint64(lineNo),
 				Role:        "user",
@@ -606,6 +610,10 @@ func sessionMessageFromCodexSessionEntry(entry codexSessionLine, lineNo int) (Se
 			}
 			if text == "" {
 				return SessionMessage{}, false
+			}
+			if msg, ok := codexSubagentNotificationSessionMessage(text, lineNo, ts); ok {
+				msg.EventID = fmt.Sprintf("codex:item:subagent-notification:%06d", lineNo)
+				return msg, true
 			}
 			kind := "message"
 			if codexSessionResponseItemIsInjectedPrompt(role, text) {
@@ -688,6 +696,20 @@ func sessionMessageFromCodexSessionEntry(entry codexSessionLine, lineNo int) (Se
 		}
 	}
 	return SessionMessage{}, false
+}
+
+func codexSubagentNotificationSessionMessage(text string, lineNo int, ts float64) (SessionMessage, bool) {
+	payload, ok := decodeCodexSubagentNotification(text)
+	if !ok {
+		return SessionMessage{}, false
+	}
+	msg := SessionMessage{
+		Seq:         uint64(lineNo),
+		Kind:        "custom_message",
+		TS:          ts,
+		SourceOrder: fmt.Sprintf("codex:%06d", lineNo),
+	}
+	return codexSubagentNotificationMessageFromPayload(msg, payload), true
 }
 
 func codexSessionResponseItemIsInjectedPrompt(role, text string) bool {

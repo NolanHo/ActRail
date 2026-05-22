@@ -253,6 +253,62 @@ func TestSessionMessagesLoadsCodexHistoryFromSessionFile(t *testing.T) {
 	}
 }
 
+func TestSessionMessagesRendersCodexSubagentNotificationAsCustomMessage(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_subagent_notification")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656999"
+	subagentID := "019e4f9b-1d41-7ef1-ab14-6e3beddc8d7b"
+	notification := `<subagent_notification>
+{"agent_path":"` + subagentID + `","status":{"completed":"OK"}}
+</subagent_notification>`
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"` + threadID + `","cwd":"/tmp/codex-history","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"review with subagent"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":` + quoteJSON(notification) + `}]}}`,
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"done","phase":"final_answer"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	identity, err := session.NewDetachedIdentity(sessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-history",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	attachCodexHistoryIODHelperFromFile(t, svc, cfg, sessionID, sourcePath)
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 3 {
+		t.Fatalf("messages = %+v, want prompt, subagent notification, assistant", messages.Items)
+	}
+	if messages.Items[1].Type != "custom_message" || messages.Items[1].Kind != "custom_message" {
+		t.Fatalf("subagent notification = %+v, want custom_message", messages.Items[1])
+	}
+	if messages.Items[1].Text != "OK" || messages.Items[1].Details["custom_type"] != "codex-subagent-message" || messages.Items[1].Details["role"] != "assistant" || messages.Items[1].Details["thread_id"] != subagentID {
+		t.Fatalf("subagent notification = %+v, want codex subagent result", messages.Items[1])
+	}
+	for _, item := range messages.Items {
+		if item.Role == "user" && strings.Contains(item.Text, "<subagent_notification>") {
+			t.Fatalf("messages = %+v, subagent notification rendered as main user message", messages.Items)
+		}
+	}
+}
+
 func TestSessionMessagesCodexHistoryIncludesPendingLocalUser(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

@@ -2,6 +2,7 @@ package iod
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -138,6 +139,32 @@ func TestSessionHistoryCacheSetPathWarmsTail(t *testing.T) {
 	}
 	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Role != "user" || snapshot.Messages[0].Text != "hello" || snapshot.Messages[1].Role != "assistant" || snapshot.Messages[1].Text != "world" {
 		t.Fatalf("Snapshot().Messages = %#v, want parsed user/assistant messages", snapshot.Messages)
+	}
+}
+
+func TestSessionHistoryCacheCodexSubagentNotificationIsCustomMessage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	subagentID := "019e4f9b-1d41-7ef1-ab14-6e3beddc8d7b"
+	notification := `<subagent_notification>
+{"agent_path":"` + subagentID + `","status":{"completed":"OK"}}
+</subagent_notification>`
+	body := strings.Join([]string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"thread-1"}}`,
+		`{"timestamp":"2026-05-08T15:58:03.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":` + quoteHistoryJSON(notification) + `}]}}`,
+		`{"timestamp":"2026-05-08T15:58:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"world","phase":"final_answer"}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cache := newSessionHistoryCache(path, true)
+	t.Cleanup(cache.Stop)
+
+	snapshot := waitForHistorySnapshot(t, cache, func(snapshot SessionHistorySnapshot) bool {
+		return snapshot.Complete && snapshot.IndexedCount == 2 && len(snapshot.Messages) == 2
+	})
+	got := snapshot.Messages[0]
+	if got.Kind != "custom_message" || got.Type != "custom_message" || got.Role != "" || got.Text != "OK" || got.Details["custom_type"] != "codex-subagent-message" || got.Details["role"] != "assistant" || got.Details["thread_id"] != subagentID {
+		t.Fatalf("Snapshot().Messages[0] = %#v, want codex subagent custom message", got)
 	}
 }
 
@@ -399,4 +426,9 @@ func waitForHistorySnapshot(t *testing.T, cache *sessionHistoryCache, ready func
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func quoteHistoryJSON(value string) string {
+	body, _ := json.Marshal(value)
+	return string(body)
 }

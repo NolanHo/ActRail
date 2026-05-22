@@ -59,6 +59,9 @@ func sessionMessageFromCommitted(item message.CommittedMessage) SessionMessage {
 		Text: item.Text(),
 		TS:   timestampSeconds(item.TS()),
 	}
+	if payload, ok := decodeCodexSubagentNotification(item.Text()); ok {
+		return codexSubagentNotificationMessageFromPayload(msg, payload)
+	}
 	switch item.Kind().String() {
 	case "error":
 		msg.Type = "error"
@@ -83,6 +86,13 @@ func sessionMessageFromCommitted(item message.CommittedMessage) SessionMessage {
 			applyCodexSubagentMessageFields(&msg, payload)
 		}
 	}
+	return msg
+}
+
+func codexSubagentNotificationMessageFromPayload(msg SessionMessage, payload codexSubagentMessagePayload) SessionMessage {
+	msg.Role = ""
+	msg.Kind = "custom_message"
+	applyCodexSubagentMessageFields(&msg, payload)
 	return msg
 }
 
@@ -113,6 +123,75 @@ func decodeCodexSubagentMessage(text string) (codexSubagentMessagePayload, bool)
 		return codexSubagentMessagePayload{}, false
 	}
 	return payload, true
+}
+
+const (
+	codexSubagentNotificationStart = "<subagent_notification>"
+	codexSubagentNotificationEnd   = "</subagent_notification>"
+)
+
+type codexSubagentNotificationPayload struct {
+	AgentPath string                     `json:"agent_path"`
+	Status    map[string]json.RawMessage `json:"status"`
+}
+
+func decodeCodexSubagentNotification(text string) (codexSubagentMessagePayload, bool) {
+	raw := strings.TrimSpace(text)
+	if !strings.HasPrefix(raw, codexSubagentNotificationStart) || !strings.HasSuffix(raw, codexSubagentNotificationEnd) {
+		return codexSubagentMessagePayload{}, false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(raw, codexSubagentNotificationStart), codexSubagentNotificationEnd))
+	if body == "" {
+		return codexSubagentMessagePayload{}, false
+	}
+	var notification codexSubagentNotificationPayload
+	if err := json.Unmarshal([]byte(body), &notification); err != nil {
+		return codexSubagentMessagePayload{}, false
+	}
+	result := codexSubagentNotificationStatusText(notification.Status)
+	if result == "" {
+		return codexSubagentMessagePayload{}, false
+	}
+	return codexSubagentMessagePayload{
+		Role:     "assistant",
+		Text:     result,
+		ThreadID: strings.TrimSpace(notification.AgentPath),
+	}, true
+}
+
+func codexSubagentNotificationStatusText(status map[string]json.RawMessage) string {
+	if len(status) == 0 {
+		return ""
+	}
+	for _, key := range []string{"completed", "failed", "cancelled", "error", "message"} {
+		if raw, ok := status[key]; ok {
+			if text := codexSubagentNotificationJSONText(raw); text != "" {
+				return text
+			}
+		}
+	}
+	for _, raw := range status {
+		if text := codexSubagentNotificationJSONText(raw); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func codexSubagentNotificationJSONText(raw json.RawMessage) string {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(encoded))
 }
 
 func applyCodexSubagentMessageFields(msg *SessionMessage, payload codexSubagentMessagePayload) {

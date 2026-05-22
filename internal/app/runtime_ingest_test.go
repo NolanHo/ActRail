@@ -1303,6 +1303,39 @@ func TestCodexSubagentUserMessageDoesNotRenderAsMainPrompt(t *testing.T) {
 	}
 }
 
+func TestCommittedCodexSubagentNotificationDoesNotRenderAsMainPrompt(t *testing.T) {
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	notification := `<subagent_notification>
+{"agent_path":"019e4f9b-1d41-7ef1-ab14-6e3beddc8d7b","status":{"completed":"OK"}}
+</subagent_notification>`
+	if _, err := svc.AppendSessionMessage(sessionID, "user", "message", notification); err != nil {
+		t.Fatalf("AppendSessionMessage() error = %v", err)
+	}
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	if len(messages.Items) != 1 {
+		t.Fatalf("SessionMessages().Items = %+v, want one subagent notification", messages.Items)
+	}
+	got := messages.Items[0]
+	if got.Type != "custom_message" || got.Kind != "custom_message" || got.Text != "OK" || got.Details["custom_type"] != "codex-subagent-message" || got.Details["role"] != "assistant" {
+		t.Fatalf("SessionMessages().Items[0] = %+v, want codex subagent custom message", got)
+	}
+	if got.Role == "user" || strings.Contains(got.Text, "<subagent_notification>") {
+		t.Fatalf("SessionMessages().Items[0] = %+v, want notification hidden from main user stream", got)
+	}
+}
+
 func TestCodexSessionWaitsForThreadBeforeInput(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()
