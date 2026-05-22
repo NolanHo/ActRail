@@ -411,9 +411,14 @@ func sessionMessageIsRecoveredTransportDiagnostic(item SessionMessage) bool {
 		eventType, _ := item.Details["event_type"].(string)
 		return eventType == "generation_broken" || eventType == "transport_reset_required"
 	}
+	if rawType, _ := item.Details["raw_type"].(string); rawType == "runtime_control_diagnostic" {
+		operation, _ := item.Details["operation"].(string)
+		return operation == "runtime_launch"
+	}
 	text := strings.TrimSpace(item.Text)
 	return strings.HasPrefix(text, "IOD generation broken: ") ||
-		strings.HasPrefix(text, "IOD transport reset required: ")
+		strings.HasPrefix(text, "IOD transport reset required: ") ||
+		strings.HasPrefix(text, "Runtime control runtime_launch failed: ")
 }
 
 func visibleTranscriptHistory(transcript message.Transcript, req SessionMessagesRequest) message.HistoryPage {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -863,6 +864,51 @@ func TestRecoveredIODGenerationBrokenDiagnosticHiddenFromSessionMessages(t *test
 	}
 	if len(recovered.Items) != 0 {
 		t.Fatalf("SessionMessages() after recovery = %+v, want recovered generation diagnostic hidden", recovered.Items)
+	}
+}
+
+func TestRecoveredRuntimeLaunchDiagnosticHiddenFromSessionMessages(t *testing.T) {
+	handle := process.NewFakeHandle(process.LaunchSpec{})
+	runner := &process.FakeRunner{NextHandle: handle}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "pi", PIAgentGRPC: boolPtr(false), CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	if err := svc.emitRuntimeControlDiagnostic(sessionID, "runtime_launch", errors.New("iod helper exited before ready: exit code 1")); err != nil {
+		t.Fatalf("emitRuntimeControlDiagnostic() error = %v", err)
+	}
+	generationID, err := iod.NewGenerationID("g_runtime_launch_recovered")
+	if err != nil {
+		t.Fatalf("NewGenerationID() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetTransport(sessionID, SessionTransportSnapshot{
+		GenerationID: generationID.String(),
+		State:        SessionTransportStateFailed,
+		Reason:       "iod helper exited before ready: exit code 1",
+	}); err != nil || !ok {
+		t.Fatalf("SetTransport(failed) ok=%v err=%v", ok, err)
+	}
+	failed, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() while launch failed error = %v", err)
+	}
+	if len(failed.Items) != 1 || failed.Items[0].Type != "pi_event" || !strings.Contains(failed.Items[0].Text, "runtime_launch failed") {
+		t.Fatalf("SessionMessages() while launch failed = %+v, want runtime launch diagnostic", failed.Items)
+	}
+	if err := svc.setSessionTransportAttached(sessionID, generationID); err != nil {
+		t.Fatalf("setSessionTransportAttached() error = %v", err)
+	}
+	recovered, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionMessages() after recovery error = %v", err)
+	}
+	if len(recovered.Items) != 0 {
+		t.Fatalf("SessionMessages() after recovery = %+v, want recovered runtime launch diagnostic hidden", recovered.Items)
 	}
 }
 
