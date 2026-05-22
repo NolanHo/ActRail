@@ -258,6 +258,31 @@ func TestSessionCatalogPersistsCodexSessionCommandLedger(t *testing.T) {
 	if len(open) != 0 {
 		t.Fatalf("open commands after completed = %+v, want none", open)
 	}
+	ok, err = catalog.UpdateCodexSessionCommandState(context.Background(), "cmd_1", "accepted", "", "", now.Add(3*time.Second))
+	if err != nil {
+		t.Fatalf("UpdateCodexSessionCommandState(late accepted) error = %v", err)
+	}
+	if ok {
+		t.Fatalf("UpdateCodexSessionCommandState(late accepted) ok = true, want false after terminal state")
+	}
+	open, err = catalog.ListOpenCodexSessionCommands(context.Background(), "s_1")
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands(after late accepted) error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("open commands after late accepted = %+v, want none", open)
+	}
+	_, err = catalog.db.ExecContext(context.Background(), `UPDATE codex_session_commands SET state = 'accepted' WHERE command_id = ?`, "cmd_1")
+	if err != nil {
+		t.Fatalf("force legacy open/completed command error = %v", err)
+	}
+	open, err = catalog.ListOpenCodexSessionCommands(context.Background(), "s_1")
+	if err != nil {
+		t.Fatalf("ListOpenCodexSessionCommands(after legacy open/completed) error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("open commands after legacy open/completed = %+v, want none", open)
+	}
 	if err := catalog.InsertCodexSessionCommand(context.Background(), command); err != nil {
 		t.Fatalf("InsertCodexSessionCommand(duplicate completed) error = %v", err)
 	}

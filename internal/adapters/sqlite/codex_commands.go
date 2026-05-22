@@ -79,6 +79,7 @@ func (c *SessionCatalog) ListOpenCodexSessionCommands(ctx context.Context, sessi
 	rows, err := c.db.QueryContext(ctx, `SELECT command_id, session_id, runtime_id, kind, text, message_id, follow_up, state, attempt_count, last_error, created_at, updated_at, claimed_at, accepted_at, reflected_at, completed_at
 		FROM codex_session_commands
 		WHERE session_id = ? AND state IN ('pending', 'dispatching', 'accepted', 'reflected')
+			AND (completed_at IS NULL OR completed_at = '')
 		ORDER BY created_at ASC, command_id ASC`, strings.TrimSpace(sessionID))
 	if err != nil {
 		return nil, fmt.Errorf("query open codex session commands %q: %w", sessionID, err)
@@ -117,7 +118,28 @@ func (c *SessionCatalog) UpdateCodexSessionCommandState(ctx context.Context, com
 			accepted_at = CASE WHEN ? = 'accepted' THEN ? ELSE accepted_at END,
 			reflected_at = CASE WHEN ? = 'reflected' THEN ? ELSE reflected_at END,
 			completed_at = CASE WHEN ? IN ('completed', 'failed', 'cancelled', 'rejected') THEN ? ELSE completed_at END
-		WHERE command_id = ?`,
+		WHERE command_id = ?
+			AND CASE state
+				WHEN 'pending' THEN 1
+				WHEN 'dispatching' THEN 2
+				WHEN 'accepted' THEN 3
+				WHEN 'reflected' THEN 4
+				WHEN 'completed' THEN 5
+				WHEN 'failed' THEN 5
+				WHEN 'cancelled' THEN 5
+				WHEN 'rejected' THEN 5
+				ELSE 0
+			END <= CASE ?
+				WHEN 'pending' THEN 1
+				WHEN 'dispatching' THEN 2
+				WHEN 'accepted' THEN 3
+				WHEN 'reflected' THEN 4
+				WHEN 'completed' THEN 5
+				WHEN 'failed' THEN 5
+				WHEN 'cancelled' THEN 5
+				WHEN 'rejected' THEN 5
+				ELSE 0
+			END`,
 		state,
 		strings.TrimSpace(runtimeID), strings.TrimSpace(runtimeID),
 		strings.TrimSpace(lastError),
@@ -127,7 +149,8 @@ func (c *SessionCatalog) UpdateCodexSessionCommandState(ctx context.Context, com
 		state, now,
 		state, now,
 		state, now,
-		strings.TrimSpace(commandID))
+		strings.TrimSpace(commandID),
+		state)
 	if err != nil {
 		return false, fmt.Errorf("update codex session command %q: %w", commandID, err)
 	}

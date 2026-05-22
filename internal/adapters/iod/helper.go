@@ -28,6 +28,7 @@ const codexChildKeepaliveInterval = 15 * time.Second
 const codexChildKeepaliveWriteTimeout = 5 * time.Second
 const codexChildPongWait = 45 * time.Second
 const codexChildReconnectInterval = 250 * time.Millisecond
+const sessionHistoryControlSnapshotTimeout = 2 * time.Second
 
 type ChildIOMode string
 
@@ -638,13 +639,13 @@ func (h *Helper) handleConn(ctx context.Context, hc *helperConn) {
 			_ = h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
 			return
 		}
-		if err := h.dispatch(hc, raw); err != nil {
+		if err := h.dispatch(ctx, hc, raw); err != nil {
 			return
 		}
 	}
 }
 
-func (h *Helper) dispatch(hc *helperConn, raw json.RawMessage) error {
+func (h *Helper) dispatch(ctx context.Context, hc *helperConn, raw json.RawMessage) error {
 	var env inboundEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
@@ -673,7 +674,7 @@ func (h *Helper) dispatch(hc *helperConn, raw json.RawMessage) error {
 		if err := json.Unmarshal(raw, &request); err != nil {
 			return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
 		}
-		return h.handleSessionHistory(hc, request)
+		return h.handleSessionHistory(ctx, hc, request)
 	case PacketCommandSend, PacketCommandEnqueue, PacketCommandInterrupt, PacketCommandUIResponseSubmit:
 		var packet CommandPacket
 		if err := json.Unmarshal(raw, &packet); err != nil {
@@ -714,14 +715,16 @@ func (h *Helper) handleHealth(hc *helperConn, request HealthRequestPacket) error
 	return h.writePacket(hc, response)
 }
 
-func (h *Helper) handleSessionHistory(hc *helperConn, request SessionHistoryRequestPacket) error {
+func (h *Helper) handleSessionHistory(ctx context.Context, hc *helperConn, request SessionHistoryRequestPacket) error {
 	if err := request.Validate(); err != nil {
 		return h.sendError(hc, true, ErrorMalformedEnvelope, err.Error(), nil)
 	}
 	var snapshot SessionHistorySnapshot
 	if h.history != nil {
 		var err error
-		snapshot, err = h.history.Snapshot(context.Background())
+		snapshotCtx, cancel := context.WithTimeout(ctx, sessionHistoryControlSnapshotTimeout)
+		snapshot, err = h.history.Snapshot(snapshotCtx)
+		cancel()
 		if err != nil {
 			return h.sendError(hc, true, ErrorHelperBroken, err.Error(), nil)
 		}

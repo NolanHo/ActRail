@@ -157,7 +157,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		}
 		if record.runtime.protocol == runtimeProtocolCodexRPC {
 			active, err := s.codexAuthoritativeActiveTurn(ctx, record)
-			if err != nil {
+			if err != nil && !isCodexAuthoritativeStateUnavailable(err) {
 				_ = s.emitRuntimeControlDiagnostic(req.SessionID, "pre_send_codex_state", err)
 			}
 			if active {
@@ -281,7 +281,7 @@ func (s *Stub) sendWithOptionsSync(ctx context.Context, req SendRequest, followU
 		}
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			active, err := s.codexAuthoritativeActiveTurn(ctx, current)
-			if err != nil {
+			if err != nil && !isCodexAuthoritativeStateUnavailable(err) {
 				_ = s.emitRuntimeControlDiagnostic(req.SessionID, "pre_send_codex_state", err)
 			}
 			if active {
@@ -457,7 +457,7 @@ func (s *Stub) retryAsyncRuntimeSendWithCurrent(sessionID session.SessionID, exp
 		}
 		if current.runtime.protocol == runtimeProtocolCodexRPC {
 			active, err := s.codexAuthoritativeActiveTurn(context.Background(), current)
-			if err != nil {
+			if err != nil && !isCodexAuthoritativeStateUnavailable(err) {
 				_ = s.emitRuntimeControlDiagnostic(sessionID, "async_retry_pre_send_codex_state", err)
 			}
 			if active {
@@ -562,7 +562,13 @@ func (s *Stub) sendIdlePrecondition(ctx context.Context, record sessionRecord) e
 		if record.identity.Backend() == session.BackendCodex && reason == "codex_authoritative_running" {
 			active, err := s.confirmCodexRuntimeActiveTurn(ctx, record)
 			if err != nil {
-				_ = s.emitRuntimeControlDiagnostic(record.identity.SessionID(), "pre_send_codex_state", err)
+				if !isCodexAuthoritativeStateUnavailable(err) {
+					_ = s.emitRuntimeControlDiagnostic(record.identity.SessionID(), "pre_send_codex_state", err)
+				}
+				if reason != "" {
+					return Conflict("session is busy: " + reason)
+				}
+				return Conflict("session is busy")
 			}
 			if !active {
 				return nil

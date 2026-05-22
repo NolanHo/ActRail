@@ -34,7 +34,9 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 			if busy && record.identity.Backend() == session.BackendCodex && reason == "codex_authoritative_running" {
 				active, err := s.confirmCodexRuntimeActiveTurn(context.Background(), record)
 				if err != nil {
-					_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_pre_send_codex_state", err)
+					if !isCodexAuthoritativeStateUnavailable(err) {
+						_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_pre_send_codex_state", err)
+					}
 					return nil
 				}
 				if !active {
@@ -71,7 +73,9 @@ func (s *Stub) dispatchQueuedPrompt(sessionID session.SessionID) {
 		if runtime.protocol == runtimeProtocolCodexRPC {
 			active, err := s.codexAuthoritativeActiveTurn(context.Background(), current)
 			if err != nil {
-				_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_pre_send_codex_state", err)
+				if !isCodexAuthoritativeStateUnavailable(err) {
+					_ = s.emitRuntimeControlDiagnostic(sessionID, "queued_pre_send_codex_state", err)
+				}
 				return nil
 			}
 			if active {

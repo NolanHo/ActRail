@@ -259,13 +259,17 @@ func TestCodexRuntimeStateTransitionsControlAndProtocolPhases(t *testing.T) {
 	if !changed || activity.Phase != codexRuntimePhaseTurnStarting || !activity.Busy || activity.Reason != "codex_turn_starting" {
 		t.Fatalf("transition(turn_starting) = %+v changed=%v, want busy turn_starting default reason", activity, changed)
 	}
+	activity, changed = state.applyProtocolBusy(false)
+	if changed || activity.Phase != codexRuntimePhaseTurnStarting || !activity.Busy || activity.Reason != "codex_turn_starting" {
+		t.Fatalf("applyProtocolBusy(false) = %+v changed=%v, want command-side turn_starting preserved", activity, changed)
+	}
 	activity, changed = state.applyProtocolBusy(true)
 	if !changed || activity.Phase != codexRuntimePhaseRunning || !activity.Busy || activity.Reason != "codex_running" {
 		t.Fatalf("applyProtocolBusy(true) = %+v changed=%v, want running", activity, changed)
 	}
 	activity, changed = state.applyProtocolBusy(false)
 	if !changed || activity.Phase != codexRuntimePhaseIdle || activity.Busy || activity.Reason != "" {
-		t.Fatalf("applyProtocolBusy(false) = %+v changed=%v, want idle", activity, changed)
+		t.Fatalf("applyProtocolBusy(false after running) = %+v changed=%v, want idle", activity, changed)
 	}
 	activity, changed = state.transition(codexRuntimePhaseFailed, "runtime input unavailable")
 	if !changed || activity.Phase != codexRuntimePhaseFailed || activity.Busy {

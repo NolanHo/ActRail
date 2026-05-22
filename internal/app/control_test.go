@@ -948,6 +948,9 @@ func TestAsyncCodexSendUsesTimestampedCommandIDWhenSeqWasAlreadyUsed(t *testing.
 	}); err != nil {
 		t.Fatalf("registry.Create(codex duplicate ledger) error = %v", err)
 	}
+	if _, err := svc.AppendSessionMessage(sessionID, "user", "message", "existing prompt"); err != nil {
+		t.Fatalf("AppendSessionMessage(existing) error = %v", err)
+	}
 	store, ok := svc.appStore.(*sqlitestore.SessionCatalog)
 	if !ok {
 		t.Fatalf("appStore = %T, want sqlite catalog", svc.appStore)

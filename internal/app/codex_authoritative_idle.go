@@ -3,6 +3,10 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -14,21 +18,43 @@ const codexPreSendHistoryTimeout = 750 * time.Millisecond
 const codexPreSendThreadProbeTimeout = 1200 * time.Millisecond
 const codexPreSendThreadProbePollInterval = 25 * time.Millisecond
 
+var errCodexAuthoritativeStateUnavailable = errors.New("codex authoritative state unavailable")
+
 func (s *Stub) codexAuthoritativeActiveTurn(ctx context.Context, record sessionRecord) (bool, error) {
 	if s == nil || record.identity.Backend() != session.BackendCodex || record.runtime.helper == nil {
 		return false, nil
+	}
+	if packet, ok := s.cachedCodexIODHistorySnapshot(record); ok {
+		if !codexIODHistoryPacketActiveTurn(packet) {
+			return false, nil
+		}
+		return s.confirmCodexRuntimeActiveTurn(ctx, record)
 	}
 	historyCtx, cancel := context.WithTimeout(ctx, codexPreSendHistoryTimeout)
 	defer cancel()
 	packet, err := record.runtime.helper.sessionHistory(historyCtx)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %v", errCodexAuthoritativeStateUnavailable, err)
 	}
 	s.storeCodexIODHistoryPacket(record.identity.SessionID(), packet)
 	if !codexIODHistoryPacketActiveTurn(packet) {
 		return false, nil
 	}
 	return s.confirmCodexRuntimeActiveTurn(ctx, record)
+}
+
+func isCodexAuthoritativeStateUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errCodexAuthoritativeStateUnavailable) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func (s *Stub) confirmCodexRuntimeActiveTurn(ctx context.Context, record sessionRecord) (bool, error) {

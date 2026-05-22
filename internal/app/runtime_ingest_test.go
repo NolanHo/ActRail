@@ -1867,6 +1867,59 @@ func TestCodexSendRejectsSecondPromptWhileTurnStarting(t *testing.T) {
 	_ = stdoutW.Close()
 }
 
+func TestCodexSessionStateKeepsBusyForCommittedCommandBeforeRuntimeAck(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	sessionID := mustSessionID(t, "s_codex_command_busy")
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.setThreadID("thread-command-busy")
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_codex_command_busy", "t_codex_command_busy", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              t.TempDir(),
+		Title:            "codex command busy",
+		BackendSessionID: "thread-command-busy",
+		Runtime: sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			codex:    runtimeState,
+			helper: &runtimeIODHelper{
+				streamClient: &iodclient.Client{},
+			},
+		},
+		Transport: SessionTransportSnapshot{GenerationID: "g_codex_command_busy", State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, _, _, ok, err := svc.registry.ActivateCodexSendWithCommand(sessionID, "continue", true, "r_codex_command_busy"); err != nil || !ok {
+		t.Fatalf("ActivateCodexSendWithCommand() ok=%v err=%v", ok, err)
+	}
+	if _, changed := runtimeState.transition(codexRuntimePhaseSending, "codex_sending"); !changed {
+		t.Fatal("transition(sending) changed = false, want command-side sending phase")
+	}
+	if activity, _ := runtimeState.applyProtocolBusy(false); activity.Phase != codexRuntimePhaseSending || !activity.Busy {
+		t.Fatalf("applyProtocolBusy(false) = %+v, want command-side sending preserved", activity)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if !state.Busy || state.BusyReason != "codex_sending" || state.RuntimeState != string(codexRuntimePhaseSending) {
+		t.Fatalf("SessionState() = %+v, want busy sending from committed command ledger", state)
+	}
+}
+
 func TestCodexInterruptDefersUntilTurnStarts(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	defer stdoutR.Close()

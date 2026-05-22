@@ -23,6 +23,7 @@ type codexRuntimeState struct {
 	progressSeq         uint64
 	phase               codexRuntimePhase
 	phaseReason         string
+	commandPhase        bool
 }
 
 type codexRuntimePhase string
@@ -381,6 +382,7 @@ func (s *codexRuntimeState) transition(phase codexRuntimePhase, reason string) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	before := s.activityLocked()
+	s.commandPhase = phase == codexRuntimePhaseSending || phase == codexRuntimePhaseTurnStarting
 	s.setPhaseLocked(phase, reason)
 	after := s.activityLocked()
 	return after, before != after
@@ -401,6 +403,10 @@ func (s *codexRuntimeState) applyProtocolBusy(busy bool) (codexRuntimeActivity, 
 		}
 	} else if s.interruptPending {
 		s.setPhaseLocked(codexRuntimePhaseInterrupting, "codex_interrupting")
+	} else if s.commandPhase && (s.phase == codexRuntimePhaseSending || s.phase == codexRuntimePhaseTurnStarting) {
+		// A protocol idle probe can arrive after ActRail has durably accepted a
+		// command but before Codex emits turn/started. Keep the command-side
+		// phase authoritative until the turn starts, completes, or fails.
 	} else {
 		s.activeTurnID = ""
 		s.interruptPending = false
@@ -443,6 +449,9 @@ func (s *codexRuntimeState) pendingResumeThreadID() string {
 
 func (s *codexRuntimeState) setPhaseLocked(phase codexRuntimePhase, reason string) {
 	normalized := normalizeCodexRuntimePhase(phase)
+	if normalized != codexRuntimePhaseSending && normalized != codexRuntimePhaseTurnStarting {
+		s.commandPhase = false
+	}
 	if s.interruptPending {
 		switch normalized {
 		case codexRuntimePhaseIdle, codexRuntimePhaseFailed, codexRuntimePhaseEnded:
