@@ -101,6 +101,7 @@ type Helper struct {
 	broken            bool
 	childExited       bool
 	childExitStarted  atomic.Bool
+	liveOutputSeq     atomic.Uint64
 	closed            bool
 	closeListenerOnce sync.Once
 	childResolved     chan struct{}
@@ -1055,7 +1056,7 @@ func (h *Helper) readChildSocket(ctx context.Context) {
 			}
 			text := string(data)
 			h.observeCodexOutput(ctx, text)
-			_, _ = h.emitStateRecord(WALRecordOutputDelta, terminalOutputPayload{Stream: "unix", Data: text})
+			_ = h.emitLiveOutputDelta(terminalOutputPayload{Stream: "unix", Data: text})
 		}
 		if err != nil {
 			if ctx.Err() != nil || h.isChildExited() || h.isChildExitStarted() {
@@ -1196,6 +1197,24 @@ func (h *Helper) waitChild() {
 	h.childExited = true
 	h.mu.Unlock()
 	_, _ = h.emitStateRecord(WALRecordChildExit, childExitPayload{Code: status.Code, Signal: status.Signal})
+}
+
+func (h *Helper) emitLiveOutputDelta(payload terminalOutputPayload) error {
+	raw, err := marshalPayload(payload)
+	if err != nil {
+		return err
+	}
+	seq := EventSeq(h.liveOutputSeq.Add(1))
+	fact, err := NewHelperFact(FactOutputDelta, &seq, raw)
+	if err != nil {
+		return err
+	}
+	packet, err := NewStatePacket(h.sessionID, h.generationID, fact)
+	if err != nil {
+		return err
+	}
+	h.broadcast(packet)
+	return nil
 }
 
 func (h *Helper) emitStateRecord(class WALRecordClass, payload any) (WALRecord, error) {

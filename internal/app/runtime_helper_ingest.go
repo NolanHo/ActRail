@@ -243,6 +243,14 @@ func (s *Stub) reconcileLiveCodexAttachLostTransport(record sessionRecord) (sess
 	}
 	result := s.tryRedialHelperAfterReadError(record.identity.SessionID(), record.identity.Backend(), generationID, transport)
 	if !result.reattached || result.client == nil {
+		if result.retry {
+			updated, ok := s.registry.Lookup(record.identity.SessionID())
+			if !ok {
+				return record, false
+			}
+			updated.runtime = s.runtimeForRecord(updated)
+			return updated, true
+		}
 		return record, false
 	}
 	updated, ok := s.registry.Lookup(record.identity.SessionID())

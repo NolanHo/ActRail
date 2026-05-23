@@ -269,6 +269,18 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 	if payload.Stream != "unix" || payload.Data != "{\"method\":\"thread/started\"}\n" {
 		t.Fatalf("output payload = %+v, want unix thread/started", payload)
 	}
+	if state.Fact.Seq == nil || *state.Fact.Seq != 1 {
+		t.Fatalf("state output seq = %#v, want 1", state.Fact.Seq)
+	}
+	replay, err := ReplayWAL(paths.WALPath, sessionID, generationID, 0)
+	if err != nil {
+		t.Fatalf("ReplayWAL() error = %v", err)
+	}
+	for i, record := range replay.Records {
+		if record.Header.Class == WALRecordOutputDelta {
+			t.Fatalf("replay record %d class = %q, want unix output to remain live-only", i, record.Header.Class)
+		}
+	}
 
 	cancel()
 	_ = control.Close()
