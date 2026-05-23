@@ -1305,7 +1305,7 @@ func TestCodexSubagentUserMessageDoesNotRenderAsMainPrompt(t *testing.T) {
 
 func TestCommittedCodexSubagentNotificationDoesNotRenderAsMainPrompt(t *testing.T) {
 	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
-	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
 	if err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
