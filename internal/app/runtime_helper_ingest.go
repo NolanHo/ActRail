@@ -153,8 +153,9 @@ func (s *Stub) runtimeHelperGenerationCurrent(sessionID session.SessionID, gener
 		if err != nil {
 			return false
 		}
-		binding, ok := bindings[sessionID]
-		return ok && binding.GenerationID == generationID
+		if binding, ok := bindings[sessionID]; ok {
+			return binding.GenerationID == generationID
+		}
 	}
 	if record.transport.GenerationID != "" {
 		return record.transport.GenerationID == generationID.String()

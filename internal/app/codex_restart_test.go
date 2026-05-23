@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"actrail/internal/adapters/iod"
 	"actrail/internal/adapters/process"
 	"actrail/internal/config"
 	"actrail/internal/domain/session"
@@ -99,6 +100,96 @@ func TestRestartCodexSessionResumesExistingThread(t *testing.T) {
 		writes := second.pty.Writes()
 		return writesContain(writes, `"method":"turn/start"`) && writesContain(writes, `"threadId":"`+threadID+`"`) && writesContain(writes, "继续")
 	})
+	_ = first.stdout.Close()
+	_ = second.stdout.Close()
+}
+
+func TestRestartCodexSessionIgnoresStaleRuntimeOutputAfterReconcile(t *testing.T) {
+	const threadID = "thread-codex-reconcile-1"
+
+	runtimes := make([]codexTestRuntimeIO, 0, 2)
+	var runtimesMu sync.Mutex
+	runner := &process.FakeRunner{
+		HandleBuild: func(spec process.LaunchSpec) process.Handle {
+			stdoutR, stdoutW := io.Pipe()
+			pty := &recordingPTY{reader: stdoutR}
+			handle := process.NewFakeHandle(spec)
+			handle.SetPTY(pty)
+			runtimesMu.Lock()
+			runtimes = append(runtimes, codexTestRuntimeIO{pty: pty, stdout: stdoutW})
+			runtimesMu.Unlock()
+			return handle
+		},
+	}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+
+	first := waitForCodexTestRuntime(t, &runtimesMu, &runtimes, 0)
+	waitForAppCondition(t, func() bool {
+		return writesContain(first.pty.Writes(), `"method":"initialize"`)
+	})
+	if _, err := io.WriteString(first.stdout, `{"id":"initialize-1","result":{"protocolVersion":1}}`+"\n"); err != nil {
+		t.Fatalf("write first initialize response: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		return writesContain(first.pty.Writes(), `"method":"thread/start"`)
+	})
+	if _, err := io.WriteString(first.stdout, `{"method":"thread/started","params":{"thread":{"id":"`+threadID+`","status":{"type":"idle"}}}}`+"\n"); err != nil {
+		t.Fatalf("write first thread started: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sessionID)
+		return ok && record.importedBackendSessionID == threadID
+	})
+
+	if _, err := svc.RestartSession(context.Background(), RestartSessionRequest{SessionID: sessionID}); err != nil {
+		t.Fatalf("RestartSession() error = %v", err)
+	}
+	second := waitForCodexTestRuntime(t, &runtimesMu, &runtimes, 1)
+	waitForAppCondition(t, func() bool {
+		return writesContain(second.pty.Writes(), `"method":"initialize"`)
+	})
+	if _, err := io.WriteString(second.stdout, `{"id":"initialize-1","result":{"protocolVersion":1}}`+"\n"); err != nil {
+		t.Fatalf("write second initialize response: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		return writesContain(second.pty.Writes(), `"method":"thread/resume"`)
+	})
+	if _, err := io.WriteString(second.stdout, `{"method":"thread/started","params":{"thread":{"id":"`+threadID+`","status":{"type":"idle"}}}}`+"\n"); err != nil {
+		t.Fatalf("write second thread started: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+		return err == nil && !state.Busy && state.RuntimeState == string(codexRuntimePhaseIdle) && state.Transport.State == SessionTransportStateAttached
+	})
+
+	if _, err := io.WriteString(first.stdout, `{"method":"turn/started","params":{"threadId":"`+threadID+`","turn":{"id":"old-turn-after-restart","status":"inProgress","error":null}}}`+"\n"); err != nil {
+		t.Fatalf("write stale first runtime event: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) || state.Transport.State != SessionTransportStateAttached {
+		t.Fatalf("SessionState() after stale old runtime output = busy:%v runtime:%q transport:%+v, want idle attached", state.Busy, state.RuntimeState, state.Transport)
+	}
+
+	if err := svc.markSessionGenerationBroken(sessionID, iod.GenerationID("g_current_codex_terminal"), "current_generation_failed"); err != nil {
+		t.Fatalf("mark current generation broken: %v", err)
+	}
+	state, err = svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() after current broken error = %v", err)
+	}
+	if state.RuntimeState != string(codexRuntimePhaseFailed) || state.Transport.State != SessionTransportStateBroken {
+		t.Fatalf("SessionState() after current generation broken = runtime:%q transport:%+v, want failed broken", state.RuntimeState, state.Transport)
+	}
 	_ = first.stdout.Close()
 	_ = second.stdout.Close()
 }
