@@ -187,7 +187,7 @@ func codexSessionMessagesFromFile(ctx context.Context, path string) ([]SessionMe
 }
 
 func codexSessionMessagesPageFromFile(ctx context.Context, path string, req SessionMessagesRequest) (SessionMessagesResponse, bool, bool, error) {
-	if (req.AfterSeq != nil && *req.AfterSeq > 0) || req.Limit <= 0 || req.IncludeToolEvents || req.IncludeToolDetails || strings.TrimSpace(req.EventID) != "" || strings.TrimSpace(req.ToolCallID) != "" {
+	if req.Limit <= 0 || req.IncludeToolEvents || req.IncludeToolDetails || strings.TrimSpace(req.EventID) != "" || strings.TrimSpace(req.ToolCallID) != "" {
 		return SessionMessagesResponse{}, false, false, nil
 	}
 	trimmed := strings.TrimSpace(path)
@@ -200,6 +200,9 @@ func codexSessionMessagesPageFromFile(ctx context.Context, path string, req Sess
 	}
 	if info.Size() < codexSessionFilePageMinSize {
 		return SessionMessagesResponse{}, false, false, nil
+	}
+	if req.AfterSeq != nil && *req.AfterSeq > 0 {
+		return codexSessionMessagesAfterPageFromFile(ctx, trimmed, info, req)
 	}
 	beforeOffset := info.Size()
 	if req.BeforeSeq != nil {
@@ -233,6 +236,39 @@ func codexSessionMessagesPageFromFile(ctx context.Context, path string, req Sess
 		response.NextBeforeSeq = &next
 	}
 	complete := codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionLinesHaveTaskComplete(ctx, locatedCodexSessionFileLineTexts(lines))
+	return response, complete, true, nil
+}
+
+func codexSessionMessagesAfterPageFromFile(ctx context.Context, path string, info os.FileInfo, req SessionMessagesRequest) (SessionMessagesResponse, bool, bool, error) {
+	afterOffset := codexSessionFileOffsetFromSeq(*req.AfterSeq)
+	if afterOffset < 0 {
+		afterOffset = 0
+	}
+	if afterOffset > info.Size() {
+		afterOffset = info.Size()
+	}
+	lines, reachedEOF, err := readCodexSessionFileLinesAfter(ctx, path, afterOffset, req.Limit)
+	if err != nil {
+		return SessionMessagesResponse{}, false, true, err
+	}
+	if len(lines) == 0 {
+		return SessionMessagesResponse{TailSeq: codexSessionFileSeqForOffset(info.Size())}, false, true, nil
+	}
+	items, err := codexSessionMessagesFromLocatedLines(ctx, path, lines)
+	if err != nil {
+		return SessionMessagesResponse{}, false, true, err
+	}
+	pageReq := req
+	pageReq.AfterSeq = nil
+	pageReq.BeforeSeq = nil
+	response := paginateSessionMessagesForRequest(items, pageReq)
+	if reachedEOF {
+		response.TailSeq = codexSessionFileSeqForOffset(info.Size())
+	} else if len(response.Items) > 0 {
+		response.TailSeq = response.Items[len(response.Items)-1].Seq
+		response.HasMore = true
+	}
+	complete := reachedEOF && (codexSessionMessagesHaveAuthoritativeCompletion(items) || codexSessionLinesHaveTaskComplete(ctx, locatedCodexSessionFileLineTexts(lines)))
 	return response, complete, true, nil
 }
 
@@ -346,6 +382,93 @@ func readCodexSessionFileLinesBefore(ctx context.Context, path string, beforeOff
 		}
 	}
 	return lines, len(lines) > 0 && lines[0].Offset > 0, nil
+}
+
+func readCodexSessionFileLinesAfter(ctx context.Context, path string, afterOffset int64, limit int) ([]locatedCodexSessionFileLine, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false, fmt.Errorf("open codex session file %q: %w", path, err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, false, fmt.Errorf("stat codex session file %q: %w", path, err)
+	}
+	start := afterOffset
+	if start < 0 {
+		start = 0
+	}
+	if start > info.Size() {
+		start = info.Size()
+	}
+	if start > 0 && start < info.Size() {
+		previous := []byte{0}
+		if _, err := file.ReadAt(previous, start-1); err != nil && err != io.EOF {
+			return nil, false, fmt.Errorf("read codex session file %q: %w", path, err)
+		}
+		if previous[0] != '\n' {
+			aligned, err := nextCodexSessionLineOffset(file, path, start, info.Size())
+			if err != nil {
+				return nil, false, err
+			}
+			start = aligned
+		}
+	}
+	if start >= info.Size() {
+		return nil, true, nil
+	}
+	chunk := int64(codexSessionFilePageInitialChunk)
+	var lines []locatedCodexSessionFileLine
+	upper := start
+	for upper < info.Size() {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		next := upper + chunk
+		if next > info.Size() {
+			next = info.Size()
+		}
+		buf := make([]byte, next-upper)
+		if _, err := file.ReadAt(buf, upper); err != nil && err != io.EOF {
+			return nil, false, fmt.Errorf("read codex session file %q: %w", path, err)
+		}
+		windowLines := codexSessionFileLinesFromWindow(buf, upper, true, next == info.Size())
+		lines = append(lines, windowLines...)
+		if limit > 0 && len(lines) > 0 && countCodexSessionVisibleMessages(ctx, lines, limit) >= limit {
+			return lines, false, nil
+		}
+		if next == info.Size() {
+			break
+		}
+		upper = next
+		if chunk < codexSessionFilePageMaxChunk {
+			chunk *= 2
+			if chunk > codexSessionFilePageMaxChunk {
+				chunk = codexSessionFilePageMaxChunk
+			}
+		}
+	}
+	return lines, true, nil
+}
+
+func nextCodexSessionLineOffset(file *os.File, path string, start int64, size int64) (int64, error) {
+	chunk := int64(64 << 10)
+	cursor := start
+	for cursor < size {
+		end := cursor + chunk
+		if end > size {
+			end = size
+		}
+		buf := make([]byte, end-cursor)
+		if _, err := file.ReadAt(buf, cursor); err != nil && err != io.EOF {
+			return 0, fmt.Errorf("read codex session file %q: %w", path, err)
+		}
+		if idx := bytes.IndexByte(buf, '\n'); idx >= 0 {
+			return cursor + int64(idx) + 1, nil
+		}
+		cursor = end
+	}
+	return size, nil
 }
 
 func codexSessionFileLinesFromWindow(buf []byte, base int64, includePrefix bool, includeSuffix bool) []locatedCodexSessionFileLine {

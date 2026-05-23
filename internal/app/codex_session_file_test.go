@@ -519,6 +519,57 @@ func TestSessionMessagesCodexSourcePageSupportsBeforeSeq(t *testing.T) {
 	}
 }
 
+func TestSessionMessagesCodexSourcePageSupportsAfterSeqFromTail(t *testing.T) {
+	threadID := "019e2107-ca2f-7e73-994d-8726965f8c91"
+	lines := makeLargeCodexSessionLines(threadID, "/tmp/codex-after")
+	lines = append(lines,
+		`{"timestamp":"2026-05-13T04:10:19.000Z","type":"session_meta","payload":{"id":"019e2107-ca2f-7e73-994d-8726965f8c91","cwd":"/tmp/codex-after","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-13T04:10:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"initial prompt"}}`,
+		`{"timestamp":"2026-05-13T04:11:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"initial answer","phase":"final_answer"}}`,
+	)
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, lines)
+
+	initial, _, ok, err := codexSessionMessagesPageFromFile(context.Background(), sourcePath, SessionMessagesRequest{Limit: 10})
+	if err != nil || !ok {
+		t.Fatalf("initial page = ok:%v err:%v", ok, err)
+	}
+	afterSeq := initial.TailSeq
+	appended := []string{
+		`{"timestamp":"2026-05-13T04:12:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"appended prompt"}}`,
+		`{"timestamp":"2026-05-13T04:13:20.000Z","type":"event_msg","payload":{"type":"agent_message","message":"appended answer","phase":"final_answer"}}`,
+	}
+	file, err := os.OpenFile(sourcePath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := file.WriteString(strings.Join(appended, "\n") + "\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	next, _, ok, err := codexSessionMessagesPageFromFile(context.Background(), sourcePath, SessionMessagesRequest{AfterSeq: &afterSeq, Limit: 10})
+	if err != nil || !ok {
+		t.Fatalf("after page = ok:%v err:%v", ok, err)
+	}
+	got := messageRolesAndText(next.Items)
+	want := []string{"user:appended prompt", "assistant:appended answer"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("after messages = %#v, want %#v", got, want)
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if next.TailSeq != codexSessionFileSeqForOffset(info.Size()) {
+		t.Fatalf("TailSeq = %d, want source tail %d", next.TailSeq, codexSessionFileSeqForOffset(info.Size()))
+	}
+	if next.TailSeq <= afterSeq {
+		t.Fatalf("TailSeq = %d, want > after seq %d", next.TailSeq, afterSeq)
+	}
+}
+
 func TestSessionMessagesCodexSourcePageAppendsPendingTranscriptWithoutWaitingForIOD(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
