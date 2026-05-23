@@ -2,9 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -40,7 +44,7 @@ func newSessionActionFixtureForBackend(t *testing.T, backend string) (*Stub, *[]
 		*handles = append(*handles, handle)
 		return handle
 	}}
-	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner, DisableExternalHandoffL3: true})
 	cwd := t.TempDir()
 	req := CreateSessionRequest{AgentBackend: backend, CWD: cwd}
 	if strings.EqualFold(backend, "pi") {
@@ -729,6 +733,20 @@ func TestStubHandoffSessionCreatesFreshPISessionAndArchivesPrevious(t *testing.T
 	}
 }
 
+type fakeHandoffL3Client struct {
+	response sessionHandoffL3
+	err      error
+	seenL2   sessionHandoffL2
+}
+
+func (c *fakeHandoffL3Client) SummarizeHandoff(_ context.Context, l2 sessionHandoffL2) (sessionHandoffL3, error) {
+	c.seenL2 = l2
+	if c.err != nil {
+		return sessionHandoffL3{}, c.err
+	}
+	return c.response, nil
+}
+
 func TestStubRestartSessionWithMissingPISourceCreatesFreshSource(t *testing.T) {
 	svc, handles, sessionID, _ := newSessionActionFixtureForBackend(t, "pi")
 	missingPath := filepath.Join(t.TempDir(), "missing.jsonl")
@@ -780,7 +798,7 @@ func TestHandoffSidecarStartsAfterLastCompactionAndMasksOldToolResults(t *testin
 	if err != nil {
 		t.Fatalf("ParseSessionID() error = %v", err)
 	}
-	sidecar, err := buildSessionHandoffSidecar(sessionID, sourcePath, time.Unix(1760000000, 0).UTC())
+	sidecar, err := buildSessionHandoffSidecar(context.Background(), sessionID, sourcePath, time.Unix(1760000000, 0).UTC(), nil)
 	if err != nil {
 		t.Fatalf("buildSessionHandoffSidecar() error = %v", err)
 	}
@@ -803,6 +821,159 @@ func TestHandoffSidecarStartsAfterLastCompactionAndMasksOldToolResults(t *testin
 	}
 	if !masked || !recent || sidecar.MaskedToolResults != 1 {
 		t.Fatalf("sidecar tool result masking = masked:%v recent:%v count:%d entries:%+v", masked, recent, sidecar.MaskedToolResults, sidecar.Entries)
+	}
+	if sidecar.Version != handoffSidecarFormatVersion || sidecar.Layers.L1.Location != "entries" {
+		t.Fatalf("sidecar layers missing: %+v", sidecar.Layers)
+	}
+	l2 := sidecar.Layers.L2
+	if l2.Kind != "actrail_handoff_l2_transcript" || len(l2.Messages) != 4 {
+		t.Fatalf("L2 = %+v, want 4 user/assistant messages", l2)
+	}
+	if l2.Messages[0].ID != "m1" || l2.Messages[0].Role != "user" || l2.Messages[0].Source.Line != 4 {
+		t.Fatalf("L2 first = %+v, want m1 user line 4", l2.Messages[0])
+	}
+	for _, item := range l2.Messages {
+		if strings.Contains(item.Text, "result one") || strings.Contains(item.Text, "result two") {
+			t.Fatalf("L2 includes tool result: %+v", item)
+		}
+	}
+	l3 := sidecar.Layers.L3
+	if l3.Kind != "actrail_handoff_l3_summary" || l3.GeneratedBy.Type != "deterministic_fallback" {
+		t.Fatalf("L3 fallback = %+v", l3)
+	}
+	if len(l3.MustReadL2) == 0 || l3.MustReadL2[0].L2ID != "m4" {
+		t.Fatalf("L3 must_read_l2 = %+v, want latest user m4", l3.MustReadL2)
+	}
+}
+
+func TestHandoffSidecarUsesValidGeneratedL3(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.jsonl")
+	body := `{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"design the L3 schema"}]}}
+{"type":"message","id":"a1","message":{"role":"assistant","content":[{"type":"text","text":"Use a tree with anchors.","textSignature":"{\"phase\":\"final_answer\"}"}],"stopReason":"stop"}}
+`
+	if err := os.WriteFile(sourcePath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(source) error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID("s_1")
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	client := &fakeHandoffL3Client{response: sessionHandoffL3{
+		Version:     handoffL3FormatVersion,
+		Kind:        "actrail_handoff_l3_summary",
+		GeneratedBy: sessionHandoffGenerator{Type: "external_model", Model: "deepseek-v4-pro"},
+		CurrentState: sessionHandoffCurrentState{
+			Goal:             "Design L3 schema",
+			LatestUserIntent: "design the L3 schema",
+			Status:           "active",
+		},
+		ConversationTree: []sessionHandoffTreeNode{{
+			ID:      "t1",
+			Title:   "L3 schema",
+			Type:    "active_thread",
+			Status:  "active",
+			Summary: "Discuss L3 shape.",
+			Anchors: []sessionHandoffL2Anchor{{L2ID: "m1", Role: "user", Reason: "current ask"}},
+		}},
+		ActiveThreads: []sessionHandoffThread{{ThreadID: "t1", Question: "design the L3 schema", WhyActive: "latest ask", ReadL2First: []string{"m1"}}},
+		MustReadL2:    []sessionHandoffMustRead{{L2ID: "m1", Reason: "latest user wording"}},
+	}}
+	sidecar, err := buildSessionHandoffSidecar(context.Background(), sessionID, sourcePath, time.Unix(1760000000, 0).UTC(), client)
+	if err != nil {
+		t.Fatalf("buildSessionHandoffSidecar() error = %v", err)
+	}
+	if len(client.seenL2.Messages) != 2 || client.seenL2.Messages[0].ID != "m1" {
+		t.Fatalf("client saw L2 = %+v", client.seenL2)
+	}
+	if sidecar.Layers.L3.GeneratedBy.Type != "external_model" || sidecar.Layers.L3.CurrentState.Goal != "Design L3 schema" {
+		t.Fatalf("L3 = %+v, want generated", sidecar.Layers.L3)
+	}
+}
+
+func TestHandoffSidecarFallsBackOnInvalidGeneratedL3(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.jsonl")
+	body := `{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"latest instruction"}]}}
+`
+	if err := os.WriteFile(sourcePath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(source) error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID("s_1")
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	client := &fakeHandoffL3Client{response: sessionHandoffL3{
+		Version:     handoffL3FormatVersion,
+		Kind:        "actrail_handoff_l3_summary",
+		GeneratedBy: sessionHandoffGenerator{Type: "external_model", Model: "deepseek-v4-pro"},
+		MustReadL2:  []sessionHandoffMustRead{{L2ID: "missing", Reason: "bad anchor"}},
+	}}
+	sidecar, err := buildSessionHandoffSidecar(context.Background(), sessionID, sourcePath, time.Unix(1760000000, 0).UTC(), client)
+	if err != nil {
+		t.Fatalf("buildSessionHandoffSidecar() error = %v", err)
+	}
+	l3 := sidecar.Layers.L3
+	if l3.GeneratedBy.Type != "deterministic_fallback" || !strings.Contains(l3.GenerationError, "unknown must_read_l2") {
+		t.Fatalf("L3 fallback = %+v, want invalid-anchor fallback", l3)
+	}
+}
+
+func TestDeepSeekHandoffL3ClientRequestsJSONMode(t *testing.T) {
+	var seenPath, seenAuth string
+	var seenBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		seenPath = req.URL.Path
+		seenAuth = req.Header.Get("Authorization")
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("ReadAll(request) error = %v", err)
+		}
+		if err := json.Unmarshal(body, &seenBody); err != nil {
+			t.Fatalf("Unmarshal(request) error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"version\":1,\"kind\":\"actrail_handoff_l3_summary\",\"current_state\":{\"goal\":\"g\"},\"must_read_l2\":[{\"l2_id\":\"m1\",\"reason\":\"latest\"}]}"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	client := deepSeekHandoffL3Client{
+		apiKey:     "secret",
+		baseURL:    server.URL,
+		model:      "deepseek-v4-pro",
+		httpClient: server.Client(),
+		timeout:    time.Second,
+	}
+	l3, err := client.SummarizeHandoff(context.Background(), sessionHandoffL2{
+		Version: handoffL2FormatVersion,
+		Kind:    "actrail_handoff_l2_transcript",
+		Messages: []sessionHandoffL2Item{{
+			ID:   "m1",
+			Role: "user",
+			Text: "latest",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SummarizeHandoff() error = %v", err)
+	}
+	if seenPath != "/chat/completions" || seenAuth != "Bearer secret" {
+		t.Fatalf("request path/auth = %q/%q", seenPath, seenAuth)
+	}
+	if seenBody["model"] != "deepseek-v4-pro" {
+		t.Fatalf("model = %v", seenBody["model"])
+	}
+	responseFormat, _ := seenBody["response_format"].(map[string]any)
+	if responseFormat["type"] != "json_object" {
+		t.Fatalf("response_format = %#v", seenBody["response_format"])
+	}
+	if l3.GeneratedBy.Type != "external_model" || l3.GeneratedBy.Model != "deepseek-v4-pro" || len(l3.MustReadL2) != 1 {
+		t.Fatalf("L3 = %+v", l3)
+	}
+}
+
+func TestHandoffPromptPrioritizesL3ThenL2(t *testing.T) {
+	prompt := handoffPrompt("/tmp/sidecar.json")
+	for _, want := range []string{"layers.l3 first", "must_read_l2", "layers.l2", "entries as L1"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("handoffPrompt() missing %q:\n%s", want, prompt)
+		}
 	}
 }
 
