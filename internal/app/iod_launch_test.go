@@ -445,7 +445,7 @@ func TestCodexIODControl(t *testing.T) {
 		`"id":"turn-interrupt-4"`,
 		`"turnId":"codex-turn-1"`,
 	})
-	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandSend})
+	assertNoCodexWAL(t, manifest.WALPath)
 }
 
 func TestCodexIODSessionHistoryEndToEnd(t *testing.T) {
@@ -530,7 +530,7 @@ func TestCodexIODSessionHistoryEndToEnd(t *testing.T) {
 	if !history.TaskComplete || history.IndexedCount != 2 {
 		t.Fatalf("sessionHistory() = %+v, want task_complete with two indexed display messages", history)
 	}
-	waitForAcceptedCommands(t, manifest.WALPath, sessionID, binding.GenerationID, []iod.PacketKind{iod.PacketCommandSend})
+	assertNoCodexWAL(t, manifest.WALPath)
 }
 
 func TestIODHelperForwardsChildArgvCWDAndEnvironment(t *testing.T) {
@@ -828,6 +828,13 @@ func waitForAcceptedCommands(t *testing.T, walPath string, sessionID session.Ses
 		}
 		return true
 	})
+}
+
+func assertNoCodexWAL(t *testing.T, walPath string) {
+	t.Helper()
+	if _, err := os.Stat(walPath); !os.IsNotExist(err) {
+		t.Fatalf("Codex helper WAL stat error = %v, want no WAL", err)
+	}
 }
 
 func waitForIODCondition(t *testing.T, cond func() bool) {

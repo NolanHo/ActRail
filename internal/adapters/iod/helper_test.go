@@ -140,6 +140,9 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 	if err := paths.EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir() error = %v", err)
 	}
+	if err := os.WriteFile(paths.WALPath, []byte("stale wal"), 0o644); err != nil {
+		t.Fatalf("write stale WAL error = %v", err)
+	}
 	listenErr := make(chan error, 1)
 	listeners := make(chan net.Listener, 1)
 	accepted := make(chan *websocket.Conn, 1)
@@ -241,6 +244,19 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 	if err := decodeWithin(t, dec, &response); err != nil {
 		t.Fatalf("decode accepted error = %v", err)
 	}
+	if response.AckCursor != 1 {
+		t.Fatalf("accepted ack cursor = %d, want in-memory cursor 1", response.AckCursor)
+	}
+	if err := enc.Encode(packet); err != nil {
+		t.Fatalf("encode duplicate command error = %v", err)
+	}
+	var duplicate CommandAcceptedPacket
+	if err := decodeWithin(t, dec, &duplicate); err != nil {
+		t.Fatalf("decode duplicate accepted error = %v", err)
+	}
+	if duplicate.AckCursor != response.AckCursor || !duplicate.Deduped {
+		t.Fatalf("duplicate outcome = %+v, want deduped cursor %d", duplicate.CommandOutcome, response.AckCursor)
+	}
 	_ = childConn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	messageType, msg, err := childConn.ReadMessage()
 	if err != nil {
@@ -272,14 +288,135 @@ func TestIodUnixChildModeForwardsOverChildSocket(t *testing.T) {
 	if state.Fact.Seq == nil || *state.Fact.Seq != 1 {
 		t.Fatalf("state output seq = %#v, want 1", state.Fact.Seq)
 	}
-	replay, err := ReplayWAL(paths.WALPath, sessionID, generationID, 0)
-	if err != nil {
-		t.Fatalf("ReplayWAL() error = %v", err)
+	if _, err := os.Stat(paths.WALPath); !os.IsNotExist(err) {
+		t.Fatalf("unix helper WAL stat error = %v, want not exist", err)
 	}
-	for i, record := range replay.Records {
-		if record.Header.Class == WALRecordOutputDelta {
-			t.Fatalf("replay record %d class = %q, want unix output to remain live-only", i, record.Header.Class)
+	replayRequest, err := NewReplayRequestPacket(sessionID, generationID, 0)
+	if err != nil {
+		t.Fatalf("NewReplayRequestPacket() error = %v", err)
+	}
+	if err := enc.Encode(replayRequest); err != nil {
+		t.Fatalf("encode replay request error = %v", err)
+	}
+	var replayDone ReplayDonePacket
+	if err := decodeWithin(t, dec, &replayDone); err != nil {
+		t.Fatalf("decode unix replay done error = %v", err)
+	}
+	if replayDone.AfterOffset != 0 || replayDone.LastOffset != 0 || replayDone.CorruptTail {
+		t.Fatalf("unix replay done = %+v, want empty replay", replayDone)
+	}
+
+	cancel()
+	_ = control.Close()
+	_ = childConn.Close()
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("helper returned error = %v", err)
 		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("helper stop timed out")
+	}
+}
+
+func TestIodUnixChildModeGenerationBreakIsLiveOnly(t *testing.T) {
+	sessionID := mustSessionID(t, "s_unix_break")
+	generationID := mustGenerationID(t, "g_unix_break")
+	paths, err := NewGenerationPaths(t.TempDir(), sessionID, generationID)
+	if err != nil {
+		t.Fatalf("NewGenerationPaths() error = %v", err)
+	}
+	if err := paths.EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir() error = %v", err)
+	}
+	listenErr := make(chan error, 1)
+	listeners := make(chan net.Listener, 1)
+	accepted := make(chan *websocket.Conn, 1)
+	defer func() {
+		select {
+		case listener := <-listeners:
+			_ = listener.Close()
+		default:
+		}
+	}()
+
+	handle := newTestHandle(4324, nil)
+	runner := &process.FakeRunner{HandleBuild: func(spec process.LaunchSpec) process.Handle {
+		handle.spec = spec
+		childListener, err := net.Listen("unix", paths.ChildSocketPath)
+		if err != nil {
+			listenErr <- err
+			return handle
+		}
+		listeners <- childListener
+		go func() {
+			upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+			server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					close(accepted)
+					return
+				}
+				accepted <- conn
+			})}
+			if err := server.Serve(childListener); err != nil && !errors.Is(err, net.ErrClosed) && !strings.Contains(err.Error(), "use of closed network connection") {
+				listenErr <- err
+			}
+		}()
+		return handle
+	}}
+	command, err := process.NewCommand("/bin/test-child", "--listen", "unix://"+paths.ChildSocketPath)
+	if err != nil {
+		t.Fatalf("process.NewCommand() error = %v", err)
+	}
+	env, err := process.InheritEnv()
+	if err != nil {
+		t.Fatalf("process.InheritEnv() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunHelper(ctx, HelperOptions{
+			SessionID:       sessionID,
+			GenerationID:    generationID,
+			Paths:           paths,
+			Command:         command,
+			CWD:             mustAbsDir(t, paths.RuntimeDir),
+			Environment:     env,
+			ChildIOMode:     ChildIOModeUnix,
+			ProtocolVersion: 1,
+			Runner:          runner,
+			Now: func() time.Time {
+				return time.Unix(1760000000, 0).UTC()
+			},
+		})
+	}()
+	childConn := acceptChildConn(t, accepted, listenErr, paths.ChildSocketPath)
+	defer childConn.Close()
+
+	waitForSocket(t, paths.ControlSocketPath)
+	control, err := net.Dial("unix", paths.ControlSocketPath)
+	if err != nil {
+		t.Fatalf("Dial(control) error = %v", err)
+	}
+	defer control.Close()
+	dec := json.NewDecoder(control)
+	var hello HelloPacket
+	if err := decodeWithin(t, dec, &hello); err != nil {
+		t.Fatalf("decode hello error = %v", err)
+	}
+
+	handle.SetWaitResult(process.ExitStatus{Code: 0}, nil)
+	var childExit StatePacket
+	if err := decodeWithin(t, dec, &childExit); err != nil {
+		t.Fatalf("decode child exit state error = %v", err)
+	}
+	if childExit.Fact.FactKind != FactChildExit || childExit.Fact.Seq != nil {
+		t.Fatalf("child exit state = %+v, want live child_exit without seq", childExit.Fact)
+	}
+	if _, err := os.Stat(paths.WALPath); !os.IsNotExist(err) {
+		t.Fatalf("unix helper WAL stat error = %v, want not exist after child exit", err)
 	}
 
 	cancel()

@@ -102,6 +102,7 @@ type Helper struct {
 	childExited       bool
 	childExitStarted  atomic.Bool
 	liveOutputSeq     atomic.Uint64
+	commandCursor     WALOffset
 	closed            bool
 	closeListenerOnce sync.Once
 	childResolved     chan struct{}
@@ -282,6 +283,9 @@ func (h *Helper) Run(ctx context.Context) error {
 		return err
 	}
 	_ = os.Remove(h.paths.ControlSocketPath)
+	if !h.usesWAL() {
+		_ = os.Remove(h.paths.WALPath)
+	}
 	listener, err := net.Listen("unix", h.paths.ControlSocketPath)
 	if err != nil {
 		return fmt.Errorf("listen control socket: %w", err)
@@ -291,12 +295,14 @@ func (h *Helper) Run(ctx context.Context) error {
 		_ = listener.Close()
 		_ = os.Remove(h.paths.ControlSocketPath)
 	}()
-	wal, err := OpenWAL(h.paths.WALPath, h.sessionID, h.generationID)
-	if err != nil {
-		return err
+	if h.usesWAL() {
+		wal, err := OpenWAL(h.paths.WALPath, h.sessionID, h.generationID)
+		if err != nil {
+			return err
+		}
+		h.wal = wal
+		defer wal.Close()
 	}
-	h.wal = wal
-	defer wal.Close()
 	if h.history != nil {
 		h.history.Start(ctx)
 		defer h.history.Stop()
@@ -361,25 +367,27 @@ func (h *Helper) Run(ctx context.Context) error {
 	}
 	h.proof = proof
 	h.manifest = manifest
-	if _, err := h.wal.Append(WALRecordHelperStart, helperStartPayload{
-		ProtocolVersion: h.protocolVersion,
-		HelperPID:       proof.HelperPID,
-		ChildPID:        proof.ChildPID,
-		WALPath:         proof.WALPath,
-		SocketPath:      proof.ControlSocketPath,
-		StartTS:         proof.StartTS,
-		StartedAt:       start,
-	}); err != nil {
-		return err
-	}
-	if childPID != nil {
-		if _, err := h.wal.Append(WALRecordAttachEstablished, attachEstablishedPayload{
-			ChildPID: *childPID,
-			IO:       string(h.childIOMode),
-			Argv:     h.launchSpec.Command().Argv(),
-			CWD:      h.launchSpec.CWD().String(),
+	if h.usesWAL() {
+		if _, err := h.wal.Append(WALRecordHelperStart, helperStartPayload{
+			ProtocolVersion: h.protocolVersion,
+			HelperPID:       proof.HelperPID,
+			ChildPID:        proof.ChildPID,
+			WALPath:         proof.WALPath,
+			SocketPath:      proof.ControlSocketPath,
+			StartTS:         proof.StartTS,
+			StartedAt:       start,
 		}); err != nil {
 			return err
+		}
+		if childPID != nil {
+			if _, err := h.wal.Append(WALRecordAttachEstablished, attachEstablishedPayload{
+				ChildPID: *childPID,
+				IO:       string(h.childIOMode),
+				Argv:     h.launchSpec.Command().Argv(),
+				CWD:      h.launchSpec.CWD().String(),
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	cleanupStartedChild = false
@@ -431,8 +439,10 @@ func (h *Helper) shutdown() error {
 	if !h.isBroken() && !h.isChildExitStarted() {
 		_ = h.emitGenerationBreak(GenerationBreakHelperExit)
 	}
-	if _, err := h.emitStateRecord(WALRecordHelperExit, helperExitPayload{Reason: GenerationBreakHelperExit.String()}); err != nil {
-		return err
+	if h.usesWAL() {
+		if _, err := h.emitStateRecord(WALRecordHelperExit, helperExitPayload{Reason: GenerationBreakHelperExit.String()}); err != nil {
+			return err
+		}
 	}
 	h.closeListener()
 	for _, conn := range h.connSnapshot() {
@@ -457,6 +467,10 @@ func (h *Helper) shutdown() error {
 		}
 	}
 	return nil
+}
+
+func (h *Helper) usesWAL() bool {
+	return h != nil && h.childIOMode != ChildIOModeUnix
 }
 
 func (h *Helper) currentChildSocket() (net.Conn, *websocket.Conn) {
@@ -739,6 +753,13 @@ func (h *Helper) handleSessionHistory(ctx context.Context, hc *helperConn, reque
 }
 
 func (h *Helper) handleReplay(hc *helperConn, request ReplayRequestPacket) error {
+	if !h.usesWAL() {
+		done, err := NewReplayDonePacket(h.sessionID, h.generationID, request.AfterOffset, request.AfterOffset, false)
+		if err != nil {
+			return err
+		}
+		return h.writePacket(hc, done)
+	}
 	replay, err := h.wal.Replay(request.AfterOffset)
 	if err != nil {
 		return h.sendError(hc, true, ErrorReplayCursorInvalid, err.Error(), nil)
@@ -816,31 +837,47 @@ func (h *Helper) resolveCommand(packet CommandPacket) (PacketKind, CommandOutcom
 	payload := commandFactPayload{CommandID: packet.CommandID, CommandKind: packet.Kind}
 	if h.broken || h.childExited || h.childExitStarted.Load() {
 		payload.Reason = rejectReason(h.broken, h.childExited || h.childExitStarted.Load())
-		record, err := h.wal.Append(WALRecordCommandRejected, payload)
+		ack, raw, err := h.resolveCommandOutcome(WALRecordCommandRejected, payload)
 		if err != nil {
 			return "", CommandOutcome{}, false, err
 		}
-		outcome, err := NewCommandOutcome(packet.CommandID, record.Header.Offset, false, record.Payload)
+		outcome, err := NewCommandOutcome(packet.CommandID, ack, false, raw)
 		if err != nil {
 			return "", CommandOutcome{}, false, err
 		}
-		h.outcomes[packet.CommandID] = storedOutcome{accepted: false, ack: record.Header.Offset, payload: record.Payload}
+		h.outcomes[packet.CommandID] = storedOutcome{accepted: false, ack: ack, payload: raw}
 		return PacketCommandRejected, outcome, false, nil
 	}
 
 	if h.beforeResolveAppend != nil {
 		h.beforeResolveAppend(packet.CommandID)
 	}
-	record, err := h.wal.Append(WALRecordCommandAccepted, payload)
+	ack, raw, err := h.resolveCommandOutcome(WALRecordCommandAccepted, payload)
 	if err != nil {
 		return "", CommandOutcome{}, false, err
 	}
-	outcome, err := NewCommandOutcome(packet.CommandID, record.Header.Offset, false, record.Payload)
+	outcome, err := NewCommandOutcome(packet.CommandID, ack, false, raw)
 	if err != nil {
 		return "", CommandOutcome{}, false, err
 	}
-	h.outcomes[packet.CommandID] = storedOutcome{accepted: true, ack: record.Header.Offset, payload: record.Payload}
+	h.outcomes[packet.CommandID] = storedOutcome{accepted: true, ack: ack, payload: raw}
 	return PacketCommandAccepted, outcome, true, nil
+}
+
+func (h *Helper) resolveCommandOutcome(class WALRecordClass, payload commandFactPayload) (WALOffset, json.RawMessage, error) {
+	if h.usesWAL() {
+		record, err := h.wal.Append(class, payload)
+		if err != nil {
+			return 0, nil, err
+		}
+		return record.Header.Offset, record.Payload, nil
+	}
+	raw, err := marshalPayload(payload)
+	if err != nil {
+		return 0, nil, err
+	}
+	h.commandCursor++
+	return h.commandCursor, raw, nil
 }
 
 func (h *Helper) commandLoop(ctx context.Context) {
@@ -1196,16 +1233,27 @@ func (h *Helper) waitChild() {
 	h.mu.Lock()
 	h.childExited = true
 	h.mu.Unlock()
-	_, _ = h.emitStateRecord(WALRecordChildExit, childExitPayload{Code: status.Code, Signal: status.Signal})
+	if h.usesWAL() {
+		_, _ = h.emitStateRecord(WALRecordChildExit, childExitPayload{Code: status.Code, Signal: status.Signal})
+		return
+	}
+	_ = h.emitLiveStateFact(FactChildExit, nil, childExitPayload{Code: status.Code, Signal: status.Signal})
 }
 
 func (h *Helper) emitLiveOutputDelta(payload terminalOutputPayload) error {
+	return h.emitLiveStateFact(FactOutputDelta, nil, payload)
+}
+
+func (h *Helper) emitLiveStateFact(kind FactKind, seq *EventSeq, payload any) error {
 	raw, err := marshalPayload(payload)
 	if err != nil {
 		return err
 	}
-	seq := EventSeq(h.liveOutputSeq.Add(1))
-	fact, err := NewHelperFact(FactOutputDelta, &seq, raw)
+	if kind.RequiresSeq() && seq == nil {
+		next := EventSeq(h.liveOutputSeq.Add(1))
+		seq = &next
+	}
+	fact, err := NewHelperFact(kind, seq, raw)
 	if err != nil {
 		return err
 	}
@@ -1242,6 +1290,15 @@ func (h *Helper) emitGenerationBreak(reason GenerationBreakReason) error {
 	}
 	h.broken = true
 	h.mu.Unlock()
+	if !h.usesWAL() {
+		seq := EventSeq(h.liveOutputSeq.Add(1))
+		packet, err := NewGenerationBreakPacket(h.sessionID, h.generationID, seq, reason)
+		if err != nil {
+			return err
+		}
+		h.broadcast(packet)
+		return nil
+	}
 	record, err := h.wal.Append(WALRecordGenerationBreak, generationBreakPayload{Reason: reason})
 	if err != nil {
 		return err

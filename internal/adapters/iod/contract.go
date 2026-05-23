@@ -571,8 +571,10 @@ func (p CommandPacket) Validate() error {
 	return nil
 }
 
-// CommandOutcome is the stable durable result for one command_id in one generation.
-// ack_cursor is the WAL offset of the durable outcome record for that command_id.
+// CommandOutcome is the stable result for one command_id in one generation.
+// Deprecated WAL-backed modes report a WAL offset. Codex/Unix reports a
+// helper-local in-memory outcome cursor because ActRail SQLite is the durable
+// command ledger for that path.
 type CommandOutcome struct {
 	CommandID CommandID       `json:"command_id"`
 	AckCursor WALOffset       `json:"ack_cursor"`
