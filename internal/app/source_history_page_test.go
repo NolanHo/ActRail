@@ -30,14 +30,53 @@ func TestLoadSourceHistoryPageReturnsNewestMessages(t *testing.T) {
 		t.Fatal("loadSourceHistoryPage() ok = false, want true")
 	}
 	response := sourceHistorySessionMessagesResponse(page, SessionMessagesRequest{Limit: 3000})
-	if len(response.Items) != 3000 {
-		t.Fatalf("len(response.Items) = %d, want 3000", len(response.Items))
+	if len(response.Items) != maxSessionMessagesConversationPage {
+		t.Fatalf("len(response.Items) = %d, want %d", len(response.Items), maxSessionMessagesConversationPage)
 	}
-	if response.Items[0].Text != "prompt 2000" || response.Items[len(response.Items)-1].Text != "prompt 4999" {
-		t.Fatalf("response page = %q..%q, want prompt 2000..prompt 4999", response.Items[0].Text, response.Items[len(response.Items)-1].Text)
+	if response.Items[0].Text != "prompt 4800" || response.Items[len(response.Items)-1].Text != "prompt 4999" {
+		t.Fatalf("response page = %q..%q, want prompt 4800..prompt 4999", response.Items[0].Text, response.Items[len(response.Items)-1].Text)
 	}
 	if !response.HasMore || response.NextBeforeSeq == nil {
 		t.Fatalf("response cursors = hasMore %v next %v, want older cursor", response.HasMore, response.NextBeforeSeq)
+	}
+}
+
+func TestLoadSourceHistoryPageStartsAtTurnBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := "" +
+		`{"type":"message","id":"u-old","message":{"role":"user","content":[{"type":"text","text":"old prompt"}]}}` + "\n" +
+		`{"type":"message","id":"a-old","message":{"role":"assistant","content":[{"type":"text","text":"old answer"}],"stopReason":"stop"}}` + "\n" +
+		`{"type":"message","id":"u-new","message":{"role":"user","content":[{"type":"text","text":"new prompt"}]}}` + "\n" +
+		`{"type":"message","id":"a-new-1","message":{"role":"assistant","content":[{"type":"text","text":"new commentary 1"}],"stopReason":"stop"}}` + "\n" +
+		`{"type":"message","id":"a-new-2","message":{"role":"assistant","content":[{"type":"text","text":"new commentary 2"}],"stopReason":"stop"}}` + "\n" +
+		`{"type":"message","id":"a-new-3","message":{"role":"assistant","content":[{"type":"text","text":"new final"}],"stopReason":"stop"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	page, ok, err := loadSourceHistoryPage(path, SessionMessagesRequest{Limit: 2})
+	if err != nil {
+		t.Fatalf("loadSourceHistoryPage() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("loadSourceHistoryPage() ok = false, want true")
+	}
+	response := sourceHistorySessionMessagesResponse(page, SessionMessagesRequest{Limit: 2})
+	got := make([]string, 0, len(response.Items))
+	for _, item := range response.Items {
+		got = append(got, item.Text)
+	}
+	want := []string{"new prompt", "new commentary 1", "new commentary 2", "new final"}
+	if len(got) != len(want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("messages = %#v, want %#v", got, want)
+		}
+	}
+	if !response.HasMore || response.NextBeforeSeq == nil || response.Items[0].Seq != *response.NextBeforeSeq {
+		t.Fatalf("response paging = hasMore %v next %v first %+v, want cursor at new prompt", response.HasMore, response.NextBeforeSeq, response.Items[0])
 	}
 }
 

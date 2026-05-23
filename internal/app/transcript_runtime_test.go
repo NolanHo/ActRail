@@ -203,14 +203,14 @@ func TestStubTranscriptWriterFeedsSessionStateAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionMessages(limit=1) error = %v", err)
 	}
-	if len(latest.Items) != 1 || latest.Items[0].Seq != 2 || latest.Items[0].Text != "hello" {
-		t.Fatalf("SessionMessages(limit=1) = %+v, want only seq 2 hello", latest)
+	if len(latest.Items) != 2 || latest.Items[0].Seq != 1 || latest.Items[0].Text != "prompt" || latest.Items[1].Seq != 2 || latest.Items[1].Text != "hello" {
+		t.Fatalf("SessionMessages(limit=1) = %+v, want complete turn", latest)
 	}
-	if !latest.HasMore {
-		t.Fatal("SessionMessages(limit=1).HasMore = false, want true")
+	if latest.HasMore {
+		t.Fatal("SessionMessages(limit=1).HasMore = true, want false")
 	}
-	if latest.NextBeforeSeq == nil || *latest.NextBeforeSeq != 2 {
-		t.Fatalf("SessionMessages(limit=1).NextBeforeSeq = %v, want 2", latest.NextBeforeSeq)
+	if latest.NextBeforeSeq != nil {
+		t.Fatalf("SessionMessages(limit=1).NextBeforeSeq = %v, want nil", latest.NextBeforeSeq)
 	}
 
 	before := uint64(2)

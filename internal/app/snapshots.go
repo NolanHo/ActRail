@@ -360,24 +360,9 @@ func (s *Stub) SessionMessages(ctx context.Context, req SessionMessagesRequest) 
 		response.Items, response.HasMore, response.NextBeforeSeq = limitSessionMessagesAfterPage(response.Items, req.Limit)
 		return s.finalizeSessionMessages(ctx, record, response), nil
 	}
-	page := visibleTranscriptHistory(record.transcript, req)
-	items := page.Items()
-	response := SessionMessagesResponse{
-		Items:   make([]SessionMessage, 0, len(items)),
-		HasMore: page.HasMore(),
-		TailSeq: record.transcript.TailSeq().Uint64(),
-	}
-	for _, item := range items {
-		msg := sessionMessageForRequest(item, req, record.transcript.TailSeq().Uint64(), activeTurnStartSeq)
-		msg.SessionID = record.identity.SessionID().String()
-		response.Items = append(response.Items, msg)
-	}
-	if !req.IncludeToolEvents {
-		response.Items = annotateHiddenToolActivitySummaries(response.Items, sessionMessagesFromCommittedItems(record.transcript.Items()))
-	}
-	if nextBefore, ok := page.NextBefore(); ok {
-		value := nextBefore.Uint64()
-		response.NextBeforeSeq = &value
+	response := paginateSessionMessagesForRequest(sessionMessagesFromCommittedItems(record.transcript.Items()), req)
+	for i := range response.Items {
+		response.Items[i].SessionID = record.identity.SessionID().String()
 	}
 	return s.finalizeSessionMessages(ctx, record, response), nil
 }
@@ -419,13 +404,6 @@ func sessionMessageIsRecoveredTransportDiagnostic(item SessionMessage) bool {
 	return strings.HasPrefix(text, "IOD generation broken: ") ||
 		strings.HasPrefix(text, "IOD transport reset required: ") ||
 		strings.HasPrefix(text, "Runtime control runtime_launch failed: ")
-}
-
-func visibleTranscriptHistory(transcript message.Transcript, req SessionMessagesRequest) message.HistoryPage {
-	if req.IncludeToolEvents {
-		return transcript.History(messageBeforeSeq(req.BeforeSeq), req.Limit)
-	}
-	return message.HistoryFromCommitted(visibleCommittedMessages(transcript.Items(), req), messageBeforeSeq(req.BeforeSeq), req.Limit)
 }
 
 func visibleCommittedMessages(items []message.CommittedMessage, req SessionMessagesRequest) []message.CommittedMessage {
@@ -706,12 +684,4 @@ func partialAssistantTurn(transcript message.Transcript) *PartialAssistantTurnSn
 		return nil
 	}
 	return &PartialAssistantTurnSnapshot{TurnID: partial.TurnID().String(), Text: partial.Text()}
-}
-
-func messageBeforeSeq(raw *uint64) *message.Seq {
-	if raw == nil {
-		return nil
-	}
-	seq := message.Seq(*raw)
-	return &seq
 }

@@ -58,18 +58,18 @@ func loadSourceHistoryPage(path string, req SessionMessagesRequest) (sourceHisto
 		return sourceHistoryPage{}, true, err
 	}
 	items = filterSessionMessagesForRequest(items, req)
-	if req.Limit > 0 && len(items) > req.Limit {
-		items = append([]SessionMessage(nil), items[len(items)-req.Limit:]...)
+	messagePage := paginateSessionMessages(items, nil, nil, req.Limit)
+	if messagePage.HasMore {
 		hasMore = true
 	}
 	response := sourceHistoryPage{
-		Items:     items,
+		Items:     messagePage.Items,
 		TailSeq:   sourceHistorySeqForOffset(info.Size()),
 		HasMore:   hasMore,
 		Signature: sourceHistorySignature(trimmed, info),
 	}
-	if hasMore && len(items) > 0 {
-		next := items[0].Seq
+	if hasMore && len(messagePage.Items) > 0 {
+		next := messagePage.Items[0].Seq
 		response.NextBeforeSeq = &next
 	}
 	return response, true, nil
@@ -124,7 +124,7 @@ func readSourceHistoryLinesBefore(path string, beforeOffset int64, req SessionMe
 		}
 		windowLines := sourceHistoryLinesFromWindow(buf, lower, lower == 0, upper == info.Size())
 		lines = append(windowLines, lines...)
-		if len(lines) > 0 && countSourceHistoryMessages(path, lines, req) >= req.Limit {
+		if len(lines) > 0 && sourceHistoryLinesCoverTurnBoundaryPage(path, lines, req) {
 			break
 		}
 		if lower == 0 {
@@ -184,13 +184,27 @@ func sourceHistoryLinesFromWindow(buf []byte, base int64, includePrefix bool, in
 	return out
 }
 
-func countSourceHistoryMessages(sourcePath string, lines []sourceHistoryLine, req SessionMessagesRequest) int {
+func sourceHistoryLinesCoverTurnBoundaryPage(sourcePath string, lines []sourceHistoryLine, req SessionMessagesRequest) bool {
+	limit := effectiveSessionMessagesConversationLimit(req.Limit)
+	if limit <= 0 {
+		return true
+	}
 	items, err := sessionMessagesFromPILines(sourcePath, lines)
 	if err != nil {
-		return 0
+		return false
 	}
 	items = filterSessionMessagesForRequest(items, req)
-	return len(items)
+	if len(items) == 0 {
+		return false
+	}
+	page := paginateSessionMessages(items, nil, nil, req.Limit)
+	if len(page.Items) == 0 {
+		return false
+	}
+	if page.Items[0].Role == "user" {
+		return countConversationSessionMessages(page.Items, 0, len(page.Items)) >= limit || page.HasMore
+	}
+	return false
 }
 
 func sessionMessagesFromPILines(sourcePath string, lines []sourceHistoryLine) ([]SessionMessage, error) {
