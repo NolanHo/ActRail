@@ -34,6 +34,7 @@ const BACKGROUND_BUSY_LIVE_REFRESH_MS = 5000;
 const WORKSPACE_REFRESH_MS = 15000;
 const REALTIME_SESSIONS_RECOVERY_MS = 30000;
 const REALTIME_WORKSPACE_RECOVERY_MS = 60000;
+const MARK_SESSION_READ_DELAY_MS = 3000;
 
 function isDocumentVisible() {
   if (typeof document === "undefined") {
@@ -136,6 +137,23 @@ export function useAppShellSessionEffects({
     }, activeLiveRefreshIntervalMs);
     return () => window.clearInterval(intervalId);
   }, [activeLiveRefreshIntervalMs, activeSessionBackend, activeSessionHistorical, activeSessionId, activeSessionPending, activeSessionReplySoundPrimingRef, activeSessionRuntimeId, liveSessionStoreApi, pageVisible, replySoundEnabled, sessionsStoreApi, suppressedReplySoundSessionIdsRef]);
+
+  useEffect(() => {
+    if (!pageVisible || !activeSessionId) {
+      return undefined;
+    }
+    const activeSession = items.find((session) => session.session_id === activeSessionId);
+    if (activeSession?.has_unread_assistant !== true) {
+      return undefined;
+    }
+    const timerId = window.setTimeout(() => {
+      if (sessionsStoreApi.getState().activeSessionId !== activeSessionId) {
+        return;
+      }
+      sessionsStoreApi.markRead(activeSessionId).catch(() => undefined);
+    }, MARK_SESSION_READ_DELAY_MS);
+    return () => window.clearTimeout(timerId);
+  }, [activeSessionId, items, pageVisible, sessionsStoreApi]);
 
   useEffect(() => {
     if (!pageVisible || !workspaceOpen || !activeSessionId) {

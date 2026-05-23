@@ -28,6 +28,7 @@ type serviceStub struct {
 	codexRenameFunc   func(context.Context, app.RenameCodexSessionFileRequest) (app.RenameCodexSessionFileResponse, error)
 	detailsFunc       func(context.Context, app.SessionDetailsRequest) (app.SessionDetailsResponse, error)
 	messagesFunc      func(context.Context, app.SessionMessagesRequest) (app.SessionMessagesResponse, error)
+	markReadFunc      func(context.Context, app.MarkSessionReadRequest) (app.MarkSessionReadResponse, error)
 	stateFunc         func(context.Context, app.SessionStateRequest) (app.SessionStateResponse, error)
 	probeStateFunc    func(context.Context, app.ProbeSessionStateRequest) (app.ProbeSessionStateResponse, error)
 	workspaceFunc     func(context.Context, app.SessionWorkspaceRequest) (app.SessionWorkspaceResponse, error)
@@ -165,6 +166,13 @@ func (s serviceStub) SessionMessages(ctx context.Context, req app.SessionMessage
 		return s.messagesFunc(ctx, req)
 	}
 	return s.base.SessionMessages(ctx, req)
+}
+
+func (s serviceStub) MarkSessionRead(ctx context.Context, req app.MarkSessionReadRequest) (app.MarkSessionReadResponse, error) {
+	if s.markReadFunc != nil {
+		return s.markReadFunc(ctx, req)
+	}
+	return s.base.MarkSessionRead(ctx, req)
 }
 
 func (s serviceStub) SessionState(ctx context.Context, req app.SessionStateRequest) (app.SessionStateResponse, error) {
@@ -366,6 +374,7 @@ type fixtureService struct {
 	codexRenameReq    app.RenameCodexSessionFileRequest
 	detailsReq        app.SessionDetailsRequest
 	messagesReq       app.SessionMessagesRequest
+	markReadReq       app.MarkSessionReadRequest
 	stateReq          app.SessionStateRequest
 	workspaceReq      app.SessionWorkspaceRequest
 	workspaceSetReq   app.UpdateSessionWorkspaceRequest
@@ -663,6 +672,11 @@ func (s *fixtureService) SessionMessages(_ context.Context, req app.SessionMessa
 		HasMore:       true,
 		TailSeq:       180,
 	}, nil
+}
+
+func (s *fixtureService) MarkSessionRead(_ context.Context, req app.MarkSessionReadRequest) (app.MarkSessionReadResponse, error) {
+	s.markReadReq = req
+	return app.MarkSessionReadResponse{OK: true, SessionID: req.SessionID, ReadSeq: req.ReadSeq}, nil
 }
 
 func (s *fixtureService) SessionState(_ context.Context, req app.SessionStateRequest) (app.SessionStateResponse, error) {
@@ -1259,6 +1273,25 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		}
 		if svc.messagesReq.AfterSeq == nil || *svc.messagesReq.AfterSeq != 100 || svc.messagesReq.BeforeSeq == nil || *svc.messagesReq.BeforeSeq != 120 || svc.messagesReq.Limit != 20 || !svc.messagesReq.Init {
 			t.Fatalf("unexpected messages request: %+v", svc.messagesReq)
+		}
+	})
+
+	t.Run("mark session read", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"read_seq":180}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/read", body)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, res.Code, res.Body.String())
+		}
+		var payload app.MarkSessionReadResponse
+		decodeJSON(t, res, &payload)
+		if !payload.OK || payload.SessionID != "s_123" || payload.ReadSeq != 180 {
+			t.Fatalf("unexpected mark read payload: %+v", payload)
+		}
+		if svc.markReadReq.SessionID != "s_123" || svc.markReadReq.ReadSeq != 180 {
+			t.Fatalf("unexpected mark read request: %+v", svc.markReadReq)
 		}
 	})
 

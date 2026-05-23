@@ -57,6 +57,7 @@ func newPersistentStubWithRuntimeOptions(cfg config.Config, now func() time.Time
 		registry:            newSessionRegistry(now, catalog),
 		launcher:            newRuntimeLauncher(runtimeCfg),
 		appStore:            catalog,
+		sessionReadSeq:      map[session.SessionID]uint64{},
 		helperDialer:        runtimeCfg.IODDialer,
 		helperBindings:      newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:             newHelperRegistry(),

@@ -196,6 +196,12 @@ export const api = {
     const suffix = query.size ? `?${query.toString()}` : "";
     return getJson<SessionsResponse>(`/api/sessions${suffix}`, signal);
   },
+  markSessionRead(sessionId: string, readSeq?: number, signal?: AbortSignal) {
+    const body = typeof readSeq === "number" && Number.isFinite(readSeq) && readSeq > 0
+      ? { read_seq: Math.floor(readSeq) }
+      : {};
+    return postJson<{ ok?: boolean; session_id?: string; read_seq?: number }>(`/api/sessions/${encodeURIComponent(sessionId)}/read`, body, signal);
+  },
   listTeams(options?: { includeClosed?: boolean }, signal?: AbortSignal) {
     const query = new URLSearchParams();
     if (options?.includeClosed) {

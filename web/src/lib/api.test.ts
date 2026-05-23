@@ -124,6 +124,21 @@ describe("api", () => {
     });
   });
 
+  it("marks a session read", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '{"ok":true,"session_id":"s_123","read_seq":180}',
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.markSessionRead("s_123", 180)).resolves.toEqual({ ok: true, session_id: "s_123", read_seq: 180 });
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/s_123/read", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ read_seq: 180 }),
+    }));
+  });
+
   it("requests sessions bootstrap metadata", async () => {
     const payload: SessionBootstrapResponse = {
       recent_cwds: ["/tmp/project"],
