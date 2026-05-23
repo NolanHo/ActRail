@@ -2294,10 +2294,10 @@ func TestPersistentStubSessionMessagesLoadsImportedPIHistoryFromSourcePath(t *te
 	if err != nil {
 		t.Fatalf("SessionMessages(limit=1) error = %v", err)
 	}
-	if len(latest.Items) != 1 || latest.Items[0].Seq != 2 || latest.Items[0].Role != "assistant" {
+	if len(latest.Items) != 2 || latest.Items[0].Seq != 1 || latest.Items[0].Role != "user" || latest.Items[1].Seq != 2 || latest.Items[1].Role != "assistant" {
 		t.Fatalf("SessionMessages(limit=1) = %+v", latest)
 	}
-	if !latest.HasMore || latest.NextBeforeSeq == nil || *latest.NextBeforeSeq != 2 {
+	if latest.HasMore || latest.NextBeforeSeq != nil {
 		t.Fatalf("SessionMessages(limit=1) paging = %+v", latest)
 	}
 }

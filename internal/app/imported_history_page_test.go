@@ -55,11 +55,11 @@ func TestDetachedImportedPIHistoryUsesTailPageForInitialLoad(t *testing.T) {
 	if !ok {
 		t.Fatal("loadDetachedImportedPIHistory() ok = false, want true")
 	}
-	if len(response.Items) != 3000 {
-		t.Fatalf("len(response.Items) = %d, want 3000", len(response.Items))
+	if len(response.Items) != maxSessionMessagesConversationPage {
+		t.Fatalf("len(response.Items) = %d, want %d", len(response.Items), maxSessionMessagesConversationPage)
 	}
-	if response.Items[0].Text != "prompt 2000" || response.Items[len(response.Items)-1].Text != "prompt 4999" {
-		t.Fatalf("response page = %q..%q, want prompt 2000..prompt 4999", response.Items[0].Text, response.Items[len(response.Items)-1].Text)
+	if response.Items[0].Text != "prompt 4800" || response.Items[len(response.Items)-1].Text != "prompt 4999" {
+		t.Fatalf("response page = %q..%q, want prompt 4800..prompt 4999", response.Items[0].Text, response.Items[len(response.Items)-1].Text)
 	}
 	if !response.HasMore || response.NextBeforeSeq == nil {
 		t.Fatalf("response cursors = hasMore %v next %v, want older cursor", response.HasMore, response.NextBeforeSeq)
@@ -111,7 +111,7 @@ func TestPIAuthoritativeHistoryFallsBackToTailPage(t *testing.T) {
 	if !ok {
 		t.Fatal("loadPIAuthoritativeHistory() ok = false, want true")
 	}
-	if len(response.Items) != 3000 || response.Items[0].Text != "prompt 2000" || response.Items[len(response.Items)-1].Text != "prompt 4999" {
-		t.Fatalf("response page len/text = %d %q..%q, want 3000 prompt 2000..prompt 4999", len(response.Items), response.Items[0].Text, response.Items[len(response.Items)-1].Text)
+	if len(response.Items) != maxSessionMessagesConversationPage || response.Items[0].Text != "prompt 4800" || response.Items[len(response.Items)-1].Text != "prompt 4999" {
+		t.Fatalf("response page len/text = %d %q..%q, want %d prompt 4800..prompt 4999", len(response.Items), response.Items[0].Text, response.Items[len(response.Items)-1].Text, maxSessionMessagesConversationPage)
 	}
 }

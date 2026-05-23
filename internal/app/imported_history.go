@@ -402,19 +402,10 @@ func previousConversationAnchorIndex(items []SessionMessage, start int) int {
 	if start <= 0 || start > len(items) {
 		return start
 	}
-	firstAssistant := -1
 	for idx := start - 1; idx >= 0; idx-- {
-		switch items[idx].Role {
-		case "user":
+		if items[idx].Role == "user" {
 			return idx
-		case "assistant":
-			if firstAssistant < 0 {
-				firstAssistant = idx
-			}
 		}
-	}
-	if firstAssistant >= 0 {
-		return firstAssistant
 	}
 	return start
 }
@@ -558,10 +549,7 @@ func paginateSessionMessages(items []SessionMessage, after *uint64, before *uint
 			upper = idx + 1
 		}
 	}
-	start := 0
-	if limit > 0 && upper > limit {
-		start = upper - limit
-	}
+	start := turnBoundarySessionMessageWindowStart(items, upper, limit)
 	page := append([]SessionMessage(nil), items[start:upper]...)
 	response := SessionMessagesResponse{
 		Items:   page,
@@ -575,6 +563,117 @@ func paginateSessionMessages(items []SessionMessage, after *uint64, before *uint
 		response.NextBeforeSeq = &next
 	}
 	return response
+}
+
+const maxSessionMessagesConversationPage = 200
+
+func effectiveSessionMessagesConversationLimit(limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+	if limit > maxSessionMessagesConversationPage {
+		return maxSessionMessagesConversationPage
+	}
+	return limit
+}
+
+func turnBoundarySessionMessageWindowStart(items []SessionMessage, upper int, limit int) int {
+	if upper <= 0 {
+		return 0
+	}
+	if upper > len(items) {
+		upper = len(items)
+	}
+	conversationLimit := effectiveSessionMessagesConversationLimit(limit)
+	if conversationLimit <= 0 {
+		return 0
+	}
+	start := lastUserSessionMessageIndexBefore(items, upper)
+	if start < 0 {
+		return conversationLimitedSessionMessageStart(items, upper, conversationLimit)
+	}
+	total := countConversationSessionMessages(items, start, upper)
+	for {
+		previous := lastUserSessionMessageIndexBefore(items, start)
+		if previous < 0 {
+			if sessionMessagesBeforeIndexAreSystem(items, start) {
+				return 0
+			}
+			return start
+		}
+		previousCount := countConversationSessionMessages(items, previous, start)
+		if total > 0 && total+previousCount > conversationLimit {
+			return start
+		}
+		total += previousCount
+		start = previous
+	}
+}
+
+func sessionMessagesBeforeIndexAreSystem(items []SessionMessage, end int) bool {
+	if end <= 0 {
+		return true
+	}
+	if end > len(items) {
+		end = len(items)
+	}
+	for idx := 0; idx < end; idx++ {
+		if items[idx].Role != "system" {
+			return false
+		}
+	}
+	return true
+}
+
+func lastUserSessionMessageIndexBefore(items []SessionMessage, upper int) int {
+	if upper > len(items) {
+		upper = len(items)
+	}
+	for idx := upper - 1; idx >= 0; idx-- {
+		if items[idx].Role == "user" {
+			return idx
+		}
+	}
+	return -1
+}
+
+func conversationLimitedSessionMessageStart(items []SessionMessage, upper int, limit int) int {
+	if limit <= 0 || upper <= 0 {
+		return 0
+	}
+	if upper > len(items) {
+		upper = len(items)
+	}
+	count := 0
+	for idx := upper - 1; idx >= 0; idx-- {
+		if sessionMessageIsConversation(items[idx]) {
+			count++
+			if count > limit {
+				return idx + 1
+			}
+		}
+	}
+	return 0
+}
+
+func countConversationSessionMessages(items []SessionMessage, start int, end int) int {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(items) {
+		end = len(items)
+	}
+	count := 0
+	for idx := start; idx < end; idx++ {
+		if sessionMessageIsConversation(items[idx]) {
+			count++
+		}
+	}
+	return count
+}
+
+func sessionMessageIsConversation(item SessionMessage) bool {
+	return item.Role == "user" || item.Role == "assistant"
 }
 
 func limitSessionMessagesAfterPage(items []SessionMessage, limit int) ([]SessionMessage, bool, *uint64) {

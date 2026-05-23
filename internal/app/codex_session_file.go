@@ -367,7 +367,7 @@ func readCodexSessionFileLinesBefore(ctx context.Context, path string, beforeOff
 		}
 		windowLines := codexSessionFileLinesFromWindow(buf, lower, lower == 0, upper == info.Size())
 		lines = append(windowLines, lines...)
-		if len(lines) > 0 && countCodexSessionVisibleMessages(ctx, lines, limit) >= limit {
+		if len(lines) > 0 && codexSessionLinesCoverTurnBoundaryPage(ctx, path, lines, limit) {
 			break
 		}
 		if lower == 0 {
@@ -382,6 +382,27 @@ func readCodexSessionFileLinesBefore(ctx context.Context, path string, beforeOff
 		}
 	}
 	return lines, len(lines) > 0 && lines[0].Offset > 0, nil
+}
+
+func codexSessionLinesCoverTurnBoundaryPage(ctx context.Context, sourcePath string, lines []locatedCodexSessionFileLine, limit int) bool {
+	conversationLimit := effectiveSessionMessagesConversationLimit(limit)
+	if conversationLimit <= 0 {
+		return true
+	}
+	items, err := codexSessionMessagesFromLocatedLines(ctx, sourcePath, lines)
+	if err != nil {
+		return false
+	}
+	req := SessionMessagesRequest{}
+	visibleItems := filterSessionMessagesForRequest(items, req)
+	if len(visibleItems) == 0 {
+		return false
+	}
+	page := paginateSessionMessages(visibleItems, nil, nil, limit)
+	if len(page.Items) == 0 || page.Items[0].Role != "user" {
+		return false
+	}
+	return countConversationSessionMessages(page.Items, 0, len(page.Items)) >= conversationLimit || page.HasMore
 }
 
 func readCodexSessionFileLinesAfter(ctx context.Context, path string, afterOffset int64, limit int) ([]locatedCodexSessionFileLine, bool, error) {

@@ -244,6 +244,84 @@ func TestSessionMessagesFastPaginationAnchorsLatestLongTurnAtUser(t *testing.T) 
 	}
 }
 
+func TestSessionMessagesTailStartsAtLatestTurnBoundary(t *testing.T) {
+	items := []SessionMessage{
+		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},
+		{Seq: 2, Role: "assistant", Kind: "message", Text: "old answer"},
+		{Seq: 3, Role: "user", Kind: "message", Text: "latest prompt"},
+		{Seq: 4, Role: "assistant", Kind: "message", Text: "commentary 1"},
+		{Seq: 5, Role: "assistant", Kind: "message", Text: "commentary 2"},
+		{Seq: 6, Role: "assistant", Kind: "message", Text: "final answer"},
+	}
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Limit: 2})
+	if got := messageSeqs(response.Items); !sameUint64s(got, []uint64{3, 4, 5, 6}) {
+		t.Fatalf("response seqs = %#v, want latest turn from user boundary", got)
+	}
+	if !response.HasMore || response.NextBeforeSeq == nil || *response.NextBeforeSeq != 3 {
+		t.Fatalf("response paging = hasMore %v next %v, want cursor at latest user seq 3", response.HasMore, response.NextBeforeSeq)
+	}
+}
+
+func TestSessionMessagesLoadOlderStartsAtTurnBoundary(t *testing.T) {
+	items := []SessionMessage{
+		{Seq: 1, Role: "user", Kind: "message", Text: "first prompt"},
+		{Seq: 2, Role: "assistant", Kind: "message", Text: "first answer"},
+		{Seq: 3, Role: "user", Kind: "message", Text: "middle prompt"},
+		{Seq: 4, Role: "assistant", Kind: "message", Text: "middle commentary 1"},
+		{Seq: 5, Role: "assistant", Kind: "message", Text: "middle commentary 2"},
+		{Seq: 6, Role: "assistant", Kind: "message", Text: "middle final"},
+		{Seq: 7, Role: "user", Kind: "message", Text: "latest prompt"},
+		{Seq: 8, Role: "assistant", Kind: "message", Text: "latest answer"},
+	}
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{BeforeSeq: testUint64Ptr(7), Limit: 2})
+	if got := messageSeqs(response.Items); !sameUint64s(got, []uint64{3, 4, 5, 6}) {
+		t.Fatalf("response seqs = %#v, want older page from user boundary", got)
+	}
+	if !response.HasMore || response.NextBeforeSeq == nil || *response.NextBeforeSeq != 3 {
+		t.Fatalf("response paging = hasMore %v next %v, want cursor at middle user seq 3", response.HasMore, response.NextBeforeSeq)
+	}
+}
+
+func TestSessionMessagesConversationLimitDoesNotCountToolEvents(t *testing.T) {
+	items := []SessionMessage{
+		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},
+		{Seq: 2, Kind: "tool", Type: "tool", Text: "old tool"},
+		{Seq: 3, Kind: "tool_result", Type: "tool_result", Text: "old result"},
+		{Seq: 4, Role: "assistant", Kind: "message", Text: "old answer"},
+		{Seq: 5, Role: "user", Kind: "message", Text: "new prompt"},
+		{Seq: 6, Kind: "tool", Type: "tool", Text: "new tool"},
+		{Seq: 7, Kind: "tool_result", Type: "tool_result", Text: "new result"},
+		{Seq: 8, Role: "assistant", Kind: "message", Text: "new answer"},
+	}
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Limit: 2, IncludeToolEvents: true})
+	if got := messageSeqs(response.Items); !sameUint64s(got, []uint64{5, 6, 7, 8}) {
+		t.Fatalf("response seqs = %#v, want latest turn including tools without counting them", got)
+	}
+}
+
+func TestSessionMessagesConversationLimitCapsPreviousTurnsAtTwoHundred(t *testing.T) {
+	items := make([]SessionMessage, 0, 260)
+	items = append(items, SessionMessage{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"})
+	for seq := 2; seq <= 51; seq++ {
+		items = append(items, SessionMessage{Seq: uint64(seq), Role: "assistant", Kind: "message", Text: "old commentary"})
+	}
+	items = append(items, SessionMessage{Seq: 52, Role: "user", Kind: "message", Text: "latest prompt"})
+	for seq := 53; seq <= 251; seq++ {
+		items = append(items, SessionMessage{Seq: uint64(seq), Role: "assistant", Kind: "message", Text: "latest commentary"})
+	}
+
+	response := paginateSessionMessagesForRequest(items, SessionMessagesRequest{Limit: 500})
+	if len(response.Items) != 200 || response.Items[0].Seq != 52 {
+		t.Fatalf("response window = len %d first %+v, want latest 200-message turn from user seq 52", len(response.Items), response.Items[0])
+	}
+	if !response.HasMore || response.NextBeforeSeq == nil || *response.NextBeforeSeq != 52 {
+		t.Fatalf("response paging = hasMore %v next %v, want cursor at latest user seq 52", response.HasMore, response.NextBeforeSeq)
+	}
+}
+
 func TestSessionMessagesByIDReturnsDeferredToolDetails(t *testing.T) {
 	items := []SessionMessage{
 		{Seq: 1, Role: "user", Kind: "message", Text: "old prompt"},
@@ -256,6 +334,26 @@ func TestSessionMessagesByIDReturnsDeferredToolDetails(t *testing.T) {
 	if msg, ok := findSessionMessageByID(items, "", "call-old"); !ok || msg.Text != "old tool" || msg.Details["arg"] != "old" {
 		t.Fatalf("find by tool_call_id = %+v, %v", msg, ok)
 	}
+}
+
+func messageSeqs(items []SessionMessage) []uint64 {
+	seqs := make([]uint64, 0, len(items))
+	for _, item := range items {
+		seqs = append(seqs, item.Seq)
+	}
+	return seqs
+}
+
+func sameUint64s(a []uint64, b []uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for idx := range a {
+		if a[idx] != b[idx] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestImportedSessionMessagesUsePIEntryIDAsEventID(t *testing.T) {
