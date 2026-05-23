@@ -953,7 +953,7 @@ func (s *Stub) HandoffSession(ctx context.Context, req HandoffSessionRequest) (H
 		}
 		return &trimmed
 	}
-	sidecarPath, err := s.writeSessionHandoffSidecar(record)
+	sidecarPath, err := s.writeSessionHandoffSidecar(ctx, record)
 	if err != nil {
 		return HandoffSessionResponse{}, err
 	}

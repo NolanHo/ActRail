@@ -51,20 +51,22 @@ func (b RuntimeHelperBinding) Validate() error {
 }
 
 type RuntimeConfig struct {
-	Catalog                 runtimeCatalog
-	Runner                  process.Runner
-	ResolveBinPath          func(session.Backend) (string, error)
-	ResolveIODHelperBinPath func() (string, error)
-	ResolveLaunchEnv        func(session.Backend, process.Environment) (process.Environment, error)
-	IODDialer               iodclient.Dialer
-	PIAgentGRPCDialer       piagentgrpc.Dialer
-	PIAgentGRPCTarget       string
-	PIAgentGRPCReadyTimeout time.Duration
-	IODRuntimeRoot          string
-	UseIODHelper            bool
-	CodexDangerousBypass    *bool
-	NewGenerationID         func(session.SessionID) (iod.GenerationID, error)
-	CurrentHelperBinding    func(session.SessionID) (*RuntimeHelperBinding, error)
+	Catalog                  runtimeCatalog
+	Runner                   process.Runner
+	ResolveBinPath           func(session.Backend) (string, error)
+	ResolveIODHelperBinPath  func() (string, error)
+	ResolveLaunchEnv         func(session.Backend, process.Environment) (process.Environment, error)
+	IODDialer                iodclient.Dialer
+	PIAgentGRPCDialer        piagentgrpc.Dialer
+	PIAgentGRPCTarget        string
+	PIAgentGRPCReadyTimeout  time.Duration
+	IODRuntimeRoot           string
+	UseIODHelper             bool
+	CodexDangerousBypass     *bool
+	NewGenerationID          func(session.SessionID) (iod.GenerationID, error)
+	CurrentHelperBinding     func(session.SessionID) (*RuntimeHelperBinding, error)
+	HandoffL3Client          sessionHandoffL3Client
+	DisableExternalHandoffL3 bool
 }
 
 type runtimeLaunchRequest struct {

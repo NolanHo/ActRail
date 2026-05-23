@@ -77,48 +77,50 @@ type Service interface {
 }
 
 type Stub struct {
-	cfg                 config.Config
-	registry            *sessionRegistry
-	launcher            runtimeLauncher
-	sink                RuntimeEventSink
-	appStore            appStateStore
-	helperDialer        helperDialer
-	helperBindings      helperBindingStore
-	helpers             *helperRegistry
-	messageCache        *sessionMessageCache
-	codexIODHistoryMu   sync.Mutex
-	codexIODHistory     map[session.SessionID]codexIODHistoryCacheEntry
-	codexIODRefreshing  map[session.SessionID]bool
-	codexIODHistoryGen  map[session.SessionID]uint64
-	codexLiveMirrorMu   sync.Mutex
-	codexLiveMirror     map[session.SessionID]uint64
-	runtimeRestoreMu    sync.RWMutex
-	runtimeRestoring    bool
-	runtimeRestoreOwner bool
-	runtimeRestoreDone  chan struct{}
-	runtimeRestoreErr   error
-	waitStore           waitStore
-	waitBlockersMu      sync.Mutex
-	waitBlockers        map[string]waitBlocker
-	supervisorStore     supervisorStore
-	schedulerStore      schedulerStore
-	sessionCommandStore sessionCommandStore
-	deferredInputMu     sync.Mutex
-	teams               *teamRegistry
-	runtimeAgentMu      sync.RWMutex
-	runtimeAgentRunning map[session.SessionID]bool
-	codexOutboundMu     sync.Mutex
-	codexOutboundPrompt map[session.SessionID]string
-	codexRetryMu        sync.Mutex
-	codexCapacityRetry  map[session.SessionID]codexCapacityRetryState
-	piRPCStateMu        sync.Mutex
-	piRPCStates         map[session.SessionID]piRPCStateCache
-	piResumePaths       piResumePathCache
-	piModels            piModelCache
-	appStateMu          sync.RWMutex
-	recentCwds          []string
-	cwdGroups           map[string]CwdGroupMeta
-	asyncSQLiteActions  bool
+	cfg                      config.Config
+	registry                 *sessionRegistry
+	launcher                 runtimeLauncher
+	sink                     RuntimeEventSink
+	appStore                 appStateStore
+	helperDialer             helperDialer
+	helperBindings           helperBindingStore
+	helpers                  *helperRegistry
+	messageCache             *sessionMessageCache
+	codexIODHistoryMu        sync.Mutex
+	codexIODHistory          map[session.SessionID]codexIODHistoryCacheEntry
+	codexIODRefreshing       map[session.SessionID]bool
+	codexIODHistoryGen       map[session.SessionID]uint64
+	codexLiveMirrorMu        sync.Mutex
+	codexLiveMirror          map[session.SessionID]uint64
+	runtimeRestoreMu         sync.RWMutex
+	runtimeRestoring         bool
+	runtimeRestoreOwner      bool
+	runtimeRestoreDone       chan struct{}
+	runtimeRestoreErr        error
+	waitStore                waitStore
+	waitBlockersMu           sync.Mutex
+	waitBlockers             map[string]waitBlocker
+	supervisorStore          supervisorStore
+	schedulerStore           schedulerStore
+	sessionCommandStore      sessionCommandStore
+	deferredInputMu          sync.Mutex
+	teams                    *teamRegistry
+	runtimeAgentMu           sync.RWMutex
+	runtimeAgentRunning      map[session.SessionID]bool
+	codexOutboundMu          sync.Mutex
+	codexOutboundPrompt      map[session.SessionID]string
+	codexRetryMu             sync.Mutex
+	codexCapacityRetry       map[session.SessionID]codexCapacityRetryState
+	piRPCStateMu             sync.Mutex
+	piRPCStates              map[session.SessionID]piRPCStateCache
+	piResumePaths            piResumePathCache
+	piModels                 piModelCache
+	appStateMu               sync.RWMutex
+	recentCwds               []string
+	cwdGroups                map[string]CwdGroupMeta
+	asyncSQLiteActions       bool
+	handoffL3Client          sessionHandoffL3Client
+	disableExternalHandoffL3 bool
 }
 
 func NewStub(cfg config.Config) (*Stub, error) {
@@ -157,32 +159,34 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		runtimeCfg.IODRuntimeRoot = cfg.Storage.IODRuntimeRoot()
 	}
 	return &Stub{
-		cfg:                 cfg,
-		registry:            newSessionRegistry(now),
-		launcher:            newRuntimeLauncher(runtimeCfg),
-		helperDialer:        runtimeCfg.IODDialer,
-		helperBindings:      newHelperBindingStore(cfg.Storage.IODBindingsDir()),
-		helpers:             newHelperRegistry(),
-		messageCache:        newSessionMessageCache(defaultSessionMessageCacheEntries),
-		codexIODHistory:     map[session.SessionID]codexIODHistoryCacheEntry{},
-		codexIODRefreshing:  map[session.SessionID]bool{},
-		codexIODHistoryGen:  map[session.SessionID]uint64{},
-		codexLiveMirror:     map[session.SessionID]uint64{},
-		runtimeRestoreDone:  closedRuntimeRestoreDone(),
-		waitStore:           newMemoryWaitStore(),
-		waitBlockers:        map[string]waitBlocker{},
-		supervisorStore:     newMemorySupervisorStore(),
-		schedulerStore:      newMemorySchedulerStore(),
-		sessionCommandStore: nil,
-		teams:               newTeamRegistry(now),
-		runtimeAgentRunning: map[session.SessionID]bool{},
-		codexOutboundPrompt: map[session.SessionID]string{},
-		codexCapacityRetry:  map[session.SessionID]codexCapacityRetryState{},
-		piRPCStates:         map[session.SessionID]piRPCStateCache{},
-		piResumePaths:       piResumePathCache{},
-		piModels:            piModelCache{},
-		recentCwds:          []string{},
-		cwdGroups:           map[string]CwdGroupMeta{},
+		cfg:                      cfg,
+		registry:                 newSessionRegistry(now),
+		launcher:                 newRuntimeLauncher(runtimeCfg),
+		helperDialer:             runtimeCfg.IODDialer,
+		helperBindings:           newHelperBindingStore(cfg.Storage.IODBindingsDir()),
+		helpers:                  newHelperRegistry(),
+		messageCache:             newSessionMessageCache(defaultSessionMessageCacheEntries),
+		codexIODHistory:          map[session.SessionID]codexIODHistoryCacheEntry{},
+		codexIODRefreshing:       map[session.SessionID]bool{},
+		codexIODHistoryGen:       map[session.SessionID]uint64{},
+		codexLiveMirror:          map[session.SessionID]uint64{},
+		runtimeRestoreDone:       closedRuntimeRestoreDone(),
+		waitStore:                newMemoryWaitStore(),
+		waitBlockers:             map[string]waitBlocker{},
+		supervisorStore:          newMemorySupervisorStore(),
+		schedulerStore:           newMemorySchedulerStore(),
+		sessionCommandStore:      nil,
+		teams:                    newTeamRegistry(now),
+		runtimeAgentRunning:      map[session.SessionID]bool{},
+		codexOutboundPrompt:      map[session.SessionID]string{},
+		codexCapacityRetry:       map[session.SessionID]codexCapacityRetryState{},
+		piRPCStates:              map[session.SessionID]piRPCStateCache{},
+		piResumePaths:            piResumePathCache{},
+		piModels:                 piModelCache{},
+		recentCwds:               []string{},
+		cwdGroups:                map[string]CwdGroupMeta{},
+		handoffL3Client:          runtimeCfg.HandoffL3Client,
+		disableExternalHandoffL3: runtimeCfg.DisableExternalHandoffL3,
 	}
 }
 
