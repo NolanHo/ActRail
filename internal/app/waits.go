@@ -638,6 +638,23 @@ func (s *Stub) activeWaitForSession(sessionID session.SessionID) *ActiveWaitSumm
 	return nil
 }
 
+func (s *Stub) activeWaitSummariesBySessionID(ctx context.Context) map[session.SessionID]*ActiveWaitSummary {
+	rows, err := s.waitStoreOrMemory().ListActiveWaits(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make(map[session.SessionID]*ActiveWaitSummary, len(rows))
+	for _, row := range rows {
+		sessionID, err := session.ParseSessionID(row.SessionID)
+		if err != nil {
+			continue
+		}
+		summary := activeWaitSummaryFromRow(row)
+		out[sessionID] = &summary
+	}
+	return out
+}
+
 func waitThreadSummaryFromRows(thread sqlitestore.WaitThreadRow, waits []sqlitestore.WaitRow) WaitThreadSummary {
 	summary := WaitThreadSummary{
 		ThreadID:  thread.ThreadID,

@@ -87,6 +87,46 @@ func (c *SessionCatalog) LookupSessionSupervisorConfig(ctx context.Context, sess
 	return out, true, nil
 }
 
+func (c *SessionCatalog) ListSessionSupervisorConfigs(ctx context.Context, sessionIDs []string) ([]SessionSupervisorConfigRow, error) {
+	seen := map[string]struct{}{}
+	args := make([]any, 0, len(sessionIDs))
+	placeholders := make([]string, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID == "" {
+			continue
+		}
+		if _, ok := seen[sessionID]; ok {
+			continue
+		}
+		seen[sessionID] = struct{}{}
+		args = append(args, sessionID)
+		placeholders = append(placeholders, "?")
+	}
+	if len(args) == 0 {
+		return nil, nil
+	}
+	query := fmt.Sprintf(`SELECT session_id, enabled, idle_after_minutes, max_consecutive_injections, consecutive_injections, goal, acceptance_criteria, context_files_json, updated_at
+		FROM session_supervisor_config WHERE session_id IN (%s) ORDER BY session_id`, strings.Join(placeholders, ","))
+	rows, err := c.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SessionSupervisorConfigRow{}
+	for rows.Next() {
+		row, err := scanSessionSupervisorConfigRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *SessionCatalog) UpsertSessionSupervisorConfig(ctx context.Context, row SessionSupervisorConfigRow) error {
 	filesJSON, err := json.Marshal(row.ContextFiles)
 	if err != nil {

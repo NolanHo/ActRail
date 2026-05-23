@@ -552,18 +552,12 @@ func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListS
 	if err != nil {
 		return ListSessionsResponse{}, err
 	}
+	summaryMeta := s.sessionSummaryMetadataForList(ctx, items[start:end], readSeqBySessionID)
 	summaries := make([]SessionSummary, 0, end-start)
 	for _, item := range items[start:end] {
 		record := item.record
 		record.runtime = s.runtimeForRecord(record)
-		if reconciled, ok := s.reconcileClearedCodexMissingChildTransport(record); ok {
-			record = reconciled
-		}
-		if reconciled, ok := s.reconcileLiveCodexAttachLostTransport(record); ok {
-			record = reconciled
-		}
-		record = s.reconcileCodexSessionFileFinalForState(record)
-		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt, readSeqBySessionID[record.identity.SessionID()]))
+		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt, summaryMeta[record.identity.SessionID()]))
 	}
 	return ListSessionsResponse{
 		Items:          summaries,
@@ -1021,17 +1015,47 @@ func (s *Stub) markPIAgentGRPCStartupFailed(sessionID session.SessionID, err err
 	s.emitSessionState(sessionID)
 }
 
-func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time, readSeq uint64) SessionSummary {
-	runtimeID, _ := record.identity.RuntimeID()
-	threadID, _ := record.identity.ThreadID()
-	transport := s.publicSessionTransportSnapshot(record)
-	var supervisor *SessionSupervisorResponse
-	if supervisorBackendSupported(record.identity.Backend()) {
-		if config, err := s.sessionSupervisorConfig(context.Background(), record.identity.SessionID()); err == nil {
-			response := sessionSupervisorResponse(config)
-			supervisor = &response
+type sessionSummaryMetadata struct {
+	readSeq    uint64
+	activeWait *ActiveWaitSummary
+	supervisor *SessionSupervisorResponse
+}
+
+func (s *Stub) sessionSummaryMetadataForList(ctx context.Context, items []displaySessionRecord, readSeqBySessionID map[session.SessionID]uint64) map[session.SessionID]sessionSummaryMetadata {
+	activeWaitBySessionID := s.activeWaitSummariesBySessionID(ctx)
+	supervisorSessionIDs := make([]session.SessionID, 0, len(items))
+	for _, item := range items {
+		if supervisorBackendSupported(item.record.identity.Backend()) {
+			supervisorSessionIDs = append(supervisorSessionIDs, item.record.identity.SessionID())
 		}
 	}
+	supervisorBySessionID, supervisorLoaded := s.sessionSupervisorResponsesBySessionID(ctx, supervisorSessionIDs)
+	now := s.registry.now()
+	out := make(map[session.SessionID]sessionSummaryMetadata, len(items))
+	for _, item := range items {
+		record := item.record
+		sessionID := record.identity.SessionID()
+		meta := sessionSummaryMetadata{
+			readSeq:    readSeqBySessionID[sessionID],
+			activeWait: activeWaitBySessionID[sessionID],
+		}
+		if supervisorBackendSupported(record.identity.Backend()) && supervisorLoaded {
+			if response, ok := supervisorBySessionID[sessionID]; ok {
+				meta.supervisor = &response
+			} else {
+				response := sessionSupervisorResponse(defaultSupervisorConfig(sessionID.String(), now))
+				meta.supervisor = &response
+			}
+		}
+		out[sessionID] = meta
+	}
+	return out
+}
+
+func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time, meta sessionSummaryMetadata) SessionSummary {
+	runtimeID, _ := record.identity.RuntimeID()
+	threadID, _ := record.identity.ThreadID()
+	transport := publicLightweightSessionTransportSnapshot(record)
 	busy, busyReason := effectiveBusy(record)
 	runtimeState, runtimeStateReason := runtimeStateFields(record)
 	lastAssistantSeq := lastAssistantMessageSeq(record)
@@ -1053,11 +1077,11 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		Focused:             record.focused,
 		QueueLen:            record.state.Queue().Len(),
 		TransportState:      transport.State.String(),
-		Probing:             s.sessionProbing(record),
+		Probing:             sessionProbing(record),
 		ResetRequired:       transport.ResetRequired,
 		TransportReason:     transport.Reason,
 		PendingStartup:      transport.State == SessionTransportStateStarting,
-		HasUnreadAssistant:  lastAssistantSeq > readSeq,
+		HasUnreadAssistant:  lastAssistantSeq > meta.readSeq,
 		LastUpdatedTS:       timestampSeconds(updatedAt),
 		UpdatedTS:           timestampSeconds(updatedAt),
 		LastAssistantTS:     lastAssistantMessageTimestamp(record),
@@ -1070,8 +1094,8 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		DependencySessionID: sessionIDString(record.dependencySessionID),
 		SessionFilePath:     record.importedSourcePath,
 		BackendSessionID:    record.importedBackendSessionID,
-		ActiveWait:          s.activeWaitForSession(record.identity.SessionID()),
-		Supervisor:          supervisor,
+		ActiveWait:          meta.activeWait,
+		Supervisor:          meta.supervisor,
 		IOD:                 s.iodRuntimeSummary(record),
 	}
 }
