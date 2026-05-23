@@ -147,6 +147,58 @@ func TestStubCreateListDetailsAndStateUseRegistry(t *testing.T) {
 	}
 }
 
+func TestStubSessionReadStateControlsUnreadSummary(t *testing.T) {
+	cfg := config.Load()
+	now := time.Unix(1760000000, 0).UTC()
+	svc := newStub(cfg, func() time.Time { return now })
+	title := "Unread project"
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{
+		AgentBackend: "pi",
+		PIAgentGRPC:  boolPtr(false),
+		CWD:          "/root/code/ActRail",
+		Title:        &title,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID, err := session.ParseSessionID(created.Session.SessionID)
+	if err != nil {
+		t.Fatalf("ParseSessionID() error = %v", err)
+	}
+	if _, err := svc.AppendSessionMessage(sessionID, "user", "message", "hello"); err != nil {
+		t.Fatalf("AppendSessionMessage() error = %v", err)
+	}
+	if _, err := svc.AppendAssistantDelta(sessionID, "turn_1", "reply"); err != nil {
+		t.Fatalf("AppendAssistantDelta() error = %v", err)
+	}
+	if _, err := svc.CommitAssistantTurn(sessionID, "turn_1", ""); err != nil {
+		t.Fatalf("CommitAssistantTurn() error = %v", err)
+	}
+
+	listed, err := svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(listed.Items) != 1 || !listed.Items[0].HasUnreadAssistant {
+		t.Fatalf("ListSessions().Items = %+v, want unread assistant", listed.Items)
+	}
+
+	read, err := svc.MarkSessionRead(context.Background(), MarkSessionReadRequest{SessionID: created.Session.SessionID})
+	if err != nil {
+		t.Fatalf("MarkSessionRead() error = %v", err)
+	}
+	if !read.OK || read.ReadSeq != 2 {
+		t.Fatalf("MarkSessionRead() = %+v, want read seq 2", read)
+	}
+	listed, err = svc.ListSessions(context.Background(), ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("ListSessions(after read) error = %v", err)
+	}
+	if len(listed.Items) != 1 || listed.Items[0].HasUnreadAssistant {
+		t.Fatalf("ListSessions(after read).Items = %+v, want no unread assistant", listed.Items)
+	}
+}
+
 func TestStubEmitAllSessionStatesPublishesCurrentSnapshots(t *testing.T) {
 	cfg := config.Load()
 	now := time.Unix(1760000000, 0).UTC()

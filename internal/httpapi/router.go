@@ -48,6 +48,10 @@ type focusSessionRequest struct {
 	Focused *bool `json:"focused"`
 }
 
+type markSessionReadRequest struct {
+	ReadSeq uint64 `json:"read_seq,omitempty"`
+}
+
 type executeSessionCommandRequest struct {
 	Command string `json:"command"`
 	Name    string `json:"name"`
@@ -134,6 +138,7 @@ func New(cfg config.Config, svc app.Service, connectHandlers ...http.Handler) ht
 	mux.Handle("POST /api/codex/session-files/{thread_id}/rename", r.requireAuth(http.HandlerFunc(r.renameCodexSessionFile)))
 	mux.Handle("GET /api/sessions/{session_id}/details", r.requireAuth(http.HandlerFunc(r.sessionDetails)))
 	mux.Handle("GET /api/sessions/{session_id}/messages", r.requireAuth(http.HandlerFunc(r.sessionMessages)))
+	mux.Handle("POST /api/sessions/{session_id}/read", r.requireAuth(http.HandlerFunc(r.markSessionRead)))
 	mux.Handle("GET /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.sessionSupervisor)))
 	mux.Handle("POST /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.updateSessionSupervisor)))
 	mux.Handle("GET /api/sessions/{session_id}/supervisor/runs", r.requireAuth(http.HandlerFunc(r.supervisorRuns)))
@@ -269,6 +274,25 @@ func (r Router) listSessions(w http.ResponseWriter, req *http.Request) {
 		AgentBackend: strings.TrimSpace(req.URL.Query().Get("agent_backend")),
 		CWD:          strings.TrimSpace(req.URL.Query().Get("cwd")),
 		Title:        strings.TrimSpace(req.URL.Query().Get("title")),
+	})
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) markSessionRead(w http.ResponseWriter, req *http.Request) {
+	var body markSessionReadRequest
+	if req.Body != nil && req.Body != http.NoBody {
+		if err := decodeJSONBody(req, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+			return
+		}
+	}
+	payload, err := r.app.MarkSessionRead(req.Context(), app.MarkSessionReadRequest{
+		SessionID: req.PathValue("session_id"),
+		ReadSeq:   body.ReadSeq,
 	})
 	if err != nil {
 		writeAppError(w, err)

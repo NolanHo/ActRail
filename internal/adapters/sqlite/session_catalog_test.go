@@ -32,6 +32,45 @@ func TestOpenSessionCatalogAppliesSchemaMigration(t *testing.T) {
 	}
 }
 
+func TestSessionCatalogPersistsSessionReadStateAcrossReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "actrail.db")
+	catalog, err := OpenSessionCatalog(path)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog() error = %v", err)
+	}
+	now := time.Unix(1760000000, 0).UTC()
+	if err := catalog.UpsertSessionSnapshot(context.Background(), SessionSnapshotRow{
+		Session:   SessionRow{SessionID: "s_1", Backend: "codex", CWD: "/tmp/project", Title: "Project", CreatedAt: now, UpdatedAt: now, ActivityAt: now},
+		Queue:     []QueueItemRow{},
+		Workspace: WorkspaceStateRow{OpenPaths: []string{}, HistoryItems: []WorkspaceHistoryItemRow{}},
+		Live:      LiveStateRow{TailSeq: 3, UpdatedAt: now},
+	}); err != nil {
+		t.Fatalf("UpsertSessionSnapshot() error = %v", err)
+	}
+	if err := catalog.UpsertSessionReadState(context.Background(), SessionReadStateRow{SessionID: "s_1", ReadSeq: 2, ReadAt: now.Add(time.Minute)}); err != nil {
+		t.Fatalf("UpsertSessionReadState(2) error = %v", err)
+	}
+	if err := catalog.UpsertSessionReadState(context.Background(), SessionReadStateRow{SessionID: "s_1", ReadSeq: 1, ReadAt: now.Add(2 * time.Minute)}); err != nil {
+		t.Fatalf("UpsertSessionReadState(1) error = %v", err)
+	}
+	if err := catalog.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reloaded, err := OpenSessionCatalog(path)
+	if err != nil {
+		t.Fatalf("OpenSessionCatalog(reload) error = %v", err)
+	}
+	defer func() { _ = reloaded.Close() }()
+	rows, err := reloaded.ListSessionReadStates(context.Background())
+	if err != nil {
+		t.Fatalf("ListSessionReadStates() error = %v", err)
+	}
+	if len(rows) != 1 || rows[0].SessionID != "s_1" || rows[0].ReadSeq != 2 {
+		t.Fatalf("ListSessionReadStates() = %+v, want s_1 read_seq 2", rows)
+	}
+}
+
 func TestOpenSessionCatalogMigratesSessionSourceRefIdentityColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "actrail.db")
 	db, err := sql.Open("sqlite", path)

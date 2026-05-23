@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 13
+const currentSchemaVersion = 14
 
 const tsLayout = time.RFC3339Nano
 
@@ -567,6 +567,49 @@ var migrations = []migration{
 			return err
 		},
 	},
+	{
+		version: 14,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			statements := []string{
+				`CREATE TABLE IF NOT EXISTS session_read_state (
+					session_id TEXT PRIMARY KEY,
+					read_seq INTEGER NOT NULL DEFAULT 0,
+					read_at TEXT NOT NULL,
+					FOREIGN KEY(session_id) REFERENCES session_catalog(session_id) ON DELETE CASCADE
+				)`,
+				`INSERT INTO session_read_state(session_id, read_seq, read_at)
+					SELECT session_catalog.session_id, COALESCE(session_live_state.tail_seq, 0), ?
+					FROM session_catalog
+					LEFT JOIN session_live_state ON session_live_state.session_id = session_catalog.session_id
+					ON CONFLICT(session_id) DO NOTHING`,
+			}
+			now := time.Now().UTC().Format(tsLayout)
+			if _, err := tx.ExecContext(ctx, statements[0]); err != nil {
+				return err
+			}
+			hasSessionCatalog, err := tableExists(ctx, tx, "session_catalog")
+			if err != nil {
+				return err
+			}
+			hasLiveState, err := tableExists(ctx, tx, "session_live_state")
+			if err != nil {
+				return err
+			}
+			if hasSessionCatalog && hasLiveState {
+				if _, err := tx.ExecContext(ctx, statements[1], now); err != nil {
+					return err
+				}
+			} else if hasSessionCatalog {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO session_read_state(session_id, read_seq, read_at)
+					SELECT session_id, 0, ? FROM session_catalog
+					ON CONFLICT(session_id) DO NOTHING`, now); err != nil {
+					return err
+				}
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 14, now)
+			return err
+		},
+	},
 }
 
 func OpenSessionCatalog(path string) (*SessionCatalog, error) {
@@ -672,6 +715,14 @@ func ensureColumnExists(ctx context.Context, tx *sql.Tx, table, column, alterStm
 		return fmt.Errorf("add column %s.%s: %w", table, column, err)
 	}
 	return nil
+}
+
+func tableExists(ctx context.Context, tx *sql.Tx, table string) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+		return false, fmt.Errorf("query table existence for %s: %w", table, err)
+	}
+	return count > 0, nil
 }
 
 func (c *SessionCatalog) Close() error {

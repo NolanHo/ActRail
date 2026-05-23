@@ -10,13 +10,16 @@ import (
 	"time"
 
 	"actrail/internal/adapters/process"
+	sqlitestore "actrail/internal/adapters/sqlite"
 	"actrail/internal/config"
+	"actrail/internal/domain/message"
 	"actrail/internal/domain/session"
 )
 
 type Service interface {
 	Bootstrap(context.Context, BootstrapRequest) BootstrapSnapshot
 	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
+	MarkSessionRead(context.Context, MarkSessionReadRequest) (MarkSessionReadResponse, error)
 	CreateSession(context.Context, CreateSessionRequest) (CreateSessionResponse, error)
 	ListTeams(context.Context, ListTeamsRequest) (ListTeamsResponse, error)
 	SpawnTeam(context.Context, SpawnTeamRequest) (TeamCommandResponse, error)
@@ -82,6 +85,8 @@ type Stub struct {
 	launcher                 runtimeLauncher
 	sink                     RuntimeEventSink
 	appStore                 appStateStore
+	sessionReadMu            sync.RWMutex
+	sessionReadSeq           map[session.SessionID]uint64
 	helperDialer             helperDialer
 	helperBindings           helperBindingStore
 	helpers                  *helperRegistry
@@ -166,6 +171,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		helperBindings:           newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:                  newHelperRegistry(),
 		messageCache:             newSessionMessageCache(defaultSessionMessageCacheEntries),
+		sessionReadSeq:           map[session.SessionID]uint64{},
 		codexIODHistory:          map[session.SessionID]codexIODHistoryCacheEntry{},
 		codexIODRefreshing:       map[session.SessionID]bool{},
 		codexIODHistoryGen:       map[session.SessionID]uint64{},
@@ -321,6 +327,7 @@ type SessionSummary struct {
 	ResetRequired       bool                       `json:"reset_required,omitempty"`
 	TransportReason     string                     `json:"transport_reason,omitempty"`
 	PendingStartup      bool                       `json:"pending_startup,omitempty"`
+	HasUnreadAssistant  bool                       `json:"has_unread_assistant,omitempty"`
 	LastUpdatedTS       float64                    `json:"last_updated_ts"`
 	UpdatedTS           float64                    `json:"updated_ts,omitempty"`
 	LastAssistantTS     float64                    `json:"last_assistant_message_ts,omitempty"`
@@ -361,6 +368,17 @@ type ListSessionsResponse struct {
 	RemainingCount int              `json:"remaining_count"`
 	TotalCount     int              `json:"total_count"`
 	GroupKey       *string          `json:"group_key"`
+}
+
+type MarkSessionReadRequest struct {
+	SessionID string `json:"session_id"`
+	ReadSeq   uint64 `json:"read_seq,omitempty"`
+}
+
+type MarkSessionReadResponse struct {
+	OK        bool   `json:"ok"`
+	SessionID string `json:"session_id"`
+	ReadSeq   uint64 `json:"read_seq"`
 }
 
 type CreateSessionRequest struct {
@@ -530,6 +548,10 @@ func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListS
 	items := sortSessionsForDisplay(filterSessionRecords(s.registry.List(), req), s.registry.now())
 	offset, limit := listWindow(req)
 	start, end := paginate(len(items), offset, limit)
+	readSeqBySessionID, err := s.sessionReadSeqBySessionID(ctx)
+	if err != nil {
+		return ListSessionsResponse{}, err
+	}
 	summaries := make([]SessionSummary, 0, end-start)
 	for _, item := range items[start:end] {
 		record := item.record
@@ -541,7 +563,7 @@ func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListS
 			record = reconciled
 		}
 		record = s.reconcileCodexSessionFileFinalForState(record)
-		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt))
+		summaries = append(summaries, s.sessionSummaryFromRecord(record, item.updatedAt, readSeqBySessionID[record.identity.SessionID()]))
 	}
 	return ListSessionsResponse{
 		Items:          summaries,
@@ -549,6 +571,25 @@ func (s *Stub) ListSessions(ctx context.Context, req ListSessionsRequest) (ListS
 		TotalCount:     len(items),
 		GroupKey:       groupKey,
 	}, nil
+}
+
+func (s *Stub) MarkSessionRead(ctx context.Context, req MarkSessionReadRequest) (MarkSessionReadResponse, error) {
+	sessionID, err := session.ParseSessionID(strings.TrimSpace(req.SessionID))
+	if err != nil {
+		return MarkSessionReadResponse{}, Invalid("session_id", "invalid session id")
+	}
+	record, ok := s.registry.LookupRoute(sessionID)
+	if !ok {
+		return MarkSessionReadResponse{}, NotFound(fmt.Sprintf("session %q not found", sessionID))
+	}
+	readSeq := req.ReadSeq
+	if readSeq == 0 {
+		readSeq = record.transcript.TailSeq().Uint64()
+	}
+	if err := s.setSessionReadSeq(ctx, record.identity.SessionID(), readSeq); err != nil {
+		return MarkSessionReadResponse{}, err
+	}
+	return MarkSessionReadResponse{OK: true, SessionID: record.identity.SessionID().String(), ReadSeq: readSeq}, nil
 }
 
 func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (CreateSessionResponse, error) {
@@ -980,7 +1021,7 @@ func (s *Stub) markPIAgentGRPCStartupFailed(sessionID session.SessionID, err err
 	s.emitSessionState(sessionID)
 }
 
-func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time) SessionSummary {
+func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Time, readSeq uint64) SessionSummary {
 	runtimeID, _ := record.identity.RuntimeID()
 	threadID, _ := record.identity.ThreadID()
 	transport := s.publicSessionTransportSnapshot(record)
@@ -993,6 +1034,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 	}
 	busy, busyReason := effectiveBusy(record)
 	runtimeState, runtimeStateReason := runtimeStateFields(record)
+	lastAssistantSeq := lastAssistantMessageSeq(record)
 	return SessionSummary{
 		SessionID:           record.identity.SessionID().String(),
 		RuntimeID:           runtimeID.String(),
@@ -1015,6 +1057,7 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 		ResetRequired:       transport.ResetRequired,
 		TransportReason:     transport.Reason,
 		PendingStartup:      transport.State == SessionTransportStateStarting,
+		HasUnreadAssistant:  lastAssistantSeq > readSeq,
 		LastUpdatedTS:       timestampSeconds(updatedAt),
 		UpdatedTS:           timestampSeconds(updatedAt),
 		LastAssistantTS:     lastAssistantMessageTimestamp(record),
@@ -1033,6 +1076,58 @@ func (s *Stub) sessionSummaryFromRecord(record sessionRecord, updatedAt time.Tim
 	}
 }
 
+func (s *Stub) sessionReadSeqBySessionID(ctx context.Context) (map[session.SessionID]uint64, error) {
+	out := map[session.SessionID]uint64{}
+	s.sessionReadMu.RLock()
+	for sessionID, readSeq := range s.sessionReadSeq {
+		out[sessionID] = readSeq
+	}
+	s.sessionReadMu.RUnlock()
+
+	store, ok := s.appStore.(sessionReadStateStore)
+	if !ok || store == nil {
+		return out, nil
+	}
+	rows, err := store.ListSessionReadStates(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list session read states: %w", err)
+	}
+	for _, row := range rows {
+		sessionID, err := session.ParseSessionID(strings.TrimSpace(row.SessionID))
+		if err != nil {
+			continue
+		}
+		if row.ReadSeq > out[sessionID] {
+			out[sessionID] = row.ReadSeq
+		}
+	}
+	return out, nil
+}
+
+func (s *Stub) setSessionReadSeq(ctx context.Context, sessionID session.SessionID, readSeq uint64) error {
+	s.sessionReadMu.Lock()
+	if s.sessionReadSeq == nil {
+		s.sessionReadSeq = map[session.SessionID]uint64{}
+	}
+	if readSeq > s.sessionReadSeq[sessionID] {
+		s.sessionReadSeq[sessionID] = readSeq
+	}
+	s.sessionReadMu.Unlock()
+
+	store, ok := s.appStore.(sessionReadStateStore)
+	if !ok || store == nil {
+		return nil
+	}
+	if err := store.UpsertSessionReadState(ctx, sqlitestore.SessionReadStateRow{
+		SessionID: sessionID.String(),
+		ReadSeq:   readSeq,
+		ReadAt:    s.registry.now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("persist session read state %q: %w", sessionID, err)
+	}
+	return nil
+}
+
 func lastAssistantMessageTimestamp(record sessionRecord) float64 {
 	items := record.transcript.Items()
 	for i := len(items) - 1; i >= 0; i-- {
@@ -1041,6 +1136,18 @@ func lastAssistantMessageTimestamp(record sessionRecord) float64 {
 			continue
 		}
 		return timestampSeconds(item.TS())
+	}
+	return 0
+}
+
+func lastAssistantMessageSeq(record sessionRecord) uint64 {
+	items := record.transcript.Items()
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item.Role() != message.RoleAssistant {
+			continue
+		}
+		return item.Seq().Uint64()
 	}
 	return 0
 }

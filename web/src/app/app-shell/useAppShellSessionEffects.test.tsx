@@ -89,6 +89,43 @@ it("refreshes sessions immediately and every 5 seconds while any session is busy
   expect(sessionsStoreApi.refresh).toHaveBeenCalledTimes(2);
 });
 
+it("marks active unread sessions read after 3 seconds", async () => {
+  vi.useFakeTimers();
+  const sessionsStoreApi = {
+    refresh: vi.fn().mockResolvedValue(undefined),
+    getState: vi.fn(() => ({ activeSessionId: "sess-1" })),
+    markRead: vi.fn().mockResolvedValue(undefined),
+  } as any;
+
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        {...baseProps({
+          items: [{ session_id: "sess-1", busy: false, has_unread_assistant: true }] as any,
+          sessionsStoreApi,
+        })}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  await act(async () => {
+    vi.advanceTimersByTime(2999);
+    await Promise.resolve();
+  });
+  expect(sessionsStoreApi.markRead).not.toHaveBeenCalled();
+
+  await act(async () => {
+    vi.advanceTimersByTime(1);
+    await Promise.resolve();
+  });
+  expect(sessionsStoreApi.markRead).toHaveBeenCalledWith("sess-1");
+});
+
 it("polls the active busy session every 3 seconds and workspace every 15 seconds when open", async () => {
   vi.useFakeTimers();
   const liveSessionStoreApi = {

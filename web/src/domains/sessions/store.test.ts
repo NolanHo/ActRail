@@ -11,6 +11,7 @@ vi.mock("../../lib/api", () => ({
   api: {
     listSessions: vi.fn(),
     getSessionsBootstrap: vi.fn(),
+    markSessionRead: vi.fn(),
   },
 }));
 
@@ -386,25 +387,24 @@ describe("createSessionsStore", () => {
       generation_id: "codex_app_server",
     }]);
   });
-  it("marks inactive sessions with unread assistant messages and clears on select", async () => {
-    vi.mocked(api.listSessions)
-      .mockResolvedValueOnce({ sessions: [
-        { session_id: "s1", last_assistant_message_ts: 100 },
-        { session_id: "s2", last_assistant_message_ts: 200 },
-      ] } as never)
-      .mockResolvedValueOnce({ sessions: [
-        { session_id: "s1", last_assistant_message_ts: 100 },
-        { session_id: "s2", last_assistant_message_ts: 250, busy: false },
-      ] } as never);
+  it("keeps backend-provided unread state on select and clears after markRead", async () => {
+    vi.mocked(api.listSessions).mockResolvedValue({ sessions: [
+      { session_id: "s1" },
+      { session_id: "s2", has_unread_assistant: true },
+    ] } as never);
+    vi.mocked(api.markSessionRead).mockResolvedValue({ ok: true, session_id: "s2", read_seq: 2 } as never);
 
     const store = createSessionsStore();
-    await store.refresh();
     await store.refresh();
 
     expect(store.getState().items.find((item) => item.session_id === "s2")?.has_unread_assistant).toBe(true);
 
     store.select("s2");
+    expect(store.getState().items.find((item) => item.session_id === "s2")?.has_unread_assistant).toBe(true);
 
-    expect(store.getState().items.find((item) => item.session_id === "s2")?.has_unread_assistant).toBeUndefined();
+    await store.markRead("s2");
+
+    expect(api.markSessionRead).toHaveBeenCalledWith("s2");
+    expect(store.getState().items.find((item) => item.session_id === "s2")?.has_unread_assistant).toBe(false);
   });
 });

@@ -14,6 +14,11 @@ type appStateStore interface {
 	ReplaceAppState(context.Context, sqlitestore.AppStateRow) error
 }
 
+type sessionReadStateStore interface {
+	ListSessionReadStates(context.Context) ([]sqlitestore.SessionReadStateRow, error)
+	UpsertSessionReadState(context.Context, sqlitestore.SessionReadStateRow) error
+}
+
 type workspaceBrowserState struct {
 	SelectedPath string
 	OpenPaths    []string
