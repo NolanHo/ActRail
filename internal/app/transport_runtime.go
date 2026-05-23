@@ -95,7 +95,39 @@ func (s *Stub) setSessionTransportAttached(sessionID session.SessionID, generati
 	return err
 }
 
+func (s *Stub) transportEventGenerationCurrent(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if s == nil || generationID == "" {
+		return true
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return false
+	}
+	eventGenerationID := strings.TrimSpace(generationID.String())
+	sawComparableGeneration := false
+	for _, current := range []string{record.transport.GenerationID, sessionTransportSnapshot(record).GenerationID} {
+		current = strings.TrimSpace(current)
+		if current == "" {
+			return true
+		}
+		if current == "codex_app_server" {
+			continue
+		}
+		sawComparableGeneration = true
+		if current == eventGenerationID {
+			return true
+		}
+	}
+	if s.runtimeHelperGenerationCurrent(sessionID, generationID) {
+		return true
+	}
+	return !sawComparableGeneration
+}
+
 func (s *Stub) markSessionGenerationEnded(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
+	if !s.transportEventGenerationCurrent(sessionID, generationID) {
+		return nil
+	}
 	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
 		return err
 	}
@@ -111,6 +143,9 @@ func (s *Stub) markSessionGenerationEnded(sessionID session.SessionID, generatio
 }
 
 func (s *Stub) markSessionGenerationBroken(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
+	if !s.transportEventGenerationCurrent(sessionID, generationID) {
+		return nil
+	}
 	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
 		return err
 	}
@@ -129,6 +164,9 @@ func (s *Stub) markSessionGenerationBroken(sessionID session.SessionID, generati
 }
 
 func (s *Stub) markSessionTransportResetRequired(sessionID session.SessionID, generationID iod.GenerationID, reason string) error {
+	if !s.transportEventGenerationCurrent(sessionID, generationID) {
+		return nil
+	}
 	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
 		return err
 	}

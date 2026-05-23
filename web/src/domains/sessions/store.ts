@@ -300,6 +300,7 @@ function sessionPatchFromStatePayload(payload: Record<string, unknown>): Session
 
   return {
     session_id: sessionId,
+    ...(optionalString(payload.runtime_id) !== undefined ? { runtime_id: optionalString(payload.runtime_id) } : {}),
     ...(optionalBoolean(payload.busy) !== undefined ? { busy: optionalBoolean(payload.busy) } : {}),
     ...(optionalString(payload.busy_reason) !== undefined ? { busy_reason: optionalString(payload.busy_reason) } : {}),
     ...(optionalString(payload.runtime_state) !== undefined ? { runtime_state: optionalString(payload.runtime_state) } : {}),

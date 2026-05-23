@@ -110,6 +110,8 @@ type ProbeSessionStateResponse struct {
 }
 
 type SessionStateResponse struct {
+	SessionID            string                        `json:"session_id,omitempty"`
+	RuntimeID            string                        `json:"runtime_id,omitempty"`
 	Busy                 bool                          `json:"busy"`
 	BusyReason           string                        `json:"busy_reason,omitempty"`
 	RuntimeState         string                        `json:"runtime_state,omitempty"`
@@ -626,6 +628,7 @@ func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 	turnTiming := copyTurnTiming(record.turnTiming)
 	busy, busyReason := effectiveBusy(record)
 	runtimeState, runtimeStateReason := runtimeStateFields(record)
+	runtimeID, _ := record.identity.RuntimeID()
 	tailSeq := record.transcript.TailSeq().Uint64()
 	if record.identity.Backend() == session.BackendCodex && s != nil {
 		if mirrored := s.codexLiveMirroredTail(record.identity.SessionID()); mirrored > tailSeq {
@@ -640,6 +643,8 @@ func (s *Stub) sessionStateResponse(record sessionRecord) SessionStateResponse {
 		partial = nil
 	}
 	return SessionStateResponse{
+		SessionID:            record.identity.SessionID().String(),
+		RuntimeID:            runtimeID.String(),
 		Busy:                 busy,
 		BusyReason:           busyReason,
 		RuntimeState:         runtimeState,

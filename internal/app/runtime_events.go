@@ -30,6 +30,7 @@ type SessionResumeCursorWriter interface {
 
 type SessionStateEvent struct {
 	SessionID          session.SessionID
+	RuntimeID          session.RuntimeID
 	Busy               bool
 	BusyReason         string
 	RuntimeState       string
@@ -80,12 +81,14 @@ type WaitsUpdatedEvent struct {
 
 type GenerationBrokenEvent struct {
 	SessionID    session.SessionID
+	RuntimeID    session.RuntimeID
 	GenerationID string
 	Reason       string
 }
 
 type TransportResetRequiredEvent struct {
 	SessionID    session.SessionID
+	RuntimeID    session.RuntimeID
 	GenerationID string
 	Reason       string
 }
@@ -124,6 +127,7 @@ func (s *Stub) emitSessionStateRecord(record sessionRecord) {
 	record.runtime = s.runtimeForRecord(record)
 	busy, busyReason := effectiveBusy(record)
 	runtimeState, runtimeStateReason := runtimeStateFields(record)
+	runtimeID, _ := record.identity.RuntimeID()
 	tailSeq := record.transcript.TailSeq().Uint64()
 	if record.identity.Backend() == session.BackendCodex {
 		if mirrored := s.codexLiveMirroredTail(record.identity.SessionID()); mirrored > tailSeq {
@@ -132,6 +136,7 @@ func (s *Stub) emitSessionStateRecord(record sessionRecord) {
 	}
 	s.sink.PublishSessionState(SessionStateEvent{
 		SessionID:          record.identity.SessionID(),
+		RuntimeID:          runtimeID,
 		Busy:               busy,
 		BusyReason:         busyReason,
 		RuntimeState:       runtimeState,
@@ -220,14 +225,28 @@ func (s *Stub) emitGenerationBroken(sessionID session.SessionID, generationID, r
 	if s == nil || s.sink == nil {
 		return
 	}
-	s.sink.PublishGenerationBroken(GenerationBrokenEvent{SessionID: sessionID, GenerationID: generationID, Reason: reason})
+	runtimeID := s.currentRuntimeID(sessionID)
+	s.sink.PublishGenerationBroken(GenerationBrokenEvent{SessionID: sessionID, RuntimeID: runtimeID, GenerationID: generationID, Reason: reason})
 }
 
 func (s *Stub) emitTransportResetRequired(sessionID session.SessionID, generationID, reason string) {
 	if s == nil || s.sink == nil {
 		return
 	}
-	s.sink.PublishTransportResetRequired(TransportResetRequiredEvent{SessionID: sessionID, GenerationID: generationID, Reason: reason})
+	runtimeID := s.currentRuntimeID(sessionID)
+	s.sink.PublishTransportResetRequired(TransportResetRequiredEvent{SessionID: sessionID, RuntimeID: runtimeID, GenerationID: generationID, Reason: reason})
+}
+
+func (s *Stub) currentRuntimeID(sessionID session.SessionID) session.RuntimeID {
+	if s == nil {
+		return ""
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return ""
+	}
+	runtimeID, _ := record.identity.RuntimeID()
+	return runtimeID
 }
 
 func (s *Stub) emitNotification(event NotificationEvent) {

@@ -15,6 +15,7 @@ import (
 
 type sessionStatePayload struct {
 	SessionID       string                       `json:"session_id"`
+	RuntimeID       string                       `json:"runtime_id,omitempty"`
 	StreamSeq       int64                        `json:"stream_seq"`
 	Busy            bool                         `json:"busy"`
 	BusyReason      string                       `json:"busy_reason,omitempty"`
@@ -106,6 +107,7 @@ type waitsUpdatedPayload struct {
 
 type generationBrokenPayload struct {
 	SessionID    string `json:"session_id"`
+	RuntimeID    string `json:"runtime_id,omitempty"`
 	StreamSeq    int64  `json:"stream_seq"`
 	GenerationID string `json:"generation_id"`
 	Reason       string `json:"reason"`
@@ -113,6 +115,7 @@ type generationBrokenPayload struct {
 
 type transportResetRequiredPayload struct {
 	SessionID    string `json:"session_id"`
+	RuntimeID    string `json:"runtime_id,omitempty"`
 	StreamSeq    int64  `json:"stream_seq"`
 	GenerationID string `json:"generation_id"`
 	Reason       string `json:"reason"`
@@ -240,6 +243,7 @@ func (b *AppBridge) PublishSessionState(event app.SessionStateEvent) {
 	b.publish(event.SessionID, session.StreamKindMain, FrameTypeSessionState, func(cursor int64) any {
 		return sessionStatePayload{
 			SessionID:       event.SessionID.String(),
+			RuntimeID:       event.RuntimeID.String(),
 			StreamSeq:       cursor,
 			Busy:            event.Busy,
 			BusyReason:      event.BusyReason,
@@ -355,6 +359,7 @@ func (b *AppBridge) PublishGenerationBroken(event app.GenerationBrokenEvent) {
 	b.publish(event.SessionID, session.StreamKindMain, FrameTypeSessionGenerationBroken, func(cursor int64) any {
 		return generationBrokenPayload{
 			SessionID:    event.SessionID.String(),
+			RuntimeID:    event.RuntimeID.String(),
 			StreamSeq:    cursor,
 			GenerationID: event.GenerationID,
 			Reason:       event.Reason,
@@ -366,6 +371,7 @@ func (b *AppBridge) PublishTransportResetRequired(event app.TransportResetRequir
 	b.publish(event.SessionID, session.StreamKindMain, FrameTypeTransportResetRequired, func(cursor int64) any {
 		return transportResetRequiredPayload{
 			SessionID:    event.SessionID.String(),
+			RuntimeID:    event.RuntimeID.String(),
 			StreamSeq:    cursor,
 			GenerationID: event.GenerationID,
 			Reason:       event.Reason,

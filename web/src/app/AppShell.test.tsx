@@ -280,6 +280,7 @@ function renderAppShell({
       turnTimingBySessionId: {},
       runtimeStateBySessionId: liveRuntimeStateBySessionId ?? Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state])),
       runtimeStateReasonBySessionId: Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_state_reason])),
+      runtimeIdBySessionId: Object.fromEntries(sessionItems.map((session) => [session.session_id, session.runtime_id])),
       transportBySessionId: {},
     },
     {

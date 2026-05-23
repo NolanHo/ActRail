@@ -951,4 +951,57 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().streamCursorsBySessionId.s1).toBe(0);
     expect(liveStore.getState().uiStreamCursorsBySessionId.s1).toBe(0);
   });
+
+  it("ignores stale runtime generation broken and reset frames", () => {
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    liveStore.applyFrame({
+      type: "session.state",
+      stream: "session:s1",
+      payload: {
+        session_id: "s1",
+        runtime_id: "rt-new",
+        stream_seq: 1,
+        busy: false,
+        runtime_state: "idle",
+        transport: { state: "attached" },
+      },
+    });
+
+    expect(liveStore.getState().runtimeIdBySessionId.s1).toBe("rt-new");
+
+    const brokenResult = liveStore.applyFrame({
+      type: "session.generation.broken",
+      stream: "session:s1",
+      payload: {
+        session_id: "s1",
+        runtime_id: "rt-old",
+        stream_seq: 2,
+        generation_id: "g-old",
+        reason: "old helper exited",
+      },
+    });
+
+    expect(brokenResult).toEqual(expect.objectContaining({ ignored: true, reason: "stale_runtime" }));
+    expect(liveStore.getState().runtimeStateBySessionId.s1).toBe("idle");
+    expect(liveStore.getState().transportBySessionId.s1?.state).toBe("attached");
+    expect(liveStore.getState().errorBySessionId.s1).toBe("");
+
+    const resetResult = liveStore.applyFrame({
+      type: "transport.reset_required",
+      stream: "session:s1",
+      payload: {
+        session_id: "s1",
+        runtime_id: "rt-old",
+        stream_seq: 3,
+        generation_id: "g-old",
+        reason: "attach_lost",
+      },
+    });
+
+    expect(resetResult).toEqual(expect.objectContaining({ ignored: true, reason: "stale_runtime" }));
+    expect(liveStore.getState().runtimeStateBySessionId.s1).toBe("idle");
+    expect(liveStore.getState().transportBySessionId.s1?.state).toBe("attached");
+  });
 });

@@ -28,6 +28,10 @@ func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.B
 	if s == nil || !runtimeProjectionSupported(backend) {
 		return
 	}
+	expectedRuntimeID := session.RuntimeID("")
+	if record, ok := s.registry.Lookup(sessionID); ok {
+		expectedRuntimeID, _ = record.identity.RuntimeID()
+	}
 	if backend == session.BackendPI {
 		if record, ok := s.registry.Lookup(sessionID); ok && record.state.Busy() {
 			_ = s.setRuntimeAgentRunning(sessionID, true)
@@ -49,7 +53,7 @@ func (s *Stub) startRuntimeIngest(sessionID session.SessionID, backend session.B
 		if src == nil {
 			continue
 		}
-		go s.readRuntimeOutput(sessionID, backend, src)
+		go s.readRuntimeOutput(sessionID, backend, expectedRuntimeID, runtime, src)
 	}
 }
 
@@ -70,14 +74,34 @@ func runtimeOutputSources(runtime sessionRuntime) []io.Reader {
 	return sources
 }
 
-func (s *Stub) readRuntimeOutput(sessionID session.SessionID, backend session.Backend, src io.Reader) {
+func (s *Stub) readRuntimeOutput(sessionID session.SessionID, backend session.Backend, expectedRuntimeID session.RuntimeID, runtime sessionRuntime, src io.Reader) {
 	decoder := runtimeEventDecoder{backend: backend}
 	scanner := bufio.NewScanner(src)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxRuntimeLineBytes)
 	for scanner.Scan() {
+		if !s.runtimeOutputStillCurrent(sessionID, expectedRuntimeID, runtime) {
+			return
+		}
 		_ = s.applyRuntimeProjection(sessionID, decoder.decodeRuntimeLine(scanner.Bytes()))
 	}
-	_ = s.orphanActiveWaits(context.Background(), &sessionID)
+	if s.runtimeOutputStillCurrent(sessionID, expectedRuntimeID, runtime) {
+		_ = s.orphanActiveWaits(context.Background(), &sessionID)
+	}
+}
+
+func (s *Stub) runtimeOutputStillCurrent(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, runtime sessionRuntime) bool {
+	if s == nil {
+		return false
+	}
+	if expectedRuntimeID != "" {
+		record, ok := s.registry.Lookup(sessionID)
+		if !ok {
+			return false
+		}
+		currentRuntimeID, ok := record.identity.RuntimeID()
+		return ok && currentRuntimeID == expectedRuntimeID
+	}
+	return s.runtimeStillCurrent(sessionID, runtime)
 }
 
 func (s *Stub) readPIAgentGRPC(sessionID session.SessionID, client *piagentgrpc.Client) {

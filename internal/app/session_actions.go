@@ -771,6 +771,8 @@ func (s *Stub) replaceSessionRuntimeSync(ctx context.Context, routeID session.Se
 	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
 	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), newRuntime)
 	s.startCodexThreadBootstrap(updated.identity.SessionID(), newRuntime)
+	expectedRuntimeID, _ := identity.RuntimeID()
+	s.startCodexRestartReconcile(updated.identity.SessionID(), expectedRuntimeID, newRuntime)
 	if reusedHelper {
 		record.runtime.CloseHelperStream()
 	} else {
@@ -841,6 +843,7 @@ func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, expec
 	s.startRuntimeIngest(updated.identity.SessionID(), updated.identity.Backend(), newRuntime)
 	s.startPIAgentGRPCReadyTransition(updated.identity.SessionID(), newRuntime)
 	s.startCodexThreadBootstrap(updated.identity.SessionID(), newRuntime)
+	s.startCodexRestartReconcile(updated.identity.SessionID(), expectedRuntimeID, newRuntime)
 	if reusedHelper {
 		previous.runtime.CloseHelperStream()
 	} else {
@@ -849,6 +852,51 @@ func (s *Stub) finishReplacementRuntimeLaunch(sessionID session.SessionID, expec
 		_ = previous.runtime.CleanupHelperArtifacts()
 	}
 	s.emitSessionState(updated.identity.SessionID())
+}
+
+func (s *Stub) startCodexRestartReconcile(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, runtime sessionRuntime) {
+	if s == nil || expectedRuntimeID == "" || runtime.protocol != runtimeProtocolCodexRPC || runtime.codex == nil || !runtime.canWriteInput() {
+		return
+	}
+	go s.reconcileCodexRestartRuntime(sessionID, expectedRuntimeID, runtime)
+}
+
+func (s *Stub) reconcileCodexRestartRuntime(sessionID session.SessionID, expectedRuntimeID session.RuntimeID, runtime sessionRuntime) {
+	ctx, cancel := context.WithTimeout(context.Background(), codexRuntimeBootstrapTimeout)
+	defer cancel()
+	if err := runtime.EnsureCodexThread(ctx); err != nil {
+		if s.runtimeStillCurrent(sessionID, runtime) {
+			_ = s.transitionCodexRuntimeIfCurrent(sessionID, expectedRuntimeID, codexRuntimePhaseFailed, "codex_thread_bootstrap_failed", "restart_reconcile_bootstrap_failed")
+			_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_restart_reconcile", err)
+		}
+		return
+	}
+	if err := runtime.WaitCodexThreadReady(ctx); err != nil {
+		return
+	}
+	if !s.runtimeStillCurrent(sessionID, runtime) {
+		return
+	}
+	record, ok := s.registry.Lookup(sessionID)
+	if !ok {
+		return
+	}
+	currentRuntimeID, ok := record.identity.RuntimeID()
+	if !ok || currentRuntimeID != expectedRuntimeID {
+		return
+	}
+	transport := sessionTransportSnapshot(record)
+	forceEmit := false
+	if transport.State == SessionTransportStateStarting {
+		if _, setOK, err := s.registry.SetTransportIfCurrent(sessionID, expectedRuntimeID, transportSnapshotCodexAttachedFrom(transport)); err != nil || !setOK {
+			return
+		}
+		forceEmit = true
+	}
+	_ = s.syncCodexRuntimeActivity(sessionID, "restart_reconcile", forceEmit)
+	if err := runtime.RequestCodexThreadState(ctx); err != nil && !stdErrors.Is(err, errCodexThreadNotReady) {
+		_ = s.emitRuntimeControlDiagnostic(sessionID, "codex_restart_reconcile_probe", err)
+	}
 }
 
 func (s *Stub) removeRuntimeHelperAttachment(sessionID session.SessionID, runtime sessionRuntime) {

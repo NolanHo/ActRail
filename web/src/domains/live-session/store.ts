@@ -31,6 +31,7 @@ export interface LiveSessionState {
   turnTimingBySessionId: Record<string, TurnTimingPayload | null>;
   runtimeStateBySessionId: Record<string, string | undefined>;
   runtimeStateReasonBySessionId: Record<string, string | undefined>;
+  runtimeIdBySessionId: Record<string, string | undefined>;
   transportBySessionId: Record<string, SessionTransportSnapshot | null | undefined>;
 }
 
@@ -47,7 +48,7 @@ export interface LiveSessionStore {
 
 export interface RealtimeFrameApplyResult {
   ignored?: boolean;
-  reason?: "invalid_frame" | "stale_cursor" | "stream_gap";
+  reason?: "invalid_frame" | "stale_cursor" | "stale_runtime" | "stream_gap";
   resyncNeeded?: boolean;
   sessionId?: string;
   stream?: "session" | "ui";
@@ -277,6 +278,18 @@ function normalizedRuntimeStateReason(payload: LiveSessionResponse | Record<stri
     : undefined;
 }
 
+function normalizedRuntimeId(payload: LiveSessionResponse | Record<string, unknown> | null) {
+  return payload && typeof payload.runtime_id === "string" && payload.runtime_id.trim()
+    ? payload.runtime_id.trim()
+    : undefined;
+}
+
+function matchesKnownRuntime(state: LiveSessionState, sessionId: string, payload: Record<string, unknown> | null) {
+  const frameRuntimeId = normalizedRuntimeId(payload);
+  const knownRuntimeId = state.runtimeIdBySessionId[sessionId];
+  return !frameRuntimeId || !knownRuntimeId || frameRuntimeId === knownRuntimeId;
+}
+
 function normalizeSnapshotRequests(payload: LiveSessionResponse) {
   if (Array.isArray(payload.requests)) {
     return payload.requests.map((request) => normalizeRequest(request)).filter((request): request is SessionUiRequest => request !== null);
@@ -303,6 +316,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     turnTimingBySessionId: {},
     runtimeStateBySessionId: {},
     runtimeStateReasonBySessionId: {},
+    runtimeIdBySessionId: {},
     transportBySessionId: {},
   };
   const listeners = new Set<() => void>();
@@ -443,6 +457,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       runtimeStateReasonBySessionId: {
         ...state.runtimeStateReasonBySessionId,
         [sessionId]: normalizedRuntimeStateReason(statePayload),
+      },
+      runtimeIdBySessionId: {
+        ...state.runtimeIdBySessionId,
+        [sessionId]: normalizedRuntimeId(statePayload) ?? state.runtimeIdBySessionId[sessionId],
       },
       transportBySessionId: {
         ...state.transportBySessionId,
@@ -725,6 +743,14 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.runtimeStateReasonBySessionId,
             [sessionId]: normalizedRuntimeStateReason(payload),
           },
+          runtimeIdBySessionId: {
+            ...state.runtimeIdBySessionId,
+            [sessionId]: normalizedRuntimeId(payload) ?? state.runtimeIdBySessionId[sessionId],
+          },
+          transportBySessionId: {
+            ...state.transportBySessionId,
+            [sessionId]: transportSnapshotFromPayload(payload) ?? state.transportBySessionId[sessionId],
+          },
         };
         emit();
         return {};
@@ -879,6 +905,9 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
 
       if (type === "session.generation.broken") {
+        if (!matchesKnownRuntime(state, sessionId, payload)) {
+          return { ignored: true, reason: "stale_runtime", sessionId, stream: "session" };
+        }
         clearStreamingArtifacts(sessionId);
         state = {
           ...state,
@@ -918,6 +947,9 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
       }
 
       if (type === "transport.reset_required") {
+        if (!matchesKnownRuntime(state, sessionId, payload)) {
+          return { ignored: true, reason: "stale_runtime", sessionId, stream: "session" };
+        }
         clearStreamingArtifacts(sessionId);
         state = {
           ...state,
@@ -989,6 +1021,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
         },
         runtimeStateReasonBySessionId: {
           ...state.runtimeStateReasonBySessionId,
+          [sessionId]: undefined,
+        },
+        runtimeIdBySessionId: {
+          ...state.runtimeIdBySessionId,
           [sessionId]: undefined,
         },
         transportBySessionId: {
