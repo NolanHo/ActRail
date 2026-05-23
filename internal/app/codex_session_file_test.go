@@ -2402,7 +2402,7 @@ func (s *blockingCommitSink) PublishMessageCommit(event MessageCommitEvent) {
 	s.captureRuntimeSink.PublishMessageCommit(event)
 }
 
-func TestListSessionsCodexFinalAnswerTailClearsStaleRunning(t *testing.T) {
+func TestListSessionsCodexFinalAnswerTailDoesNotClearStaleRunning(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sessionID := mustSessionID(t, "s_codex_file_list_clears_running")
@@ -2444,15 +2444,26 @@ func TestListSessionsCodexFinalAnswerTailClearsStaleRunning(t *testing.T) {
 	if len(listed.Items) != 1 {
 		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
 	}
-	if listed.Items[0].Busy || listed.Items[0].RuntimeState != string(codexRuntimePhaseIdle) {
-		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want trusted final source tail to clear stale running", listed.Items[0].Busy, listed.Items[0].RuntimeState)
+	if !listed.Items[0].Busy || listed.Items[0].RuntimeState == string(codexRuntimePhaseIdle) {
+		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want lightweight list to preserve cached running state", listed.Items[0].Busy, listed.Items[0].RuntimeState)
+	}
+	if !svc.isRuntimeAgentRunning(sessionID) {
+		t.Fatal("runtimeAgentRunning = false, want list path to avoid source-tail reconciliation")
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) {
+		t.Fatalf("SessionState() = busy:%v runtime:%q, want trusted final source tail to clear stale running", state.Busy, state.RuntimeState)
 	}
 	if svc.isRuntimeAgentRunning(sessionID) {
-		t.Fatal("runtimeAgentRunning = true, want false after trusted final source tail")
+		t.Fatal("runtimeAgentRunning = true, want false after SessionState source-tail reconciliation")
 	}
 }
 
-func TestListSessionsCodexTailTerminalDoesNotScanWholeSourceFile(t *testing.T) {
+func TestSessionStateCodexTailTerminalDoesNotScanWholeSourceFile(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sessionID := mustSessionID(t, "s_codex_file_list_tail_only")
@@ -2494,8 +2505,16 @@ func TestListSessionsCodexTailTerminalDoesNotScanWholeSourceFile(t *testing.T) {
 	if len(listed.Items) != 1 {
 		t.Fatalf("len(ListSessions().Items) = %d, want 1", len(listed.Items))
 	}
-	if listed.Items[0].Busy || listed.Items[0].RuntimeState != string(codexRuntimePhaseIdle) {
-		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want tail terminal source to clear stale running", listed.Items[0].Busy, listed.Items[0].RuntimeState)
+	if !listed.Items[0].Busy || listed.Items[0].RuntimeState == string(codexRuntimePhaseIdle) {
+		t.Fatalf("ListSessions().Items[0] = busy:%v runtime:%q, want lightweight list to avoid source-tail reconciliation", listed.Items[0].Busy, listed.Items[0].RuntimeState)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Busy || state.RuntimeState != string(codexRuntimePhaseIdle) {
+		t.Fatalf("SessionState() = busy:%v runtime:%q, want tail terminal source to clear stale running", state.Busy, state.RuntimeState)
 	}
 }
 

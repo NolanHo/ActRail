@@ -50,6 +50,14 @@ func (s *Stub) publicSessionTransportSnapshot(record sessionRecord) SessionTrans
 	return transport
 }
 
+func publicLightweightSessionTransportSnapshot(record sessionRecord) SessionTransportSnapshot {
+	transport := sessionTransportSnapshot(record)
+	if record.identity.Backend() == session.BackendCodex {
+		transport.GenerationID = ""
+	}
+	return transport
+}
+
 func (s *Stub) sessionProbing(record sessionRecord) bool {
 	record.runtime = s.runtimeForRecord(record)
 	if transport, ok := s.helperMissingCodexChildTransport(record); ok && transport.ResetRequired {

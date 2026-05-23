@@ -45,6 +45,7 @@ type supervisorStore interface {
 	LookupSupervisorProviderSettings(context.Context) (sqlitestore.SupervisorProviderSettingsRow, bool, error)
 	UpsertSupervisorProviderSettings(context.Context, sqlitestore.SupervisorProviderSettingsRow) error
 	LookupSessionSupervisorConfig(context.Context, string) (sqlitestore.SessionSupervisorConfigRow, bool, error)
+	ListSessionSupervisorConfigs(context.Context, []string) ([]sqlitestore.SessionSupervisorConfigRow, error)
 	UpsertSessionSupervisorConfig(context.Context, sqlitestore.SessionSupervisorConfigRow) error
 	InsertSupervisorRun(context.Context, sqlitestore.SupervisorRunRow) error
 	UpdateSupervisorRun(context.Context, sqlitestore.SupervisorRunRow) error
@@ -226,6 +227,27 @@ func (m *memorySupervisorStore) LookupSessionSupervisorConfig(_ context.Context,
 	defer m.mu.Unlock()
 	row, ok := m.sessionConfigs[sessionID]
 	return row, ok, nil
+}
+
+func (m *memorySupervisorStore) ListSessionSupervisorConfigs(_ context.Context, sessionIDs []string) ([]sqlitestore.SessionSupervisorConfigRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]sqlitestore.SessionSupervisorConfigRow, 0, len(sessionIDs))
+	seen := map[string]struct{}{}
+	for _, sessionID := range sessionIDs {
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID == "" {
+			continue
+		}
+		if _, ok := seen[sessionID]; ok {
+			continue
+		}
+		seen[sessionID] = struct{}{}
+		if row, ok := m.sessionConfigs[sessionID]; ok {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func (m *memorySupervisorStore) UpsertSessionSupervisorConfig(_ context.Context, row sqlitestore.SessionSupervisorConfigRow) error {
@@ -451,6 +473,27 @@ func (s *Stub) sessionSupervisorConfig(ctx context.Context, sessionID session.Se
 		return normalizeSupervisorConfig(config, s.registry.now()), nil
 	}
 	return defaultSupervisorConfig(sessionID.String(), s.registry.now()), nil
+}
+
+func (s *Stub) sessionSupervisorResponsesBySessionID(ctx context.Context, sessionIDs []session.SessionID) (map[session.SessionID]SessionSupervisorResponse, bool) {
+	rawSessionIDs := make([]string, 0, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		rawSessionIDs = append(rawSessionIDs, sessionID.String())
+	}
+	rows, err := s.supervisorStore.ListSessionSupervisorConfigs(ctx, rawSessionIDs)
+	if err != nil {
+		return nil, false
+	}
+	now := s.registry.now()
+	out := make(map[session.SessionID]SessionSupervisorResponse, len(rows))
+	for _, row := range rows {
+		sessionID, err := session.ParseSessionID(strings.TrimSpace(row.SessionID))
+		if err != nil {
+			continue
+		}
+		out[sessionID] = sessionSupervisorResponse(normalizeSupervisorConfig(row, now))
+	}
+	return out, true
 }
 
 func defaultSupervisorConfig(sessionID string, now time.Time) sqlitestore.SessionSupervisorConfigRow {
