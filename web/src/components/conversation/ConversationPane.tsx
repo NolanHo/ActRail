@@ -32,6 +32,7 @@ import type { MessageEvent, SessionSummary, TodoSnapshotItem } from "../../lib/t
 
 const EMPTY_PENDING_MESSAGES: never[] = [];
 const EMPTY_MESSAGES: MessageEvent[] = [];
+const EMPTY_EXPANDED_TURNS = new Set<string>();
 
 type ConversationActiveSession = Pick<SessionSummary, "session_id" | "runtime_id" | "agent_backend" | "historical" | "transport" | "transport_state" | "reset_required" | "busy" | "cwd">;
 
@@ -641,10 +642,23 @@ function assistantMessageClass(event: MessageEvent): string {
   return typeof event.message_class === "string" ? event.message_class : "";
 }
 
+function assistantMessagePhase(event: MessageEvent): string {
+  const details = asRecord(event.details);
+  return typeof details?.phase === "string" ? details.phase.trim() : "";
+}
+
 function isAssistantProgressMessage(event: MessageEvent): boolean {
-  return event.role === "assistant"
-    && event.streaming !== true
-    && assistantMessageClass(event) === "narration";
+  if (event.role !== "assistant" || event.streaming === true) {
+    return false;
+  }
+  const messageClass = assistantMessageClass(event);
+  if (messageClass === "narration") {
+    return true;
+  }
+  if (messageClass === "final_response") {
+    return false;
+  }
+  return assistantMessagePhase(event) === "commentary";
 }
 
 function isFinalAssistantMessage(event: MessageEvent): boolean {
@@ -659,9 +673,11 @@ function isFinalAssistantMessage(event: MessageEvent): boolean {
     return false;
   }
   if (messageClass === "committed_response") {
-    const details = asRecord(event.details);
-    const phase = typeof details?.phase === "string" ? details.phase : "";
+    const phase = assistantMessagePhase(event);
     return phase === "" || phase === "final_answer";
+  }
+  if (assistantMessagePhase(event) === "commentary") {
+    return false;
   }
   return messageClass === "";
 }
@@ -1522,6 +1538,119 @@ function renderChatCard(event: MessageEvent, kind: "system" | "user" | "assistan
     return <AssistantProgressCard event={event} options={options} />;
   }
   return <ChatMessageCard event={event} kind={kind} options={options} turnMeta={turnMeta} commandOutput={commandOutput} />;
+}
+
+interface CollapsedCommentaryGroup {
+  turnId: string;
+  events: MessageEvent[];
+  indexes: number[];
+  finalIndex: number;
+}
+
+function commentaryTurnID(event: MessageEvent): string {
+  return typeof event.turn_id === "string" ? event.turn_id.trim() : "";
+}
+
+function isErrorLikeCommentary(event: MessageEvent): boolean {
+  return event.is_error === true || isTurnErrorOperation(event);
+}
+
+function isInterruptedTurnEvent(event: MessageEvent): boolean {
+  const kind = eventKind(event).trim();
+  if (kind === "turn_aborted" || kind === "turn.aborted") {
+    return true;
+  }
+  const details = asRecord(event.details);
+  const status = typeof event.status === "string"
+    ? event.status.trim()
+    : typeof details?.status === "string"
+      ? details.status.trim()
+      : "";
+  return status === "interrupted" || status === "aborted";
+}
+
+function collapsedCommentaryGroups(messages: MessageEvent[]): Map<number, CollapsedCommentaryGroup> {
+  const byTurnID = new Map<string, { commentary: Array<{ event: MessageEvent; index: number }>; finalIndex: number; interrupted: boolean }>();
+  for (let index = 0; index < messages.length; index += 1) {
+    const event = messages[index];
+    const turnId = commentaryTurnID(event);
+    if (!turnId) {
+      continue;
+    }
+    let entry = byTurnID.get(turnId);
+    if (!entry) {
+      entry = { commentary: [], finalIndex: -1, interrupted: false };
+      byTurnID.set(turnId, entry);
+    }
+    if (isInterruptedTurnEvent(event)) {
+      entry.interrupted = true;
+    }
+    if (isAssistantProgressMessage(event)) {
+      entry.commentary.push({ event, index });
+      continue;
+    }
+    if (isFinalAssistantMessage(event)) {
+      entry.finalIndex = index;
+    }
+  }
+
+  const result = new Map<number, CollapsedCommentaryGroup>();
+  for (const [turnId, entry] of byTurnID) {
+    if (entry.finalIndex < 0 || entry.commentary.length === 0 || entry.interrupted) {
+      continue;
+    }
+    const collapsed = entry.commentary.filter((item) => item.index < entry.finalIndex);
+    if (collapsed.length === 0) {
+      continue;
+    }
+    if (collapsed.some((item) => isErrorLikeCommentary(item.event))) {
+      continue;
+    }
+    result.set(entry.finalIndex, {
+      turnId,
+      finalIndex: entry.finalIndex,
+      events: collapsed.map((item) => item.event),
+      indexes: collapsed.map((item) => item.index),
+    });
+  }
+  return result;
+}
+
+function CollapsedCommentaryRow({
+  group,
+  expanded,
+  onToggle,
+  options,
+}: {
+  group: CollapsedCommentaryGroup;
+  expanded: boolean;
+  onToggle: () => void;
+  options: MarkdownRenderOptions;
+}) {
+  const count = group.events.length;
+  const firstTs = group.events.map(eventTimestampSeconds).find((value): value is number => value !== null) ?? null;
+  return (
+    <div className="collapsedCommentaryStack">
+      <button
+        type="button"
+        className="collapsedCommentaryToggle"
+        aria-expanded={expanded}
+        data-testid="commentary-collapse-toggle"
+        onClick={onToggle}
+      >
+        <span className={cn("collapsedCommentaryChevron", expanded && "isExpanded")} aria-hidden="true">▸</span>
+        <span>{count} {count === 1 ? "progress update" : "progress updates"}</span>
+        {firstTs !== null ? <span className="collapsedCommentaryTime">{formatMessageTimestamp(firstTs)}</span> : null}
+      </button>
+      {expanded ? (
+        <div className="collapsedCommentaryExpanded">
+          {group.events.map((event, index) => (
+            <AssistantProgressCard key={messageRowKey(event, "assistant_progress", index)} event={event} options={options} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function shouldAllowFuzzyAskUserMatch(messages: MessageEvent[], index: number) {
@@ -3505,9 +3634,11 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const activeSessionRuntimeId = getSessionRuntimeId(activeSession);
   const [selectedView, setSelectedView] = useState<"conversation" | "trace">("conversation");
+  const [expandedCommentaryState, setExpandedCommentaryState] = useState<{ sessionId: string | null; turns: Set<string> }>(() => ({ sessionId: null, turns: new Set() }));
   useEffect(() => {
     setSelectedView("conversation");
   }, [activeSessionId]);
+  const expandedCommentaryTurns = expandedCommentaryState.sessionId === activeSessionId ? expandedCommentaryState.turns : EMPTY_EXPANDED_TURNS;
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeSessionIsHistoricalPi = activeSession?.historical === true && activeSessionIsPi;
   const activeTransportState = typeof activeSession?.transport_state === "string" ? activeSession.transport_state.trim() : "";
@@ -3534,6 +3665,14 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   );
   const assistantTurnMetaByIndex = useMemo(() => buildAssistantTurnMeta(messages), [messages]);
   const commandOutputByIndex = useMemo(() => commandOutputByAssistantIndex(messages), [messages]);
+  const collapsedCommentaryByFinalIndex = useMemo(() => collapsedCommentaryGroups(messages), [messages]);
+  const collapsedCommentaryIndexes = useMemo(() => {
+    const result = new Set<number>();
+    for (const group of collapsedCommentaryByFinalIndex.values()) {
+      for (const index of group.indexes) result.add(index);
+    }
+    return result;
+  }, [collapsedCommentaryByFinalIndex]);
   const lastMessage = messages[messages.length - 1] ?? null;
   const latestMessageScrollKey = useMemo(() => (lastMessage
     ? [
@@ -3557,7 +3696,11 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     messageIndex: number;
     turnMeta?: AssistantTurnMeta;
     commandOutput?: boolean;
+    collapsedCommentary?: CollapsedCommentaryGroup;
   }>>((out, message, index) => {
+    if (collapsedCommentaryIndexes.has(index)) {
+      return out;
+    }
     const kind = eventKind(message);
     const rowKind = isAssistantProgressMessage(message) ? "assistant_progress" : kind;
     const traceKind = compactTraceKind(message);
@@ -3599,9 +3742,10 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       messageIndex: index,
       turnMeta: kind === "assistant" ? assistantTurnMetaByIndex.get(index) : undefined,
       commandOutput: kind === "assistant" ? commandOutputByIndex.has(index) : undefined,
+      collapsedCommentary: kind === "assistant" ? collapsedCommentaryByFinalIndex.get(index) : undefined,
     });
     return out;
-  }, []), [allowLegacyAskUserFallback, assistantTurnMetaByIndex, commandOutputByIndex, messages]);
+  }, []), [allowLegacyAskUserFallback, assistantTurnMetaByIndex, collapsedCommentaryByFinalIndex, collapsedCommentaryIndexes, commandOutputByIndex, messages]);
   const sectionRef = useRef<HTMLElement | null>(null);
   const historyAnchorRef = useRef<{ key: string; top: number } | null>(null);
   const scrollMemoryRef = useRef<Map<string, ConversationScrollMemory>>(new Map());
@@ -3832,6 +3976,19 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     scrollPaneToPosition(pane, pane.scrollHeight);
   };
 
+  const toggleCommentaryTurn = (turnId: string) => {
+    setExpandedCommentaryState((current) => {
+      const base = current.sessionId === activeSessionId ? current.turns : new Set<string>();
+      const next = new Set(base);
+      if (next.has(turnId)) {
+        next.delete(turnId);
+      } else {
+        next.add(turnId);
+      }
+      return { sessionId: activeSessionId, turns: next };
+    });
+  };
+
   return (
     <section ref={sectionRef} className="conversationTimeline relative flex min-h-0 flex-1 flex-col" onCopy={handleConversationCopy}>
       <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2 text-sm">
@@ -3911,19 +4068,33 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                         <span className="h-px flex-1 bg-border/60" />
                       </div>
                     ) : null}
-                    <div data-row-key={row.key} className={cn("messageRow flex", row.kind, row.grouped && "grouped")}>
+                    <div data-row-key={row.key} className={cn("messageRow flex", row.kind, row.grouped && "grouped", row.collapsedCommentary && "hasCollapsedCommentary")}>
                       {row.kind === "machine_trace"
                         ? <CompactMachineTrace events={row.events} options={markdownOptions} isBusy={isBusy && index === rows.length - 1} />
-                        : renderConversationEvent(
-                          row.events[0],
-                          row.kind,
-                          activeSessionId || undefined,
-                          activeSessionRuntimeId,
-                          markdownOptions,
-                          row.allowFuzzyLiveMatch,
-                          row.allowLegacyFallback,
-                          row.turnMeta,
-                          row.commandOutput,
+                        : (
+                          <Fragment>
+                            {renderConversationEvent(
+                              row.events[0],
+                              row.kind,
+                              activeSessionId || undefined,
+                              activeSessionRuntimeId,
+                              markdownOptions,
+                              row.allowFuzzyLiveMatch,
+                              row.allowLegacyFallback,
+                              row.turnMeta,
+                              row.commandOutput,
+                            )}
+                            {row.collapsedCommentary ? (
+                              <CollapsedCommentaryRow
+                                group={row.collapsedCommentary}
+                                expanded={expandedCommentaryTurns.has(row.collapsedCommentary.turnId)}
+                                onToggle={() => {
+                                  if (row.collapsedCommentary) toggleCommentaryTurn(row.collapsedCommentary.turnId);
+                                }}
+                                options={markdownOptions}
+                              />
+                            ) : null}
+                          </Fragment>
                         )}
                     </div>
                   </Fragment>

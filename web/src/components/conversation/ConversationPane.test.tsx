@@ -2445,6 +2445,159 @@ describe("ConversationPane", () => {
     expect(finalAssistantRows[0]?.textContent).toContain("1 tool");
   });
 
+  it("collapses completed turn commentary until the user expands it", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-commentary-collapse", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-commentary-collapse": [
+            { role: "user", text: "Check this", ts: 1761177600, turn_id: "turn-1" },
+            { role: "assistant", text: "Reading files", ts: 1761177601, turn_id: "turn-1", details: { phase: "commentary" } },
+            { role: "assistant", text: "Running tests", ts: 1761177602, turn_id: "turn-1", details: { phase: "commentary" } },
+            { role: "assistant", text: "All done.", ts: 1761177603, turn_id: "turn-1", details: { phase: "final_answer" } },
+          ],
+        },
+        offsetsBySessionId: { "sess-commentary-collapse": 4 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.textContent).toContain("Check this");
+    expect(root.textContent).toContain("All done.");
+    expect(root.textContent).toContain("2 progress updates");
+    expect(root.textContent).not.toContain("Reading files");
+    expect(root.textContent).not.toContain("Running tests");
+
+    const toggle = root.querySelector<HTMLButtonElement>("[data-testid='commentary-collapse-toggle']");
+    expect(toggle).not.toBeNull();
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const expandedToggle = root.querySelector<HTMLButtonElement>("[data-testid='commentary-collapse-toggle']");
+    expect(expandedToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(root.textContent).toContain("Reading files");
+    expect(root.textContent).toContain("Running tests");
+    expect(root.querySelectorAll(".collapsedCommentaryExpanded .assistantProgressSurface")).toHaveLength(2);
+  });
+
+  it("keeps unfinished commentary visible when there is no final answer", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-commentary-running", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-commentary-running": [
+            { role: "user", text: "Keep checking", ts: 1761177600, turn_id: "turn-running" },
+            { role: "assistant", text: "Still checking", ts: 1761177601, turn_id: "turn-running", details: { phase: "commentary" } },
+          ],
+        },
+        offsetsBySessionId: { "sess-commentary-running": 2 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.querySelector("[data-testid='commentary-collapse-toggle']")).toBeNull();
+    expect(root.textContent).toContain("Still checking");
+    expect(root.querySelector(".messageRow.assistant_progress")).not.toBeNull();
+  });
+
+  it("keeps error-like commentary visible even when the turn has a final answer", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-commentary-error", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-commentary-error": [
+            { role: "user", text: "Check errors", ts: 1761177600, turn_id: "turn-error" },
+            { role: "assistant", text: "Runtime warning", ts: 1761177601, turn_id: "turn-error", is_error: true, details: { phase: "commentary" } },
+            { role: "assistant", text: "Recovered.", ts: 1761177602, turn_id: "turn-error", details: { phase: "final_answer" } },
+          ],
+        },
+        offsetsBySessionId: { "sess-commentary-error": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.querySelector("[data-testid='commentary-collapse-toggle']")).toBeNull();
+    expect(root.textContent).toContain("Runtime warning");
+    expect(root.textContent).toContain("Recovered.");
+  });
+
+  it("keeps interrupted turn commentary visible even when a final answer is present", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-commentary-interrupted", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-commentary-interrupted": [
+            { role: "user", text: "Stop after this", ts: 1761177600, turn_id: "turn-interrupted" },
+            { role: "assistant", text: "Checking before interrupt", ts: 1761177601, turn_id: "turn-interrupted", details: { phase: "commentary" } },
+            { type: "turn_aborted", text: "Interrupted", ts: 1761177602, turn_id: "turn-interrupted" },
+            { role: "assistant", text: "Stopped.", ts: 1761177603, turn_id: "turn-interrupted", details: { phase: "final_answer" } },
+          ],
+        },
+        offsetsBySessionId: { "sess-commentary-interrupted": 4 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.querySelector("[data-testid='commentary-collapse-toggle']")).toBeNull();
+    expect(root.textContent).toContain("Checking before interrupt");
+    expect(root.textContent).toContain("Stopped.");
+  });
+
   it("marks the latest unfinished tool token as running while the session is busy", () => {
     const sessionsStore = createStaticStore(
       { items: [{ session_id: "sess-trace-running", busy: true }], activeSessionId: "sess-trace-running", loading: false, newSessionDefaults: null },
