@@ -2430,19 +2430,25 @@ describe("ConversationPane", () => {
       root,
     );
 
-    const progressRow = root.querySelector(".messageRow.assistant_progress") as HTMLElement | null;
-    expect(progressRow).not.toBeNull();
-    expect(progressRow?.textContent).toContain("Assistant progress");
-    expect(progressRow?.textContent).toContain("Checking the workspace");
-    expect(progressRow?.querySelector(".assistantProgressSurface")).not.toBeNull();
-    expect(progressRow?.querySelector(".messageBubble.assistant")).toBeNull();
-
     const finalAssistantRows = Array.from(root.querySelectorAll<HTMLElement>(".messageRow.assistant"))
       .filter((row) => row.textContent?.includes("On branch main"));
     expect(finalAssistantRows).toHaveLength(1);
     expect(finalAssistantRows[0]?.querySelector(".messageBubble.assistant")).not.toBeNull();
     expect(finalAssistantRows[0]?.textContent).toContain("Output");
     expect(finalAssistantRows[0]?.textContent).toContain("1 tool");
+    expect(finalAssistantRows[0]?.textContent).toContain("1 progress update");
+    expect(root.textContent).not.toContain("Checking the workspace");
+
+    const toggle = root.querySelector<HTMLButtonElement>("[data-testid='commentary-collapse-toggle']");
+    expect(toggle).not.toBeNull();
+    act(() => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    const expandedProgress = root.querySelector(".collapsedCommentaryExpanded .assistantProgressSurface") as HTMLElement | null;
+    expect(expandedProgress).not.toBeNull();
+    expect(expandedProgress?.textContent).toContain("Assistant progress");
+    expect(expandedProgress?.textContent).toContain("Checking the workspace");
+    expect(expandedProgress?.querySelector(".messageBubble.assistant")).toBeNull();
   });
 
   it("collapses completed turn commentary until the user expands it", () => {
@@ -2527,6 +2533,43 @@ describe("ConversationPane", () => {
     expect(root.querySelector("[data-testid='commentary-collapse-toggle']")).toBeNull();
     expect(root.textContent).toContain("Still checking");
     expect(root.querySelector(".messageRow.assistant_progress")).not.toBeNull();
+  });
+
+  it("collapses legacy completed commentary without turn ids by adjacent user and final answer", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-commentary-legacy", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-commentary-legacy": [
+            { role: "user", text: "Summarize state", ts: 1761177600 },
+            { role: "assistant", text: "Reading current state", ts: 1761177601, details: { phase: "commentary" } },
+            { role: "assistant", text: "Checking tests", ts: 1761177602, details: { phase: "commentary" } },
+            { role: "assistant", text: "The state is clean.", ts: 1761177603, details: { phase: "final_answer" } },
+          ],
+        },
+        offsetsBySessionId: { "sess-commentary-legacy": 4 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.textContent).toContain("Summarize state");
+    expect(root.textContent).toContain("The state is clean.");
+    expect(root.textContent).toContain("2 progress updates");
+    expect(root.textContent).not.toContain("Reading current state");
+    expect(root.textContent).not.toContain("Checking tests");
   });
 
   it("keeps error-like commentary visible even when the turn has a final answer", () => {

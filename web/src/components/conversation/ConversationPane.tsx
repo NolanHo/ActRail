@@ -1595,6 +1595,7 @@ function collapsedCommentaryGroups(messages: MessageEvent[]): Map<number, Collap
   }
 
   const result = new Map<number, CollapsedCommentaryGroup>();
+  const groupedIndexes = new Set<number>();
   for (const [turnId, entry] of byTurnID) {
     if (entry.finalIndex < 0 || entry.commentary.length === 0 || entry.interrupted) {
       continue;
@@ -1606,12 +1607,50 @@ function collapsedCommentaryGroups(messages: MessageEvent[]): Map<number, Collap
     if (collapsed.some((item) => isErrorLikeCommentary(item.event))) {
       continue;
     }
+    groupedIndexes.add(entry.finalIndex);
+    collapsed.forEach((item) => groupedIndexes.add(item.index));
     result.set(entry.finalIndex, {
       turnId,
       finalIndex: entry.finalIndex,
       events: collapsed.map((item) => item.event),
       indexes: collapsed.map((item) => item.index),
     });
+  }
+
+  let legacyCommentary: Array<{ event: MessageEvent; index: number }> = [];
+  let legacyBlocked = false;
+  let legacyHasUser = false;
+  for (let index = 0; index < messages.length; index += 1) {
+    const event = messages[index];
+    if (event.role === "user") {
+      legacyCommentary = [];
+      legacyBlocked = false;
+      legacyHasUser = true;
+      continue;
+    }
+    if (!legacyHasUser || commentaryTurnID(event) || groupedIndexes.has(index)) {
+      continue;
+    }
+    if (isInterruptedTurnEvent(event) || isErrorLikeCommentary(event)) {
+      legacyBlocked = true;
+    }
+    if (isAssistantProgressMessage(event)) {
+      legacyCommentary.push({ event, index });
+      continue;
+    }
+    if (isFinalAssistantMessage(event)) {
+      const collapsed = legacyCommentary.filter((item) => item.index < index);
+      if (!legacyBlocked && collapsed.length > 0) {
+        result.set(index, {
+          turnId: `legacy:${index}`,
+          finalIndex: index,
+          events: collapsed.map((item) => item.event),
+          indexes: collapsed.map((item) => item.index),
+        });
+      }
+      legacyCommentary = [];
+      legacyBlocked = false;
+    }
   }
   return result;
 }
