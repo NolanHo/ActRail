@@ -157,6 +157,19 @@ function normalizeCreateSessionPayload(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeForkSessionPayload(payload: Record<string, unknown>) {
+  return {
+    cwd: typeof payload.cwd === "string" && payload.cwd.trim() ? payload.cwd.trim() : undefined,
+    provider: legacyProviderToCanonical(payload),
+    model: typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : undefined,
+    title: typeof payload.title === "string" && payload.title.trim()
+      ? payload.title.trim()
+      : typeof payload.name === "string" && payload.name.trim()
+        ? payload.name.trim()
+        : undefined,
+  };
+}
+
 export const api = {
   me(signal?: AbortSignal) {
     return getJson<{ ok?: boolean }>("/api/me", signal);
@@ -390,6 +403,21 @@ export const api = {
   },
   async createSession(payload: Record<string, unknown>) {
     const response = await postJson<CreateSessionResponse>(`/api/sessions`, normalizeCreateSessionPayload(payload));
+    if (response.session && typeof response.session === "object") {
+      return {
+        ...response,
+        session_id: response.session_id ?? response.session.session_id,
+        runtime_id: response.runtime_id ?? response.session.runtime_id,
+        backend: response.backend ?? response.session.agent_backend,
+        pending_startup: response.pending_startup ?? response.session.pending_startup,
+        focused: response.focused ?? response.session.focused,
+        alias: response.alias ?? response.session.alias,
+      };
+    }
+    return response;
+  },
+  async forkSession(sessionId: string, payload: Record<string, unknown> = {}) {
+    const response = await postJson<CreateSessionResponse>(`/api/sessions/${String(sessionId || "").trim()}/fork`, normalizeForkSessionPayload(payload));
     if (response.session && typeof response.session === "object") {
       return {
         ...response,

@@ -21,6 +21,7 @@ type serviceStub struct {
 	base              *app.Stub
 	listSessionsFunc  func(context.Context, app.ListSessionsRequest) (app.ListSessionsResponse, error)
 	createSessionFunc func(context.Context, app.CreateSessionRequest) (app.CreateSessionResponse, error)
+	forkSessionFunc   func(context.Context, app.ForkSessionRequest) (app.CreateSessionResponse, error)
 	teamsFunc         func(context.Context, app.ListTeamsRequest) (app.ListTeamsResponse, error)
 	resumeFunc        func(context.Context, app.SessionResumeCandidatesRequest) (app.SessionResumeCandidatesResponse, error)
 	codexFilesFunc    func(context.Context, app.CodexSessionFilesRequest) (app.CodexSessionFilesResponse, error)
@@ -66,6 +67,13 @@ func (s serviceStub) CreateSession(ctx context.Context, req app.CreateSessionReq
 		return s.createSessionFunc(ctx, req)
 	}
 	return s.base.CreateSession(ctx, req)
+}
+
+func (s serviceStub) ForkSession(ctx context.Context, req app.ForkSessionRequest) (app.CreateSessionResponse, error) {
+	if s.forkSessionFunc != nil {
+		return s.forkSessionFunc(ctx, req)
+	}
+	return s.base.ForkSession(ctx, req)
 }
 
 func (s serviceStub) ListTeams(ctx context.Context, req app.ListTeamsRequest) (app.ListTeamsResponse, error) {
@@ -367,6 +375,7 @@ func (s serviceStub) CancelSelfReminder(ctx context.Context, req app.CancelSelfR
 type fixtureService struct {
 	listReq           app.ListSessionsRequest
 	createReq         app.CreateSessionRequest
+	forkReq           app.ForkSessionRequest
 	teamsReq          app.ListTeamsRequest
 	resumeReq         app.SessionResumeCandidatesRequest
 	codexFilesReq     app.CodexSessionFilesRequest
@@ -469,6 +478,25 @@ func (s *fixtureService) CreateSession(_ context.Context, req app.CreateSessionR
 		WSAttach: &app.SessionAttachRequest{
 			SessionID:            "s_123",
 			SuggestSubscriptions: []string{"session:s_123"},
+		},
+	}, nil
+}
+
+func (s *fixtureService) ForkSession(_ context.Context, req app.ForkSessionRequest) (app.CreateSessionResponse, error) {
+	s.forkReq = req
+	return app.CreateSessionResponse{
+		OK: true,
+		Session: &app.CreatedSession{
+			SessionID:    "s_fork",
+			RuntimeID:    "r_fork",
+			ThreadID:     "t_fork",
+			AgentBackend: "codex",
+			CWD:          req.CWD,
+			Busy:         false,
+		},
+		WSAttach: &app.SessionAttachRequest{
+			SessionID:            "s_fork",
+			SuggestSubscriptions: []string{"session:s_fork"},
 		},
 	}, nil
 }
@@ -1249,6 +1277,26 @@ func TestSnapshotRoutesReturnContractShapes(t *testing.T) {
 		}
 	})
 
+	t.Run("fork session", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"cwd":"/root/code/ActRail","model":"gpt-5.4","provider":"chatgpt"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/s_123/fork", body)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+		}
+
+		var payload app.CreateSessionResponse
+		decodeJSON(t, res, &payload)
+		if !payload.OK || payload.Session == nil || payload.Session.SessionID != "s_fork" || payload.WSAttach == nil {
+			t.Fatalf("unexpected fork payload: %+v", payload)
+		}
+		if svc.forkReq.SessionID != "s_123" || svc.forkReq.CWD != "/root/code/ActRail" || optionalStringForTest(svc.forkReq.Model) != "gpt-5.4" || optionalStringForTest(svc.forkReq.Provider) != "chatgpt" {
+			t.Fatalf("unexpected fork request: %+v", svc.forkReq)
+		}
+	})
+
 	t.Run("session details", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/sessions/s_123/details", nil)
 		res := httptest.NewRecorder()
@@ -1908,6 +1956,13 @@ func decodeJSON(t *testing.T, res *httptest.ResponseRecorder, dst any) {
 	if err := json.NewDecoder(res.Body).Decode(dst); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+}
+
+func optionalStringForTest(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func assertErrorEnvelope(t *testing.T, res *httptest.ResponseRecorder, status int, code, field string) {

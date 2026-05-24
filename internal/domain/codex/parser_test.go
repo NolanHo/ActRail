@@ -34,6 +34,7 @@ func TestDecodeAppServerLineThreadAttachResultMarksInitialized(t *testing.T) {
 	for _, raw := range []string{
 		`{"id":"thread-start-2","result":{"thread":{"id":"thread-codex-start","status":{"type":"idle"},"turns":[]}}}`,
 		`{"id":"thread-resume-2","result":{"thread":{"id":"thread-codex-resume","status":{"type":"idle"},"turns":[]}}}`,
+		`{"id":"thread-fork-2","result":{"thread":{"id":"thread-codex-fork","status":{"type":"idle"},"turns":[]}}}`,
 	} {
 		projection, ok := DecodeAppServerLine([]byte(raw))
 		if !ok {

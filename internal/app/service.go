@@ -21,6 +21,7 @@ type Service interface {
 	ListSessions(context.Context, ListSessionsRequest) (ListSessionsResponse, error)
 	MarkSessionRead(context.Context, MarkSessionReadRequest) (MarkSessionReadResponse, error)
 	CreateSession(context.Context, CreateSessionRequest) (CreateSessionResponse, error)
+	ForkSession(context.Context, ForkSessionRequest) (CreateSessionResponse, error)
 	ListTeams(context.Context, ListTeamsRequest) (ListTeamsResponse, error)
 	SpawnTeam(context.Context, SpawnTeamRequest) (TeamCommandResponse, error)
 	PromptTeam(context.Context, PromptTeamRequest) (TeamCommandResponse, error)
@@ -393,6 +394,15 @@ type CreateSessionRequest struct {
 	Hidden          bool    `json:"-"`
 }
 
+type ForkSessionRequest struct {
+	SessionID       string  `json:"session_id"`
+	CWD             string  `json:"cwd,omitempty"`
+	Provider        *string `json:"provider,omitempty"`
+	Model           *string `json:"model,omitempty"`
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+	Title           *string `json:"title,omitempty"`
+}
+
 type CreateSessionResponse struct {
 	OK       bool                  `json:"ok"`
 	Session  *CreatedSession       `json:"session,omitempty"`
@@ -728,6 +738,158 @@ func (s *Stub) CreateSession(ctx context.Context, req CreateSessionRequest) (Cre
 	}, nil
 }
 
+func (s *Stub) ForkSession(ctx context.Context, req ForkSessionRequest) (CreateSessionResponse, error) {
+	sourceID, err := session.ParseSessionID(strings.TrimSpace(req.SessionID))
+	if err != nil {
+		return CreateSessionResponse{}, Invalid("session_id", "invalid session id")
+	}
+	if sourceID.IsHistorical() {
+		return CreateSessionResponse{}, Unsupported("forking historical sessions is not implemented")
+	}
+	source, ok := s.registry.Lookup(sourceID)
+	if !ok {
+		return CreateSessionResponse{}, NotFound(fmt.Sprintf("session %q not found", sourceID))
+	}
+	if source.identity.Backend() != session.BackendCodex {
+		return CreateSessionResponse{}, Unsupported("fork is only implemented for codex sessions")
+	}
+	parentThreadID := strings.TrimSpace(source.importedBackendSessionID)
+	if parentThreadID == "" && source.runtime.codex != nil {
+		_, threadID, _ := source.runtime.codex.snapshot()
+		parentThreadID = strings.TrimSpace(threadID)
+	}
+	if parentThreadID == "" {
+		return CreateSessionResponse{}, NotFound(fmt.Sprintf("codex session %q has no thread id to fork", sourceID))
+	}
+	cwd := strings.TrimSpace(req.CWD)
+	if cwd == "" {
+		cwd = strings.TrimSpace(source.cwd)
+	}
+	if cwd == "" {
+		return CreateSessionResponse{}, Invalid("cwd", "cwd required")
+	}
+	if !source.hidden {
+		if err := s.recordRecentCWD(cwd); err != nil {
+			return CreateSessionResponse{}, err
+		}
+	}
+	identity, err := s.registry.ReserveIdentity(session.BackendCodex)
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	provider := optionalString(req.Provider)
+	if provider == "" {
+		provider = strings.TrimSpace(source.provider)
+	}
+	model := optionalString(req.Model)
+	if model == "" {
+		model = strings.TrimSpace(source.model)
+	}
+	reasoningEffort := ""
+	title := optionalString(req.Title)
+	if title == "" {
+		title = strings.TrimSpace(source.title)
+	}
+	runtimeReq := runtimeLaunchRequest{
+		SessionID:         identity.SessionID(),
+		Backend:           session.BackendCodex,
+		CWD:               cwd,
+		Provider:          provider,
+		Model:             model,
+		ReasoningEffort:   reasoningEffort,
+		CodexForkThreadID: parentThreadID,
+		PIAgentGRPC:       false,
+	}
+	if !s.asyncSQLiteActions {
+		return s.createForkSessionWithRuntimeLaunch(ctx, identity, runtimeReq, title)
+	}
+	runtime := pendingRuntimeForLaunch(runtimeReq)
+	transport := pendingTransportForLaunch(runtimeReq)
+	record, err := s.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              cwd,
+		Provider:         provider,
+		Model:            model,
+		ReasoningEffort:  reasoningEffort,
+		Title:            title,
+		SourceConfidence: sourceConfidenceProvisional,
+		Runtime:          runtime,
+		Transport:        transport,
+	})
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	expectedRuntimeID, _ := record.identity.RuntimeID()
+	s.startSessionRuntimeLaunch(record.identity.SessionID(), expectedRuntimeID, runtimeReq)
+	stream, err := session.MainStream(record.identity)
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	return CreateSessionResponse{
+		OK:      true,
+		Session: s.createdSessionFromRecord(record),
+		WSAttach: &SessionAttachRequest{
+			SessionID:            record.identity.SessionID().String(),
+			SuggestSubscriptions: []string{stream.String()},
+		},
+	}, nil
+}
+
+func (s *Stub) createForkSessionWithRuntimeLaunch(ctx context.Context, identity session.Identity, req runtimeLaunchRequest, title string) (CreateSessionResponse, error) {
+	runtime, err := s.launcher.Launch(ctx, req)
+	if err != nil {
+		_ = runtime.CleanupHelperArtifacts()
+		return CreateSessionResponse{}, err
+	}
+	bindingSaved := false
+	rollbackRuntime := func() {
+		runtime.ReleaseAttachedHelperRollback()
+		if bindingSaved {
+			_ = s.helperBindings.Delete(identity.SessionID())
+		}
+	}
+	if err := s.bindRuntimeCurrentGeneration(identity.SessionID(), runtime); err != nil {
+		rollbackRuntime()
+		return CreateSessionResponse{}, err
+	}
+	bindingSaved = true
+	record, err := s.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              req.CWD,
+		Provider:         req.Provider,
+		Model:            req.Model,
+		ReasoningEffort:  req.ReasoningEffort,
+		Title:            title,
+		SourceConfidence: sourceConfidenceProvisional,
+		Runtime:          runtime,
+		Transport:        transportForRuntimeStartup(runtime),
+	})
+	if err != nil {
+		rollbackRuntime()
+		return CreateSessionResponse{}, err
+	}
+	s.startRuntimeIngest(record.identity.SessionID(), session.BackendCodex, runtime)
+	s.startCodexThreadBootstrap(record.identity.SessionID(), runtime)
+	responseRecord := record
+	if updated, ok := s.registry.Lookup(record.identity.SessionID()); ok {
+		responseRecord = updated
+	}
+	stream, err := session.MainStream(record.identity)
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	return CreateSessionResponse{
+		OK:      true,
+		Session: s.createdSessionFromRecord(responseRecord),
+		WSAttach: &SessionAttachRequest{
+			SessionID:            record.identity.SessionID().String(),
+			SuggestSubscriptions: []string{stream.String()},
+		},
+	}, nil
+}
+
 func (s *Stub) createSessionWithRuntimeLaunch(ctx context.Context, req CreateSessionRequest, identity session.Identity, backend session.Backend, cwd, sourcePath, resumeBackendSessionID string) (CreateSessionResponse, error) {
 	runtime, err := s.launcher.Launch(ctx, runtimeLaunchRequest{
 		SessionID:       identity.SessionID(),
@@ -797,7 +959,7 @@ func (s *Stub) createSessionWithRuntimeLaunch(ctx context.Context, req CreateSes
 }
 
 func pendingRuntimeForLaunch(req runtimeLaunchRequest) sessionRuntime {
-	codex := newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID)
+	codex := newCodexRuntimeStateWithAttachThread(req.Backend, req.CodexThreadID, req.CodexForkThreadID)
 	if codex != nil {
 		codex.transition(codexRuntimePhaseInitializing, "codex_initializing")
 	}

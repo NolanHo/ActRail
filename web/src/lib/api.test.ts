@@ -290,6 +290,50 @@ describe("api", () => {
     }));
   });
 
+  it("posts native fork to the session fork route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        ok: true,
+        session: {
+          session_id: "sess-fork",
+          runtime_id: "rt-fork",
+          agent_backend: "codex",
+          alias: "Inbox cleanup",
+          cwd: "/tmp/project",
+          pending_startup: true,
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.forkSession("sess-1", {
+      cwd: "/tmp/project",
+      provider: "openrouter",
+      model: "gpt-5.4",
+      reasoning_effort: "high",
+      title: "Inbox cleanup",
+    })).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      session_id: "sess-fork",
+      runtime_id: "rt-fork",
+      backend: "codex",
+      alias: "Inbox cleanup",
+      pending_startup: true,
+    }));
+
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/sess-1/fork", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        cwd: "/tmp/project",
+        provider: "openrouter",
+        model: "gpt-5.4",
+        title: "Inbox cleanup",
+      }),
+    }));
+  });
+
   it("posts runtime model settings to the session runtime route", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
