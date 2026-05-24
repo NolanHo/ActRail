@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -238,7 +239,7 @@ func (s *Stub) reconcileLiveCodexAttachLostTransport(record sessionRecord) (sess
 	if transport.State != SessionTransportStateBroken || !transport.ResetRequired || transport.Reason != iod.GenerationBreakAttachLost.String() {
 		return record, false
 	}
-	generationID := mustTransportGenerationID(transport.GenerationID)
+	generationID := s.recoverableHelperGenerationID(record, transport)
 	if generationID == "" {
 		return record, false
 	}
@@ -263,6 +264,23 @@ func (s *Stub) reconcileLiveCodexAttachLostTransport(record sessionRecord) (sess
 		go s.readRuntimeHelper(updated.identity.SessionID(), updated.identity.Backend(), updated.runtime.helper)
 	}
 	return updated, true
+}
+
+func (s *Stub) recoverableHelperGenerationID(record sessionRecord, transport SessionTransportSnapshot) iod.GenerationID {
+	if generationID := mustTransportGenerationID(transport.GenerationID); generationID != "" {
+		return generationID
+	}
+	if binding, err := record.runtime.CurrentHelperBinding(record.identity.SessionID()); err == nil && binding != nil && binding.GenerationID != "" {
+		return binding.GenerationID
+	}
+	if s != nil && strings.TrimSpace(s.helperBindings.root) != "" {
+		if bindings, err := s.helperBindings.Load(); err == nil {
+			if binding, ok := bindings[record.identity.SessionID()]; ok && binding.GenerationID != "" {
+				return binding.GenerationID
+			}
+		}
+	}
+	return ""
 }
 
 func (s *Stub) helperGenerationAppearsAlive(sessionID session.SessionID, generationID iod.GenerationID) bool {
