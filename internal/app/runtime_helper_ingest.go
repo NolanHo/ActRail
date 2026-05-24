@@ -269,11 +269,10 @@ func (s *Stub) helperGenerationAppearsAlive(sessionID session.SessionID, generat
 	if s == nil || generationID == "" {
 		return false
 	}
-	attachment, ok := s.helperAttachmentForRedial(sessionID, generationID)
+	manifest, ok := s.helperManifestForRedial(sessionID, generationID)
 	if !ok {
 		return false
 	}
-	manifest := attachment.Manifest
 	if manifest.GenerationID != generationID || manifest.SessionID != sessionID {
 		return false
 	}
@@ -284,6 +283,21 @@ func (s *Stub) helperGenerationAppearsAlive(sessionID session.SessionID, generat
 		return false
 	}
 	return true
+}
+
+func (s *Stub) helperManifestForRedial(sessionID session.SessionID, generationID iod.GenerationID) (iod.GenerationManifest, bool) {
+	if s == nil || generationID == "" {
+		return iod.GenerationManifest{}, false
+	}
+	if attachment, ok := s.helperAttachmentForRedial(sessionID, generationID); ok {
+		return attachment.Manifest, true
+	}
+	manifestPath := iodclient.GenerationManifestPath(iodclient.RuntimeRoot(s.cfg.Storage.DataDir), sessionID, generationID)
+	manifest, err := iod.ReadGenerationManifest(manifestPath)
+	if err != nil || manifest.SessionID != sessionID || manifest.GenerationID != generationID {
+		return iod.GenerationManifest{}, false
+	}
+	return manifest, true
 }
 
 func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backend session.Backend, generationID iod.GenerationID, transport SessionTransportSnapshot) helperReadErrorResult {
