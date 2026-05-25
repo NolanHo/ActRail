@@ -29,6 +29,8 @@ const (
 	defaultReminderDelay     = 4 * time.Second
 	defaultReminderTimeout   = 5 * time.Second
 	defaultLarkCLIBin        = "/root/.local/bin/lark-cli"
+	defaultHermesHome        = "/root/.hermes"
+	defaultHermesFeishuURL   = "https://open.feishu.cn"
 )
 
 type Config struct {
@@ -82,6 +84,9 @@ type Features struct {
 
 type Notifications struct {
 	FeishuWebhookURL string
+	HermesHome       string
+	HermesFeishuURL  string
+	HermesFeishuChat string
 	LarkCLIBin       string
 	LarkCLIAs        string
 	LarkCLIChatID    string
@@ -132,6 +137,9 @@ func Load() Config {
 		},
 		Notifications: Notifications{
 			FeishuWebhookURL: envString("ACTRAIL_FEISHU_WEBHOOK_URL", ""),
+			HermesHome:       envString("ACTRAIL_HERMES_HOME", defaultHermesHome),
+			HermesFeishuURL:  envString("ACTRAIL_HERMES_FEISHU_BASE_URL", defaultHermesFeishuURL),
+			HermesFeishuChat: envString("ACTRAIL_HERMES_FEISHU_CHAT_ID", ""),
 			LarkCLIBin:       envString("ACTRAIL_LARK_CLI_BIN", defaultLarkCLIBin),
 			LarkCLIAs:        envString("ACTRAIL_LARK_CLI_AS", "bot"),
 			LarkCLIChatID:    envString("ACTRAIL_LARK_CHAT_ID", ""),
