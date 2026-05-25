@@ -592,6 +592,56 @@ func TestCurrentHelperReadErrorKeepsLiveHelperRecoverableWhenRedialTemporarilyFa
 	}
 }
 
+func TestCurrentHelperReadErrorKeepsRuntimeHelperPIDRecoverableWhenManifestMissing(t *testing.T) {
+	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+		return nil, errors.New("temporary dial failure")
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{IODDialer: dialer})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_current_helper_pid_transient")
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime = sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			helper: &runtimeIODHelper{
+				streamClient: iodclient.NewClient(clientConn),
+				sessionID:    sessionID,
+				generationID: generationID,
+				helperPID:    os.Getpid(),
+			},
+			codex: newCodexRuntimeState(session.BackendCodex),
+		}
+		record.runtime.codex.markInitialized()
+		record.runtime.codex.setThreadID("thread-helper-pid-transient")
+		record.transport = transportSnapshotAttached(generationID)
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+
+	result := svc.handleHelperReadError(sessionID, session.BackendCodex, generationID, errors.New("transient stream reset"))
+	if !result.retry || result.reattached || result.client != nil {
+		t.Fatalf("handleHelperReadError() = %+v, want retry without client", result)
+	}
+
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateSilent || state.Transport.ResetRequired || state.Transport.Reason != "attach_lost_reconnecting" {
+		t.Fatalf("SessionState().Transport = %+v, want silent reconnecting without reset", state.Transport)
+	}
+	if state.RuntimeState == string(codexRuntimePhaseFailed) || strings.TrimSpace(state.RuntimeStateReason) != "" {
+		t.Fatalf("SessionState() runtime = (%q, %q), want non-failed reconnecting", state.RuntimeState, state.RuntimeStateReason)
+	}
+}
+
 func TestBrokenAttachLostCanRedialLiveCodexHelper(t *testing.T) {
 	var hello iod.HelloPacket
 	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {

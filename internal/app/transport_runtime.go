@@ -265,6 +265,10 @@ func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend sessio
 			} else if result.orphanCandidate != nil {
 				s.cleanupOrphanChildAsync(*result.orphanCandidate)
 			}
+			if s.helperGenerationAppearsAlive(sessionID, generationID) {
+				_ = s.markHelperTransportReconnecting(sessionID, generationID)
+				return helperReadErrorResult{retry: true}
+			}
 		}
 		return helperReadErrorResult{}
 	}
@@ -280,10 +284,18 @@ func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend sessio
 	if result := s.tryRedialHelperAfterReadError(sessionID, backend, generationID, state.Transport); result.reattached || result.retry {
 		return result
 	} else if result.orphanCandidate != nil {
+		if s.helperGenerationAppearsAlive(sessionID, generationID) {
+			_ = s.markHelperTransportReconnecting(sessionID, generationID)
+			return helperReadErrorResult{retry: true}
+		}
 		if err := s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String()); err == nil {
 			s.cleanupOrphanChildAsync(*result.orphanCandidate)
 		}
 		return helperReadErrorResult{}
+	}
+	if s.helperGenerationAppearsAlive(sessionID, generationID) {
+		_ = s.markHelperTransportReconnecting(sessionID, generationID)
+		return helperReadErrorResult{retry: true}
 	}
 	_ = s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String())
 	return helperReadErrorResult{}

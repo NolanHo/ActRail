@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"actrail/internal/adapters/iod"
@@ -287,6 +286,27 @@ func (s *Stub) helperGenerationAppearsAlive(sessionID session.SessionID, generat
 	if s == nil || generationID == "" {
 		return false
 	}
+	if s.helpers != nil {
+		if attachment, ok := s.helpers.Attachment(sessionID); ok && attachment.Binding.GenerationID == generationID {
+			if attachment.Hello.HelperPID > 0 && processPIDAlive(attachment.Hello.HelperPID) {
+				return true
+			}
+			if attachment.Manifest.HelperPID > 0 && processPIDAlive(attachment.Manifest.HelperPID) {
+				return true
+			}
+		}
+	}
+	if record, ok := s.registry.Lookup(sessionID); ok {
+		runtime := s.runtimeForRecord(record)
+		if runtime.helper != nil && runtime.helper.generationID == generationID {
+			if runtime.helper.helperPID > 0 && processPIDAlive(runtime.helper.helperPID) {
+				return true
+			}
+			if runtime.helper.manifest.HelperPID > 0 && processPIDAlive(runtime.helper.manifest.HelperPID) {
+				return true
+			}
+		}
+	}
 	manifest, ok := s.helperManifestForRedial(sessionID, generationID)
 	if !ok {
 		return false
@@ -294,13 +314,7 @@ func (s *Stub) helperGenerationAppearsAlive(sessionID session.SessionID, generat
 	if manifest.GenerationID != generationID || manifest.SessionID != sessionID {
 		return false
 	}
-	if manifest.HelperPID <= 0 {
-		return false
-	}
-	if err := syscall.Kill(manifest.HelperPID, 0); err != nil {
-		return false
-	}
-	return true
+	return manifest.HelperPID > 0 && processPIDAlive(manifest.HelperPID)
 }
 
 func (s *Stub) helperManifestForRedial(sessionID session.SessionID, generationID iod.GenerationID) (iod.GenerationManifest, bool) {

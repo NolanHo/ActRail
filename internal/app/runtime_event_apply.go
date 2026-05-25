@@ -349,6 +349,7 @@ func (s *Stub) emitAssistantFinalNotification(sessionID session.SessionID, msg S
 		messageID = fmt.Sprintf("%s:%d", sessionID, msg.Seq)
 	}
 	s.emitNotification(NotificationEvent{SessionID: sessionID.String(), Title: title, Body: msg.Text, MessageID: messageID, Kind: "assistant_final"})
+	s.scheduleUnreadAssistantReminder(sessionID, msg)
 }
 
 func (s *Stub) commitRuntimeMessage(sessionID session.SessionID, turnID, role, text string) (SessionMessage, bool, error) {

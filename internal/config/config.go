@@ -26,17 +26,20 @@ const (
 	defaultRuntimeDir        = "runtime"
 	defaultIODRuntimeDir     = "iod"
 	defaultIODBindingsDir    = "iod-bindings"
+	defaultFeishuDelay       = 4 * time.Second
+	defaultFeishuTimeout     = 5 * time.Second
 )
 
 type Config struct {
-	Server       Server
-	Protocol     Protocol
-	Auth         Auth
-	Features     Features
-	Launch       Launch
-	Storage      Storage
-	DisabledUI   []string
-	AllowedHosts []string
+	Server        Server
+	Protocol      Protocol
+	Auth          Auth
+	Features      Features
+	Notifications Notifications
+	Launch        Launch
+	Storage       Storage
+	DisabledUI    []string
+	AllowedHosts  []string
 }
 
 type Server struct {
@@ -74,6 +77,12 @@ type Features struct {
 	PIUI           bool
 	WorkspaceRead  bool
 	WorkspaceWrite bool
+}
+
+type Notifications struct {
+	FeishuWebhookURL string
+	FeishuDelay      time.Duration
+	FeishuTimeout    time.Duration
 }
 
 type Launch struct {
@@ -115,6 +124,11 @@ func Load() Config {
 			PIUI:           true,
 			WorkspaceRead:  true,
 			WorkspaceWrite: false,
+		},
+		Notifications: Notifications{
+			FeishuWebhookURL: envString("ACTRAIL_FEISHU_WEBHOOK_URL", ""),
+			FeishuDelay:      envDuration("ACTRAIL_FEISHU_REMINDER_DELAY", defaultFeishuDelay),
+			FeishuTimeout:    envDuration("ACTRAIL_FEISHU_TIMEOUT", defaultFeishuTimeout),
 		},
 		Launch: Launch{
 			DefaultBackend:       envString("ACTRAIL_DEFAULT_BACKEND", "codex"),
