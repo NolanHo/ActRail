@@ -18,3 +18,12 @@ export function getSessionRouteId(
   const durable = String(sessionId || "").trim();
   return runtime || durable;
 }
+
+export function getSessionReadRouteId(
+  sessionId: string,
+  runtimeId?: string | null,
+) {
+  const durable = String(sessionId || "").trim();
+  const runtime = String(runtimeId || "").trim();
+  return durable || runtime;
+}

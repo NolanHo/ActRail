@@ -573,6 +573,27 @@ describe("api", () => {
     }));
   });
 
+  it("loads messages through the durable session id when a stale runtime id is present", async () => {
+    const payload = {
+      events: [],
+      items: [],
+      tail_seq: 0,
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.listMessages("s_172", true, undefined, undefined, undefined, undefined, "r_2")).resolves.toEqual(payload);
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      session: { session_id: "s_172" },
+    });
+  });
+
   it("omits zero after_seq from Connect proto message requests", async () => {
     const body = toBinary(SessionMessagesResponseSchema, create(SessionMessagesResponseSchema, {
       eventsJson: [],
@@ -691,6 +712,27 @@ describe("api", () => {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
     }));
+  });
+
+  it("loads state through the durable session id when a stale runtime id is present", async () => {
+    const payload: LiveSessionResponse = {
+      ok: true,
+      session_id: "s_172",
+      busy: false,
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => payload,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.getSessionState("s_172", undefined, "r_2")).resolves.toEqual(payload);
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      session: { session_id: "s_172" },
+    });
   });
 
   it("requests session state snapshots when compatibility cursors are provided", async () => {

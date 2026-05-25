@@ -1,7 +1,7 @@
 import { sendRealtimeCommand } from "../domains/realtime/client";
 import { fetchConnectListSessions, fetchConnectSessionMessages, fetchConnectSessionState, type ConnectTransportConfig } from "../domains/realtime/connect";
 import { getJson, postJson } from "./http";
-import { getSessionRouteId } from "./session-identity";
+import { getSessionReadRouteId, getSessionRouteId } from "./session-identity";
 import type {
   AttachmentInjectResponse,
   AudioListenerResponse,
@@ -235,7 +235,7 @@ export const api = {
     return api.getBootstrap(options, signal);
   },
   async getSessionDetails(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     const response = await getJson<SessionDetailsResponse & { session?: Record<string, unknown> | null }>(`/api/sessions/${routeId}/details`, signal);
     return normalizeSessionDetailsResponse(response);
   },
@@ -257,7 +257,7 @@ export const api = {
     if (deferred) {
       query.set("deferred", "1");
     }
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     if (connectConfig !== false && connectConfig !== null) {
       return fetchConnectSessionMessages(connectConfig, { sessionId: routeId, after, before, limit, init, deferred, activeTurnStartSeq, includeToolDetails, eventId, toolCallId, includeToolEvents, signal });
     }
@@ -280,18 +280,18 @@ export const api = {
     return getJson<MessagesResponse>(`/api/sessions/${routeId}/messages${suffix}`, signal);
   },
   getSessionUiState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson<SessionUiStateResponse>(`/api/sessions/${routeId}/ui_state`, signal);
   },
   getWaitInbox(signal?: AbortSignal) {
     return getJson<WaitInboxResponse>(`/api/waits/inbox`, signal);
   },
   getWaitThreads(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson<WaitThreadsResponse>(`/api/sessions/${routeId}/waits/threads`, signal);
   },
   getWaitThread(sessionId: string, threadId: string, signal?: AbortSignal, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson<WaitThreadResponse>(`/api/sessions/${routeId}/waits/threads/${encodeURIComponent(threadId)}`, signal);
   },
   claimWait(sessionId: string, waitId: string, runtimeId?: string | null) {
@@ -307,21 +307,21 @@ export const api = {
     return postJson<WaitLifecycleResponse>(`/api/sessions/${routeId}/waits/${encodeURIComponent(waitId)}/cancel`, {});
   },
   getSessionState(sessionId: string, signal?: AbortSignal, runtimeId?: string | null, connectConfig: ConnectTransportConfig | false | null = { basePath: "/api/connect", wireFormat: "json" }) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     if (connectConfig !== false && connectConfig !== null) {
       return fetchConnectSessionState(connectConfig, { sessionId: routeId, signal });
     }
     return getJson<LiveSessionResponse>(`/api/sessions/${routeId}/state`, signal);
   },
   probeSessionState(sessionId: string, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return postJson<{ probe_id: string; state: LiveSessionResponse }>(`/api/sessions/${routeId}/state/probe`, {});
   },
   getLiveSession(sessionId: string, _offset?: number, _requestsVersion?: string, signal?: AbortSignal, _liveOffset?: number, runtimeId?: string | null, _bridgeOffset?: number) {
     return api.getSessionState(sessionId, signal, runtimeId);
   },
   getWorkspace(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson<WorkspaceResponse>(`/api/sessions/${routeId}/workspace`, signal);
   },
   updateWorkspace(sessionId: string, payload: Record<string, unknown>, runtimeId?: string | null) {
@@ -329,7 +329,7 @@ export const api = {
     return postJson<WorkspaceResponse>(`/api/sessions/${routeId}/workspace`, payload);
   },
   getSessionCommands(sessionId: string, signal?: AbortSignal, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson<SessionCommandsResponse>(`/api/sessions/${routeId}/commands`, signal);
   },
   executeSessionCommand(sessionId: string, payload: { name?: string; command?: string; args?: string }, runtimeId?: string | null) {
@@ -589,11 +589,11 @@ export const api = {
     return postJson<NotificationSubscriptionStateResponse>(`/api/notifications/subscription/toggle`, { endpoint, enabled });
   },
   getDiagnostics(sessionId: string, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson(`/api/sessions/${routeId}/diagnostics`);
   },
   getQueue(sessionId: string, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson(`/api/sessions/${routeId}/queue`);
   },
   async getFiles(sessionId: string, path?: string, signal?: AbortSignal, runtimeId?: string | null) {
@@ -602,7 +602,7 @@ export const api = {
       query.set("path", path);
     }
     const suffix = query.size ? `?${query.toString()}` : "";
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     const response = await getJson<SessionFileListResponse>(`/api/sessions/${routeId}/file/list${suffix}`, signal);
     return {
       ...response,
@@ -612,7 +612,7 @@ export const api = {
   async getFileRead(sessionId: string, path: string, signal?: AbortSignal, runtimeId?: string | null) {
     const query = new URLSearchParams();
     query.set("path", path);
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     const response = await getJson<SessionFileReadResponse>(`/api/sessions/${routeId}/file/read?${query.toString()}`, signal);
     return {
       ...response,
@@ -623,11 +623,11 @@ export const api = {
   getGitFileVersions(sessionId: string, path: string, signal?: AbortSignal, runtimeId?: string | null) {
     const query = new URLSearchParams();
     query.set("path", path);
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson<GitFileVersionsResponse>(`/api/sessions/${routeId}/git/file_versions?${query.toString()}`, signal);
   },
   getHarness(sessionId: string, runtimeId?: string | null) {
-    const routeId = getSessionRouteId(sessionId, runtimeId);
+    const routeId = getSessionReadRouteId(sessionId, runtimeId);
     return getJson<HarnessConfigResponse>(`/api/sessions/${routeId}/harness`);
   },
   saveHarness(sessionId: string, payload: Record<string, unknown>, runtimeId?: string | null) {
