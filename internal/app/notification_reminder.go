@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -14,11 +15,16 @@ import (
 
 const maxFeishuReminderBodyRunes = 600
 
+var runLarkCLICommand = func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	return cmd.CombinedOutput()
+}
+
 func (s *Stub) scheduleUnreadAssistantReminder(sessionID session.SessionID, msg SessionMessage) {
-	if s == nil || msg.Seq == 0 || strings.TrimSpace(s.cfg.Notifications.FeishuWebhookURL) == "" {
+	if s == nil || msg.Seq == 0 || !s.unreadReminderConfigured() {
 		return
 	}
-	delay := s.cfg.Notifications.FeishuDelay
+	delay := s.cfg.Notifications.ReminderDelay
 	if delay <= 0 {
 		delay = 4 * time.Second
 	}
@@ -26,20 +32,30 @@ func (s *Stub) scheduleUnreadAssistantReminder(sessionID session.SessionID, msg 
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		<-timer.C
-		ctx, cancel := context.WithTimeout(context.Background(), s.feishuReminderTimeout())
+		ctx, cancel := context.WithTimeout(context.Background(), s.unreadReminderTimeout())
 		defer cancel()
 		if !s.assistantMessageStillUnread(ctx, sessionID, seq) {
 			return
 		}
-		_ = s.sendFeishuUnreadReminder(ctx, sessionID, body)
+		_ = s.sendUnreadReminder(ctx, sessionID, seq, body)
 	}(msg.Seq, msg.Text)
 }
 
-func (s *Stub) feishuReminderTimeout() time.Duration {
-	if s == nil || s.cfg.Notifications.FeishuTimeout <= 0 {
+func (s *Stub) unreadReminderConfigured() bool {
+	if s == nil {
+		return false
+	}
+	if strings.TrimSpace(s.cfg.Notifications.LarkCLIBin) != "" && (strings.TrimSpace(s.cfg.Notifications.LarkCLIChatID) != "" || strings.TrimSpace(s.cfg.Notifications.LarkCLIUserID) != "") {
+		return true
+	}
+	return strings.TrimSpace(s.cfg.Notifications.FeishuWebhookURL) != ""
+}
+
+func (s *Stub) unreadReminderTimeout() time.Duration {
+	if s == nil || s.cfg.Notifications.ReminderTimeout <= 0 {
 		return 5 * time.Second
 	}
-	return s.cfg.Notifications.FeishuTimeout
+	return s.cfg.Notifications.ReminderTimeout
 }
 
 func (s *Stub) assistantMessageStillUnread(ctx context.Context, sessionID session.SessionID, seq uint64) bool {
@@ -57,16 +73,48 @@ func (s *Stub) assistantMessageStillUnread(ctx context.Context, sessionID sessio
 	return readSeqBySessionID[sessionID] < seq
 }
 
+func (s *Stub) sendUnreadReminder(ctx context.Context, sessionID session.SessionID, seq uint64, body string) error {
+	if s.larkCLIReminderConfigured() {
+		return s.sendLarkCLIUnreadReminder(ctx, sessionID, seq, body)
+	}
+	return s.sendFeishuUnreadReminder(ctx, sessionID, body)
+}
+
+func (s *Stub) larkCLIReminderConfigured() bool {
+	return s != nil && strings.TrimSpace(s.cfg.Notifications.LarkCLIBin) != "" && (strings.TrimSpace(s.cfg.Notifications.LarkCLIChatID) != "" || strings.TrimSpace(s.cfg.Notifications.LarkCLIUserID) != "")
+}
+
+func (s *Stub) sendLarkCLIUnreadReminder(ctx context.Context, sessionID session.SessionID, seq uint64, body string) error {
+	bin := strings.TrimSpace(s.cfg.Notifications.LarkCLIBin)
+	if bin == "" {
+		return nil
+	}
+	text := unreadReminderText(s, sessionID, body)
+	identity := strings.TrimSpace(s.cfg.Notifications.LarkCLIAs)
+	if identity == "" {
+		identity = "bot"
+	}
+	args := []string{"im", "+messages-send", "--as", identity, "--text", text, "--idempotency-key", fmt.Sprintf("actrail-unread-%s-%d", sessionID, seq)}
+	if chatID := strings.TrimSpace(s.cfg.Notifications.LarkCLIChatID); chatID != "" {
+		args = append(args, "--chat-id", chatID)
+	} else if userID := strings.TrimSpace(s.cfg.Notifications.LarkCLIUserID); userID != "" {
+		args = append(args, "--user-id", userID)
+	} else {
+		return nil
+	}
+	output, err := runLarkCLICommand(ctx, bin, args...)
+	if err != nil {
+		return fmt.Errorf("lark-cli unread reminder failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func (s *Stub) sendFeishuUnreadReminder(ctx context.Context, sessionID session.SessionID, body string) error {
 	webhookURL := strings.TrimSpace(s.cfg.Notifications.FeishuWebhookURL)
 	if webhookURL == "" {
 		return nil
 	}
-	title := sessionID.String()
-	if record, ok := s.registry.Lookup(sessionID); ok {
-		title = firstNonEmptyString(record.alias, record.title, record.cwd, sessionID.String())
-	}
-	text := fmt.Sprintf("ActRail unread assistant reply\nSession: %s\nID: %s\n\n%s", title, sessionID, truncateFeishuReminderBody(body))
+	text := unreadReminderText(s, sessionID, body)
 	payload := map[string]any{
 		"msg_type": "text",
 		"content":  map[string]string{"text": text},
@@ -89,6 +137,16 @@ func (s *Stub) sendFeishuUnreadReminder(ctx context.Context, sessionID session.S
 		return fmt.Errorf("feishu webhook returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func unreadReminderText(s *Stub, sessionID session.SessionID, body string) string {
+	title := sessionID.String()
+	if s != nil {
+		if record, ok := s.registry.Lookup(sessionID); ok {
+			title = firstNonEmptyString(record.alias, record.title, record.cwd, sessionID.String())
+		}
+	}
+	return fmt.Sprintf("ActRail unread assistant reply\nSession: %s\nID: %s\n\n%s", title, sessionID, truncateFeishuReminderBody(body))
 }
 
 func truncateFeishuReminderBody(body string) string {

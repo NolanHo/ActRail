@@ -26,8 +26,9 @@ const (
 	defaultRuntimeDir        = "runtime"
 	defaultIODRuntimeDir     = "iod"
 	defaultIODBindingsDir    = "iod-bindings"
-	defaultFeishuDelay       = 4 * time.Second
-	defaultFeishuTimeout     = 5 * time.Second
+	defaultReminderDelay     = 4 * time.Second
+	defaultReminderTimeout   = 5 * time.Second
+	defaultLarkCLIBin        = "/root/.local/bin/lark-cli"
 )
 
 type Config struct {
@@ -81,8 +82,12 @@ type Features struct {
 
 type Notifications struct {
 	FeishuWebhookURL string
-	FeishuDelay      time.Duration
-	FeishuTimeout    time.Duration
+	LarkCLIBin       string
+	LarkCLIAs        string
+	LarkCLIChatID    string
+	LarkCLIUserID    string
+	ReminderDelay    time.Duration
+	ReminderTimeout  time.Duration
 }
 
 type Launch struct {
@@ -127,8 +132,12 @@ func Load() Config {
 		},
 		Notifications: Notifications{
 			FeishuWebhookURL: envString("ACTRAIL_FEISHU_WEBHOOK_URL", ""),
-			FeishuDelay:      envDuration("ACTRAIL_FEISHU_REMINDER_DELAY", defaultFeishuDelay),
-			FeishuTimeout:    envDuration("ACTRAIL_FEISHU_TIMEOUT", defaultFeishuTimeout),
+			LarkCLIBin:       envString("ACTRAIL_LARK_CLI_BIN", defaultLarkCLIBin),
+			LarkCLIAs:        envString("ACTRAIL_LARK_CLI_AS", "bot"),
+			LarkCLIChatID:    envString("ACTRAIL_LARK_CHAT_ID", ""),
+			LarkCLIUserID:    envString("ACTRAIL_LARK_USER_ID", ""),
+			ReminderDelay:    envDuration("ACTRAIL_UNREAD_REMINDER_DELAY", envDuration("ACTRAIL_FEISHU_REMINDER_DELAY", defaultReminderDelay)),
+			ReminderTimeout:  envDuration("ACTRAIL_UNREAD_REMINDER_TIMEOUT", envDuration("ACTRAIL_FEISHU_TIMEOUT", defaultReminderTimeout)),
 		},
 		Launch: Launch{
 			DefaultBackend:       envString("ACTRAIL_DEFAULT_BACKEND", "codex"),

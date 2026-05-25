@@ -29,8 +29,10 @@ func TestUnreadAssistantReminderSendsFeishuWebhook(t *testing.T) {
 
 	cfg := config.Load()
 	cfg.Notifications.FeishuWebhookURL = server.URL
-	cfg.Notifications.FeishuDelay = time.Millisecond
-	cfg.Notifications.FeishuTimeout = time.Second
+	cfg.Notifications.LarkCLIChatID = ""
+	cfg.Notifications.LarkCLIUserID = ""
+	cfg.Notifications.ReminderDelay = time.Millisecond
+	cfg.Notifications.ReminderTimeout = time.Second
 	svc := newStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
 	title := "Unread reminder"
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir(), Title: &title})
@@ -73,8 +75,10 @@ func TestUnreadAssistantReminderSkipsReadMessage(t *testing.T) {
 
 	cfg := config.Load()
 	cfg.Notifications.FeishuWebhookURL = server.URL
-	cfg.Notifications.FeishuDelay = 10 * time.Millisecond
-	cfg.Notifications.FeishuTimeout = time.Second
+	cfg.Notifications.LarkCLIChatID = ""
+	cfg.Notifications.LarkCLIUserID = ""
+	cfg.Notifications.ReminderDelay = 10 * time.Millisecond
+	cfg.Notifications.ReminderTimeout = time.Second
 	svc := newStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
 	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
 	if err != nil {
@@ -95,5 +99,49 @@ func TestUnreadAssistantReminderSkipsReadMessage(t *testing.T) {
 	case <-requests:
 		t.Fatal("unexpected feishu webhook for read message")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestUnreadAssistantReminderPrefersLarkCLI(t *testing.T) {
+	oldRun := runLarkCLICommand
+	defer func() { runLarkCLICommand = oldRun }()
+	calls := make(chan []string, 1)
+	runLarkCLICommand = func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		calls <- append([]string{bin}, args...)
+		return []byte(`{"ok":true}`), nil
+	}
+
+	cfg := config.Load()
+	cfg.Notifications.FeishuWebhookURL = "http://127.0.0.1:1/unused"
+	cfg.Notifications.LarkCLIBin = "/tmp/lark-cli"
+	cfg.Notifications.LarkCLIChatID = "oc_test"
+	cfg.Notifications.LarkCLIUserID = ""
+	cfg.Notifications.LarkCLIAs = "bot"
+	cfg.Notifications.ReminderDelay = time.Millisecond
+	cfg.Notifications.ReminderTimeout = time.Second
+	svc := newStubWithRuntime(cfg, func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{})
+	title := "Lark reminder"
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir(), Title: &title})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	msg, err := svc.AppendSessionMessage(sessionID, "assistant", "message", "sent by lark-cli")
+	if err != nil {
+		t.Fatalf("AppendSessionMessage() error = %v", err)
+	}
+
+	svc.scheduleUnreadAssistantReminder(sessionID, msg)
+
+	select {
+	case args := <-calls:
+		joined := strings.Join(args, "\x00")
+		for _, want := range []string{"/tmp/lark-cli", "im", "+messages-send", "--as", "bot", "--text", "Lark reminder", "--chat-id", "oc_test"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("lark-cli args = %#v, missing %q", args, want)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for lark-cli call")
 	}
 }
