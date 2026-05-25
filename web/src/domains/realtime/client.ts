@@ -37,6 +37,7 @@ let connectAbortController: AbortController | null = null;
 let connectLastEventId = 0;
 let currentSubscriptions: RealtimeStreamSubscription[] = [];
 let currentSubscriptionsKey = "[]";
+let currentSubscriptionTopologyKey = "[]";
 
 const frameListeners = new Set<(frame: RealtimeEnvelope) => void>();
 const stateListeners = new Set<(next: RealtimeConnectionState) => void>();
@@ -101,6 +102,13 @@ function normalizeSubscriptions(subscriptions: RealtimeStreamSubscription[]) {
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function subscriptionTopologyKey(subscriptions: RealtimeStreamSubscription[]) {
+  return JSON.stringify(subscriptions.map((subscription) => ({
+    name: subscription.name,
+    suppressMessageDeltas: Boolean(subscription.suppressMessageDeltas),
+  })));
+}
+
 function restartConnectStream() {
   clearReconnectTimer();
   const controller = connectAbortController;
@@ -157,12 +165,15 @@ export function subscribeRealtimeState(listener: (next: RealtimeConnectionState)
 export function setRealtimeSubscriptions(subscriptions: RealtimeStreamSubscription[]) {
   const normalized = normalizeSubscriptions(subscriptions);
   const nextKey = JSON.stringify(normalized);
+  const nextTopologyKey = subscriptionTopologyKey(normalized);
   if (nextKey === currentSubscriptionsKey) {
     return;
   }
+  const topologyChanged = nextTopologyKey !== currentSubscriptionTopologyKey;
   currentSubscriptions = normalized;
   currentSubscriptionsKey = nextKey;
-  if (connectAbortController || connectPromise || reconnectTimer !== null) {
+  currentSubscriptionTopologyKey = nextTopologyKey;
+  if (topologyChanged && (connectAbortController || connectPromise)) {
     restartConnectStream();
   }
 }

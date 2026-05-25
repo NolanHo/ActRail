@@ -58,6 +58,23 @@ describe("Connect realtime transport", () => {
     });
   });
 
+  it("does not reconnect the Connect stream for cursor-only subscription changes", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockReturnValue(new Promise(() => undefined) as never);
+    configureRealtimeClient({ connectBasePath: "/api/connect" });
+    setRealtimeSubscriptions([{ name: "session:s_1", resumeFrom: 1, suppressMessageDeltas: true }]);
+
+    await connect();
+    setRealtimeSubscriptions([{ name: "session:s_1", resumeFrom: 2, suppressMessageDeltas: true }]);
+    await Promise.resolve();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    setRealtimeSubscriptions([{ name: "session:s_1", resumeFrom: 2, suppressMessageDeltas: false }]);
+    await Promise.resolve();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("sends unary commands to the Connect SessionCommandService", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       payloadJson: payloadJson({ busy: true }),

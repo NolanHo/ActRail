@@ -175,23 +175,6 @@ func (r subscribeRequest) suppressMessageDeltaFilters() map[string]struct{} {
 	return out
 }
 
-func (r subscribeRequest) minResumeFrom() uint64 {
-	var min uint64
-	consider := func(value uint64) {
-		if value == 0 {
-			return
-		}
-		if min == 0 || value < min {
-			min = value
-		}
-	}
-	for _, subscription := range append(r.Subscriptions, r.SubscriptionsRaw...) {
-		consider(subscription.ResumeFrom)
-		consider(subscription.ResumeFromRaw)
-	}
-	return min
-}
-
 func connectEventAllowed(event EventEnvelope, streams, suppressDelta map[string]struct{}) bool {
 	if len(streams) > 0 {
 		if _, ok := streams[event.Stream]; !ok {
@@ -518,9 +501,6 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 		return
 	}
 	after := body.afterEventID()
-	if minResume := body.minResumeFrom(); minResume > 0 && (after == 0 || minResume < after) {
-		after = minResume
-	}
 	span.SetAttributes(attribute.Int64("connect.stream.after_event_id", int64(after)))
 	streamFilters := body.streamFilters()
 	suppressDeltaFilters := body.suppressMessageDeltaFilters()
