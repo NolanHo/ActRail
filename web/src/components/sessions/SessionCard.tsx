@@ -16,6 +16,7 @@ interface SessionCardProps {
   onToggleFocus?: () => void;
   onEdit?: () => void;
   onDuplicate?: () => void;
+  onFork?: () => void;
   onRestart?: () => void;
   restartLabel?: string;
   onHandoff?: () => void;
@@ -70,7 +71,7 @@ function sessionHealthLabel(health: SessionHealth) {
   }
 }
 
-function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" | "handoff" | "restart" | "supervisor" | "menu" }) {
+function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "fork" | "delete" | "focus" | "handoff" | "restart" | "supervisor" | "menu" }) {
   if (kind === "edit") {
     return (
       <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -85,6 +86,18 @@ function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" 
       <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
         <rect x="5" y="3" width="8" height="9" rx="1.5" />
         <path d="M3.5 6.5V12A1.5 1.5 0 0 0 5 13.5h5.5" />
+      </svg>
+    );
+  }
+
+  if (kind === "fork") {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <path d="M4 2.5v8.2a2.8 2.8 0 0 0 2.8 2.8H9" />
+        <path d="M4 6.5h2.2A2.8 2.8 0 0 0 9 3.7V2.5" />
+        <circle cx="4" cy="2.5" r="1.4" />
+        <circle cx="9" cy="2.5" r="1.4" />
+        <circle cx="10.5" cy="13.5" r="1.4" />
       </svg>
     );
   }
@@ -161,13 +174,14 @@ function sessionCardPropsEqual(left: SessionCardProps, right: SessionCardProps) 
     && Boolean(left.onToggleFocus) === Boolean(right.onToggleFocus)
     && Boolean(left.onEdit) === Boolean(right.onEdit)
     && Boolean(left.onDuplicate) === Boolean(right.onDuplicate)
+    && Boolean(left.onFork) === Boolean(right.onFork)
     && Boolean(left.onRestart) === Boolean(right.onRestart)
     && Boolean(left.onHandoff) === Boolean(right.onHandoff)
     && Boolean(left.onSupervisor) === Boolean(right.onSupervisor)
     && Boolean(left.onDelete) === Boolean(right.onDelete);
 }
 
-function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onRestart, restartLabel, onHandoff, onSupervisor, onDelete }: SessionCardProps) {
+function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onFork, onRestart, restartLabel, onHandoff, onSupervisor, onDelete }: SessionCardProps) {
   const title = getSessionDisplayName(session);
   const isHistorical = session.historical === true;
   const desktopActions = useDesktopSessionActions();
@@ -184,7 +198,7 @@ function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit
       ? `Supervisor on ${supervisor.consecutive_injections}/${supervisor.max_consecutive_injections}`
       : "";
   const hasInlineActions = Boolean(onToggleFocus || onEdit);
-  const hasMenuActions = Boolean(onDuplicate || onRestart || onHandoff || onSupervisor || onDelete);
+  const hasMenuActions = Boolean(onDuplicate || onFork || onRestart || onHandoff || onSupervisor || onDelete);
   const hasActions = hasInlineActions || hasMenuActions;
   const showActions = hasActions && (active || desktopActions);
   const accessibilityParts = [
@@ -332,6 +346,17 @@ function SessionCardComponent({ session, active, onSelect, onToggleFocus, onEdit
                               >
                                 <ActionIcon kind="duplicate" />
                                 <span>Duplicate</span>
+                              </button>
+                            ) : null}
+                            {onFork ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="sessionActionMenuItem"
+                                onClick={() => runMenuAction(onFork)}
+                              >
+                                <ActionIcon kind="fork" />
+                                <span>Fork</span>
                               </button>
                             ) : null}
                             {onRestart ? (

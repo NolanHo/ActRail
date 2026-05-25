@@ -895,6 +895,8 @@ func (s *Stub) prepareRuntimeSend(ctx context.Context, sessionID session.Session
 		reason := "codex_thread_starting"
 		if runtime.PendingCodexResumeThreadID() != "" {
 			reason = "codex_thread_resuming"
+		} else if runtime.PendingCodexForkThreadID() != "" {
+			reason = "codex_thread_forking"
 		}
 		_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseThreadStarting, reason, "prepare_send")
 	}
@@ -962,6 +964,8 @@ func (s *Stub) startCodexThreadBootstrap(sessionID session.SessionID, runtime se
 	reason := "codex_initializing"
 	if runtime.PendingCodexResumeThreadID() != "" {
 		reason = "codex_thread_resuming"
+	} else if runtime.PendingCodexForkThreadID() != "" {
+		reason = "codex_thread_forking"
 	}
 	_ = s.transitionCodexRuntime(sessionID, codexRuntimePhaseInitializing, reason, "thread_bootstrap")
 	go func() {

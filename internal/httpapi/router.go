@@ -139,6 +139,7 @@ func New(cfg config.Config, svc app.Service, connectHandlers ...http.Handler) ht
 	mux.Handle("GET /api/sessions/{session_id}/details", r.requireAuth(http.HandlerFunc(r.sessionDetails)))
 	mux.Handle("GET /api/sessions/{session_id}/messages", r.requireAuth(http.HandlerFunc(r.sessionMessages)))
 	mux.Handle("POST /api/sessions/{session_id}/read", r.requireAuth(http.HandlerFunc(r.markSessionRead)))
+	mux.Handle("POST /api/sessions/{session_id}/fork", r.requireAuth(http.HandlerFunc(r.forkSession)))
 	mux.Handle("GET /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.sessionSupervisor)))
 	mux.Handle("POST /api/sessions/{session_id}/supervisor", r.requireAuth(http.HandlerFunc(r.updateSessionSupervisor)))
 	mux.Handle("GET /api/sessions/{session_id}/supervisor/runs", r.requireAuth(http.HandlerFunc(r.supervisorRuns)))
@@ -450,6 +451,21 @@ func (r Router) createSession(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	payload, err := r.app.CreateSession(req.Context(), body)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (r Router) forkSession(w http.ResponseWriter, req *http.Request) {
+	var body app.ForkSessionRequest
+	if err := decodeJSONBody(req, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid json", "")
+		return
+	}
+	body.SessionID = req.PathValue("session_id")
+	payload, err := r.app.ForkSession(req.Context(), body)
 	if err != nil {
 		writeAppError(w, err)
 		return

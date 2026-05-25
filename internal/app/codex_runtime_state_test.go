@@ -93,6 +93,54 @@ func TestCodexRuntimeStateBootstrapsInitializeThenThreadResume(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeStateBootstrapsInitializeThenThreadFork(t *testing.T) {
+	state := newCodexRuntimeStateWithForkThread(session.BackendCodex, "thread-parent")
+	if state == nil {
+		t.Fatal("newCodexRuntimeStateWithForkThread(codex) = nil")
+	}
+
+	requests := state.bootstrapRequests()
+	if len(requests) != 1 {
+		t.Fatalf("initial bootstrap request count = %d, want 1", len(requests))
+	}
+	assertRuntimeRequest(t, requests[0], "initialize", "initialize-1")
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseInitializing || !activity.Busy {
+		t.Fatalf("activity after initialize = %+v, want initializing busy", activity)
+	}
+
+	state.markInitialized()
+	request := state.threadStartRequest()
+	assertRuntimeRequest(t, request, "thread/fork", "thread-fork-2")
+	params, ok := request.(map[string]any)["params"].(map[string]any)
+	if !ok || params["threadId"] != "thread-parent" || len(params) != 1 {
+		t.Fatalf("thread/fork params = %#v, want only threadId", request)
+	}
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseThreadStarting || activity.Reason != "codex_thread_forking" || !activity.Busy {
+		t.Fatalf("activity after fork request = %+v, want forking busy", activity)
+	}
+	if pending := state.pendingForkThreadID(); pending != "thread-parent" {
+		t.Fatalf("pendingForkThreadID() = %q, want thread-parent", pending)
+	}
+	if request := state.threadStartRequest(); request != nil {
+		t.Fatalf("threadStartRequest() while fork pending = %#v, want nil", request)
+	}
+
+	accepted, changed := state.setThreadID("thread-child")
+	if !accepted || !changed {
+		t.Fatalf("setThreadID(child) = accepted=%v changed=%v, want true true", accepted, changed)
+	}
+	initialized, threadID, activeTurnID := state.snapshot()
+	if !initialized || threadID != "thread-child" || activeTurnID != "" {
+		t.Fatalf("snapshot = initialized=%v threadID=%q activeTurnID=%q", initialized, threadID, activeTurnID)
+	}
+	if pending := state.pendingForkThreadID(); pending != "" {
+		t.Fatalf("pendingForkThreadID() = %q, want empty", pending)
+	}
+	if activity := state.activity(); activity.Phase != codexRuntimePhaseIdle || activity.Busy {
+		t.Fatalf("activity after forked thread id = %+v, want idle", activity)
+	}
+}
+
 func TestCodexRuntimeStateResetsProtocolForResume(t *testing.T) {
 	state := newCodexRuntimeStateWithResumeThread(session.BackendCodex, "thread-existing")
 	state.markInitialized()

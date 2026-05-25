@@ -225,6 +225,24 @@ export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: 
     }
   };
 
+  const forkSession = async (session: SessionSummary) => {
+    const cwd = String(session.cwd || "").trim();
+    if (!cwd) {
+      setActionError("This session does not have a working directory to fork.");
+      return;
+    }
+
+    setActionError("");
+
+    try {
+      const response = await api.forkSession(session.session_id, { cwd });
+      await selectCreatedSession(response);
+      await sessionsStoreApi.refreshBootstrap();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to fork session");
+    }
+  };
+
   const handoffSession = async (session: SessionSummary) => {
     setActionError("");
     try {
@@ -336,6 +354,11 @@ export function SessionsPane({ onNewSession, onOpenSettings, onSessionSelect }: 
                 }}
                 onToggleFocus={() => { void toggleSessionFocus(session); }}
                 onDuplicate={session.historical ? undefined : () => { void duplicateSession(session); }}
+                onFork={(!session.historical
+                  && session.pending_startup !== true
+                  && normalizeLaunchBackend(session.agent_backend) === "codex")
+                  ? () => { void forkSession(session); }
+                  : undefined}
                 onRestart={(!session.historical && session.pending_startup !== true)
                   ? () => {
                     setActionError("");

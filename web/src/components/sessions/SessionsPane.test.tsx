@@ -1,6 +1,6 @@
 import { render } from "preact";
 import { act } from "preact/test-utils";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "../../app/providers";
 import { api } from "../../lib/api";
@@ -9,6 +9,7 @@ import { SessionsPane } from "./SessionsPane";
 vi.mock("../../lib/api", () => ({
   api: {
     createSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", broker_pid: 42 }),
+    forkSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-fork", runtime_id: "rt-fork", broker_pid: 43 }),
     handoffSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", runtime_id: "rt-2", broker_pid: 42 }),
     restartSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-1", runtime_id: "rt-2", previous_runtime_id: "rt-1", broker_pid: 42 }),
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
@@ -116,6 +117,14 @@ function renderSessionsPane(
 }
 
 describe("SessionsPane", () => {
+  beforeEach(() => {
+    vi.mocked(api.createSession).mockResolvedValue({ ok: true, session_id: "sess-2", broker_pid: 42 } as any);
+    vi.mocked(api.forkSession).mockResolvedValue({ ok: true, session_id: "sess-fork", runtime_id: "rt-fork", broker_pid: 43 } as any);
+    vi.mocked(api.handoffSession).mockResolvedValue({ ok: true, session_id: "sess-2", runtime_id: "rt-2", broker_pid: 42 } as any);
+    vi.mocked(api.restartSession).mockResolvedValue({ ok: true, session_id: "sess-1", runtime_id: "rt-2", previous_runtime_id: "rt-1", broker_pid: 42 } as any);
+    vi.mocked(api.getSessionDetails).mockResolvedValue({ session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi", priority_offset: 0 } as any);
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
@@ -614,6 +623,37 @@ describe("SessionsPane", () => {
       title: "Inbox cleanup",
     });
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-2");
+  });
+
+  it("forks a codex session through the native fork action", async () => {
+    const sessionsStore = renderSessionsPane({
+      items: [{ session_id: "sess-1", alias: "Inbox cleanup", cwd: "/tmp/project", agent_backend: "codex" }],
+      activeSessionId: "sess-1",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: ["/tmp/project"],
+      cwdGroups: {},
+      tmuxAvailable: true,
+    });
+
+    sessionsStore.refresh = vi.fn(async () => {
+      sessionsStore.setState({
+        ...sessionsStore.getState(),
+        items: [...sessionsStore.getState().items, { session_id: "sess-fork", alias: "Inbox cleanup fork", cwd: "/tmp/project", agent_backend: "codex" }],
+      });
+    });
+    sessionsStore.refreshBootstrap = vi.fn(async () => undefined);
+
+    await openSessionMenu();
+    const forkAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Fork"));
+    expect(forkAction).toBeDefined();
+    await click(forkAction!);
+    await flush();
+
+    expect(api.forkSession).toHaveBeenCalledWith("sess-1", { cwd: "/tmp/project" });
+    expect(api.createSession).not.toHaveBeenCalled();
+    expect(sessionsStore.select).toHaveBeenCalledWith("sess-fork");
+    expect(sessionsStore.refreshBootstrap).toHaveBeenCalled();
   });
 
   it("selects historical pi sessions without resuming them immediately", async () => {

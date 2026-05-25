@@ -70,17 +70,18 @@ type RuntimeConfig struct {
 }
 
 type runtimeLaunchRequest struct {
-	SessionID       session.SessionID
-	Backend         session.Backend
-	CWD             string
-	Provider        string
-	Model           string
-	ReasoningEffort string
-	SessionPath     string
-	CodexThreadID   string
-	PIAgentGRPC     bool
-	AttachOnly      bool
-	ForceNewIOD     bool
+	SessionID         session.SessionID
+	Backend           session.Backend
+	CWD               string
+	Provider          string
+	Model             string
+	ReasoningEffort   string
+	SessionPath       string
+	CodexThreadID     string
+	CodexForkThreadID string
+	PIAgentGRPC       bool
+	AttachOnly        bool
+	ForceNewIOD       bool
 }
 
 type processRuntimeLauncher struct {
@@ -458,7 +459,7 @@ func (l processRuntimeLauncher) launchDirect(ctx context.Context, req runtimeLau
 		launchSpec:           launchSpec,
 		handle:               handle,
 		protocol:             runtimeProtocolForBackend(req.Backend),
-		codex:                newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID),
+		codex:                newCodexRuntimeStateWithAttachThread(req.Backend, req.CodexThreadID, req.CodexForkThreadID),
 		currentHelperBinding: l.currentHelperBinding,
 	}, nil
 }
@@ -541,7 +542,7 @@ func (l processRuntimeLauncher) launchViaIODHelper(ctx context.Context, req runt
 		launchSpec:    childLaunchSpec,
 		handle:        handle,
 		protocol:      runtimeProtocolForBackend(req.Backend),
-		codex:         newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID),
+		codex:         newCodexRuntimeStateWithAttachThread(req.Backend, req.CodexThreadID, req.CodexForkThreadID),
 		helper:        helper,
 		helperBinding: binding,
 		currentHelperBinding: func(session.SessionID) (*RuntimeHelperBinding, error) {
@@ -566,7 +567,7 @@ func (l processRuntimeLauncher) attachExistingIODHelper(ctx context.Context, req
 	if preferred == nil && req.Backend != session.BackendCodex {
 		return sessionRuntime{}, false
 	}
-	if req.Backend == session.BackendCodex && strings.TrimSpace(req.CodexThreadID) != "" {
+	if req.Backend == session.BackendCodex && strings.TrimSpace(req.CodexThreadID) != "" && strings.TrimSpace(req.CodexForkThreadID) == "" {
 		for _, discovered := range index.CodexThreadCandidates(req.CodexThreadID, nil) {
 			runtime, err := l.attachIODManifest(ctx, req, discovered)
 			if err == nil {
@@ -616,7 +617,7 @@ func (l processRuntimeLauncher) attachIODManifest(ctx context.Context, req runti
 		_ = client.Close()
 		return sessionRuntime{}, err
 	}
-	codex := newCodexRuntimeStateWithResumeThread(req.Backend, req.CodexThreadID)
+	codex := newCodexRuntimeStateWithAttachThread(req.Backend, req.CodexThreadID, req.CodexForkThreadID)
 	if codex != nil && strings.TrimSpace(req.CodexThreadID) != "" {
 		codex.attachInitializedThread(req.CodexThreadID)
 	}
@@ -888,6 +889,13 @@ func (r sessionRuntime) PendingCodexResumeThreadID() string {
 		return ""
 	}
 	return strings.TrimSpace(r.codex.pendingResumeThreadID())
+}
+
+func (r sessionRuntime) PendingCodexForkThreadID() string {
+	if r.protocol != runtimeProtocolCodexRPC || r.codex == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.codex.pendingForkThreadID())
 }
 
 func (r sessionRuntime) PIAgentGRPCState(ctx context.Context) (piagentgrpc.State, error) {

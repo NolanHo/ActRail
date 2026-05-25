@@ -104,6 +104,82 @@ func TestRestartCodexSessionResumesExistingThread(t *testing.T) {
 	_ = second.stdout.Close()
 }
 
+func TestForkCodexSessionUsesNativeThreadFork(t *testing.T) {
+	const parentThreadID = "thread-codex-parent-1"
+	const forkThreadID = "thread-codex-fork-1"
+
+	runtimes := make([]codexTestRuntimeIO, 0, 2)
+	var runtimesMu sync.Mutex
+	runner := &process.FakeRunner{
+		HandleBuild: func(spec process.LaunchSpec) process.Handle {
+			stdoutR, stdoutW := io.Pipe()
+			pty := &recordingPTY{reader: stdoutR}
+			handle := process.NewFakeHandle(spec)
+			handle.SetPTY(pty)
+			runtimesMu.Lock()
+			runtimes = append(runtimes, codexTestRuntimeIO{pty: pty, stdout: stdoutW})
+			runtimesMu.Unlock()
+			return handle
+		},
+	}
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return time.Unix(1760000000, 0).UTC() }, RuntimeConfig{Runner: runner})
+
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: "/root/code/ActRail"})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sourceID := mustSessionID(t, created.Session.SessionID)
+	sourceRuntime := waitForCodexTestRuntime(t, &runtimesMu, &runtimes, 0)
+	waitForAppCondition(t, func() bool {
+		return writesContain(sourceRuntime.pty.Writes(), `"method":"initialize"`)
+	})
+	if _, err := io.WriteString(sourceRuntime.stdout, `{"id":"initialize-1","result":{"protocolVersion":1}}`+"\n"); err != nil {
+		t.Fatalf("write source initialize response: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		return writesContain(sourceRuntime.pty.Writes(), `"method":"thread/start"`)
+	})
+	if _, err := io.WriteString(sourceRuntime.stdout, `{"id":"thread-start-2","result":{"thread":{"id":"`+parentThreadID+`","status":{"type":"idle"}}}}`+"\n"); err != nil {
+		t.Fatalf("write source thread start response: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(sourceID)
+		return ok && record.importedBackendSessionID == parentThreadID
+	})
+
+	forked, err := svc.ForkSession(context.Background(), ForkSessionRequest{SessionID: sourceID.String()})
+	if err != nil {
+		t.Fatalf("ForkSession() error = %v", err)
+	}
+	if !forked.OK || forked.Session == nil {
+		t.Fatalf("ForkSession() = %+v, want session payload", forked)
+	}
+	forkRuntime := waitForCodexTestRuntime(t, &runtimesMu, &runtimes, 1)
+	waitForAppCondition(t, func() bool {
+		return writesContain(forkRuntime.pty.Writes(), `"method":"initialize"`)
+	})
+	if _, err := io.WriteString(forkRuntime.stdout, `{"id":"initialize-1","result":{"protocolVersion":1}}`+"\n"); err != nil {
+		t.Fatalf("write fork initialize response: %v", err)
+	}
+	waitForAppCondition(t, func() bool {
+		writes := forkRuntime.pty.Writes()
+		return writesContain(writes, `"method":"thread/fork"`) && writesContain(writes, `"threadId":"`+parentThreadID+`"`)
+	})
+	if writesContain(forkRuntime.pty.Writes(), `"method":"thread/start"`) || writesContain(forkRuntime.pty.Writes(), `"method":"thread/resume"`) {
+		t.Fatalf("fork runtime writes = %q, want no thread/start or thread/resume", strings.Join(forkRuntime.pty.Writes(), "\n"))
+	}
+	if _, err := io.WriteString(forkRuntime.stdout, `{"id":"thread-fork-2","result":{"thread":{"id":"`+forkThreadID+`","status":{"type":"idle"}}}}`+"\n"); err != nil {
+		t.Fatalf("write fork response: %v", err)
+	}
+	forkSessionID := mustSessionID(t, forked.Session.SessionID)
+	waitForAppCondition(t, func() bool {
+		record, ok := svc.registry.Lookup(forkSessionID)
+		return ok && record.importedBackendSessionID == forkThreadID
+	})
+	_ = sourceRuntime.stdout.Close()
+	_ = forkRuntime.stdout.Close()
+}
+
 func TestRestartCodexSessionIgnoresStaleRuntimeOutputAfterReconcile(t *testing.T) {
 	const threadID = "thread-codex-reconcile-1"
 
