@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -58,6 +59,27 @@ func (s *controllerStub) SessionState(_ context.Context, req app.SessionStateReq
 func (s *controllerStub) SessionMessages(_ context.Context, req app.SessionMessagesRequest) (app.SessionMessagesResponse, error) {
 	s.messagesReq = req
 	return app.SessionMessagesResponse{Items: []app.SessionMessage{{Seq: 1, Role: "user", Kind: "message", Text: "hello"}}, TailSeq: 1}, nil
+}
+
+func decodeJSONConnectFrames(t *testing.T, data []byte) []EventEnvelope {
+	t.Helper()
+	var events []EventEnvelope
+	for len(data) > 0 {
+		if len(data) < 5 {
+			t.Fatalf("truncated connect frame header: %d bytes", len(data))
+		}
+		size := int(binary.BigEndian.Uint32(data[1:5]))
+		if len(data) < 5+size {
+			t.Fatalf("truncated connect frame payload: have %d want %d", len(data)-5, size)
+		}
+		var event EventEnvelope
+		if err := json.Unmarshal(data[5:5+size], &event); err != nil {
+			t.Fatalf("decode connect frame: %v", err)
+		}
+		events = append(events, event)
+		data = data[5+size:]
+	}
+	return events
 }
 
 func TestListSessionsProto(t *testing.T) {
@@ -250,6 +272,34 @@ func TestEventServiceSubscribeWritesProtoEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(string(event.GetPayloadJson()), `"busy":true`) {
 		t.Fatalf("payload_json = %s", string(event.GetPayloadJson()))
+	}
+}
+
+func TestEventServiceSubscribeFiltersJSONStreams(t *testing.T) {
+	broker := NewBroker(10)
+	broker.ObserveEvent(realtime.Event{Type: "notification", UnixMillis: time.UnixMilli(1000).UnixMilli(), Stream: "system", Payload: map[string]any{"ok": true}})
+	broker.ObserveEvent(realtime.Event{Type: "session.state", UnixMillis: time.UnixMilli(1100).UnixMilli(), Stream: "session:s_1", Payload: map[string]any{"session_id": "s_1", "busy": true}})
+	broker.ObserveEvent(realtime.Event{Type: "message.delta", UnixMillis: time.UnixMilli(1200).UnixMilli(), Stream: "session:s_1", Payload: map[string]any{"session_id": "s_1", "text": "hidden"}})
+	broker.ObserveEvent(realtime.Event{Type: "session.state", UnixMillis: time.UnixMilli(1300).UnixMilli(), Stream: "session:s_2", Payload: map[string]any{"session_id": "s_2", "busy": true}})
+	h := NewHandler(&controllerStub{}, broker)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, connectBasePath+eventService+"/Subscribe", strings.NewReader(`{"subscriptions":[{"name":"system"},{"name":"session:s_1","suppressMessageDeltas":true}]}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", res.Code, res.Body.String())
+	}
+	events := decodeJSONConnectFrames(t, res.Body.Bytes())
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, events = %+v", len(events), events)
+	}
+	if events[0].Stream != "system" || events[0].Type != "notification" {
+		t.Fatalf("first event = %+v", events[0])
+	}
+	if events[1].Stream != "session:s_1" || events[1].Type != "session.state" {
+		t.Fatalf("second event = %+v", events[1])
 	}
 }
 

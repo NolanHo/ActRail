@@ -35,6 +35,8 @@ let reconnectTimer: number | null = null;
 let shouldReconnect = false;
 let connectAbortController: AbortController | null = null;
 let connectLastEventId = 0;
+let currentSubscriptions: RealtimeStreamSubscription[] = [];
+let currentSubscriptionsKey = "[]";
 
 const frameListeners = new Set<(frame: RealtimeEnvelope) => void>();
 const stateListeners = new Set<(next: RealtimeConnectionState) => void>();
@@ -75,6 +77,41 @@ function connectConfig() {
 
 function handleFrame(frame: RealtimeEnvelope) {
   emitFrame(frame);
+}
+
+function normalizeSubscriptions(subscriptions: RealtimeStreamSubscription[]) {
+  const byName = new Map<string, RealtimeStreamSubscription>();
+  for (const subscription of subscriptions) {
+    const name = String(subscription.name || "").trim();
+    if (!name) {
+      continue;
+    }
+    const resumeFrom = typeof subscription.resumeFrom === "number" && Number.isFinite(subscription.resumeFrom)
+      ? Math.max(0, Math.floor(subscription.resumeFrom))
+      : undefined;
+    const existing = byName.get(name);
+    byName.set(name, {
+      name,
+      resumeFrom: existing?.resumeFrom !== undefined || resumeFrom !== undefined
+        ? Math.max(existing?.resumeFrom ?? 0, resumeFrom ?? 0)
+        : undefined,
+      suppressMessageDeltas: Boolean(existing?.suppressMessageDeltas || subscription.suppressMessageDeltas),
+    });
+  }
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function restartConnectStream() {
+  clearReconnectTimer();
+  const controller = connectAbortController;
+  connectAbortController = null;
+  connectPromise = null;
+  if (controller) {
+    controller.abort();
+  }
+  if (shouldReconnect) {
+    void connect().catch(() => undefined);
+  }
 }
 
 export function configureRealtimeClient(next: RealtimeClientConfig) {
@@ -118,7 +155,16 @@ export function subscribeRealtimeState(listener: (next: RealtimeConnectionState)
 }
 
 export function setRealtimeSubscriptions(subscriptions: RealtimeStreamSubscription[]) {
-  void subscriptions;
+  const normalized = normalizeSubscriptions(subscriptions);
+  const nextKey = JSON.stringify(normalized);
+  if (nextKey === currentSubscriptionsKey) {
+    return;
+  }
+  currentSubscriptions = normalized;
+  currentSubscriptionsKey = nextKey;
+  if (connectAbortController || connectPromise || reconnectTimer !== null) {
+    restartConnectStream();
+  }
 }
 
 export async function connect() {
@@ -133,7 +179,7 @@ export async function connect() {
   emitState("connecting");
   const controller = new AbortController();
   connectAbortController = controller;
-  connectPromise = subscribeConnectEvents(connectConfig(), connectLastEventId, (rawFrame) => {
+  const wrapped = subscribeConnectEvents(connectConfig(), connectLastEventId, currentSubscriptions, (rawFrame) => {
     const frame = frameToRealtimeEnvelope(rawFrame);
     if (!frame) return;
     const id = Number(frame.id || 0);
@@ -143,19 +189,28 @@ export async function connect() {
     }
     handleFrame(frame);
   }, controller.signal).then(() => {
-    connectPromise = null;
-    connectAbortController = null;
-    emitState("closed");
-    if (shouldReconnect) scheduleReconnect();
+    if (connectPromise === wrapped) {
+      connectPromise = null;
+    }
+    if (connectAbortController === controller) {
+      connectAbortController = null;
+      emitState("closed");
+      if (shouldReconnect) scheduleReconnect();
+    }
   }).catch((error) => {
-    connectPromise = null;
-    connectAbortController = null;
+    if (connectPromise === wrapped) {
+      connectPromise = null;
+    }
+    if (connectAbortController === controller) {
+      connectAbortController = null;
+    }
     if (!controller.signal.aborted) {
       emitState("error");
       scheduleReconnect();
       throw error;
     }
   });
+  connectPromise = wrapped;
   emitState("open");
   return;
 }

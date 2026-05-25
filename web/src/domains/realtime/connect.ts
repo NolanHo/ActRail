@@ -27,6 +27,12 @@ export interface ConnectTransportConfig {
   wireFormat?: ConnectWireFormat;
 }
 
+export interface ConnectStreamSubscription {
+  name: string;
+  resumeFrom?: number;
+  suppressMessageDeltas?: boolean;
+}
+
 const textDecoder = new TextDecoder();
 
 function apiPath(path: string) {
@@ -228,7 +234,7 @@ export async function readConnectStream(response: Response, onFrame: (frame: Rec
   }
 }
 
-export function subscribeConnectEvents(config: ConnectTransportConfig, afterEventId: number, onFrame: (frame: Record<string, unknown>) => void, signal: AbortSignal) {
+export function subscribeConnectEvents(config: ConnectTransportConfig, afterEventId: number, subscriptions: ConnectStreamSubscription[], onFrame: (frame: Record<string, unknown>) => void, signal: AbortSignal) {
   const basePath = config.basePath || "/api/connect";
   const wireFormat = config.wireFormat === "proto" ? "proto" : "json";
   return fetch(apiPath(servicePath(basePath, EVENT_SERVICE, "Subscribe")), {
@@ -237,7 +243,7 @@ export function subscribeConnectEvents(config: ConnectTransportConfig, afterEven
     headers: wireFormat === "proto"
       ? { "Content-Type": "application/connect+proto", Accept: "application/connect+proto" }
       : { "Content-Type": "application/json", Accept: "application/connect+json" },
-    body: wireFormat === "proto" ? encodeSubscribeRequestProto(afterEventId) : JSON.stringify({ afterEventId }),
+    body: wireFormat === "proto" ? encodeSubscribeRequestProto(afterEventId) : JSON.stringify({ afterEventId, subscriptions }),
   }).then((response) => {
     if (!response.ok) {
       throw new HttpError(`Connect event stream failed: ${response.status}`, response.status);

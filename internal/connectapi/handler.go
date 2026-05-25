@@ -74,8 +74,23 @@ type listSessionsRequest struct {
 }
 
 type subscribeRequest struct {
-	AfterEventID    uint64 `json:"afterEventId"`
-	AfterEventIDRaw uint64 `json:"after_event_id"`
+	AfterEventID         uint64                   `json:"afterEventId"`
+	AfterEventIDRaw      uint64                   `json:"after_event_id"`
+	Streams              []string                 `json:"streams"`
+	StreamsRaw           []string                 `json:"stream_names"`
+	Subscriptions        []subscribeStreamRequest `json:"subscriptions"`
+	SubscriptionsRaw     []subscribeStreamRequest `json:"stream_subscriptions"`
+	SuppressDeltaStreams map[string]bool          `json:"suppressMessageDeltaStreams"`
+	SuppressDeltaRaw     map[string]bool          `json:"suppress_message_delta_streams"`
+}
+
+type subscribeStreamRequest struct {
+	Name                     string `json:"name"`
+	NameRaw                  string `json:"stream"`
+	ResumeFrom               uint64 `json:"resumeFrom"`
+	ResumeFromRaw            uint64 `json:"resume_from"`
+	SuppressMessageDeltas    bool   `json:"suppressMessageDeltas"`
+	SuppressMessageDeltasRaw bool   `json:"suppress_message_deltas"`
 }
 
 type sessionMessagesRequest struct {
@@ -104,6 +119,100 @@ type connectError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	TraceID string `json:"traceId,omitempty"`
+}
+
+func (r subscribeRequest) afterEventID() uint64 {
+	if r.AfterEventID != 0 {
+		return r.AfterEventID
+	}
+	return r.AfterEventIDRaw
+}
+
+func (r subscribeRequest) streamFilters() map[string]struct{} {
+	out := map[string]struct{}{}
+	add := func(value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			out[value] = struct{}{}
+		}
+	}
+	for _, stream := range r.Streams {
+		add(stream)
+	}
+	for _, stream := range r.StreamsRaw {
+		add(stream)
+	}
+	for _, subscription := range append(r.Subscriptions, r.SubscriptionsRaw...) {
+		add(firstString(subscription.Name, subscription.NameRaw))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (r subscribeRequest) suppressMessageDeltaFilters() map[string]struct{} {
+	out := map[string]struct{}{}
+	add := func(stream string, suppress bool) {
+		if !suppress {
+			return
+		}
+		if stream = strings.TrimSpace(stream); stream != "" {
+			out[stream] = struct{}{}
+		}
+	}
+	for stream, suppress := range r.SuppressDeltaStreams {
+		add(stream, suppress)
+	}
+	for stream, suppress := range r.SuppressDeltaRaw {
+		add(stream, suppress)
+	}
+	for _, subscription := range append(r.Subscriptions, r.SubscriptionsRaw...) {
+		add(firstString(subscription.Name, subscription.NameRaw), subscription.SuppressMessageDeltas || subscription.SuppressMessageDeltasRaw)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (r subscribeRequest) minResumeFrom() uint64 {
+	var min uint64
+	consider := func(value uint64) {
+		if value == 0 {
+			return
+		}
+		if min == 0 || value < min {
+			min = value
+		}
+	}
+	for _, subscription := range append(r.Subscriptions, r.SubscriptionsRaw...) {
+		consider(subscription.ResumeFrom)
+		consider(subscription.ResumeFromRaw)
+	}
+	return min
+}
+
+func connectEventAllowed(event EventEnvelope, streams, suppressDelta map[string]struct{}) bool {
+	if len(streams) > 0 {
+		if _, ok := streams[event.Stream]; !ok {
+			return false
+		}
+	}
+	if event.Type == "message.delta" && len(suppressDelta) > 0 {
+		if _, ok := suppressDelta[event.Stream]; ok {
+			return false
+		}
+	}
+	return true
+}
+
+func shouldLogConnectStreamEvent(event EventEnvelope) bool {
+	switch event.Type {
+	case "stream.heartbeat", "session.state", "message.delta", "message.generating", "message.commit":
+		return false
+	default:
+		return true
+	}
 }
 
 type HandlerOption func(*Handler)
@@ -408,11 +517,16 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 		writeConnectError(w, http.StatusBadRequest, "invalid_argument", "invalid json")
 		return
 	}
-	after := body.AfterEventID
-	if after == 0 {
-		after = body.AfterEventIDRaw
+	after := body.afterEventID()
+	if minResume := body.minResumeFrom(); minResume > 0 && (after == 0 || minResume < after) {
+		after = minResume
 	}
 	span.SetAttributes(attribute.Int64("connect.stream.after_event_id", int64(after)))
+	streamFilters := body.streamFilters()
+	suppressDeltaFilters := body.suppressMessageDeltaFilters()
+	if len(streamFilters) > 0 {
+		span.SetAttributes(attribute.Int("connect.stream.subscription_count", len(streamFilters)))
+	}
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	if protoMode {
 		w.Header().Set("Content-Type", "application/connect+proto")
@@ -423,20 +537,25 @@ func (h *Handler) handleEvent(w http.ResponseWriter, req *http.Request, method s
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 	writeEvent := func(event EventEnvelope) bool {
+		if !connectEventAllowed(event, streamFilters, suppressDeltaFilters) {
+			return true
+		}
 		var err error
 		eventSessionID := sessionIDFromStream(event.Stream)
 		eventLagMS := h.now().UnixMilli() - event.UnixMillis
 		if eventLagMS < 0 {
 			eventLagMS = 0
 		}
-		span.AddEvent("connect.stream.event", trace.WithAttributes(
-			attribute.Int64("event.id", int64(event.ID)),
-			attribute.String("event.type", event.Type),
-			attribute.String("event.stream", event.Stream),
-			attribute.Int64("event.lag_ms", eventLagMS),
-			attribute.String("session.id", eventSessionID),
-		))
-		h.logConnectEvent(req, method, eventSessionID, event.Stream, wireFormat, event.ID, event.Type, eventLagMS, started)
+		if shouldLogConnectStreamEvent(event) {
+			span.AddEvent("connect.stream.event", trace.WithAttributes(
+				attribute.Int64("event.id", int64(event.ID)),
+				attribute.String("event.type", event.Type),
+				attribute.String("event.stream", event.Stream),
+				attribute.Int64("event.lag_ms", eventLagMS),
+				attribute.String("session.id", eventSessionID),
+			))
+			h.logConnectEvent(req, method, eventSessionID, event.Stream, wireFormat, event.ID, event.Type, eventLagMS, started)
+		}
 		if protoMode {
 			err = writeConnectProtoEnvelope(w, event)
 		} else {

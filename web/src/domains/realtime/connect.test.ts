@@ -1,7 +1,7 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import { CommandResponseSchema } from "../../gen/actrail/v1/transport_pb";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connect, disconnect, sendRealtimeCommand, configureRealtimeClient } from "./client";
+import { connect, disconnect, sendRealtimeCommand, configureRealtimeClient, setRealtimeSubscriptions } from "./client";
 import { fetchConnectListSessions, fetchConnectSessionState } from "./connect";
 
 const encoder = new TextEncoder();
@@ -20,6 +20,7 @@ function payloadJson(value: unknown) {
 describe("Connect realtime transport", () => {
   afterEach(() => {
     disconnect();
+    setRealtimeSubscriptions([]);
     vi.restoreAllMocks();
     configureRealtimeClient({ connectBasePath: "/api/connect", connectWireFormat: "json" });
   });
@@ -34,6 +35,27 @@ describe("Connect realtime transport", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, "api/connect-a/actrail.v1.EventService/Subscribe", expect.objectContaining({ method: "POST" }));
     expect(fetchMock).toHaveBeenNthCalledWith(2, "api/connect-b/actrail.v1.EventService/Subscribe", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("sends JSON stream subscriptions to the Connect EventService", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockReturnValue(new Promise(() => undefined) as never);
+    configureRealtimeClient({ connectBasePath: "/api/connect" });
+    setRealtimeSubscriptions([
+      { name: "system" },
+      { name: "session:s_1", resumeFrom: 42, suppressMessageDeltas: true },
+    ]);
+
+    await connect();
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("api/connect/actrail.v1.EventService/Subscribe");
+    expect(JSON.parse(String(init.body))).toEqual({
+      afterEventId: 0,
+      subscriptions: [
+        { name: "session:s_1", resumeFrom: 42, suppressMessageDeltas: true },
+        { name: "system", suppressMessageDeltas: false },
+      ],
+    });
   });
 
   it("sends unary commands to the Connect SessionCommandService", async () => {
