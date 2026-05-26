@@ -35,6 +35,7 @@ type MarkdownDefinition = {
 };
 
 const markdownProcessor = unified().use(remarkParse).use(remarkGfm).use(remarkBreaks);
+const codeBlockUrlPattern = /\bhttps?:\/\/[^\s<>"'`]+/gi;
 
 function textFromChildren(children: ComponentChildren): string {
   if (children == null || typeof children === "boolean") {
@@ -245,6 +246,56 @@ function renderMarkdownImage(target: string, altText: string, options: MarkdownR
   );
 }
 
+function splitCodeBlockUrl(rawUrl: string): { href: string; suffix: string } {
+  const match = rawUrl.match(/[.,;:!?]+$/);
+  if (!match) {
+    return { href: rawUrl, suffix: "" };
+  }
+  const suffix = match[0] || "";
+  return { href: rawUrl.slice(0, -suffix.length), suffix };
+}
+
+function renderCodeBlockText(rawValue: string, keyPrefix: string): ComponentChildren {
+  const value = rawValue.replace(/\n$/, "");
+  const parts: ComponentChildren[] = [];
+  let cursor = 0;
+  for (const match of value.matchAll(codeBlockUrlPattern)) {
+    const matchedText = match[0] || "";
+    const index = match.index ?? 0;
+    if (!matchedText || index < cursor) {
+      continue;
+    }
+    if (index > cursor) {
+      parts.push(value.slice(cursor, index));
+    }
+    const { href, suffix } = splitCodeBlockUrl(matchedText);
+    if (href) {
+      parts.push(
+        <a
+          className="messageCodeLink underline decoration-dotted underline-offset-4"
+          href={href}
+          key={`${keyPrefix}-url-${index}`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {href}
+        </a>,
+      );
+    }
+    if (suffix) {
+      parts.push(suffix);
+    }
+    cursor = index + matchedText.length;
+  }
+  if (!parts.length) {
+    return value;
+  }
+  if (cursor < value.length) {
+    parts.push(value.slice(cursor));
+  }
+  return parts;
+}
+
 function renderMarkdownChildren(children: MarkdownNode[] | undefined, options: MarkdownRenderOptions, definitions: Map<string, MarkdownDefinition>, keyPrefix: string): ComponentChildren {
   return (children || []).map((child, index) => (
     <Fragment key={`${keyPrefix}-${index}`}>{renderMarkdownNode(child, options, definitions, `${keyPrefix}-${index}`)}</Fragment>
@@ -314,7 +365,7 @@ function renderMarkdownNode(node: MarkdownNode, options: MarkdownRenderOptions, 
       const className = node.lang ? `language-${node.lang}` : undefined;
       return (
         <pre className="overflow-x-auto rounded-2xl border border-border/60 bg-background/70 p-4">
-          <code className={cn("font-mono text-sm", className)}>{(node.value || "").replace(/\n$/, "")}</code>
+          <code className={cn("font-mono text-sm", className)}>{renderCodeBlockText(node.value || "", keyPrefix)}</code>
         </pre>
       );
     }

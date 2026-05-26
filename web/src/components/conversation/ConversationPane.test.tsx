@@ -1728,6 +1728,44 @@ describe("ConversationPane", () => {
     expect(blockCode?.textContent).toContain("const answer = 42;");
   });
 
+  it("linkifies urls inside markdown code blocks", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-code-link", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-code-link": [
+            {
+              role: "assistant",
+              text: "Logs:\n\n```text\nopen https://example.com/path?x=1.\nplain_code();\n```",
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-code-link": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const codeLink = root.querySelector<HTMLAnchorElement>(".messageBody pre code a.messageCodeLink");
+    const blockCode = root.querySelector(".messageBody pre code");
+    expect(codeLink?.textContent).toBe("https://example.com/path?x=1");
+    expect(codeLink?.getAttribute("href")).toBe("https://example.com/path?x=1");
+    expect(blockCode?.textContent).toContain("https://example.com/path?x=1.");
+    expect(blockCode?.textContent).toContain("plain_code();");
+  });
+
   it("renders markdown unordered and ordered lists with explicit list styling", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-4-list", loading: false, newSessionDefaults: null },
