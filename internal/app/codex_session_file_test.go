@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1914,6 +1915,118 @@ func TestSessionStateCodexTaskCompleteClearsRuntimeAgentRunning(t *testing.T) {
 	}
 	if svc.isRuntimeAgentRunning(sessionID) {
 		t.Fatal("runtimeAgentRunning = true, want false after codex task_complete state reconcile")
+	}
+}
+
+func TestSendReconcilesCodexTaskCompleteBeforeBusyPrecondition(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	sessionID := mustSessionID(t, "s_codex_send_after_task_complete")
+	threadID := "019e084e-63e0-7320-9a4a-84f68f656827"
+	sourcePath := writeCodexSessionFile(t, t.TempDir(), threadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"019e084e-63e0-7320-9a4a-84f68f656827","cwd":"/tmp/codex-send-after-complete","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"previous prompt"}}`,
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"done","phase":"final_answer"}}`,
+		`{"timestamp":"2026-05-08T15:59:10.397Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-codex-task-complete","last_agent_message":"done","completed_at":1760000350}}`,
+	})
+	raw, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", sourcePath, err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	appItems, err := codexSessionMessagesFromJSONLLines(context.Background(), sourcePath, lines)
+	if err != nil {
+		t.Fatalf("codexSessionMessagesFromJSONLLines() error = %v", err)
+	}
+	messages := make([]iod.SessionHistoryMessage, 0, len(appItems))
+	for _, item := range appItems {
+		messages = append(messages, iod.SessionHistoryMessage{
+			Seq:         item.Seq,
+			Role:        item.Role,
+			Kind:        item.Kind,
+			Type:        item.Type,
+			Text:        item.Text,
+			TS:          item.TS,
+			EventID:     item.EventID,
+			SourceOrder: item.SourceOrder,
+			Details:     item.Details,
+		})
+	}
+	generationID := mustHelperGenerationID(t, "g_codex_send_after_task_complete")
+	packet, err := iod.NewSessionHistoryResponsePacket(sessionID, generationID, iod.SessionHistorySnapshot{
+		SourcePath:   sourcePath,
+		Lines:        lines,
+		Messages:     messages,
+		IndexedCount: len(messages),
+		TaskComplete: true,
+		Warmed:       true,
+		Complete:     true,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionHistoryResponsePacket() error = %v", err)
+	}
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	svc.asyncSQLiteActions = true
+	identity, err := session.NewLiveIdentity(sessionID.String(), "r_send_after_complete", "t_send_after_complete", session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewLiveIdentity() error = %v", err)
+	}
+	runtimeState := newCodexRuntimeState(session.BackendCodex)
+	runtimeState.markInitialized()
+	runtimeState.attachInitializedThread(threadID)
+	_, _ = runtimeState.applyProtocolBusy(true)
+	sent := make(chan string, 1)
+	runtime := sessionRuntime{
+		protocol: runtimeProtocolCodexRPC,
+		codex:    runtimeState,
+		helper: &runtimeIODHelper{
+			streamClient: &iodclient.Client{},
+			sessionID:    sessionID,
+			generationID: generationID,
+			historyFunc: func(context.Context) (iod.SessionHistoryResponsePacket, error) {
+				return packet, nil
+			},
+			commandFunc: func(_ context.Context, _ iod.CommandName, payload json.RawMessage) error {
+				sent <- string(payload)
+				return nil
+			},
+		},
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &identity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-send-after-complete",
+		BackendSessionID: threadID,
+		SourcePath:       sourcePath,
+		SourceConfidence: sourceConfidenceExact,
+		Runtime:          runtime,
+		Transport:        SessionTransportSnapshot{GenerationID: generationID.String(), State: SessionTransportStateAttached},
+	}); err != nil {
+		t.Fatalf("registry.Create() error = %v", err)
+	}
+	if _, ok, err := svc.registry.SetBusy(sessionID, true); err != nil || !ok {
+		t.Fatalf("registry.SetBusy() = (_, %v, %v), want ok", ok, err)
+	}
+	if err := svc.setRuntimeAgentRunning(sessionID, true); err != nil {
+		t.Fatalf("setRuntimeAgentRunning() error = %v", err)
+	}
+	response, err := svc.Send(context.Background(), SendRequest{SessionID: sessionID, Text: "next prompt"})
+	if err != nil {
+		t.Fatalf("Send() error = %v, want stale busy state reconciled before precondition", err)
+	}
+	if response.Message.Text != "next prompt" {
+		t.Fatalf("Send().Message = %+v, want next prompt", response.Message)
+	}
+	select {
+	case payload := <-sent:
+		if !strings.Contains(payload, "next prompt") {
+			t.Fatalf("runtime payload = %s, want next prompt", payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime command was not dispatched")
 	}
 }
 

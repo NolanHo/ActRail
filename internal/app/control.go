@@ -138,6 +138,7 @@ func (s *Stub) sendWithOptions(ctx context.Context, req SendRequest, followUp bo
 		if reconciled, ok := s.reconcileLiveCodexAttachLostTransport(record); ok {
 			record = reconciled
 		}
+		record = s.reconcileCodexSessionFileFinalForState(record)
 		if precondition != nil {
 			if err := precondition(record); err != nil {
 				return err
@@ -239,6 +240,7 @@ func (s *Stub) sendWithOptionsSync(ctx context.Context, req SendRequest, followU
 		if reconciled, ok := s.reconcileLiveCodexAttachLostTransport(record); ok {
 			record = reconciled
 		}
+		record = s.reconcileCodexSessionFileFinalForState(record)
 		if precondition != nil {
 			if err := precondition(record); err != nil {
 				return err
