@@ -260,7 +260,9 @@ func TestSessionMessagesUsesForkParentHistoryBeforeForkFileExists(t *testing.T) 
 	childSessionID := mustSessionID(t, "s_codex_fork_parent_history_child")
 	parentThreadID := "019e084e-63e0-7320-9a4a-84f68f656880"
 	childThreadID := "019e084e-63e0-7320-9a4a-84f68f656881"
-	parentSourcePath := writeCodexSessionFile(t, t.TempDir(), parentThreadID, []string{
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	parentSourcePath := writeCodexSessionFile(t, codexHome, parentThreadID, []string{
 		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"` + parentThreadID + `","cwd":"/tmp/codex-fork-parent","originator":"actrail"}}`,
 		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"parent prompt"}}`,
 		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"parent final","phase":"final_answer"}}`,
@@ -309,6 +311,21 @@ func TestSessionMessagesUsesForkParentHistoryBeforeForkFileExists(t *testing.T) 
 	}
 	if got, want := messageRolesAndText(messages.Items), []string{"user:parent prompt", "assistant:parent final"}; strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("SessionMessages(child) = %#v, want %#v", got, want)
+	}
+	childRecord, ok := svc.registry.Lookup(childSessionID)
+	if !ok {
+		t.Fatal("child session missing")
+	}
+	svc.rememberCodexThreadBinding(childRecord, childThreadID)
+	childRecord, ok = svc.registry.Lookup(childSessionID)
+	if !ok {
+		t.Fatal("child session missing after binding")
+	}
+	if childRecord.importedSourcePath == "" || childRecord.importedSourcePath == parentSourcePath {
+		t.Fatalf("child importedSourcePath = %q, want materialized fork file distinct from parent %q", childRecord.importedSourcePath, parentSourcePath)
+	}
+	if got, ok, err := codexSessionIDFromFile(context.Background(), childRecord.importedSourcePath); err != nil || !ok || got != childThreadID {
+		t.Fatalf("codexSessionIDFromFile(child) = %q, %v, %v; want %q, true, nil", got, ok, err, childThreadID)
 	}
 
 	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})

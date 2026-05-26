@@ -2094,6 +2094,11 @@ func (s *Stub) rememberCodexThreadBinding(record sessionRecord, threadID string,
 			sourcePath = discovered
 		}
 	}
+	if sourcePath == "" {
+		if materialized, ok, err := s.materializeCodexForkSessionFile(record, resolved); err == nil && ok {
+			sourcePath = materialized
+		}
+	}
 	if strings.TrimSpace(record.importedBackendSessionID) == resolved &&
 		filepath.Clean(strings.TrimSpace(record.importedSourcePath)) == filepath.Clean(strings.TrimSpace(sourcePath)) &&
 		strings.TrimSpace(record.importedSourceConfidence) == sourceConfidenceExact {

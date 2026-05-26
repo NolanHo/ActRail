@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"actrail/internal/domain/session"
 )
 
 type codexSessionLine struct {
@@ -138,6 +140,121 @@ func discoverCodexSessionFileByID(ctx context.Context, sessionID string) (string
 		}
 	}
 	return best, best != ""
+}
+
+func (s *Stub) materializeCodexForkSessionFile(record sessionRecord, threadID string) (string, bool, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" || record.identity.Backend() != session.BackendCodex {
+		return "", false, nil
+	}
+	if path, ok := discoverCodexSessionFileByID(context.Background(), threadID); ok {
+		return path, true, nil
+	}
+	parentPath, parentThreadID := s.codexForkParentSource(record)
+	if strings.TrimSpace(parentPath) == "" {
+		return "", false, nil
+	}
+	if parentThreadID != "" && !codexSourcePathMatchesSessionID(parentPath, parentThreadID) {
+		return "", false, nil
+	}
+	now := time.Now().UTC()
+	if s != nil && s.registry != nil && s.registry.now != nil {
+		now = s.registry.now().UTC()
+	}
+	dir := filepath.Join(codexSessionRoot(), now.Format("2006"), now.Format("01"), now.Format("02"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", false, fmt.Errorf("create codex fork session dir %q: %w", dir, err)
+	}
+	path := filepath.Join(dir, fmt.Sprintf("rollout-%s-%s.jsonl", now.Format("2006-01-02T15-04-05"), threadID))
+	if err := copyCodexForkSessionFile(parentPath, path, threadID, record.cwd); err != nil {
+		if os.IsExist(err) {
+			if discovered, ok := discoverCodexSessionFileByID(context.Background(), threadID); ok {
+				return discovered, true, nil
+			}
+		}
+		return "", false, err
+	}
+	return filepath.Clean(path), true, nil
+}
+
+func copyCodexForkSessionFile(parentPath, childPath, childThreadID, cwd string) error {
+	in, err := os.Open(strings.TrimSpace(parentPath))
+	if err != nil {
+		return fmt.Errorf("open codex fork parent session file %q: %w", parentPath, err)
+	}
+	defer in.Close()
+	out, err := os.OpenFile(strings.TrimSpace(childPath), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("create codex fork child session file %q: %w", childPath, err)
+	}
+	committed := false
+	defer func() {
+		_ = out.Close()
+		if !committed {
+			_ = os.Remove(childPath)
+		}
+	}()
+	writer := bufio.NewWriter(out)
+	scanner := bufio.NewScanner(in)
+	scanner.Buffer(make([]byte, 0, 64*1024), codexSessionFileMaxLineBytes)
+	sawSessionMeta := false
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		nextLine, rewrote, err := codexForkSessionLine(line, childThreadID, cwd)
+		if err != nil {
+			return err
+		}
+		if rewrote {
+			sawSessionMeta = true
+		}
+		if _, err := writer.Write(nextLine); err != nil {
+			return fmt.Errorf("write codex fork child session file %q: %w", childPath, err)
+		}
+		if err := writer.WriteByte('\n'); err != nil {
+			return fmt.Errorf("write codex fork child session file %q: %w", childPath, err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan codex fork parent session file %q: %w", parentPath, err)
+	}
+	if !sawSessionMeta {
+		return fmt.Errorf("codex fork parent session file %q has no session_meta", parentPath)
+	}
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("flush codex fork child session file %q: %w", childPath, err)
+	}
+	if err := out.Sync(); err != nil {
+		return fmt.Errorf("sync codex fork child session file %q: %w", childPath, err)
+	}
+	committed = true
+	return nil
+}
+
+func codexForkSessionLine(line []byte, childThreadID, cwd string) ([]byte, bool, error) {
+	var entry map[string]any
+	if err := json.Unmarshal(line, &entry); err != nil {
+		return nil, false, fmt.Errorf("parse codex fork parent session line: %w", err)
+	}
+	if strings.TrimSpace(stringValue(entry["type"])) != "session_meta" {
+		return append([]byte(nil), line...), false, nil
+	}
+	payload, _ := entry["payload"].(map[string]any)
+	if payload == nil {
+		payload = map[string]any{}
+		entry["payload"] = payload
+	}
+	payload["id"] = strings.TrimSpace(childThreadID)
+	if strings.TrimSpace(cwd) != "" {
+		payload["cwd"] = strings.TrimSpace(cwd)
+	}
+	body, err := json.Marshal(entry)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode codex fork child session line: %w", err)
+	}
+	return body, true, nil
 }
 
 func codexSessionRoot() string {
