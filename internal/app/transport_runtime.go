@@ -128,6 +128,7 @@ func (s *Stub) markSessionGenerationEnded(sessionID session.SessionID, generatio
 	if !s.transportEventGenerationCurrent(sessionID, generationID) {
 		return nil
 	}
+	s.clearHelperReconnectStart(sessionID, generationID)
 	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
 		return err
 	}
@@ -146,6 +147,7 @@ func (s *Stub) markSessionGenerationBroken(sessionID session.SessionID, generati
 	if !s.transportEventGenerationCurrent(sessionID, generationID) {
 		return nil
 	}
+	s.clearHelperReconnectStart(sessionID, generationID)
 	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
 		return err
 	}
@@ -167,6 +169,7 @@ func (s *Stub) markSessionTransportResetRequired(sessionID session.SessionID, ge
 	if !s.transportEventGenerationCurrent(sessionID, generationID) {
 		return nil
 	}
+	s.clearHelperReconnectStart(sessionID, generationID)
 	if err := s.clearRuntimeTerminalState(sessionID); err != nil {
 		return err
 	}
@@ -265,8 +268,7 @@ func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend sessio
 			} else if result.orphanCandidate != nil {
 				s.cleanupOrphanChildAsync(*result.orphanCandidate)
 			}
-			if s.helperGenerationAppearsAlive(sessionID, generationID) {
-				_ = s.markHelperTransportReconnecting(sessionID, generationID)
+			if s.markHelperTransportReconnectingIfRecoverable(sessionID, generationID) {
 				return helperReadErrorResult{retry: true}
 			}
 		}
@@ -284,8 +286,7 @@ func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend sessio
 	if result := s.tryRedialHelperAfterReadError(sessionID, backend, generationID, state.Transport); result.reattached || result.retry {
 		return result
 	} else if result.orphanCandidate != nil {
-		if s.helperGenerationAppearsAlive(sessionID, generationID) {
-			_ = s.markHelperTransportReconnecting(sessionID, generationID)
+		if s.markHelperTransportReconnectingIfRecoverable(sessionID, generationID) {
 			return helperReadErrorResult{retry: true}
 		}
 		if err := s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String()); err == nil {
@@ -293,8 +294,7 @@ func (s *Stub) handleHelperReadError(sessionID session.SessionID, backend sessio
 		}
 		return helperReadErrorResult{}
 	}
-	if s.helperGenerationAppearsAlive(sessionID, generationID) {
-		_ = s.markHelperTransportReconnecting(sessionID, generationID)
+	if s.markHelperTransportReconnectingIfRecoverable(sessionID, generationID) {
 		return helperReadErrorResult{retry: true}
 	}
 	_ = s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String())

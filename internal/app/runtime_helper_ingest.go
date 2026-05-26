@@ -20,6 +20,13 @@ const (
 	runtimeHelperReconnectMaxWait     = 5 * time.Second
 )
 
+var runtimeHelperReconnectDeadline = 30 * time.Second
+
+type helperReconnectKey struct {
+	sessionID    session.SessionID
+	generationID iod.GenerationID
+}
+
 type runtimeHelperProjector struct {
 	mu      sync.Mutex
 	decoder runtimeEventDecoder
@@ -180,6 +187,7 @@ func (s *Stub) markHelperTransportAlive(sessionID session.SessionID, generationI
 	if s == nil || generationID == "" {
 		return nil
 	}
+	s.clearHelperReconnectStart(sessionID, generationID)
 	record, ok := s.registry.Lookup(sessionID)
 	if !ok {
 		return nil
@@ -228,6 +236,50 @@ func (s *Stub) markHelperTransportReconnecting(sessionID session.SessionID, gene
 	}
 	s.emitSessionState(sessionID)
 	return nil
+}
+
+func (s *Stub) markHelperTransportReconnectingIfRecoverable(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if s == nil || generationID == "" || !s.helperGenerationAppearsAlive(sessionID, generationID) {
+		return false
+	}
+	if !s.helperReconnectWithinDeadline(sessionID, generationID) {
+		_ = s.markSessionTransportResetRequired(sessionID, generationID, iod.GenerationBreakAttachLost.String())
+		return false
+	}
+	_ = s.markHelperTransportReconnecting(sessionID, generationID)
+	return true
+}
+
+func (s *Stub) helperReconnectWithinDeadline(sessionID session.SessionID, generationID iod.GenerationID) bool {
+	if s == nil || generationID == "" {
+		return false
+	}
+	now := s.registry.now().UTC()
+	key := helperReconnectKey{sessionID: sessionID, generationID: generationID}
+	s.helperReconnectMu.Lock()
+	defer s.helperReconnectMu.Unlock()
+	if s.helperReconnectStarted == nil {
+		s.helperReconnectStarted = map[helperReconnectKey]time.Time{}
+	}
+	started, ok := s.helperReconnectStarted[key]
+	if !ok {
+		s.helperReconnectStarted[key] = now
+		return true
+	}
+	if now.Sub(started) <= runtimeHelperReconnectDeadline {
+		return true
+	}
+	delete(s.helperReconnectStarted, key)
+	return false
+}
+
+func (s *Stub) clearHelperReconnectStart(sessionID session.SessionID, generationID iod.GenerationID) {
+	if s == nil || generationID == "" {
+		return
+	}
+	s.helperReconnectMu.Lock()
+	defer s.helperReconnectMu.Unlock()
+	delete(s.helperReconnectStarted, helperReconnectKey{sessionID: sessionID, generationID: generationID})
 }
 
 func (s *Stub) reconcileLiveCodexAttachLostTransport(record sessionRecord) (sessionRecord, bool) {
@@ -394,8 +446,7 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 	defer cancel()
 	client, hello, err := redialHelper(ctx, manifest, s.helperDialer)
 	if err != nil {
-		if s.helperGenerationAppearsAlive(sessionID, generationID) {
-			_ = s.markHelperTransportReconnecting(sessionID, generationID)
+		if s.markHelperTransportReconnectingIfRecoverable(sessionID, generationID) {
 			return helperReadErrorResult{retry: true}
 		}
 		return helperReadErrorResult{orphanCandidate: &manifest}
@@ -436,6 +487,7 @@ func (s *Stub) tryRedialHelperAfterReadError(sessionID session.SessionID, backen
 		_ = client.Close()
 		return helperReadErrorResult{}
 	}
+	s.clearHelperReconnectStart(sessionID, generationID)
 	s.emitSessionState(sessionID)
 	return helperReadErrorResult{reattached: true, client: client}
 }

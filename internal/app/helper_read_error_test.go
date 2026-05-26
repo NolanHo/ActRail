@@ -642,6 +642,63 @@ func TestCurrentHelperReadErrorKeepsRuntimeHelperPIDRecoverableWhenManifestMissi
 	}
 }
 
+func TestLiveHelperReadErrorEscalatesReconnectAfterDeadline(t *testing.T) {
+	oldDeadline := runtimeHelperReconnectDeadline
+	runtimeHelperReconnectDeadline = time.Second
+	defer func() { runtimeHelperReconnectDeadline = oldDeadline }()
+
+	now := time.Unix(1760000000, 0).UTC()
+	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+		return nil, errors.New("temporary dial failure")
+	})
+	svc := newStubWithRuntime(config.Load(), func() time.Time { return now }, RuntimeConfig{IODDialer: dialer})
+	created, err := svc.CreateSession(context.Background(), CreateSessionRequest{AgentBackend: "codex", CWD: t.TempDir()})
+	if err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+	sessionID := mustSessionID(t, created.Session.SessionID)
+	generationID := mustHelperGenerationID(t, "g_current_helper_reconnect_deadline")
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	if _, ok, err := svc.registry.Update(sessionID, false, func(record *sessionRecord) error {
+		record.runtime = sessionRuntime{
+			protocol: runtimeProtocolCodexRPC,
+			helper: &runtimeIODHelper{
+				streamClient: iodclient.NewClient(clientConn),
+				sessionID:    sessionID,
+				generationID: generationID,
+				helperPID:    os.Getpid(),
+			},
+			codex: newCodexRuntimeState(session.BackendCodex),
+		}
+		record.runtime.codex.markInitialized()
+		record.runtime.codex.setThreadID("thread-helper-reconnect-deadline")
+		record.transport = transportSnapshotAttached(generationID)
+		return nil
+	}); err != nil || !ok {
+		t.Fatalf("registry.Update() = (_, %v, %v), want ok", ok, err)
+	}
+
+	result := svc.handleHelperReadError(sessionID, session.BackendCodex, generationID, errors.New("transient stream reset"))
+	if !result.retry || result.reattached || result.client != nil {
+		t.Fatalf("first handleHelperReadError() = %+v, want retry without client", result)
+	}
+
+	now = now.Add(runtimeHelperReconnectDeadline + time.Nanosecond)
+	result = svc.handleHelperReadError(sessionID, session.BackendCodex, generationID, errors.New("stale stream reset"))
+	if result.retry || result.reattached || result.client != nil {
+		t.Fatalf("second handleHelperReadError() = %+v, want reset-required stop", result)
+	}
+	state, err := svc.SessionState(context.Background(), SessionStateRequest{SessionID: sessionID})
+	if err != nil {
+		t.Fatalf("SessionState() error = %v", err)
+	}
+	if state.Transport.State != SessionTransportStateBroken || !state.Transport.ResetRequired || state.Transport.Reason != iod.GenerationBreakAttachLost.String() {
+		t.Fatalf("SessionState().Transport = %+v, want broken reset-required attach_lost", state.Transport)
+	}
+}
+
 func TestBrokenAttachLostCanRedialLiveCodexHelper(t *testing.T) {
 	var hello iod.HelloPacket
 	dialer := helperReadErrorDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {

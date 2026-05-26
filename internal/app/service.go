@@ -91,6 +91,8 @@ type Stub struct {
 	helperDialer             helperDialer
 	helperBindings           helperBindingStore
 	helpers                  *helperRegistry
+	helperReconnectMu        sync.Mutex
+	helperReconnectStarted   map[helperReconnectKey]time.Time
 	messageCache             *sessionMessageCache
 	codexIODHistoryMu        sync.Mutex
 	codexIODHistory          map[session.SessionID]codexIODHistoryCacheEntry
@@ -171,6 +173,7 @@ func newStubWithRuntime(cfg config.Config, now func() time.Time, runtimeCfg Runt
 		helperDialer:             runtimeCfg.IODDialer,
 		helperBindings:           newHelperBindingStore(cfg.Storage.IODBindingsDir()),
 		helpers:                  newHelperRegistry(),
+		helperReconnectStarted:   map[helperReconnectKey]time.Time{},
 		messageCache:             newSessionMessageCache(defaultSessionMessageCacheEntries),
 		sessionReadSeq:           map[session.SessionID]uint64{},
 		codexIODHistory:          map[session.SessionID]codexIODHistoryCacheEntry{},
