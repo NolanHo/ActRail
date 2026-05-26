@@ -410,7 +410,11 @@ func (r *sessionRegistry) persistCodexSourceAndClaimLocked(record sessionRecord)
 	if r == nil || r.store == nil {
 		return nil
 	}
-	if strings.TrimSpace(record.importedSourcePath) != "" || strings.TrimSpace(record.importedBackendSessionID) != "" {
+	if strings.TrimSpace(record.importedSourcePath) != "" ||
+		strings.TrimSpace(record.importedBackendSessionID) != "" ||
+		record.forkParent.SessionID != nil ||
+		strings.TrimSpace(record.forkParent.BackendSessionID) != "" ||
+		strings.TrimSpace(record.forkParent.SourcePath) != "" {
 		if err := r.store.UpsertSessionSourceRef(context.Background(), sqlitestore.SessionSourceRefRow{
 			SessionID:        record.identity.SessionID().String(),
 			Backend:          record.identity.Backend().String(),
@@ -418,6 +422,14 @@ func (r *sessionRegistry) persistCodexSourceAndClaimLocked(record sessionRecord)
 			SourcePath:       strings.TrimSpace(record.importedSourcePath),
 			SourceConfidence: strings.TrimSpace(record.importedSourceConfidence),
 			FirstUserMessage: strings.TrimSpace(record.importedFirstUserMessage),
+			ForkParentSessionID: func() string {
+				if record.forkParent.SessionID == nil {
+					return ""
+				}
+				return record.forkParent.SessionID.String()
+			}(),
+			ForkParentBackendID:  strings.TrimSpace(record.forkParent.BackendSessionID),
+			ForkParentSourcePath: strings.TrimSpace(record.forkParent.SourcePath),
 		}); err != nil {
 			return err
 		}

@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 14
+const currentSchemaVersion = 15
 
 const tsLayout = time.RFC3339Nano
 
@@ -607,6 +607,28 @@ var migrations = []migration{
 				}
 			}
 			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 14, now)
+			return err
+		},
+	},
+	{
+		version: 15,
+		apply: func(ctx context.Context, tx *sql.Tx) error {
+			hasSourceRefs, err := tableExists(ctx, tx, "session_source_refs")
+			if err != nil {
+				return err
+			}
+			if hasSourceRefs {
+				if err := ensureColumnExists(ctx, tx, "session_source_refs", "fork_parent_session_id", `ALTER TABLE session_source_refs ADD COLUMN fork_parent_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+					return err
+				}
+				if err := ensureColumnExists(ctx, tx, "session_source_refs", "fork_parent_backend_id", `ALTER TABLE session_source_refs ADD COLUMN fork_parent_backend_id TEXT NOT NULL DEFAULT ''`); err != nil {
+					return err
+				}
+				if err := ensureColumnExists(ctx, tx, "session_source_refs", "fork_parent_source_path", `ALTER TABLE session_source_refs ADD COLUMN fork_parent_source_path TEXT NOT NULL DEFAULT ''`); err != nil {
+					return err
+				}
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)`, 15, time.Now().UTC().Format(tsLayout))
 			return err
 		},
 	},

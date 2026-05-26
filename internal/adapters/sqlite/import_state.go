@@ -18,6 +18,9 @@ type SessionSourceRefRow struct {
 	SourceConfidence        string
 	FirstUserMessage        string
 	HasLegacySessionUIState bool
+	ForkParentSessionID     string
+	ForkParentBackendID     string
+	ForkParentSourcePath    string
 }
 
 type CodexRuntimeClaimRow struct {
@@ -100,7 +103,7 @@ func (c *SessionCatalog) ReplaceImportBundle(ctx context.Context, bundle ImportB
 		}
 	}
 	for _, row := range bundle.SessionSourceRefs {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state) VALUES(?, ?, ?, ?, ?, ?, ?)`, row.SessionID, row.Backend, row.BackendSessionID, row.SourcePath, row.SourceConfidence, row.FirstUserMessage, boolToInt(row.HasLegacySessionUIState)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state, fork_parent_session_id, fork_parent_backend_id, fork_parent_source_path) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, row.SessionID, row.Backend, row.BackendSessionID, row.SourcePath, row.SourceConfidence, row.FirstUserMessage, boolToInt(row.HasLegacySessionUIState), row.ForkParentSessionID, row.ForkParentBackendID, row.ForkParentSourcePath); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("insert session source ref %q: %w", row.SessionID, err)
 		}
@@ -191,8 +194,8 @@ func (c *SessionCatalog) UpsertSessionSourceRef(ctx context.Context, row Session
 	if c == nil || c.db == nil {
 		return fmt.Errorf("sqlite catalog is not initialized")
 	}
-	_, err := c.db.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state) VALUES(?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(session_id) DO UPDATE SET backend=excluded.backend, backend_session_id=excluded.backend_session_id, source_path=excluded.source_path, source_confidence=excluded.source_confidence, first_user_message=excluded.first_user_message, has_legacy_session_ui_state=excluded.has_legacy_session_ui_state`, row.SessionID, row.Backend, row.BackendSessionID, row.SourcePath, row.SourceConfidence, row.FirstUserMessage, boolToInt(row.HasLegacySessionUIState))
+	_, err := c.db.ExecContext(ctx, `INSERT INTO session_source_refs(session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state, fork_parent_session_id, fork_parent_backend_id, fork_parent_source_path) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET backend=excluded.backend, backend_session_id=excluded.backend_session_id, source_path=excluded.source_path, source_confidence=excluded.source_confidence, first_user_message=excluded.first_user_message, has_legacy_session_ui_state=excluded.has_legacy_session_ui_state, fork_parent_session_id=excluded.fork_parent_session_id, fork_parent_backend_id=excluded.fork_parent_backend_id, fork_parent_source_path=excluded.fork_parent_source_path`, row.SessionID, row.Backend, row.BackendSessionID, row.SourcePath, row.SourceConfidence, row.FirstUserMessage, boolToInt(row.HasLegacySessionUIState), row.ForkParentSessionID, row.ForkParentBackendID, row.ForkParentSourcePath)
 	if err != nil {
 		return fmt.Errorf("upsert session source ref %q: %w", row.SessionID, err)
 	}
@@ -203,7 +206,7 @@ func (c *SessionCatalog) ListSessionSourceRefs(ctx context.Context) ([]SessionSo
 	if c == nil || c.db == nil {
 		return nil, fmt.Errorf("sqlite catalog is not initialized")
 	}
-	rows, err := c.db.QueryContext(ctx, `SELECT session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state FROM session_source_refs ORDER BY session_id ASC`)
+	rows, err := c.db.QueryContext(ctx, `SELECT session_id, backend, backend_session_id, source_path, source_confidence, first_user_message, has_legacy_session_ui_state, fork_parent_session_id, fork_parent_backend_id, fork_parent_source_path FROM session_source_refs ORDER BY session_id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query session source refs: %w", err)
 	}
@@ -214,7 +217,7 @@ func (c *SessionCatalog) ListSessionSourceRefs(ctx context.Context) ([]SessionSo
 			row                     SessionSourceRefRow
 			hasLegacySessionUIState int
 		)
-		if err := rows.Scan(&row.SessionID, &row.Backend, &row.BackendSessionID, &row.SourcePath, &row.SourceConfidence, &row.FirstUserMessage, &hasLegacySessionUIState); err != nil {
+		if err := rows.Scan(&row.SessionID, &row.Backend, &row.BackendSessionID, &row.SourcePath, &row.SourceConfidence, &row.FirstUserMessage, &hasLegacySessionUIState, &row.ForkParentSessionID, &row.ForkParentBackendID, &row.ForkParentSourcePath); err != nil {
 			return nil, fmt.Errorf("scan session source ref row: %w", err)
 		}
 		row.HasLegacySessionUIState = hasLegacySessionUIState != 0

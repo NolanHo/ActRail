@@ -67,8 +67,25 @@ func applyImportedSourceRefs(records []sessionRecord, refs []sqlitestore.Session
 		records[i].importedSourceConfidence = normalizeSourceConfidence(row.SourceConfidence)
 		records[i].importedFirstUserMessage = strings.TrimSpace(row.FirstUserMessage)
 		records[i].importedHasLegacySessionUIState = row.HasLegacySessionUIState
+		records[i].forkParent = sessionSourceForkParent{
+			SessionID:        parseOptionalSessionID(row.ForkParentSessionID),
+			BackendSessionID: strings.TrimSpace(row.ForkParentBackendID),
+			SourcePath:       strings.TrimSpace(row.ForkParentSourcePath),
+		}
 	}
 	return records
+}
+
+func parseOptionalSessionID(raw string) *session.SessionID {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	id, err := session.ParseSessionID(trimmed)
+	if err != nil {
+		return nil
+	}
+	return &id
 }
 
 func firstUserMessageForRecord(record sessionRecord) string {
@@ -1243,7 +1260,74 @@ func (s *Stub) loadCodexSessionFileHistory(ctx context.Context, record sessionRe
 	if response, ok, err := s.loadCodexIODHistory(ctx, record, req); ok {
 		return response, true, err
 	}
-	return s.loadCodexSourceFileHistory(ctx, record, req)
+	if response, ok, err := s.loadCodexSourceFileHistory(ctx, record, req); ok {
+		return response, true, err
+	}
+	return s.loadCodexForkParentHistory(ctx, record, req)
+}
+
+func (s *Stub) loadCodexForkParentHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {
+	sourcePath, parentThreadID := s.codexForkParentSource(record)
+	if sourcePath == "" {
+		return SessionMessagesResponse{}, false, nil
+	}
+	if parentThreadID != "" && !codexSourcePathMatchesSessionID(sourcePath, parentThreadID) {
+		return SessionMessagesResponse{}, false, nil
+	}
+	response, complete, ok, err := codexSessionMessagesPageFromFile(ctx, sourcePath, req)
+	if err != nil {
+		return SessionMessagesResponse{}, true, err
+	}
+	if ok {
+		if req.BeforeSeq == nil {
+			appendPendingTranscriptMessagesToPage(&response, record, req, complete)
+		}
+		return response, true, nil
+	}
+	items, err := codexSessionMessagesFromFile(ctx, sourcePath)
+	if err != nil {
+		return SessionMessagesResponse{}, true, err
+	}
+	if len(items) == 0 {
+		return SessionMessagesResponse{}, false, nil
+	}
+	if req.BeforeSeq == nil {
+		appendPendingTranscriptMessages(&items, record)
+		for i := range items {
+			items[i].Seq = uint64(i + 1)
+		}
+	}
+	return paginateSessionMessagesForRequest(items, req), true, nil
+}
+
+func (s *Stub) codexForkParentSource(record sessionRecord) (string, string) {
+	sourcePath := strings.TrimSpace(record.forkParent.SourcePath)
+	threadID := strings.TrimSpace(record.forkParent.BackendSessionID)
+	if sourcePath != "" {
+		return filepath.Clean(sourcePath), threadID
+	}
+	if s != nil && record.forkParent.SessionID != nil {
+		if parent, ok := s.registry.Lookup(*record.forkParent.SessionID); ok {
+			if threadID == "" {
+				threadID = strings.TrimSpace(parent.importedBackendSessionID)
+			}
+			if parentPath := strings.TrimSpace(parent.importedSourcePath); parentPath != "" {
+				return filepath.Clean(parentPath), threadID
+			}
+			if path, resolvedThreadID, err := s.codexSessionFileForRecord(parent); err == nil && strings.TrimSpace(path) != "" {
+				if threadID == "" {
+					threadID = resolvedThreadID
+				}
+				return filepath.Clean(path), threadID
+			}
+		}
+	}
+	if threadID != "" {
+		if path, ok := discoverCodexSessionFileByID(context.Background(), threadID); ok {
+			return path, threadID
+		}
+	}
+	return "", threadID
 }
 
 func (s *Stub) loadCodexIODHistory(ctx context.Context, record sessionRecord, req SessionMessagesRequest) (SessionMessagesResponse, bool, error) {

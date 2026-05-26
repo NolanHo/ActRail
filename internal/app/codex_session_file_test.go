@@ -253,6 +253,77 @@ func TestSessionMessagesLoadsCodexHistoryFromSessionFile(t *testing.T) {
 	}
 }
 
+func TestSessionMessagesUsesForkParentHistoryBeforeForkFileExists(t *testing.T) {
+	cfg := persistentTestConfig(t)
+	now := time.Unix(1760000000, 0).UTC()
+	parentSessionID := mustSessionID(t, "s_codex_fork_parent_history_parent")
+	childSessionID := mustSessionID(t, "s_codex_fork_parent_history_child")
+	parentThreadID := "019e084e-63e0-7320-9a4a-84f68f656880"
+	childThreadID := "019e084e-63e0-7320-9a4a-84f68f656881"
+	parentSourcePath := writeCodexSessionFile(t, t.TempDir(), parentThreadID, []string{
+		`{"timestamp":"2026-05-08T15:58:02.545Z","type":"session_meta","payload":{"id":"` + parentThreadID + `","cwd":"/tmp/codex-fork-parent","originator":"actrail"}}`,
+		`{"timestamp":"2026-05-08T15:58:02.548Z","type":"event_msg","payload":{"type":"user_message","message":"parent prompt"}}`,
+		`{"timestamp":"2026-05-08T15:59:10.297Z","type":"event_msg","payload":{"type":"agent_message","message":"parent final","phase":"final_answer"}}`,
+	})
+
+	svc, err := NewPersistentStubForTest(cfg, func() time.Time { return now }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest() error = %v", err)
+	}
+	parentIdentity, err := session.NewDetachedIdentity(parentSessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity(parent) error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &parentIdentity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-fork-parent",
+		BackendSessionID: parentThreadID,
+		SourcePath:       parentSourcePath,
+		SourceConfidence: sourceConfidenceExact,
+	}); err != nil {
+		t.Fatalf("registry.Create(parent) error = %v", err)
+	}
+	childIdentity, err := session.NewDetachedIdentity(childSessionID.String(), session.BackendCodex.String())
+	if err != nil {
+		t.Fatalf("NewDetachedIdentity(child) error = %v", err)
+	}
+	if _, err := svc.registry.Create(sessionCreateSpec{
+		Identity:         &childIdentity,
+		Backend:          session.BackendCodex,
+		CWD:              "/tmp/codex-fork-parent",
+		BackendSessionID: childThreadID,
+		SourceConfidence: sourceConfidenceProvisional,
+		ForkParent: sessionSourceForkParent{
+			SessionID:        &parentSessionID,
+			BackendSessionID: parentThreadID,
+			SourcePath:       parentSourcePath,
+		},
+	}); err != nil {
+		t.Fatalf("registry.Create(child) error = %v", err)
+	}
+
+	messages, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: childSessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionMessages(child) error = %v", err)
+	}
+	if got, want := messageRolesAndText(messages.Items), []string{"user:parent prompt", "assistant:parent final"}; strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("SessionMessages(child) = %#v, want %#v", got, want)
+	}
+
+	rehydrated, err := NewPersistentStubForTest(cfg, func() time.Time { return now.Add(time.Hour) }, RuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewPersistentStubForTest(rehydrate) error = %v", err)
+	}
+	reloaded, err := rehydrated.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: childSessionID, Limit: 10})
+	if err != nil {
+		t.Fatalf("SessionMessages(reloaded child) error = %v", err)
+	}
+	if got, want := messageRolesAndText(reloaded.Items), []string{"user:parent prompt", "assistant:parent final"}; strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("SessionMessages(reloaded child) = %#v, want %#v", got, want)
+	}
+}
+
 func TestSessionMessagesRendersCodexSubagentNotificationAsCustomMessage(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()

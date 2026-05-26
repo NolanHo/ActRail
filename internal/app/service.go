@@ -761,6 +761,19 @@ func (s *Stub) ForkSession(ctx context.Context, req ForkSessionRequest) (CreateS
 	if parentThreadID == "" {
 		return CreateSessionResponse{}, NotFound(fmt.Sprintf("codex session %q has no thread id to fork", sourceID))
 	}
+	parentSourcePath := strings.TrimSpace(source.importedSourcePath)
+	if parentSourcePath == "" {
+		if path, _, err := s.codexSessionFileForRecord(source); err != nil {
+			return CreateSessionResponse{}, err
+		} else {
+			parentSourcePath = path
+		}
+	}
+	forkParent := sessionSourceForkParent{
+		SessionID:        &sourceID,
+		BackendSessionID: parentThreadID,
+		SourcePath:       parentSourcePath,
+	}
 	cwd := strings.TrimSpace(req.CWD)
 	if cwd == "" {
 		cwd = strings.TrimSpace(source.cwd)
@@ -801,7 +814,7 @@ func (s *Stub) ForkSession(ctx context.Context, req ForkSessionRequest) (CreateS
 		PIAgentGRPC:       false,
 	}
 	if !s.asyncSQLiteActions {
-		return s.createForkSessionWithRuntimeLaunch(ctx, identity, runtimeReq, title)
+		return s.createForkSessionWithRuntimeLaunch(ctx, identity, runtimeReq, title, forkParent)
 	}
 	runtime := pendingRuntimeForLaunch(runtimeReq)
 	transport := pendingTransportForLaunch(runtimeReq)
@@ -814,6 +827,7 @@ func (s *Stub) ForkSession(ctx context.Context, req ForkSessionRequest) (CreateS
 		ReasoningEffort:  reasoningEffort,
 		Title:            title,
 		SourceConfidence: sourceConfidenceProvisional,
+		ForkParent:       forkParent,
 		Runtime:          runtime,
 		Transport:        transport,
 	})
@@ -836,7 +850,7 @@ func (s *Stub) ForkSession(ctx context.Context, req ForkSessionRequest) (CreateS
 	}, nil
 }
 
-func (s *Stub) createForkSessionWithRuntimeLaunch(ctx context.Context, identity session.Identity, req runtimeLaunchRequest, title string) (CreateSessionResponse, error) {
+func (s *Stub) createForkSessionWithRuntimeLaunch(ctx context.Context, identity session.Identity, req runtimeLaunchRequest, title string, forkParent sessionSourceForkParent) (CreateSessionResponse, error) {
 	runtime, err := s.launcher.Launch(ctx, req)
 	if err != nil {
 		_ = runtime.CleanupHelperArtifacts()
@@ -863,6 +877,7 @@ func (s *Stub) createForkSessionWithRuntimeLaunch(ctx context.Context, identity 
 		ReasoningEffort:  req.ReasoningEffort,
 		Title:            title,
 		SourceConfidence: sourceConfidenceProvisional,
+		ForkParent:       forkParent,
 		Runtime:          runtime,
 		Transport:        transportForRuntimeStartup(runtime),
 	})

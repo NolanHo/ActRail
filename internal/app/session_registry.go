@@ -41,8 +41,15 @@ type sessionCreateSpec struct {
 	SourcePath       string
 	BackendSessionID string
 	SourceConfidence string
+	ForkParent       sessionSourceForkParent
 	Runtime          sessionRuntime
 	Transport        SessionTransportSnapshot
+}
+
+type sessionSourceForkParent struct {
+	SessionID        *session.SessionID
+	BackendSessionID string
+	SourcePath       string
 }
 
 type sessionRecord struct {
@@ -70,6 +77,7 @@ type sessionRecord struct {
 	importedSourceConfidence        string
 	importedFirstUserMessage        string
 	importedHasLegacySessionUIState bool
+	forkParent                      sessionSourceForkParent
 	runtime                         sessionRuntime
 	uiRequest                       *SessionUIRequestSnapshot
 	transport                       SessionTransportSnapshot
@@ -129,6 +137,7 @@ func (r *sessionRegistry) Create(spec sessionCreateSpec) (sessionRecord, error) 
 		importedSourcePath:       strings.TrimSpace(spec.SourcePath),
 		importedBackendSessionID: strings.TrimSpace(spec.BackendSessionID),
 		importedSourceConfidence: normalizeSourceConfidence(spec.SourceConfidence),
+		forkParent:               copySessionSourceForkParent(spec.ForkParent),
 		runtime:                  spec.Runtime,
 		transport:                spec.Transport,
 		inputMu:                  &sync.Mutex{},
@@ -1135,6 +1144,7 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		importedSourceConfidence:        record.importedSourceConfidence,
 		importedFirstUserMessage:        record.importedFirstUserMessage,
 		importedHasLegacySessionUIState: record.importedHasLegacySessionUIState,
+		forkParent:                      copySessionSourceForkParent(record.forkParent),
 		runtime:                         record.runtime,
 		uiRequest:                       copySessionUIRequest(record.uiRequest),
 		transport:                       record.transport,
@@ -1143,6 +1153,14 @@ func copySessionRecord(record sessionRecord) sessionRecord {
 		turnTiming:                      copyTurnTiming(record.turnTiming),
 		runtimeAgentRunning:             record.runtimeAgentRunning,
 		inputMu:                         record.inputMu,
+	}
+}
+
+func copySessionSourceForkParent(parent sessionSourceForkParent) sessionSourceForkParent {
+	return sessionSourceForkParent{
+		SessionID:        copySessionIDPtr(parent.SessionID),
+		BackendSessionID: strings.TrimSpace(parent.BackendSessionID),
+		SourcePath:       strings.TrimSpace(parent.SourcePath),
 	}
 }
 
