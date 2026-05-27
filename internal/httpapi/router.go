@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"expvar"
 	"io"
+	"net"
 	"net/http"
+	"net/http/pprof"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -106,6 +109,18 @@ func New(cfg config.Config, svc app.Service, connectHandlers ...http.Handler) ht
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", r.healthz)
+	mux.Handle("GET /debug/vars", localDebugOnly(expvar.Handler()))
+	mux.Handle("GET /debug/pprof/", localDebugOnly(http.HandlerFunc(pprof.Index)))
+	mux.Handle("GET /debug/pprof/cmdline", localDebugOnly(http.HandlerFunc(pprof.Cmdline)))
+	mux.Handle("GET /debug/pprof/profile", localDebugOnly(http.HandlerFunc(pprof.Profile)))
+	mux.Handle("GET /debug/pprof/symbol", localDebugOnly(http.HandlerFunc(pprof.Symbol)))
+	mux.Handle("GET /debug/pprof/trace", localDebugOnly(http.HandlerFunc(pprof.Trace)))
+	mux.Handle("GET /debug/pprof/allocs", localDebugOnly(pprof.Handler("allocs")))
+	mux.Handle("GET /debug/pprof/block", localDebugOnly(pprof.Handler("block")))
+	mux.Handle("GET /debug/pprof/goroutine", localDebugOnly(pprof.Handler("goroutine")))
+	mux.Handle("GET /debug/pprof/heap", localDebugOnly(pprof.Handler("heap")))
+	mux.Handle("GET /debug/pprof/mutex", localDebugOnly(pprof.Handler("mutex")))
+	mux.Handle("GET /debug/pprof/threadcreate", localDebugOnly(pprof.Handler("threadcreate")))
 	mux.HandleFunc("GET /api/me", r.me)
 	mux.HandleFunc("POST /api/login", r.login)
 	mux.HandleFunc("POST /api/logout", r.logout)
@@ -176,6 +191,39 @@ func New(cfg config.Config, svc app.Service, connectHandlers ...http.Handler) ht
 	mux.Handle("/api/connect/", r.requireAuth(r.connect))
 
 	return traceMiddleware(mux)
+}
+
+func localDebugOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !debugRequestIsLocal(req) {
+			http.NotFound(w, req)
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
+func debugRequestIsLocal(req *http.Request) bool {
+	if req == nil {
+		return false
+	}
+	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
+		value := strings.TrimSpace(req.Header.Get(header))
+		if value == "" {
+			continue
+		}
+		host := strings.TrimSpace(strings.Split(value, ",")[0])
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		host = req.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
 }
 
 func (r Router) requireAuth(next http.Handler) http.Handler {

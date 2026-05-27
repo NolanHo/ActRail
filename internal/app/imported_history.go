@@ -1797,10 +1797,9 @@ func (s *Stub) warmCodexSourceHistories(ctx context.Context) {
 		if record.identity.Backend() != session.BackendCodex {
 			continue
 		}
-		_, _, _ = s.loadCodexSourceFileHistory(ctx, record, SessionMessagesRequest{
-			SessionID:         record.identity.SessionID(),
-			Limit:             1,
-			IncludeToolEvents: true,
+		_, _, _ = s.loadCodexSourceFileHistoryPage(ctx, record, SessionMessagesRequest{
+			SessionID: record.identity.SessionID(),
+			Limit:     1,
 		})
 	}
 }

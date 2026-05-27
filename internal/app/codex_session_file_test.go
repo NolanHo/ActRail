@@ -806,7 +806,7 @@ func makeLargeCodexSessionLines(threadID string, cwd string) []string {
 	return lines
 }
 
-func TestWarmCodexSourceHistoriesCachesSourceFile(t *testing.T) {
+func TestWarmCodexSourceHistoriesUsesPagedSourceFile(t *testing.T) {
 	cfg := persistentTestConfig(t)
 	now := time.Unix(1760000000, 0).UTC()
 	sessionID := mustSessionID(t, "s_codex_file_warmup")
@@ -845,14 +845,18 @@ func TestWarmCodexSourceHistoriesCachesSourceFile(t *testing.T) {
 
 	svc.warmCodexSourceHistories(context.Background())
 
-	items, ok := svc.messageCache.Get(sessionID, "codex-source-file:"+signature)
-	if !ok {
-		t.Fatal("message cache missing source file after warmCodexSourceHistories")
+	if _, ok := svc.messageCache.Get(sessionID, "codex-source-file:"+signature); ok {
+		t.Fatal("message cache unexpectedly populated after warmCodexSourceHistories")
 	}
-	got := messageRolesAndText(items)
+
+	response, err := svc.SessionMessages(context.Background(), SessionMessagesRequest{SessionID: sessionID, Limit: 2})
+	if err != nil {
+		t.Fatalf("SessionMessages() error = %v", err)
+	}
+	got := messageRolesAndText(response.Items)
 	want := []string{"user:warm this source", "assistant:warmed from startup"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("cached messages = %#v, want %#v", got, want)
+		t.Fatalf("SessionMessages() = %#v, want %#v", got, want)
 	}
 }
 
